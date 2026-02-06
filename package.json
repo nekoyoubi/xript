@@ -1,0 +1,14 @@
+{
+	"name": "xript",
+	"version": "0.0.1",
+	"private": true,
+	"workspaces": [
+		"docs",
+		"runtimes/*",
+		"tools/*"
+	],
+	"scripts": {
+		"docs:dev": "npm run dev -w @xript/docs",
+		"docs:build": "npm run build -w @xript/docs"
+	}
+}
