@@ -1,0 +1,167 @@
+---
+const tagline = "mod the it";
+const subtitle = "eXtensible Runtime Interface Protocol Tooling";
+---
+
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" type="image/svg+xml" href="/xript/favicon.svg" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="generator" content={Astro.generator} />
+		<meta name="description" content="xript - The USB of software extensibility. A platform specification for making any application moddable." />
+		<title>xript — {tagline}</title>
+		<style>
+			:root {
+				--bg: #0a0a0b;
+				--fg: #e8e8e8;
+				--fg-muted: #888;
+				--accent: #7c3aed;
+				--accent-glow: rgba(124, 58, 237, 0.3);
+			}
+
+			* {
+				margin: 0;
+				padding: 0;
+				box-sizing: border-box;
+			}
+
+			html {
+				font-family: system-ui, -apple-system, sans-serif;
+				background: var(--bg);
+				color: var(--fg);
+				line-height: 1.6;
+			}
+
+			body {
+				min-height: 100vh;
+				display: flex;
+				flex-direction: column;
+			}
+
+			main {
+				flex: 1;
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				justify-content: center;
+				padding: 2rem;
+				text-align: center;
+			}
+
+			.logo {
+				font-size: clamp(4rem, 15vw, 8rem);
+				font-weight: 700;
+				letter-spacing: -0.04em;
+				margin-bottom: 0.5rem;
+			}
+
+			.logo span {
+				color: var(--accent);
+			}
+
+			.tagline {
+				font-size: clamp(1rem, 3vw, 1.5rem);
+				color: var(--fg-muted);
+				font-style: italic;
+				margin-bottom: 1rem;
+			}
+
+			.subtitle {
+				font-size: 0.875rem;
+				color: var(--fg-muted);
+				letter-spacing: 0.1em;
+				text-transform: uppercase;
+				margin-bottom: 3rem;
+			}
+
+			.pitch {
+				max-width: 42rem;
+				font-size: clamp(1.125rem, 2.5vw, 1.375rem);
+				line-height: 1.7;
+				margin-bottom: 3rem;
+			}
+
+			.pitch strong {
+				color: var(--accent);
+			}
+
+			.cta-group {
+				display: flex;
+				gap: 1rem;
+				flex-wrap: wrap;
+				justify-content: center;
+			}
+
+			.cta {
+				display: inline-flex;
+				align-items: center;
+				gap: 0.5rem;
+				padding: 0.875rem 1.75rem;
+				border-radius: 0.5rem;
+				font-weight: 500;
+				text-decoration: none;
+				transition: all 0.2s ease;
+			}
+
+			.cta-primary {
+				background: var(--accent);
+				color: white;
+				box-shadow: 0 0 20px var(--accent-glow);
+			}
+
+			.cta-primary:hover {
+				transform: translateY(-2px);
+				box-shadow: 0 4px 30px var(--accent-glow);
+			}
+
+			.cta-secondary {
+				background: transparent;
+				color: var(--fg);
+				border: 1px solid var(--fg-muted);
+			}
+
+			.cta-secondary:hover {
+				border-color: var(--fg);
+				background: rgba(255, 255, 255, 0.05);
+			}
+
+			footer {
+				padding: 2rem;
+				text-align: center;
+				color: var(--fg-muted);
+				font-size: 0.875rem;
+			}
+
+			footer a {
+				color: var(--fg-muted);
+				text-decoration: none;
+			}
+
+			footer a:hover {
+				color: var(--fg);
+			}
+		</style>
+	</head>
+	<body>
+		<main>
+			<h1 class="logo">x<span>ript</span></h1>
+			<p class="tagline">{tagline}</p>
+			<p class="subtitle">{subtitle}</p>
+
+			<p class="pitch">
+				Every application should be moddable.<br />
+				xript is a <strong>platform specification</strong> for how software exposes functionality to its users — safely, consistently, and with documentation that writes itself.
+			</p>
+
+			<div class="cta-group">
+				<a href="/xript/vision" class="cta cta-primary">Read the Vision</a>
+				<a href="https://github.com/nekoyoubi/xript" class="cta cta-secondary">GitHub</a>
+			</div>
+		</main>
+
+		<footer>
+			<p>xript.dev — <a href="/xript/vision">the USB of software extensibility</a></p>
+		</footer>
+	</body>
+</html>

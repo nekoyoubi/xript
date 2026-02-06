@@ -1,0 +1,165 @@
+---
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
+const visionPath = join(process.cwd(), "../spec/vision.md");
+const visionContent = await readFile(visionPath, "utf-8");
+
+function parseMarkdown(md: string): string {
+	return md
+		.replace(/^### (.+)$/gm, '<h3>$1</h3>')
+		.replace(/^## (.+)$/gm, '<h2>$1</h2>')
+		.replace(/^# (.+)$/gm, '<h1>$1</h1>')
+		.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+		.replace(/\*(.+?)\*/g, '<em>$1</em>')
+		.replace(/^- (.+)$/gm, '<li>$1</li>')
+		.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
+		.replace(/^---$/gm, '<hr />')
+		.replace(/\n\n/g, '</p><p>')
+		.replace(/^(?!<[hup]|<li|<hr)(.+)$/gm, '<p>$1</p>')
+		.replace(/<p><\/p>/g, '')
+		.replace(/<p>(<h[123]>)/g, '$1')
+		.replace(/(<\/h[123]>)<\/p>/g, '$1')
+		.replace(/<p>(<ul>)/g, '$1')
+		.replace(/(<\/ul>)<\/p>/g, '$1')
+		.replace(/<p>(<hr \/>)<\/p>/g, '$1');
+}
+
+const htmlContent = parseMarkdown(visionContent);
+---
+
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" type="image/svg+xml" href="/xript/favicon.svg" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="generator" content={Astro.generator} />
+		<meta name="description" content="The vision behind xript - making every application moddable." />
+		<title>Vision — xript</title>
+		<style>
+			:root {
+				--bg: #0a0a0b;
+				--fg: #e8e8e8;
+				--fg-muted: #888;
+				--accent: #7c3aed;
+			}
+
+			* {
+				margin: 0;
+				padding: 0;
+				box-sizing: border-box;
+			}
+
+			html {
+				font-family: system-ui, -apple-system, sans-serif;
+				background: var(--bg);
+				color: var(--fg);
+				line-height: 1.7;
+			}
+
+			body {
+				min-height: 100vh;
+			}
+
+			header {
+				padding: 1.5rem 2rem;
+				border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+			}
+
+			header a {
+				color: var(--fg);
+				text-decoration: none;
+				font-weight: 600;
+				font-size: 1.25rem;
+			}
+
+			header a span {
+				color: var(--accent);
+			}
+
+			main {
+				max-width: 48rem;
+				margin: 0 auto;
+				padding: 3rem 2rem 6rem;
+			}
+
+			h1 {
+				font-size: 2.5rem;
+				margin-bottom: 0.5rem;
+				letter-spacing: -0.02em;
+			}
+
+			h2 {
+				font-size: 1.75rem;
+				margin-top: 3rem;
+				margin-bottom: 1rem;
+				color: var(--accent);
+			}
+
+			h3 {
+				font-size: 1.25rem;
+				margin-top: 2rem;
+				margin-bottom: 0.75rem;
+			}
+
+			p {
+				margin-bottom: 1rem;
+				color: var(--fg);
+			}
+
+			strong {
+				color: var(--accent);
+				font-weight: 600;
+			}
+
+			em {
+				font-style: italic;
+			}
+
+			ul {
+				margin: 1rem 0;
+				padding-left: 1.5rem;
+			}
+
+			li {
+				margin-bottom: 0.5rem;
+			}
+
+			hr {
+				border: none;
+				border-top: 1px solid rgba(255, 255, 255, 0.1);
+				margin: 2.5rem 0;
+			}
+
+			footer {
+				padding: 2rem;
+				text-align: center;
+				color: var(--fg-muted);
+				font-size: 0.875rem;
+				border-top: 1px solid rgba(255, 255, 255, 0.1);
+			}
+
+			footer a {
+				color: var(--fg-muted);
+				text-decoration: none;
+			}
+
+			footer a:hover {
+				color: var(--fg);
+			}
+		</style>
+	</head>
+	<body>
+		<header>
+			<a href="/xript/">x<span>ript</span></a>
+		</header>
+
+		<main>
+			<Fragment set:html={htmlContent} />
+		</main>
+
+		<footer>
+			<p><a href="/xript/">← Back to home</a></p>
+		</footer>
+	</body>
+</html>
