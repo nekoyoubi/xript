@@ -1,0 +1,31 @@
+:root {
+	--sl-color-accent-low: #1a0a3e;
+	--sl-color-accent: #7c3aed;
+	--sl-color-accent-high: #c4b5fd;
+	--sl-color-white: #e8e8e8;
+	--sl-color-gray-1: #d0d0d0;
+	--sl-color-gray-2: #999;
+	--sl-color-gray-3: #666;
+	--sl-color-gray-4: #333;
+	--sl-color-gray-5: #1a1a1c;
+	--sl-color-gray-6: #111113;
+	--sl-color-black: #0a0a0b;
+}
+
+:root[data-theme="light"] {
+	--sl-color-accent-low: #ede9fe;
+	--sl-color-accent: #6d28d9;
+	--sl-color-accent-high: #3b0764;
+	--sl-color-white: #111113;
+	--sl-color-gray-1: #333;
+	--sl-color-gray-2: #666;
+	--sl-color-gray-3: #999;
+	--sl-color-gray-4: #d0d0d0;
+	--sl-color-gray-5: #f0f0f0;
+	--sl-color-gray-6: #fafafa;
+	--sl-color-black: #fff;
+}
+
+.hero .accent {
+	color: var(--sl-color-accent);
+}

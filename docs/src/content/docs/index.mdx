@@ -1,0 +1,37 @@
+---
+title: xript
+description: The USB of software extensibility. A platform specification for making any application moddable.
+template: splash
+hero:
+  title: |
+    x<span class="accent">ript</span>
+  tagline: |
+    Every application should be moddable.
+    xript is a platform specification for how software exposes functionality to its users — safely, consistently, and with documentation that writes itself.
+  actions:
+    - text: Read the Vision
+      link: /vision/
+      icon: right-arrow
+      variant: primary
+    - text: GitHub
+      link: https://github.com/nekoyoubi/xript
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid stagger>
+	<Card title="Familiar Language" icon="seti:javascript">
+		Users write JavaScript. No new syntax to learn, no tools to install. LLMs already speak it fluently.
+	</Card>
+	<Card title="Safe by Default" icon="approve-check-circle">
+		No sandbox escape. No denial of service. No implicit trust. No eval. Ever. Running someone else's mod should never be a question of trust.
+	</Card>
+	<Card title="The Manifest Is the Product" icon="document">
+		One declarative manifest defines bindings, capabilities, types, and examples. From it, everything is derived: docs, types, validation, playgrounds.
+	</Card>
+	<Card title="Incremental Adoption" icon="rocket">
+		Five minutes for safe expressions. An afternoon for simple bindings. A few days for full scripting. Each level stands on its own.
+	</Card>
+</CardGrid>
