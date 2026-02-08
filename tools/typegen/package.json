@@ -1,0 +1,22 @@
+{
+	"name": "@xript/typegen",
+	"version": "0.1.0",
+	"description": "Generate TypeScript definitions from xript manifests.",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"bin": {
+		"xript-typegen": "./dist/cli.js"
+	},
+	"scripts": {
+		"build": "tsc",
+		"test": "node --test test/*.test.js",
+		"prepublishOnly": "npm run build"
+	},
+	"keywords": ["xript", "typegen", "typescript", "code-generation"],
+	"license": "MIT",
+	"devDependencies": {
+		"typescript": "^5.7.0",
+		"@types/node": "^22.0.0"
+	}
+}
