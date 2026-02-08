@@ -1,0 +1,11 @@
+{
+	"name": "@xript/example-expression-evaluator",
+	"version": "1.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Example: expression evaluator using @xript/runtime-js",
+	"scripts": {
+		"start": "node src/host.js",
+		"demo": "node src/demo.js"
+	}
+}
