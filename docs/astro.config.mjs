@@ -25,6 +25,9 @@ export default defineConfig({
 					label: "Specification",
 					items: [
 						{ label: "Manifest", slug: "spec/manifest" },
+						{ label: "Capabilities", slug: "spec/capabilities" },
+						{ label: "Bindings", slug: "spec/bindings" },
+						{ label: "Security", slug: "spec/security" },
 					],
 				},
 			],
