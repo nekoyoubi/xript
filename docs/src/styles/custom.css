@@ -29,3 +29,16 @@
 .hero .accent {
 	color: var(--sl-color-accent);
 }
+
+.manifest-teaser {
+	max-width: 40rem;
+	margin: 2rem auto 3rem;
+	text-align: center;
+}
+
+.manifest-teaser .teaser-label {
+	font-size: 1.125rem;
+	color: var(--sl-color-gray-2);
+	margin-bottom: 1rem;
+	font-style: italic;
+}
