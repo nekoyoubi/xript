@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { createRuntime, createRuntimeFromFile } from "../dist/index.js";
+import { createRuntime, createRuntimeFromFile, ManifestValidationError } from "../dist/index.js";
 
 const minimalManifest = {
 	xript: "0.1",
@@ -15,8 +15,8 @@ describe("createRuntime", () => {
 	});
 
 	it("rejects invalid manifests", () => {
-		assert.throws(() => createRuntime({}, { hostBindings: {} }), /Invalid manifest/);
-		assert.throws(() => createRuntime({ xript: "0.1" }, { hostBindings: {} }), /Invalid manifest/);
+		assert.throws(() => createRuntime({}, { hostBindings: {} }), /Invalid xript manifest/);
+		assert.throws(() => createRuntime({ xript: "0.1" }, { hostBindings: {} }), /Invalid xript manifest/);
 	});
 });
 
@@ -380,6 +380,116 @@ describe("state isolation between executions", () => {
 		runtime.execute("counter++;");
 		const result = runtime.execute("counter");
 		assert.equal(result.value, 1);
+	});
+});
+
+describe("manifest validation", () => {
+	it("throws ManifestValidationError for null input", () => {
+		assert.throws(
+			() => createRuntime(null, { hostBindings: {} }),
+			(err) => err instanceof ManifestValidationError && err.issues.length === 1,
+		);
+	});
+
+	it("throws ManifestValidationError for non-object input", () => {
+		assert.throws(
+			() => createRuntime("not-an-object", { hostBindings: {} }),
+			(err) => err instanceof ManifestValidationError,
+		);
+	});
+
+	it("collects multiple structural issues", () => {
+		try {
+			createRuntime({}, { hostBindings: {} });
+			assert.fail("should have thrown");
+		} catch (err) {
+			assert.ok(err instanceof ManifestValidationError);
+			assert.ok(err.issues.length >= 2);
+			const paths = err.issues.map((i) => i.path);
+			assert.ok(paths.includes("/xript"));
+			assert.ok(paths.includes("/name"));
+		}
+	});
+
+	it("rejects invalid bindings type", () => {
+		assert.throws(
+			() => createRuntime({ xript: "0.1", name: "test", bindings: "bad" }, { hostBindings: {} }),
+			(err) => err instanceof ManifestValidationError && err.issues.some((i) => i.path === "/bindings"),
+		);
+	});
+
+	it("rejects invalid limits values", () => {
+		assert.throws(
+			() => createRuntime({ xript: "0.1", name: "test", limits: { timeout_ms: -1 } }, { hostBindings: {} }),
+			(err) => err instanceof ManifestValidationError && err.issues.some((i) => i.path === "/limits/timeout_ms"),
+		);
+	});
+
+	it("passes basic structural check for valid manifests", () => {
+		const runtime = createRuntime(
+			{ xript: "0.1", name: "test", bindings: {}, capabilities: {}, limits: { timeout_ms: 100 } },
+			{ hostBindings: {} },
+		);
+		assert.ok(runtime);
+	});
+});
+
+describe("createRuntimeFromFile validation", () => {
+	it("validates manifest by default", async () => {
+		const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			hostBindings: {
+				log: (msg) => msg,
+				player: {
+					getName: () => "Hero",
+					getHealth: () => 100,
+					getMaxHealth: () => 100,
+					getPosition: () => ({ x: 0, y: 0 }),
+					setHealth: () => {},
+					getInventory: () => [],
+					addItem: () => {},
+				},
+				world: {
+					getCurrentLevel: () => 1,
+					getEnemies: async () => [],
+					spawnEnemy: () => {},
+				},
+				data: {
+					get: async () => undefined,
+					set: async () => {},
+				},
+			},
+			capabilities: ["modify-player", "modify-world", "storage"],
+		});
+		assert.ok(runtime);
+	});
+
+	it("can skip validation with validate: false", async () => {
+		const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			hostBindings: {
+				log: (msg) => msg,
+				player: {
+					getName: () => "Hero",
+					getHealth: () => 100,
+					getMaxHealth: () => 100,
+					getPosition: () => ({ x: 0, y: 0 }),
+					setHealth: () => {},
+					getInventory: () => [],
+					addItem: () => {},
+				},
+				world: {
+					getCurrentLevel: () => 1,
+					getEnemies: async () => [],
+					spawnEnemy: () => {},
+				},
+				data: {
+					get: async () => undefined,
+					set: async () => {},
+				},
+			},
+			capabilities: ["modify-player", "modify-world", "storage"],
+			validate: false,
+		});
+		assert.ok(runtime);
 	});
 });
 
