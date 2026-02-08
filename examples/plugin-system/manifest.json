@@ -1,0 +1,83 @@
+{
+	"xript": "0.1",
+	"name": "task-manager",
+	"version": "1.0.0",
+	"title": "Task Manager",
+	"description": "A simple task manager demonstrating xript's tier 2 adoption: namespaces, capabilities, and custom types.",
+
+	"bindings": {
+		"tasks": {
+			"description": "Read and manage tasks.",
+			"members": {
+				"list": {
+					"description": "Returns all tasks.",
+					"returns": { "array": "Task" }
+				},
+				"get": {
+					"description": "Returns a task by ID.",
+					"params": [{ "name": "id", "type": "string" }],
+					"returns": { "optional": "Task" }
+				},
+				"add": {
+					"description": "Creates a new task.",
+					"params": [
+						{ "name": "title", "type": "string", "description": "The task title." },
+						{ "name": "priority", "type": "Priority", "description": "Task priority level.", "default": "medium" }
+					],
+					"returns": "Task",
+					"capability": "manage-tasks"
+				},
+				"complete": {
+					"description": "Marks a task as done.",
+					"params": [{ "name": "id", "type": "string" }],
+					"returns": "boolean",
+					"capability": "manage-tasks"
+				},
+				"remove": {
+					"description": "Permanently removes a task.",
+					"params": [{ "name": "id", "type": "string" }],
+					"returns": "boolean",
+					"capability": "admin"
+				}
+			}
+		},
+		"log": {
+			"description": "Writes a message to the plugin console.",
+			"params": [{ "name": "message", "type": "string" }]
+		}
+	},
+
+	"capabilities": {
+		"manage-tasks": {
+			"description": "Create and complete tasks.",
+			"risk": "medium"
+		},
+		"admin": {
+			"description": "Delete tasks and perform administrative operations.",
+			"risk": "high"
+		}
+	},
+
+	"types": {
+		"Task": {
+			"description": "A task in the task manager.",
+			"fields": {
+				"id": { "type": "string", "description": "Unique task identifier." },
+				"title": { "type": "string", "description": "The task title." },
+				"done": { "type": "boolean", "description": "Whether the task is completed." },
+				"priority": { "type": "Priority", "description": "Priority level." },
+				"createdAt": { "type": "string", "description": "ISO 8601 creation timestamp." }
+			}
+		},
+		"Priority": {
+			"description": "Task priority levels.",
+			"values": ["low", "medium", "high", "urgent"]
+		}
+	},
+
+	"limits": {
+		"timeout_ms": 2000,
+		"memory_mb": 16,
+		"max_stack_depth": 128
+	}
+}

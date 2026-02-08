@@ -1,0 +1,10 @@
+{
+	"name": "@xript/example-plugin-system",
+	"version": "1.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Example: tier 2 plugin system with capabilities using @xript/runtime-js",
+	"scripts": {
+		"demo": "node src/demo.js"
+	}
+}
