@@ -34,9 +34,17 @@ export default defineConfig({
 				{
 					label: "Tools",
 					items: [
+						{ label: "Runtime", slug: "tools/runtime" },
 						{ label: "Manifest Validator", slug: "tools/validator" },
 						{ label: "Type Generator", slug: "tools/typegen" },
 						{ label: "Doc Generator", slug: "tools/docgen" },
+					],
+				},
+				{
+					label: "Examples",
+					items: [
+						{ label: "Expression Evaluator", slug: "examples/expression-evaluator" },
+						{ label: "Plugin System", slug: "examples/plugin-system" },
 					],
 				},
 			],
