@@ -19,6 +19,7 @@ export default defineConfig({
 					label: "About",
 					items: [
 						{ label: "Vision", slug: "vision" },
+						{ label: "Getting Started", slug: "getting-started" },
 					],
 				},
 				{
@@ -28,6 +29,14 @@ export default defineConfig({
 						{ label: "Capabilities", slug: "spec/capabilities" },
 						{ label: "Bindings", slug: "spec/bindings" },
 						{ label: "Security", slug: "spec/security" },
+					],
+				},
+				{
+					label: "Tools",
+					items: [
+						{ label: "Manifest Validator", slug: "tools/validator" },
+						{ label: "Type Generator", slug: "tools/typegen" },
+						{ label: "Doc Generator", slug: "tools/docgen" },
 					],
 				},
 			],
