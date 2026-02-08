@@ -19,7 +19,33 @@ hero:
       variant: minimal
 ---
 
-import { Card, CardGrid } from '@astrojs/starlight/components';
+import { Card, CardGrid, Code } from '@astrojs/starlight/components';
+
+export const manifestSample = `{
+  "xript": "0.1",
+  "name": "my-game",
+  "bindings": {
+    "player": {
+      "description": "The player character.",
+      "members": {
+        "getHealth": {
+          "description": "Current health points.",
+          "returns": "number"
+        },
+        "setHealth": {
+          "description": "Set the player's health.",
+          "params": [{ "name": "value", "type": "number" }],
+          "capability": "modify-player"
+        }
+      }
+    }
+  }
+}`;
+
+<div class="manifest-teaser">
+	<p class="teaser-label">One manifest. Everything else is generated.</p>
+	<Code code={manifestSample} lang="json" title="xript.manifest.json" />
+</div>
 
 <CardGrid stagger>
 	<Card title="Familiar Language" icon="seti:javascript">

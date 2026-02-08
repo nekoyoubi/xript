@@ -1,0 +1,9 @@
+{
+	"xript": "0.1",
+	"name": "my-app",
+	"bindings": {
+		"doThing": {
+			"returns": "number"
+		}
+	}
+}
