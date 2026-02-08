@@ -1,0 +1,19 @@
+{
+	"name": "@xript/runtime-js",
+	"version": "0.1.0",
+	"description": "Reference JavaScript runtime for xript — sandboxed script execution with manifest-driven bindings.",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"scripts": {
+		"build": "tsc",
+		"test": "node --test test/*.test.js",
+		"prepublishOnly": "npm run build"
+	},
+	"keywords": ["xript", "runtime", "sandbox", "scripting", "modding"],
+	"license": "MIT",
+	"devDependencies": {
+		"typescript": "^5.7.0",
+		"@types/node": "^22.0.0"
+	}
+}
