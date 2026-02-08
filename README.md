@@ -52,8 +52,11 @@ runtime.execute('eval("1")');       // Error: eval() is not permitted
 
 - [Vision](https://xript.dev/vision) -- the guiding principles
 - [Getting Started](https://xript.dev/getting-started) -- five-minute integration guide
+- [Runtime API](https://xript.dev/tools/runtime) -- the reference runtime
 - [Manifest Spec](https://xript.dev/spec/manifest) -- the manifest format
 - [Security Guarantees](https://xript.dev/spec/security) -- what the sandbox promises
+- [Expression Evaluator](https://xript.dev/examples/expression-evaluator) -- tier 1 walkthrough
+- [Plugin System](https://xript.dev/examples/plugin-system) -- tier 2 walkthrough
 
 ## Repository Structure
 
@@ -69,6 +72,7 @@ xript/
 ├── docs/           # documentation site (Astro + Starlight) → xript.dev
 └── examples/
     ├── expression-evaluator/  # tier 1 "safe eval replacement" demo
+    ├── plugin-system/         # tier 2 namespace + capability demo
     └── game-mod-system.json   # tier 3 full manifest example
 ```
 
@@ -93,7 +97,8 @@ npx xript-docgen manifest.json -o docs/  # generate documentation
 | Spec v0.1 | Complete -- manifest schema, capabilities, bindings, security |
 | Reference Runtime | Complete -- Node.js vm-based sandbox with full spec compliance |
 | Toolchain | Complete -- validator, typegen, docgen |
-| Developer Experience | In progress -- docs, examples, guides |
+| Developer Experience | Complete -- 14-page docs site, getting started guide, runtime API reference, example walkthroughs |
+| Hardening | Complete -- 105 tests, manifest validation, CI smoke tests |
 
 ## License
 
