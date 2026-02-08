@@ -1,0 +1,78 @@
+{
+	"xript": "0.1",
+	"name": "expression-evaluator",
+	"version": "1.0.0",
+	"title": "Expression Evaluator",
+	"description": "A minimal example demonstrating xript's tier 1 adoption: safe expression evaluation. Exposes basic math and string operations in a sandboxed environment.",
+
+	"bindings": {
+		"abs": {
+			"description": "Returns the absolute value of a number.",
+			"params": [{ "name": "x", "type": "number" }],
+			"returns": "number"
+		},
+		"round": {
+			"description": "Rounds a number to the nearest integer.",
+			"params": [{ "name": "x", "type": "number" }],
+			"returns": "number"
+		},
+		"floor": {
+			"description": "Rounds a number down to the nearest integer.",
+			"params": [{ "name": "x", "type": "number" }],
+			"returns": "number"
+		},
+		"ceil": {
+			"description": "Rounds a number up to the nearest integer.",
+			"params": [{ "name": "x", "type": "number" }],
+			"returns": "number"
+		},
+		"min": {
+			"description": "Returns the smaller of two numbers.",
+			"params": [
+				{ "name": "a", "type": "number" },
+				{ "name": "b", "type": "number" }
+			],
+			"returns": "number"
+		},
+		"max": {
+			"description": "Returns the larger of two numbers.",
+			"params": [
+				{ "name": "a", "type": "number" },
+				{ "name": "b", "type": "number" }
+			],
+			"returns": "number"
+		},
+		"clamp": {
+			"description": "Clamps a value between a minimum and maximum.",
+			"params": [
+				{ "name": "value", "type": "number" },
+				{ "name": "lo", "type": "number" },
+				{ "name": "hi", "type": "number" }
+			],
+			"returns": "number"
+		},
+		"upper": {
+			"description": "Converts a string to uppercase.",
+			"params": [{ "name": "s", "type": "string" }],
+			"returns": "string"
+		},
+		"lower": {
+			"description": "Converts a string to lowercase.",
+			"params": [{ "name": "s", "type": "string" }],
+			"returns": "string"
+		},
+		"len": {
+			"description": "Returns the length of a string.",
+			"params": [{ "name": "s", "type": "string" }],
+			"returns": "number"
+		},
+		"concat": {
+			"description": "Concatenates two strings.",
+			"params": [
+				{ "name": "a", "type": "string" },
+				{ "name": "b", "type": "string" }
+			],
+			"returns": "string"
+		}
+	}
+}

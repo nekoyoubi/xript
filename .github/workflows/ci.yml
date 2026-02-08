@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - run: npm ci
+
+      - name: build manifest-validator
+        run: npm run build --workspace=tools/manifest-validator
+      - name: test manifest-validator
+        run: npm test --workspace=tools/manifest-validator
+
+      - name: build typegen
+        run: npm run build --workspace=tools/typegen
+      - name: test typegen
+        run: npm test --workspace=tools/typegen
+
+      - name: build docgen
+        run: npm run build --workspace=tools/docgen
+      - name: test docgen
+        run: npm test --workspace=tools/docgen
+
+      - name: build runtime-js
+        run: npm run build --workspace=runtimes/js
+      - name: test runtime-js
+        run: npm test --workspace=runtimes/js
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: build docs
+        run: npm run docs:build
