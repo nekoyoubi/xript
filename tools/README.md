@@ -6,8 +6,8 @@ Tooling for the xript ecosystem.
 
 - **manifest-validator/** (`@xript/manifest-validator`) — validate xript manifests against the spec schema
 - **typegen/** (`@xript/typegen`) — generate TypeScript definitions from manifests
+- **docgen/** (`@xript/docgen`) — generate markdown documentation from manifests
 
 ## Planned Tools
 
-- **docgen/** — generate documentation sites from manifests
 - **playground/** — interactive playground for testing scripts against manifests
