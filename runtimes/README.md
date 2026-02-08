@@ -2,9 +2,12 @@
 
 Language-specific implementations of the xript runtime.
 
+## Available Runtimes
+
+- **js/** (`@xript/runtime-js`) — reference JavaScript runtime using Node.js `vm` module for sandboxed execution
+
 ## Planned Runtimes
 
-- **js/** — JavaScript/TypeScript (likely QuickJS-based)
 - **rust/** — Rust
 - **go/** — Go
 - **csharp/** — C# / .NET

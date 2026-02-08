@@ -28,9 +28,15 @@ xript/
 ## Development Commands
 
 ```sh
-npm install              # install all workspace dependencies
-npm run docs:dev         # run the docs site locally on port 4351
-npm run docs:build       # build the docs site for production
+npm install                            # install all workspace dependencies
+npm run docs:dev                       # run the docs site locally on port 4351
+npm run docs:build                     # build the docs site for production
+
+# tools (run from repo root after npm install)
+npx xript-validate <manifest.json>     # validate a manifest against the spec schema
+npx xript-typegen <manifest.json>      # generate TypeScript definitions (stdout)
+npx xript-typegen <m.json> -o out.d.ts # generate TypeScript definitions (file)
+npx xript-docgen <m.json> -o docs/     # generate markdown documentation
 ```
 
 ## Conventions
@@ -43,7 +49,11 @@ npm run docs:build       # build the docs site for production
 
 ## Current State
 
-The project is in its earliest stage. The vision document and docs site exist. The specification, runtimes, tools, and examples are all planned but not yet implemented. Check the GitHub issues and milestones for the current roadmap.
+- **Spec v0.1** is complete: manifest schema (JSON Schema draft 2020-12), capability model, binding conventions, and security guarantees are all documented in `spec/`
+- **Toolchain** is complete: manifest validator (`@xript/manifest-validator`), type generator (`@xript/typegen`), and doc generator (`@xript/docgen`) are all built and tested in `tools/`
+- **Docs site** is live at xript.dev with Starlight, covering the vision and all spec documents
+- **Reference runtime** (`runtimes/js/`) is the current focus -- the first implementation of the spec using Node.js `vm` module for sandboxed execution
+- Check GitHub issues and milestones for the current roadmap
 
 ## Key Design Decisions
 
