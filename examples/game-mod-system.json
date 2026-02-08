@@ -1,0 +1,165 @@
+{
+	"xript": "0.1",
+	"name": "dungeon-crawler",
+	"version": "1.2.0",
+	"title": "Dungeon Crawler",
+	"description": "A roguelike dungeon crawler. Mods can read game state, modify player stats, create custom items, and react to game events.",
+
+	"bindings": {
+		"log": {
+			"description": "Writes a message to the mod console.",
+			"params": [
+				{ "name": "message", "type": "string", "description": "The message to log." }
+			]
+		},
+		"player": {
+			"description": "Functions for reading and modifying the player character.",
+			"members": {
+				"getName": {
+					"description": "Returns the player's display name.",
+					"returns": "string"
+				},
+				"getHealth": {
+					"description": "Returns the player's current health points.",
+					"returns": "number"
+				},
+				"getMaxHealth": {
+					"description": "Returns the player's maximum health points.",
+					"returns": "number"
+				},
+				"getPosition": {
+					"description": "Returns the player's current position in the dungeon.",
+					"returns": "Position"
+				},
+				"setHealth": {
+					"description": "Sets the player's health to a specific value. Clamped to 0..maxHealth.",
+					"params": [
+						{ "name": "value", "type": "number", "description": "The new health value." }
+					],
+					"capability": "modify-player",
+					"examples": [
+						{
+							"title": "Full heal",
+							"code": "const max = player.getMaxHealth();\nplayer.setHealth(max);",
+							"description": "Restores the player to full health."
+						}
+					]
+				},
+				"getInventory": {
+					"description": "Returns all items in the player's inventory.",
+					"returns": { "array": "Item" }
+				},
+				"addItem": {
+					"description": "Adds an item to the player's inventory.",
+					"params": [
+						{ "name": "item", "type": "Item", "description": "The item to add." }
+					],
+					"capability": "modify-player"
+				}
+			}
+		},
+		"world": {
+			"description": "Functions for querying the game world.",
+			"members": {
+				"getCurrentLevel": {
+					"description": "Returns the current dungeon level number (1-indexed).",
+					"returns": "number"
+				},
+				"getEnemies": {
+					"description": "Returns all enemies on the current level.",
+					"returns": { "array": "Enemy" },
+					"async": true
+				},
+				"spawnEnemy": {
+					"description": "Spawns an enemy at the given position.",
+					"params": [
+						{ "name": "type", "type": "EnemyType", "description": "The type of enemy to spawn." },
+						{ "name": "position", "type": "Position", "description": "Where to spawn the enemy." }
+					],
+					"capability": "modify-world"
+				}
+			}
+		},
+		"data": {
+			"description": "Persistent data storage for mods.",
+			"members": {
+				"get": {
+					"description": "Reads a value from the mod's persistent storage.",
+					"params": [
+						{ "name": "key", "type": "string", "description": "The storage key." }
+					],
+					"returns": { "optional": "string" },
+					"capability": "storage",
+					"async": true
+				},
+				"set": {
+					"description": "Writes a value to the mod's persistent storage.",
+					"params": [
+						{ "name": "key", "type": "string", "description": "The storage key." },
+						{ "name": "value", "type": "string", "description": "The value to store." }
+					],
+					"capability": "storage",
+					"async": true
+				}
+			}
+		}
+	},
+
+	"capabilities": {
+		"modify-player": {
+			"description": "Modify the player's stats, inventory, and equipment.",
+			"risk": "medium"
+		},
+		"modify-world": {
+			"description": "Spawn or remove entities in the game world.",
+			"risk": "high"
+		},
+		"storage": {
+			"description": "Read and write persistent data for this mod.",
+			"risk": "low"
+		}
+	},
+
+	"types": {
+		"Position": {
+			"description": "A 2D position in dungeon coordinates.",
+			"fields": {
+				"x": { "type": "number", "description": "Horizontal position (column)." },
+				"y": { "type": "number", "description": "Vertical position (row)." }
+			}
+		},
+		"Item": {
+			"description": "An item that can exist in the player's inventory.",
+			"fields": {
+				"id": { "type": "string", "description": "Unique item identifier." },
+				"name": { "type": "string", "description": "Display name." },
+				"type": { "type": "ItemType", "description": "The category of item." },
+				"damage": { "type": "number", "description": "Damage value for weapons.", "optional": true },
+				"healing": { "type": "number", "description": "Healing value for consumables.", "optional": true }
+			}
+		},
+		"Enemy": {
+			"description": "An enemy in the dungeon.",
+			"fields": {
+				"id": { "type": "string", "description": "Unique enemy instance identifier." },
+				"type": { "type": "EnemyType", "description": "The enemy type." },
+				"health": { "type": "number", "description": "Current health points." },
+				"position": { "type": "Position", "description": "Current position." }
+			}
+		},
+		"ItemType": {
+			"description": "Categories of items.",
+			"values": ["weapon", "armor", "consumable", "key", "quest"]
+		},
+		"EnemyType": {
+			"description": "Types of enemies that can appear in the dungeon.",
+			"values": ["skeleton", "goblin", "slime", "dragon", "mimic"]
+		}
+	},
+
+	"limits": {
+		"timeout_ms": 1000,
+		"memory_mb": 32,
+		"max_stack_depth": 128
+	}
+}
