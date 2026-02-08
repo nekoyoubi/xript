@@ -1,0 +1,18 @@
+{
+	"xript": "0.1",
+	"name": "my-game",
+	"version": "1.0.0",
+	"title": "My Game",
+	"bindings": {
+		"getHealth": {
+			"description": "Returns the player's current health.",
+			"returns": "number"
+		},
+		"log": {
+			"description": "Logs a message to the console.",
+			"params": [
+				{ "name": "message", "type": "string" }
+			]
+		}
+	}
+}
