@@ -5,6 +5,7 @@ Example manifests and integrations demonstrating xript in action.
 ## Runnable Examples
 
 - [expression-evaluator/](./expression-evaluator/) — tier 1 "safe eval replacement" with interactive REPL and demo script
+- [plugin-system/](./plugin-system/) — tier 2 plugin system with namespaces, capabilities, and custom types
 
 ## Manifests
 
