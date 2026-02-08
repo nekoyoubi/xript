@@ -21,6 +21,12 @@ export default defineConfig({
 						{ label: "Vision", slug: "vision" },
 					],
 				},
+				{
+					label: "Specification",
+					items: [
+						{ label: "Manifest", slug: "spec/manifest" },
+					],
+				},
 			],
 			customCss: ["./src/styles/custom.css"],
 			editLink: {
