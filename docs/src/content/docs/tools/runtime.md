@@ -1,0 +1,171 @@
+---
+title: Runtime
+description: Reference JavaScript runtime for sandboxed script execution with manifest-driven bindings.
+---
+
+The reference runtime (`@xript/runtime-js`) executes user scripts inside a secure sandbox. It reads a manifest to determine which bindings to expose, enforces capability gates, and prevents access to anything outside the declared surface.
+
+## Installation
+
+```sh
+npm install @xript/runtime-js
+```
+
+The runtime uses Node.js's built-in `vm` module for sandboxing. No native dependencies.
+
+## Creating a Runtime
+
+### From an inline manifest
+
+```javascript
+import { createRuntime } from "@xript/runtime-js";
+
+const runtime = createRuntime(manifest, {
+  hostBindings: { greet: (name) => `Hello, ${name}!` },
+});
+```
+
+`createRuntime(manifest, options)` is synchronous. It performs structural validation on the manifest (checks required fields, correct types, valid limits) and throws `ManifestValidationError` if anything is wrong.
+
+### From a file
+
+```javascript
+import { createRuntimeFromFile } from "@xript/runtime-js";
+
+const runtime = await createRuntimeFromFile("./manifest.json", {
+  hostBindings: { greet: (name) => `Hello, ${name}!` },
+});
+```
+
+`createRuntimeFromFile(path, options)` is asynchronous. It validates the manifest against the full JSON Schema (via `@xript/manifest-validator`) by default, then creates the runtime.
+
+## Options
+
+Both functions accept the same `RuntimeOptions` object:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `hostBindings` | `HostBindings` | (required) | Map of binding names to host functions |
+| `capabilities` | `string[]` | `[]` | List of capabilities granted to this script |
+| `validate` | `boolean` | `true` for file, N/A for inline | Whether to run full JSON Schema validation |
+| `console` | `{ log, warn, error }` | no-op functions | Console output routing |
+
+### Host Bindings
+
+Host bindings are a flat object mapping binding names to functions, or namespace names to objects of functions:
+
+```javascript
+const hostBindings = {
+  log: (msg) => console.log(msg),
+  player: {
+    getName: () => "Hero",
+    getHealth: () => 80,
+    setHealth: (value) => { health = value; },
+  },
+};
+```
+
+Every binding declared in the manifest should have a corresponding host function. If a manifest binding has no host function, calling it throws a `BindingError`.
+
+### Capabilities
+
+Capabilities are an opt-in security layer. By default, no capabilities are granted. Pass the capability names the script should have access to:
+
+```javascript
+const runtime = createRuntime(manifest, {
+  hostBindings,
+  capabilities: ["modify-player", "storage"],
+});
+```
+
+Any call to a binding gated by a capability not in this list throws a `CapabilityDeniedError`.
+
+## Executing Scripts
+
+### Synchronous
+
+```javascript
+const result = runtime.execute("2 + 2");
+// { value: 4, duration_ms: 0.5 }
+```
+
+`execute(code)` runs the code synchronously and returns an `ExecutionResult`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `value` | `unknown` | The result of the last expression |
+| `duration_ms` | `number` | Wall-clock execution time in milliseconds |
+
+### Asynchronous
+
+```javascript
+const result = await runtime.executeAsync("return await data.get('score');");
+// { value: "42", duration_ms: 1.2 }
+```
+
+`executeAsync(code)` wraps the code in an async function. Use `return` and `await` as needed. Returns a Promise resolving to an `ExecutionResult`.
+
+## Error Types
+
+The runtime exports four error classes, all available as named imports:
+
+### ManifestValidationError
+
+Thrown when the manifest fails structural or schema validation.
+
+```javascript
+import { ManifestValidationError } from "@xript/runtime-js";
+
+try {
+  createRuntime({}, { hostBindings: {} });
+} catch (e) {
+  // e.name === "ManifestValidationError"
+  // e.issues === [{ path: "/xript", message: "required field..." }, ...]
+}
+```
+
+The `issues` array contains every problem found, with a `path` and `message` for each.
+
+### BindingError
+
+Thrown when a host function throws or is not provided.
+
+```javascript
+import { BindingError } from "@xript/runtime-js";
+// e.name === "BindingError"
+// e.binding === "player.getHealth"
+// e.message includes the original error message
+```
+
+### CapabilityDeniedError
+
+Thrown when calling a capability-gated binding without the required capability.
+
+```javascript
+import { CapabilityDeniedError } from "@xript/runtime-js";
+// e.name === "CapabilityDeniedError"
+// e.capability === "modify-player"
+// e.binding === "player.setHealth"
+```
+
+### ExecutionLimitError
+
+Thrown when the script exceeds configured execution limits (timeout, memory).
+
+```javascript
+import { ExecutionLimitError } from "@xript/runtime-js";
+// e.name === "ExecutionLimitError"
+// e.limit === "timeout_ms"
+```
+
+## Sandbox Details
+
+The sandbox provides a restricted JavaScript environment:
+
+**Available:** `Math`, `JSON`, `Date`, `Number`, `String`, `Boolean`, `Array`, `Object`, `Map`, `Set`, `WeakMap`, `WeakSet`, `Promise`, `RegExp`, `Symbol`, `Proxy`, `Reflect`, typed arrays, `parseInt`, `parseFloat`, `isNaN`, `isFinite`, and all standard error constructors.
+
+**Blocked:** `eval`, `new Function`, `process`, `require`, `import`, `fetch`, `setTimeout`, `setInterval`, `Buffer`, `__dirname`, `__filename`, and all Node.js-specific globals.
+
+**Frozen namespaces:** Namespace objects are frozen with `Object.freeze`. Scripts cannot add, remove, or reassign namespace members.
+
+**Execution limits:** The `timeout_ms` field in the manifest's `limits` section controls how long a script can run. Default is 5000ms.
