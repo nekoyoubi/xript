@@ -5,10 +5,11 @@ The xript specification defines how applications expose functionality to scripts
 ## Contents
 
 - [vision.md](./vision.md) — the guiding vision for xript
+- [manifest.md](./manifest.md) — the manifest format specification
+- [manifest.schema.json](./manifest.schema.json) — the manifest JSON Schema
 
 ## Planned
 
-- Manifest schema (JSON Schema)
 - Capability model
 - Binding conventions
 - Security guarantees

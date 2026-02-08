@@ -1,0 +1,306 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://xript.dev/schema/manifest/v0.1.json",
+	"title": "xript Manifest",
+	"description": "Declarative manifest for xript-enabled applications. Defines the API surface, capabilities, and documentation for modders.",
+	"type": "object",
+	"required": ["xript", "name"],
+	"properties": {
+		"xript": {
+			"description": "The xript specification version this manifest conforms to.",
+			"type": "string",
+			"pattern": "^\\d+\\.\\d+$",
+			"examples": ["0.1"]
+		},
+		"name": {
+			"description": "Machine-readable identifier for this application. Used in generated package names and documentation URLs.",
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9-]*$",
+			"minLength": 1,
+			"maxLength": 64
+		},
+		"version": {
+			"description": "The version of this application's scripting API. Follows semver.",
+			"type": "string",
+			"pattern": "^\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?$",
+			"examples": ["1.0.0", "0.3.0-beta.1"]
+		},
+		"title": {
+			"description": "Human-readable display name for the application.",
+			"type": "string",
+			"maxLength": 128
+		},
+		"description": {
+			"description": "A brief description of what this application does and what modders can extend.",
+			"type": "string",
+			"maxLength": 1024
+		},
+		"bindings": {
+			"description": "The functions and namespaces exposed to scripts. This is the API surface.",
+			"type": "object",
+			"additionalProperties": {
+				"$ref": "#/$defs/binding"
+			}
+		},
+		"capabilities": {
+			"description": "Named capabilities that scripts can request. Each capability gates access to a set of bindings or behaviors.",
+			"type": "object",
+			"additionalProperties": {
+				"$ref": "#/$defs/capability"
+			}
+		},
+		"types": {
+			"description": "Custom type definitions referenced by bindings. Enables rich type generation and documentation.",
+			"type": "object",
+			"additionalProperties": {
+				"$ref": "#/$defs/typeDefinition"
+			}
+		},
+		"limits": {
+			"$ref": "#/$defs/executionLimits"
+		}
+	},
+	"additionalProperties": false,
+	"$defs": {
+		"typeRef": {
+			"description": "A reference to a type. Can be a primitive, a custom type name, an array type, or a union.",
+			"oneOf": [
+				{
+					"type": "string",
+					"description": "A primitive type name, custom type reference, or shorthand.",
+					"examples": ["string", "number", "boolean", "void", "null", "Player", "string[]", "number[]"]
+				},
+				{
+					"type": "object",
+					"description": "A complex type expression.",
+					"properties": {
+						"array": {
+							"$ref": "#/$defs/typeRef",
+							"description": "An array of this type."
+						},
+						"union": {
+							"type": "array",
+							"items": { "$ref": "#/$defs/typeRef" },
+							"minItems": 2,
+							"description": "A union of multiple types."
+						},
+						"map": {
+							"$ref": "#/$defs/typeRef",
+							"description": "A string-keyed map with values of this type."
+						},
+						"optional": {
+							"$ref": "#/$defs/typeRef",
+							"description": "An optional (nullable) version of this type."
+						}
+					},
+					"oneOf": [
+						{ "required": ["array"] },
+						{ "required": ["union"] },
+						{ "required": ["map"] },
+						{ "required": ["optional"] }
+					],
+					"additionalProperties": false
+				}
+			]
+		},
+		"parameter": {
+			"description": "A function parameter with a name, type, and optional description.",
+			"type": "object",
+			"required": ["name", "type"],
+			"properties": {
+				"name": {
+					"type": "string",
+					"description": "The parameter name."
+				},
+				"type": {
+					"$ref": "#/$defs/typeRef",
+					"description": "The parameter's type."
+				},
+				"description": {
+					"type": "string",
+					"description": "What this parameter represents."
+				},
+				"default": {
+					"description": "The default value if the parameter is omitted. Implies the parameter is optional."
+				},
+				"required": {
+					"type": "boolean",
+					"description": "Whether this parameter is required. Defaults to true unless a default value is provided.",
+					"default": true
+				}
+			},
+			"additionalProperties": false
+		},
+		"binding": {
+			"description": "A function or namespace exposed to scripts.",
+			"oneOf": [
+				{ "$ref": "#/$defs/functionBinding" },
+				{ "$ref": "#/$defs/namespaceBinding" }
+			]
+		},
+		"functionBinding": {
+			"description": "A callable function exposed to scripts.",
+			"type": "object",
+			"required": ["description"],
+			"properties": {
+				"description": {
+					"type": "string",
+					"description": "What this function does. Shown in generated docs and editor tooltips."
+				},
+				"params": {
+					"type": "array",
+					"items": { "$ref": "#/$defs/parameter" },
+					"description": "The function's parameters, in order."
+				},
+				"returns": {
+					"$ref": "#/$defs/typeRef",
+					"description": "The return type. Omit for void functions."
+				},
+				"async": {
+					"type": "boolean",
+					"description": "Whether this function is asynchronous. Defaults to false.",
+					"default": false
+				},
+				"capability": {
+					"type": "string",
+					"description": "The capability required to call this function. If omitted, the function is always available."
+				},
+				"examples": {
+					"type": "array",
+					"items": { "$ref": "#/$defs/example" },
+					"description": "Usage examples for documentation."
+				},
+				"deprecated": {
+					"type": "string",
+					"description": "If present, this function is deprecated. The value describes the migration path."
+				}
+			},
+			"additionalProperties": false
+		},
+		"namespaceBinding": {
+			"description": "A namespace that groups related functions.",
+			"type": "object",
+			"required": ["description", "members"],
+			"properties": {
+				"description": {
+					"type": "string",
+					"description": "What this namespace represents."
+				},
+				"members": {
+					"type": "object",
+					"additionalProperties": {
+						"$ref": "#/$defs/binding"
+					},
+					"description": "The functions and sub-namespaces in this namespace."
+				}
+			},
+			"additionalProperties": false
+		},
+		"capability": {
+			"description": "A named capability that gates access to functionality.",
+			"type": "object",
+			"required": ["description"],
+			"properties": {
+				"description": {
+					"type": "string",
+					"description": "What this capability grants access to. Shown to the user when a script requests it."
+				},
+				"risk": {
+					"type": "string",
+					"enum": ["low", "medium", "high"],
+					"description": "Advisory risk level. Helps users make informed decisions about granting capabilities.",
+					"default": "low"
+				}
+			},
+			"additionalProperties": false
+		},
+		"typeDefinition": {
+			"description": "A custom type definition.",
+			"type": "object",
+			"required": ["description"],
+			"properties": {
+				"description": {
+					"type": "string",
+					"description": "What this type represents."
+				},
+				"fields": {
+					"type": "object",
+					"additionalProperties": {
+						"$ref": "#/$defs/fieldDefinition"
+					},
+					"description": "The fields of this type (for object/struct types)."
+				},
+				"values": {
+					"type": "array",
+					"items": { "type": "string" },
+					"description": "The allowed values (for enum types)."
+				}
+			},
+			"additionalProperties": false
+		},
+		"fieldDefinition": {
+			"description": "A field within a custom type.",
+			"type": "object",
+			"required": ["type"],
+			"properties": {
+				"type": {
+					"$ref": "#/$defs/typeRef"
+				},
+				"description": {
+					"type": "string"
+				},
+				"optional": {
+					"type": "boolean",
+					"description": "Whether this field can be absent. Defaults to false.",
+					"default": false
+				}
+			},
+			"additionalProperties": false
+		},
+		"example": {
+			"description": "A usage example for documentation.",
+			"type": "object",
+			"required": ["code"],
+			"properties": {
+				"title": {
+					"type": "string",
+					"description": "A short title for this example."
+				},
+				"code": {
+					"type": "string",
+					"description": "The JavaScript code demonstrating usage."
+				},
+				"description": {
+					"type": "string",
+					"description": "Explanation of what this example demonstrates."
+				}
+			},
+			"additionalProperties": false
+		},
+		"executionLimits": {
+			"description": "Default execution limits for scripts. Runtimes enforce these limits to prevent denial of service.",
+			"type": "object",
+			"properties": {
+				"timeout_ms": {
+					"type": "integer",
+					"minimum": 1,
+					"description": "Maximum execution time in milliseconds.",
+					"default": 5000
+				},
+				"memory_mb": {
+					"type": "integer",
+					"minimum": 1,
+					"description": "Maximum memory usage in megabytes.",
+					"default": 64
+				},
+				"max_stack_depth": {
+					"type": "integer",
+					"minimum": 1,
+					"description": "Maximum call stack depth.",
+					"default": 256
+				}
+			},
+			"additionalProperties": false
+		}
+	}
+}
