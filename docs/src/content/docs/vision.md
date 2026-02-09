@@ -41,7 +41,7 @@ When a developer integrates xript, they get:
 
 - A declarative manifest that *is* the documentation
 - Sandboxed execution with fine-grained capability gating
-- Generated types, docs, and playground — from a single source of truth
+- Generated types, docs, and validation — from a single source of truth
 - A growing community of modders who already know the system
 
 ---
@@ -72,7 +72,7 @@ The xript manifest is not configuration — it *is* the API. It defines bindings
 - Documentation sites
 - TypeScript definitions
 - Validation rules
-- Playground environments
+- Interactive playgrounds (planned)
 
 If it's not in the manifest, it doesn't exist. If it is, it's documented, typed, and enforceable.
 
@@ -120,7 +120,7 @@ Before xript, every application reinvents extensibility from scratch — or ship
 
 - A specification for declaring extensibility manifests
 - A capability-based security model for sandboxed scripting
-- A toolchain for generating documentation, types, and playgrounds
+- A toolchain for generating documentation, types, and interactive demos
 - A set of runtime implementations for major platforms
 - A community standard for moddable software
 

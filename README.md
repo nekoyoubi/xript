@@ -19,9 +19,10 @@ npm install @xript/runtime-js
 ```
 
 ```javascript
-import { createRuntime } from "@xript/runtime-js";
+import { initXript } from "@xript/runtime-js";
 
-const runtime = createRuntime(
+const xript = await initXript();
+const runtime = xript.createRuntime(
   {
     xript: "0.1",
     name: "my-app",
@@ -44,6 +45,8 @@ runtime.execute('greet("World")'); // => { value: "Hello, World!", duration_ms: 
 // The sandbox blocks anything not in the manifest
 runtime.execute("process.exit(1)"); // Error: process is not defined
 runtime.execute('eval("1")');       // Error: eval() is not permitted
+
+runtime.dispose();
 ```
 
 ## Documentation
@@ -51,8 +54,10 @@ runtime.execute('eval("1")');       // Error: eval() is not permitted
 **[xript.dev](https://xript.dev)** -- the full documentation site.
 
 - [Vision](https://xript.dev/vision) -- the guiding principles
+- [Adoption Tiers](https://xript.dev/adoption-tiers) -- the three-tier incremental adoption model
 - [Getting Started](https://xript.dev/getting-started) -- five-minute integration guide
-- [Runtime API](https://xript.dev/tools/runtime) -- the reference runtime
+- [Runtime API](https://xript.dev/tools/runtime) -- the universal runtime (QuickJS WASM)
+- [Node.js Runtime](https://xript.dev/tools/runtime-node) -- the Node.js-optimized runtime
 - [Manifest Spec](https://xript.dev/spec/manifest) -- the manifest format
 - [Security Guarantees](https://xript.dev/spec/security) -- what the sandbox promises
 - [Expression Evaluator](https://xript.dev/examples/expression-evaluator) -- tier 1 walkthrough
@@ -64,7 +69,8 @@ runtime.execute('eval("1")');       // Error: eval() is not permitted
 xript/
 ├── spec/           # the specification (manifest schema, capabilities, bindings, security)
 ├── runtimes/
-│   └── js/         # reference runtime (@xript/runtime-js)
+│   ├── js/         # universal runtime (@xript/runtime-js, QuickJS WASM sandbox)
+│   └── node/       # Node.js-optimized runtime (@xript/runtime-node, vm-based)
 ├── tools/
 │   ├── manifest-validator/  # @xript/manifest-validator
 │   ├── typegen/             # @xript/typegen
@@ -95,10 +101,11 @@ npx xript-docgen manifest.json -o docs/  # generate documentation
 | Milestone | Status |
 |-----------|--------|
 | Spec v0.1 | Complete -- manifest schema, capabilities, bindings, security |
-| Reference Runtime | Complete -- Node.js vm-based sandbox with full spec compliance |
+| Universal Runtime | Complete -- QuickJS WASM sandbox, runs in browser/Node/Deno/Bun |
+| Node.js Runtime | Complete -- Node.js vm-based sandbox with `createRuntimeFromFile` and JSON Schema validation |
 | Toolchain | Complete -- validator, typegen, docgen |
-| Developer Experience | Complete -- 14-page docs site, getting started guide, runtime API reference, example walkthroughs |
-| Hardening | Complete -- 105 tests, manifest validation, CI smoke tests |
+| Developer Experience | Complete -- 16-page docs site, getting started guide, runtime API reference, example walkthroughs |
+| Hardening | Complete -- 163 tests across 6 packages, manifest validation, CI smoke tests |
 
 ## License
 
