@@ -1,4 +1,4 @@
-import { createRuntime } from "../../../runtimes/js/dist/index.js";
+import { initXript } from "../../../runtimes/js/dist/index.js";
 import { readFile } from "node:fs/promises";
 
 const manifestRaw = await readFile(new URL("../manifest.json", import.meta.url), "utf-8");
@@ -18,7 +18,8 @@ const hostBindings = {
 	concat: (a, b) => String(a) + String(b),
 };
 
-const runtime = createRuntime(manifest, {
+const xript = await initXript();
+const runtime = xript.createRuntime(manifest, {
 	hostBindings,
 	console: { log: console.log, warn: console.warn, error: console.error },
 });
@@ -66,3 +67,5 @@ demo("[1, 2, 3].map(x => x * 2)");
 demo('JSON.stringify({ greeting: upper("hi") })');
 
 console.log("\n=== Demo complete ===");
+
+runtime.dispose();

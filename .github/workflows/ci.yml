@@ -40,6 +40,11 @@ jobs:
       - name: test runtime-js
         run: npm test --workspace=runtimes/js
 
+      - name: build runtime-node
+        run: npm run build --workspace=runtimes/node
+      - name: test runtime-node
+        run: npm test --workspace=runtimes/node
+
       - name: smoke test expression-evaluator example
         run: node examples/expression-evaluator/src/demo.js
       - name: smoke test plugin-system example
