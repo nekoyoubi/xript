@@ -36,7 +36,7 @@ There are no `capabilities`, no `types`, and no `limits` sections. This is as mi
 The host provides one JavaScript function for each binding:
 
 ```javascript
-import { createRuntime } from "@xript/runtime-js";
+import { initXript } from "@xript/runtime-js";
 
 const hostBindings = {
   abs: (x) => Math.abs(x),
@@ -52,7 +52,8 @@ const hostBindings = {
   concat: (a, b) => String(a) + String(b),
 };
 
-const runtime = createRuntime(manifest, { hostBindings });
+const xript = await initXript();
+const runtime = xript.createRuntime(manifest, { hostBindings });
 ```
 
 Each binding is a pure function with no side effects. This is the safest kind of integration -- users can compose expressions but cannot modify any application state.
