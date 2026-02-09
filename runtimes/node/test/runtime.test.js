@@ -436,7 +436,7 @@ describe("manifest validation", () => {
 
 describe("createRuntimeFromFile validation", () => {
 	it("validates manifest by default", async () => {
-		const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+		const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 			hostBindings: {
 				log: (msg) => msg,
 				player: {
@@ -464,7 +464,7 @@ describe("createRuntimeFromFile validation", () => {
 	});
 
 	it("can skip validation with validate: false", async () => {
-		const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+		const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 			hostBindings: {
 				log: (msg) => msg,
 				player: {
@@ -495,7 +495,7 @@ describe("createRuntimeFromFile validation", () => {
 
 describe("createRuntimeFromFile", () => {
 	it("loads a manifest from a file", async () => {
-		const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+		const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 			hostBindings: {
 				log: (msg) => msg,
 				player: {

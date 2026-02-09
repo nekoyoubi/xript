@@ -47,6 +47,7 @@ export default defineConfig({
 					items: [
 						{ label: "Expression Evaluator", slug: "examples/expression-evaluator" },
 						{ label: "Plugin System", slug: "examples/plugin-system" },
+						{ label: "Game Mod System", slug: "examples/game-mod-system" },
 					],
 				},
 			],

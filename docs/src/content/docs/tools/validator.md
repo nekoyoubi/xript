@@ -18,7 +18,7 @@ npm install @xript/manifest-validator
 xript-validate manifest.json
 
 # Validate multiple manifests
-xript-validate manifest.json examples/game-mod-system.json
+xript-validate manifest.json examples/game-mod-system/manifest.json
 ```
 
 On success, each file gets a green checkmark. On failure, you get specific error messages pointing to the problem.
