@@ -1,0 +1,10 @@
+{
+	"name": "@xript/example-game-mod-system",
+	"version": "1.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Example: tier 3 game mod system with async bindings, capabilities, and execution limits",
+	"scripts": {
+		"demo": "node src/demo.js"
+	}
+}

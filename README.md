@@ -79,7 +79,7 @@ xript/
 └── examples/
     ├── expression-evaluator/  # tier 1 "safe eval replacement" demo
     ├── plugin-system/         # tier 2 namespace + capability demo
-    └── game-mod-system.json   # tier 3 full manifest example
+    └── game-mod-system/         # tier 3 dungeon crawler modding demo
 ```
 
 ## Tools
@@ -104,7 +104,7 @@ npx xript-docgen manifest.json -o docs/  # generate documentation
 | Universal Runtime | Complete -- QuickJS WASM sandbox, runs in browser/Node/Deno/Bun |
 | Node.js Runtime | Complete -- Node.js vm-based sandbox with `createRuntimeFromFile` and JSON Schema validation |
 | Toolchain | Complete -- validator, typegen, docgen |
-| Developer Experience | Complete -- 16-page docs site, getting started guide, runtime API reference, example walkthroughs |
+| Developer Experience | Complete -- 17-page docs site, getting started guide, runtime API reference, example walkthroughs |
 | Hardening | Complete -- 163 tests across 6 packages, manifest validation, CI smoke tests |
 
 ## License

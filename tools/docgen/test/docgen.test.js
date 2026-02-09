@@ -232,7 +232,7 @@ describe("generateDocs", () => {
 	});
 
 	it("generates full docs for the dungeon-crawler example", async () => {
-		const result = await generateDocsFromFile("../../examples/game-mod-system.json");
+		const result = await generateDocsFromFile("../../examples/game-mod-system/manifest.json");
 		assert.equal(result.pages.length, 10);
 
 		const slugs = result.pages.map((p) => p.slug).sort();

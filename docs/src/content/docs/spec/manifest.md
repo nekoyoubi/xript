@@ -209,7 +209,7 @@ A few functions, no capabilities needed.
 
 ### Tier 3: Full Scripting
 
-Namespaces, capabilities, custom types, examples, and execution limits. See the [game mod system example](https://github.com/nekoyoubi/xript/blob/main/examples/game-mod-system.json) for a complete tier 3 manifest.
+Namespaces, capabilities, custom types, examples, and execution limits. See the [Game Mod System](/examples/game-mod-system) example walkthrough for a complete tier 3 manifest.
 
 ## Schema
 

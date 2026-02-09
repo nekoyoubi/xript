@@ -49,6 +49,8 @@ jobs:
         run: node examples/expression-evaluator/src/demo.js
       - name: smoke test plugin-system example
         run: node examples/plugin-system/src/demo.js
+      - name: smoke test game-mod-system example
+        run: node examples/game-mod-system/src/demo.js
 
   docs:
     runs-on: ubuntu-latest
