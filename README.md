@@ -62,6 +62,7 @@ runtime.dispose();
 - [Security Guarantees](https://xript.dev/spec/security) -- what the sandbox promises
 - [Expression Evaluator](https://xript.dev/examples/expression-evaluator) -- tier 1 walkthrough
 - [Plugin System](https://xript.dev/examples/plugin-system) -- tier 2 walkthrough
+- [Game Mod System](https://xript.dev/examples/game-mod-system) -- tier 3 walkthrough
 
 ## Repository Structure
 

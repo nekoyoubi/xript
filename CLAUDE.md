@@ -43,9 +43,9 @@ npm test --workspace=runtimes/node                 # run Node.js runtime tests (
 npm run build --workspace=tools/manifest-validator # build the validator
 npm test --workspace=tools/manifest-validator      # run validator tests (11 tests)
 npm run build --workspace=tools/typegen            # build the type generator
-npm test --workspace=tools/typegen                 # run typegen tests (16 tests)
+npm test --workspace=tools/typegen                 # run typegen tests (20 tests)
 npm run build --workspace=tools/docgen             # build the doc generator
-npm test --workspace=tools/docgen                  # run docgen tests (18 tests)
+npm test --workspace=tools/docgen                  # run docgen tests (14 tests)
 
 # tools (run from repo root after npm install)
 npx xript-validate <manifest.json>     # validate a manifest against the spec schema
