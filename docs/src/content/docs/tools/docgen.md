@@ -22,7 +22,7 @@ xript-docgen manifest.json -o docs/api/
 ### Example
 
 ```sh
-$ xript-docgen examples/game-mod-system.json -o api-docs/
+$ xript-docgen examples/game-mod-system/manifest.json -o api-docs/
 ✓ Generated 10 documentation pages to /path/to/api-docs
   api-docs/index.md
   api-docs/bindings/log.md

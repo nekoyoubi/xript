@@ -281,7 +281,7 @@ describe("generateTypes", () => {
 	});
 
 	it("generates full output for the dungeon-crawler example", async () => {
-		const result = await generateTypesFromFile("../../examples/game-mod-system.json");
+		const result = await generateTypesFromFile("../../examples/game-mod-system/manifest.json");
 		assert.ok(result.content.includes("interface Position {"));
 		assert.ok(result.content.includes("interface Item {"));
 		assert.ok(result.content.includes("interface Enemy {"));

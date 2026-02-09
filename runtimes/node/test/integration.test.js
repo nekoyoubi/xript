@@ -65,7 +65,7 @@ describe("dungeon-crawler integration tests", () => {
 	describe("with no capabilities", () => {
 		it("can read player name", async () => {
 			const { bindings } = createDungeonCrawlerBindings();
-			const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 				hostBindings: bindings,
 			});
 			assert.equal(runtime.execute("player.getName()").value, "Hero");
@@ -73,7 +73,7 @@ describe("dungeon-crawler integration tests", () => {
 
 		it("can read player health", async () => {
 			const { bindings } = createDungeonCrawlerBindings();
-			const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 				hostBindings: bindings,
 			});
 			assert.equal(runtime.execute("player.getHealth()").value, 80);
@@ -82,7 +82,7 @@ describe("dungeon-crawler integration tests", () => {
 
 		it("can read player position", async () => {
 			const { bindings } = createDungeonCrawlerBindings();
-			const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 				hostBindings: bindings,
 			});
 			const result = runtime.execute("player.getPosition()");
@@ -91,7 +91,7 @@ describe("dungeon-crawler integration tests", () => {
 
 		it("can read player inventory", async () => {
 			const { bindings } = createDungeonCrawlerBindings();
-			const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 				hostBindings: bindings,
 			});
 			const result = runtime.execute("player.getInventory()");
@@ -101,7 +101,7 @@ describe("dungeon-crawler integration tests", () => {
 
 		it("can read world level", async () => {
 			const { bindings } = createDungeonCrawlerBindings();
-			const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 				hostBindings: bindings,
 			});
 			assert.equal(runtime.execute("world.getCurrentLevel()").value, 3);
@@ -109,7 +109,7 @@ describe("dungeon-crawler integration tests", () => {
 
 		it("can call log", async () => {
 			const { bindings } = createDungeonCrawlerBindings();
-			const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 				hostBindings: bindings,
 			});
 			assert.equal(runtime.execute('log("hello")').value, "hello");
@@ -117,7 +117,7 @@ describe("dungeon-crawler integration tests", () => {
 
 		it("denies player.setHealth without modify-player", async () => {
 			const { bindings } = createDungeonCrawlerBindings();
-			const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 				hostBindings: bindings,
 			});
 			const result = runtime.execute(`
@@ -129,7 +129,7 @@ describe("dungeon-crawler integration tests", () => {
 
 		it("denies player.addItem without modify-player", async () => {
 			const { bindings } = createDungeonCrawlerBindings();
-			const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 				hostBindings: bindings,
 			});
 			const result = runtime.execute(`
@@ -141,7 +141,7 @@ describe("dungeon-crawler integration tests", () => {
 
 		it("denies world.spawnEnemy without modify-world", async () => {
 			const { bindings } = createDungeonCrawlerBindings();
-			const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 				hostBindings: bindings,
 			});
 			const result = runtime.execute(`
@@ -153,7 +153,7 @@ describe("dungeon-crawler integration tests", () => {
 
 		it("denies data.get and data.set without storage", async () => {
 			const { bindings } = createDungeonCrawlerBindings();
-			const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 				hostBindings: bindings,
 			});
 			const result = runtime.execute(`
@@ -169,7 +169,7 @@ describe("dungeon-crawler integration tests", () => {
 	describe("with modify-player capability", () => {
 		it("can set player health", async () => {
 			const { bindings, state } = createDungeonCrawlerBindings();
-			const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 				hostBindings: bindings,
 				capabilities: ["modify-player"],
 			});
@@ -179,7 +179,7 @@ describe("dungeon-crawler integration tests", () => {
 
 		it("clamps health to valid range", async () => {
 			const { bindings, state } = createDungeonCrawlerBindings();
-			const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 				hostBindings: bindings,
 				capabilities: ["modify-player"],
 			});
@@ -191,7 +191,7 @@ describe("dungeon-crawler integration tests", () => {
 
 		it("can add items to inventory", async () => {
 			const { bindings, state } = createDungeonCrawlerBindings();
-			const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 				hostBindings: bindings,
 				capabilities: ["modify-player"],
 			});
@@ -202,7 +202,7 @@ describe("dungeon-crawler integration tests", () => {
 
 		it("still denies modify-world operations", async () => {
 			const { bindings } = createDungeonCrawlerBindings();
-			const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 				hostBindings: bindings,
 				capabilities: ["modify-player"],
 			});
@@ -217,7 +217,7 @@ describe("dungeon-crawler integration tests", () => {
 	describe("with all capabilities", () => {
 		it("can access everything", async () => {
 			const { bindings, state } = createDungeonCrawlerBindings();
-			const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 				hostBindings: bindings,
 				capabilities: ["modify-player", "modify-world", "storage"],
 			});
@@ -234,7 +234,7 @@ describe("dungeon-crawler integration tests", () => {
 	describe("async bindings", () => {
 		it("can call world.getEnemies", async () => {
 			const { bindings } = createDungeonCrawlerBindings();
-			const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 				hostBindings: bindings,
 			});
 			const result = await runtime.executeAsync("return await world.getEnemies();");
@@ -244,7 +244,7 @@ describe("dungeon-crawler integration tests", () => {
 
 		it("can call data.get and data.set", async () => {
 			const { bindings } = createDungeonCrawlerBindings();
-			const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 				hostBindings: bindings,
 				capabilities: ["storage"],
 			});
@@ -255,7 +255,7 @@ describe("dungeon-crawler integration tests", () => {
 
 		it("returns undefined for missing keys", async () => {
 			const { bindings } = createDungeonCrawlerBindings();
-			const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 				hostBindings: bindings,
 				capabilities: ["storage"],
 			});
@@ -267,7 +267,7 @@ describe("dungeon-crawler integration tests", () => {
 	describe("execution limits", () => {
 		it("enforces the 1000ms timeout from the manifest", async () => {
 			const { bindings } = createDungeonCrawlerBindings();
-			const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 				hostBindings: bindings,
 			});
 			assert.throws(
@@ -280,7 +280,7 @@ describe("dungeon-crawler integration tests", () => {
 	describe("complex scripting scenarios", () => {
 		it("can compose multiple read operations", async () => {
 			const { bindings } = createDungeonCrawlerBindings();
-			const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 				hostBindings: bindings,
 			});
 			const result = runtime.execute(`
@@ -305,7 +305,7 @@ describe("dungeon-crawler integration tests", () => {
 
 		it("can heal player to full with modify-player", async () => {
 			const { bindings, state } = createDungeonCrawlerBindings();
-			const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 				hostBindings: bindings,
 				capabilities: ["modify-player"],
 			});
@@ -315,7 +315,7 @@ describe("dungeon-crawler integration tests", () => {
 
 		it("can filter inventory by type", async () => {
 			const { bindings } = createDungeonCrawlerBindings();
-			const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
 				hostBindings: bindings,
 			});
 			const result = runtime.execute(`
