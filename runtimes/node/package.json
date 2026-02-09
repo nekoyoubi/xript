@@ -1,7 +1,7 @@
 {
-	"name": "@xript/runtime-js",
-	"version": "0.2.0",
-	"description": "Universal JavaScript runtime for xript — QuickJS WASM sandbox for browser, Node, Deno, and more.",
+	"name": "@xript/runtime-node",
+	"version": "0.1.0",
+	"description": "Node.js-optimized xript runtime — sandboxed script execution via Node.js vm module.",
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -10,10 +10,10 @@
 		"test": "node --test test/*.test.js",
 		"prepublishOnly": "npm run build"
 	},
-	"keywords": ["xript", "runtime", "sandbox", "scripting", "modding", "quickjs", "wasm"],
+	"keywords": ["xript", "runtime", "sandbox", "scripting", "modding", "node", "vm"],
 	"license": "MIT",
 	"dependencies": {
-		"quickjs-emscripten": "^0.31.0"
+		"@xript/manifest-validator": "^0.1.0"
 	},
 	"devDependencies": {
 		"typescript": "^5.7.0",
