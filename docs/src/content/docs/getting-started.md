@@ -7,7 +7,7 @@ This guide walks through adding xript to an application from scratch. By the end
 
 ## Install the Runtime
 
-The reference runtime is a Node.js package with zero dependencies beyond Node's built-in `vm` module.
+The universal runtime uses QuickJS compiled to WebAssembly — it works in browsers, Node.js, Deno, and more.
 
 ```sh
 npm install @xript/runtime-js
@@ -55,17 +55,19 @@ const hostBindings = {
 
 ## Create a Runtime
 
-Wire the manifest and bindings together into an xript runtime:
+Initialize the WASM sandbox, then wire the manifest and bindings together:
 
 ```javascript
-import { createRuntime } from "@xript/runtime-js";
-import manifest from "./manifest.json" with { type: "json" };
+import { initXript } from "@xript/runtime-js";
 
-const runtime = createRuntime(manifest, {
+const xript = await initXript();
+const runtime = xript.createRuntime(manifest, {
   hostBindings,
   console: { log: console.log, warn: console.warn, error: console.error },
 });
 ```
+
+`initXript()` loads the QuickJS WASM module once. After that, `createRuntime()` is synchronous — create as many runtimes as you need.
 
 ## Execute Scripts
 
@@ -81,6 +83,14 @@ Scripts can compose your bindings with standard JavaScript:
 
 ```javascript
 runtime.execute('[1, 2, 3].map(n => add(n, 10))'); // { value: [11, 12, 13], ... }
+```
+
+## Clean Up
+
+When you're done with a runtime, free its WASM resources:
+
+```javascript
+runtime.dispose();
 ```
 
 ## See the Sandbox in Action

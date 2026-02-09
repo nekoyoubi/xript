@@ -1,54 +1,41 @@
-import { describe, it, after } from "node:test";
+import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { initXript, ManifestValidationError } from "../dist/index.js";
+import { createRuntime, createRuntimeFromFile, ManifestValidationError } from "../dist/index.js";
 
 const minimalManifest = {
 	xript: "0.1",
 	name: "test-app",
 };
 
-let xript;
-
-describe("initXript", () => {
-	it("loads the WASM module and returns a factory", async () => {
-		xript = await initXript();
-		assert.ok(xript);
-		assert.equal(typeof xript.createRuntime, "function");
-	});
-});
-
 describe("createRuntime", () => {
 	it("creates a runtime from a valid manifest", () => {
-		const runtime = xript.createRuntime(minimalManifest, { hostBindings: {} });
+		const runtime = createRuntime(minimalManifest, { hostBindings: {} });
 		assert.ok(runtime);
 		assert.equal(runtime.manifest.name, "test-app");
-		runtime.dispose();
 	});
 
 	it("rejects invalid manifests", () => {
-		assert.throws(() => xript.createRuntime({}, { hostBindings: {} }), /Invalid xript manifest/);
-		assert.throws(() => xript.createRuntime({ xript: "0.1" }, { hostBindings: {} }), /Invalid xript manifest/);
+		assert.throws(() => createRuntime({}, { hostBindings: {} }), /Invalid xript manifest/);
+		assert.throws(() => createRuntime({ xript: "0.1" }, { hostBindings: {} }), /Invalid xript manifest/);
 	});
 });
 
 describe("basic script execution", () => {
 	it("executes simple expressions", () => {
-		const runtime = xript.createRuntime(minimalManifest, { hostBindings: {} });
+		const runtime = createRuntime(minimalManifest, { hostBindings: {} });
 		const result = runtime.execute("2 + 2");
 		assert.equal(result.value, 4);
 		assert.ok(result.duration_ms >= 0);
-		runtime.dispose();
 	});
 
 	it("executes multi-line scripts", () => {
-		const runtime = xript.createRuntime(minimalManifest, { hostBindings: {} });
+		const runtime = createRuntime(minimalManifest, { hostBindings: {} });
 		const result = runtime.execute("const a = 10; const b = 20; a + b;");
 		assert.equal(result.value, 30);
-		runtime.dispose();
 	});
 
 	it("supports standard JavaScript built-ins", () => {
-		const runtime = xript.createRuntime(minimalManifest, { hostBindings: {} });
+		const runtime = createRuntime(minimalManifest, { hostBindings: {} });
 
 		assert.equal(runtime.execute("typeof Math.PI").value, "number");
 		assert.equal(runtime.execute("JSON.stringify({a: 1})").value, '{"a":1}');
@@ -56,14 +43,12 @@ describe("basic script execution", () => {
 		assert.equal(runtime.execute("[1, 2, 3].map(x => x * 2).join(',')").value, "2,4,6");
 		assert.equal(runtime.execute("new Map([[1, 'a']]).get(1)").value, "a");
 		assert.equal(runtime.execute("new Set([1, 2, 2, 3]).size").value, 3);
-		runtime.dispose();
 	});
 
 	it("supports Promises and async execution", async () => {
-		const runtime = xript.createRuntime(minimalManifest, { hostBindings: {} });
+		const runtime = createRuntime(minimalManifest, { hostBindings: {} });
 		const result = await runtime.executeAsync("return await Promise.resolve(42);");
 		assert.equal(result.value, 42);
-		runtime.dispose();
 	});
 });
 
@@ -76,11 +61,10 @@ describe("host bindings", () => {
 				add: { description: "Adds two numbers.", params: [{ name: "a", type: "number" }, { name: "b", type: "number" }], returns: "number" },
 			},
 		};
-		const runtime = xript.createRuntime(manifest, {
+		const runtime = createRuntime(manifest, {
 			hostBindings: { add: (a, b) => Number(a) + Number(b) },
 		});
 		assert.equal(runtime.execute("add(3, 4)").value, 7);
-		runtime.dispose();
 	});
 
 	it("exposes namespace bindings", () => {
@@ -97,7 +81,7 @@ describe("host bindings", () => {
 				},
 			},
 		};
-		const runtime = xript.createRuntime(manifest, {
+		const runtime = createRuntime(manifest, {
 			hostBindings: {
 				math: {
 					add: (a, b) => Number(a) + Number(b),
@@ -107,7 +91,6 @@ describe("host bindings", () => {
 		});
 		assert.equal(runtime.execute("math.add(2, 3)").value, 5);
 		assert.equal(runtime.execute("math.multiply(4, 5)").value, 20);
-		runtime.dispose();
 	});
 
 	it("wraps host errors in BindingError", () => {
@@ -116,7 +99,7 @@ describe("host bindings", () => {
 			name: "test",
 			bindings: { fail: { description: "Always fails." } },
 		};
-		const runtime = xript.createRuntime(manifest, {
+		const runtime = createRuntime(manifest, {
 			hostBindings: {
 				fail: () => {
 					throw new Error("host exploded");
@@ -130,7 +113,6 @@ describe("host bindings", () => {
 		`);
 		assert.ok(String(result.value).includes("BindingError"));
 		assert.ok(String(result.value).includes("host exploded"));
-		runtime.dispose();
 	});
 
 	it("throws BindingError when host function is not provided", () => {
@@ -139,7 +121,7 @@ describe("host bindings", () => {
 			name: "test",
 			bindings: { missing: { description: "Missing binding." } },
 		};
-		const runtime = xript.createRuntime(manifest, { hostBindings: {} });
+		const runtime = createRuntime(manifest, { hostBindings: {} });
 		const result = runtime.execute(`
 			let caught;
 			try { missing(); } catch (e) { caught = e; }
@@ -147,7 +129,6 @@ describe("host bindings", () => {
 		`);
 		assert.ok(String(result.value).includes("BindingError"));
 		assert.ok(String(result.value).includes("missing"));
-		runtime.dispose();
 	});
 });
 
@@ -167,15 +148,14 @@ describe("capability enforcement", () => {
 	};
 
 	it("allows ungated bindings without any capabilities", () => {
-		const runtime = xript.createRuntime(manifest, {
+		const runtime = createRuntime(manifest, {
 			hostBindings: { readData: () => "hello" },
 		});
 		assert.equal(runtime.execute("readData()").value, "hello");
-		runtime.dispose();
 	});
 
 	it("throws CapabilityDeniedError for gated bindings without the capability", () => {
-		const runtime = xript.createRuntime(manifest, {
+		const runtime = createRuntime(manifest, {
 			hostBindings: { writeData: () => {} },
 		});
 		const result = runtime.execute(`
@@ -184,11 +164,10 @@ describe("capability enforcement", () => {
 			caught.name;
 		`);
 		assert.equal(result.value, "CapabilityDeniedError");
-		runtime.dispose();
 	});
 
 	it("includes capability name in the error message", () => {
-		const runtime = xript.createRuntime(manifest, {
+		const runtime = createRuntime(manifest, {
 			hostBindings: { writeData: () => {} },
 		});
 		const result = runtime.execute(`
@@ -198,11 +177,10 @@ describe("capability enforcement", () => {
 		`);
 		assert.ok(String(result.value).includes("storage"));
 		assert.ok(String(result.value).includes("writeData"));
-		runtime.dispose();
 	});
 
 	it("allows gated bindings when capability is granted", () => {
-		const runtime = xript.createRuntime(manifest, {
+		const runtime = createRuntime(manifest, {
 			hostBindings: {
 				readData: () => "hello",
 				writeData: (v) => `wrote: ${v}`,
@@ -211,11 +189,10 @@ describe("capability enforcement", () => {
 		});
 		assert.equal(runtime.execute("readData()").value, "hello");
 		assert.equal(runtime.execute("writeData('test')").value, "wrote: test");
-		runtime.dispose();
 	});
 
 	it("denies capabilities not in the grant set", () => {
-		const runtime = xript.createRuntime(manifest, {
+		const runtime = createRuntime(manifest, {
 			hostBindings: {
 				readData: () => "hello",
 				writeData: () => {},
@@ -230,12 +207,11 @@ describe("capability enforcement", () => {
 			caught;
 		`);
 		assert.equal(result.value, "CapabilityDeniedError");
-		runtime.dispose();
 	});
 
 	it("does not execute the function when capability is denied", () => {
 		let called = false;
-		const runtime = xript.createRuntime(manifest, {
+		const runtime = createRuntime(manifest, {
 			hostBindings: {
 				writeData: () => { called = true; },
 			},
@@ -244,13 +220,12 @@ describe("capability enforcement", () => {
 			try { writeData("test"); } catch (e) {}
 		`);
 		assert.equal(called, false);
-		runtime.dispose();
 	});
 });
 
 describe("sandbox isolation", () => {
 	it("blocks eval()", () => {
-		const runtime = xript.createRuntime(minimalManifest, { hostBindings: {} });
+		const runtime = createRuntime(minimalManifest, { hostBindings: {} });
 		const result = runtime.execute(`
 			let caught;
 			try { eval("1 + 1"); } catch (e) { caught = e; }
@@ -258,42 +233,51 @@ describe("sandbox isolation", () => {
 		`);
 		assert.ok(String(result.value).includes("TypeError"));
 		assert.ok(String(result.value).includes("not permitted"));
-		runtime.dispose();
 	});
 
 	it("blocks new Function()", () => {
-		const runtime = xript.createRuntime(minimalManifest, { hostBindings: {} });
+		const runtime = createRuntime(minimalManifest, { hostBindings: {} });
 		const result = runtime.execute(`
 			let caught;
 			try { new Function("return 1"); } catch (e) { caught = e; }
 			caught.message;
 		`);
 		assert.ok(String(result.value).includes("not permitted"));
-		runtime.dispose();
+	});
+
+	it("blocks code generation via vm codeGeneration option", () => {
+		const runtime = createRuntime(minimalManifest, { hostBindings: {} });
+		const result = runtime.execute(`
+			let blocked = false;
+			try {
+				(0, eval)("1");
+			} catch (e) {
+				blocked = true;
+			}
+			blocked;
+		`);
+		assert.equal(result.value, true);
 	});
 
 	it("does not expose process, require, or import", () => {
-		const runtime = xript.createRuntime(minimalManifest, { hostBindings: {} });
+		const runtime = createRuntime(minimalManifest, { hostBindings: {} });
 		assert.equal(runtime.execute("typeof process").value, "undefined");
 		assert.equal(runtime.execute("typeof require").value, "undefined");
 		assert.equal(runtime.execute("typeof module").value, "undefined");
-		runtime.dispose();
 	});
 
 	it("does not expose fetch, setTimeout, or setInterval", () => {
-		const runtime = xript.createRuntime(minimalManifest, { hostBindings: {} });
+		const runtime = createRuntime(minimalManifest, { hostBindings: {} });
 		assert.equal(runtime.execute("typeof fetch").value, "undefined");
 		assert.equal(runtime.execute("typeof setTimeout").value, "undefined");
 		assert.equal(runtime.execute("typeof setInterval").value, "undefined");
-		runtime.dispose();
 	});
 
 	it("does not expose Node.js specific globals", () => {
-		const runtime = xript.createRuntime(minimalManifest, { hostBindings: {} });
+		const runtime = createRuntime(minimalManifest, { hostBindings: {} });
 		assert.equal(runtime.execute("typeof Buffer").value, "undefined");
 		assert.equal(runtime.execute("typeof __dirname").value, "undefined");
 		assert.equal(runtime.execute("typeof __filename").value, "undefined");
-		runtime.dispose();
 	});
 
 	it("namespace objects are frozen", () => {
@@ -307,7 +291,7 @@ describe("sandbox isolation", () => {
 				},
 			},
 		};
-		const runtime = xript.createRuntime(manifest, {
+		const runtime = createRuntime(manifest, {
 			hostBindings: { ns: { fn: () => "original" } },
 		});
 		const result = runtime.execute(`
@@ -321,7 +305,6 @@ describe("sandbox isolation", () => {
 			tampered;
 		`);
 		assert.equal(result.value, true);
-		runtime.dispose();
 	});
 });
 
@@ -332,19 +315,17 @@ describe("execution limits", () => {
 			name: "test",
 			limits: { timeout_ms: 50 },
 		};
-		const runtime = xript.createRuntime(manifest, { hostBindings: {} });
+		const runtime = createRuntime(manifest, { hostBindings: {} });
 		assert.throws(
 			() => runtime.execute("while (true) {}"),
-			(err) => err.name === "ExecutionLimitError" || err.message.includes("timed out") || err.message.includes("interrupted"),
+			(err) => err.code === "ERR_SCRIPT_EXECUTION_TIMEOUT" || err.message.includes("timed out"),
 		);
-		runtime.dispose();
 	});
 
 	it("uses default 5000ms timeout when limits are not specified", () => {
-		const runtime = xript.createRuntime(minimalManifest, { hostBindings: {} });
+		const runtime = createRuntime(minimalManifest, { hostBindings: {} });
 		const result = runtime.execute("1 + 1");
 		assert.equal(result.value, 2);
-		runtime.dispose();
 	});
 
 	it("short timeout still allows quick scripts", () => {
@@ -353,17 +334,16 @@ describe("execution limits", () => {
 			name: "test",
 			limits: { timeout_ms: 100 },
 		};
-		const runtime = xript.createRuntime(manifest, { hostBindings: {} });
+		const runtime = createRuntime(manifest, { hostBindings: {} });
 		const result = runtime.execute("42");
 		assert.equal(result.value, 42);
-		runtime.dispose();
 	});
 });
 
 describe("console", () => {
 	it("routes console.log to host console", () => {
 		const logs = [];
-		const runtime = xript.createRuntime(minimalManifest, {
+		const runtime = createRuntime(minimalManifest, {
 			hostBindings: {},
 			console: {
 				log: (...args) => logs.push(args),
@@ -374,13 +354,12 @@ describe("console", () => {
 		runtime.execute('console.log("hello", 42)');
 		assert.equal(logs.length, 1);
 		assert.deepEqual(logs[0], ["hello", 42]);
-		runtime.dispose();
 	});
 
 	it("routes console.warn and console.error to host console", () => {
 		const warns = [];
 		const errors = [];
-		const runtime = xript.createRuntime(minimalManifest, {
+		const runtime = createRuntime(minimalManifest, {
 			hostBindings: {},
 			console: {
 				log: () => {},
@@ -391,39 +370,37 @@ describe("console", () => {
 		runtime.execute('console.warn("warning"); console.error("error")');
 		assert.equal(warns.length, 1);
 		assert.equal(errors.length, 1);
-		runtime.dispose();
 	});
 });
 
 describe("state isolation between executions", () => {
 	it("persists state within the same runtime", () => {
-		const runtime = xript.createRuntime(minimalManifest, { hostBindings: {} });
+		const runtime = createRuntime(minimalManifest, { hostBindings: {} });
 		runtime.execute("var counter = 0;");
 		runtime.execute("counter++;");
 		const result = runtime.execute("counter");
 		assert.equal(result.value, 1);
-		runtime.dispose();
 	});
 });
 
 describe("manifest validation", () => {
 	it("throws ManifestValidationError for null input", () => {
 		assert.throws(
-			() => xript.createRuntime(null, { hostBindings: {} }),
+			() => createRuntime(null, { hostBindings: {} }),
 			(err) => err instanceof ManifestValidationError && err.issues.length === 1,
 		);
 	});
 
 	it("throws ManifestValidationError for non-object input", () => {
 		assert.throws(
-			() => xript.createRuntime("not-an-object", { hostBindings: {} }),
+			() => createRuntime("not-an-object", { hostBindings: {} }),
 			(err) => err instanceof ManifestValidationError,
 		);
 	});
 
 	it("collects multiple structural issues", () => {
 		try {
-			xript.createRuntime({}, { hostBindings: {} });
+			createRuntime({}, { hostBindings: {} });
 			assert.fail("should have thrown");
 		} catch (err) {
 			assert.ok(err instanceof ManifestValidationError);
@@ -436,32 +413,115 @@ describe("manifest validation", () => {
 
 	it("rejects invalid bindings type", () => {
 		assert.throws(
-			() => xript.createRuntime({ xript: "0.1", name: "test", bindings: "bad" }, { hostBindings: {} }),
+			() => createRuntime({ xript: "0.1", name: "test", bindings: "bad" }, { hostBindings: {} }),
 			(err) => err instanceof ManifestValidationError && err.issues.some((i) => i.path === "/bindings"),
 		);
 	});
 
 	it("rejects invalid limits values", () => {
 		assert.throws(
-			() => xript.createRuntime({ xript: "0.1", name: "test", limits: { timeout_ms: -1 } }, { hostBindings: {} }),
+			() => createRuntime({ xript: "0.1", name: "test", limits: { timeout_ms: -1 } }, { hostBindings: {} }),
 			(err) => err instanceof ManifestValidationError && err.issues.some((i) => i.path === "/limits/timeout_ms"),
 		);
 	});
 
 	it("passes basic structural check for valid manifests", () => {
-		const runtime = xript.createRuntime(
+		const runtime = createRuntime(
 			{ xript: "0.1", name: "test", bindings: {}, capabilities: {}, limits: { timeout_ms: 100 } },
 			{ hostBindings: {} },
 		);
 		assert.ok(runtime);
-		runtime.dispose();
 	});
 });
 
-describe("dispose", () => {
-	it("cleans up WASM resources", () => {
-		const runtime = xript.createRuntime(minimalManifest, { hostBindings: {} });
-		runtime.execute("1 + 1");
-		runtime.dispose();
+describe("createRuntimeFromFile validation", () => {
+	it("validates manifest by default", async () => {
+		const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			hostBindings: {
+				log: (msg) => msg,
+				player: {
+					getName: () => "Hero",
+					getHealth: () => 100,
+					getMaxHealth: () => 100,
+					getPosition: () => ({ x: 0, y: 0 }),
+					setHealth: () => {},
+					getInventory: () => [],
+					addItem: () => {},
+				},
+				world: {
+					getCurrentLevel: () => 1,
+					getEnemies: async () => [],
+					spawnEnemy: () => {},
+				},
+				data: {
+					get: async () => undefined,
+					set: async () => {},
+				},
+			},
+			capabilities: ["modify-player", "modify-world", "storage"],
+		});
+		assert.ok(runtime);
+	});
+
+	it("can skip validation with validate: false", async () => {
+		const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			hostBindings: {
+				log: (msg) => msg,
+				player: {
+					getName: () => "Hero",
+					getHealth: () => 100,
+					getMaxHealth: () => 100,
+					getPosition: () => ({ x: 0, y: 0 }),
+					setHealth: () => {},
+					getInventory: () => [],
+					addItem: () => {},
+				},
+				world: {
+					getCurrentLevel: () => 1,
+					getEnemies: async () => [],
+					spawnEnemy: () => {},
+				},
+				data: {
+					get: async () => undefined,
+					set: async () => {},
+				},
+			},
+			capabilities: ["modify-player", "modify-world", "storage"],
+			validate: false,
+		});
+		assert.ok(runtime);
+	});
+});
+
+describe("createRuntimeFromFile", () => {
+	it("loads a manifest from a file", async () => {
+		const runtime = await createRuntimeFromFile("../../examples/game-mod-system.json", {
+			hostBindings: {
+				log: (msg) => msg,
+				player: {
+					getName: () => "Hero",
+					getHealth: () => 100,
+					getMaxHealth: () => 100,
+					getPosition: () => ({ x: 5, y: 10 }),
+					setHealth: () => {},
+					getInventory: () => [],
+					addItem: () => {},
+				},
+				world: {
+					getCurrentLevel: () => 3,
+					getEnemies: async () => [],
+					spawnEnemy: () => {},
+				},
+				data: {
+					get: async () => undefined,
+					set: async () => {},
+				},
+			},
+			capabilities: ["modify-player", "modify-world", "storage"],
+		});
+		assert.equal(runtime.manifest.name, "dungeon-crawler");
+		assert.equal(runtime.execute("player.getName()").value, "Hero");
+		assert.equal(runtime.execute("player.getHealth()").value, 100);
+		assert.equal(runtime.execute("world.getCurrentLevel()").value, 3);
 	});
 });

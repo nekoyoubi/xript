@@ -1,8 +1,11 @@
-import type { QuickJSWASMModule } from "quickjs-emscripten";
-import { createSandboxSync, createSandboxAsync, type HostBindings, type HostFunction, type SandboxOptions, type ExecutionResult } from "./sandbox.js";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { validateManifest, type ValidationResult } from "@xript/manifest-validator";
+import { createSandbox, type HostBindings, type HostFunction, type SandboxOptions, type ExecutionResult } from "./sandbox.js";
 
 export { BindingError, CapabilityDeniedError, ExecutionLimitError } from "./errors.js";
 export type { HostBindings, HostFunction, ExecutionResult } from "./sandbox.js";
+export type { ValidationResult };
 
 interface Manifest {
 	xript: string;
@@ -31,6 +34,7 @@ export class ManifestValidationError extends Error {
 export interface RuntimeOptions {
 	hostBindings: HostBindings;
 	capabilities?: string[];
+	validate?: boolean;
 	console?: {
 		log: (...args: unknown[]) => void;
 		warn: (...args: unknown[]) => void;
@@ -42,11 +46,6 @@ export interface XriptRuntime {
 	readonly manifest: Manifest;
 	execute(code: string): ExecutionResult;
 	executeAsync(code: string): Promise<ExecutionResult>;
-	dispose(): void;
-}
-
-export interface XriptFactory {
-	createRuntime(manifest: unknown, options: RuntimeOptions): XriptRuntime;
 }
 
 function checkBasicStructure(manifest: unknown): Manifest {
@@ -95,51 +94,39 @@ function checkBasicStructure(manifest: unknown): Manifest {
 	return manifest as Manifest;
 }
 
-export async function initXript(): Promise<XriptFactory> {
-	const { getQuickJS } = await import("quickjs-emscripten");
-	const quickjs: QuickJSWASMModule = await getQuickJS();
+export function createRuntime(manifest: unknown, options: RuntimeOptions): XriptRuntime {
+	const m = checkBasicStructure(manifest);
+
+	const sandbox = createSandbox({
+		manifest: m as SandboxOptions["manifest"],
+		hostBindings: options.hostBindings,
+		capabilities: options.capabilities,
+		console: options.console,
+	});
 
 	return {
-		createRuntime(manifest: unknown, options: RuntimeOptions): XriptRuntime {
-			const m = checkBasicStructure(manifest);
-
-			const sandbox = createSandboxSync(quickjs, {
-				manifest: m as SandboxOptions["manifest"],
-				hostBindings: options.hostBindings,
-				capabilities: options.capabilities,
-				console: options.console,
-			});
-
-			return {
-				manifest: m,
-				execute: sandbox.execute,
-				executeAsync: sandbox.executeAsync,
-				dispose: sandbox.dispose,
-			};
-		},
+		manifest: m,
+		execute: sandbox.execute,
+		executeAsync: sandbox.executeAsync,
 	};
 }
 
-export async function initXriptAsync(): Promise<{
-	createRuntime(manifest: unknown, options: RuntimeOptions): Promise<XriptRuntime>;
-}> {
-	return {
-		async createRuntime(manifest: unknown, options: RuntimeOptions): Promise<XriptRuntime> {
-			const m = checkBasicStructure(manifest);
+export async function createRuntimeFromFile(
+	manifestPath: string,
+	options: RuntimeOptions,
+): Promise<XriptRuntime> {
+	const absolutePath = resolve(manifestPath);
+	const raw = await readFile(absolutePath, "utf-8");
+	const manifest = JSON.parse(raw) as unknown;
 
-			const sandbox = await createSandboxAsync({
-				manifest: m as SandboxOptions["manifest"],
-				hostBindings: options.hostBindings,
-				capabilities: options.capabilities,
-				console: options.console,
-			});
+	const shouldValidate = options.validate !== false;
 
-			return {
-				manifest: m,
-				execute: sandbox.execute,
-				executeAsync: sandbox.executeAsync,
-				dispose: sandbox.dispose,
-			};
-		},
-	};
+	if (shouldValidate) {
+		const result = await validateManifest(manifest);
+		if (!result.valid) {
+			throw new ManifestValidationError(result.errors);
+		}
+	}
+
+	return createRuntime(manifest, { ...options, validate: false });
 }
