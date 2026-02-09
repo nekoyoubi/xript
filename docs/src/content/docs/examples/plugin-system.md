@@ -100,12 +100,19 @@ const hostBindings = {
 
 Each plugin gets its own runtime instance but shares the same underlying `taskStore`. This means plugins can see each other's changes -- a deliberate design choice for this example.
 
+The factory is initialized once, then each plugin creates a runtime from it:
+
+```javascript
+import { initXript } from "@xript/runtime-js";
+const xript = await initXript();
+```
+
 ## The Five Plugins
 
 ### 1. Task Reporter (no capabilities)
 
 ```javascript
-const runtime = createRuntime(manifest, { hostBindings, capabilities: [] });
+const runtime = xript.createRuntime(manifest, { hostBindings, capabilities: [] });
 runtime.execute("tasks.list()");
 runtime.execute('log("Found " + tasks.list().length + " tasks")');
 ```
@@ -115,7 +122,7 @@ Can read tasks and call `log`, but cannot create, complete, or remove tasks.
 ### 2. Task Creator (manage-tasks)
 
 ```javascript
-const runtime = createRuntime(manifest, { hostBindings, capabilities: ["manage-tasks"] });
+const runtime = xript.createRuntime(manifest, { hostBindings, capabilities: ["manage-tasks"] });
 runtime.execute('tasks.add("Write documentation", "high")');
 runtime.execute('tasks.complete("1")');
 ```
@@ -125,7 +132,7 @@ Can create and complete tasks, but cannot remove them (no `admin` capability).
 ### 3. Read-Only Dashboard (no capabilities)
 
 ```javascript
-const runtime = createRuntime(manifest, { hostBindings, capabilities: [] });
+const runtime = xript.createRuntime(manifest, { hostBindings, capabilities: [] });
 runtime.execute('tasks.list().filter(t => !t.done).length'); // works
 runtime.execute('tasks.add("Sneaky task", "low")');          // CapabilityDeniedError
 ```
@@ -135,7 +142,7 @@ Demonstrates that even after other plugins have created tasks, a plugin without 
 ### 4. Admin Cleanup (manage-tasks + admin)
 
 ```javascript
-const runtime = createRuntime(manifest, { hostBindings, capabilities: ["manage-tasks", "admin"] });
+const runtime = xript.createRuntime(manifest, { hostBindings, capabilities: ["manage-tasks", "admin"] });
 runtime.execute('tasks.remove("1")');
 ```
 
@@ -144,7 +151,7 @@ Full access. Can read, create, complete, and remove tasks.
 ### 5. Privilege Escalation Attempt (manage-tasks only)
 
 ```javascript
-const runtime = createRuntime(manifest, { hostBindings, capabilities: ["manage-tasks"] });
+const runtime = xript.createRuntime(manifest, { hostBindings, capabilities: ["manage-tasks"] });
 runtime.execute('tasks.remove("2")'); // CapabilityDeniedError: requires "admin"
 ```
 
