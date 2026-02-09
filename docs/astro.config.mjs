@@ -19,6 +19,7 @@ export default defineConfig({
 					label: "About",
 					items: [
 						{ label: "Vision", slug: "vision" },
+						{ label: "Adoption Tiers", slug: "adoption-tiers" },
 						{ label: "Getting Started", slug: "getting-started" },
 					],
 				},
@@ -35,6 +36,7 @@ export default defineConfig({
 					label: "Tools",
 					items: [
 						{ label: "Runtime", slug: "tools/runtime" },
+						{ label: "Node.js Runtime", slug: "tools/runtime-node" },
 						{ label: "Manifest Validator", slug: "tools/validator" },
 						{ label: "Type Generator", slug: "tools/typegen" },
 						{ label: "Doc Generator", slug: "tools/docgen" },

@@ -81,7 +81,7 @@ Total test count: 163 across 6 packages. All green.
 
 ## Key Design Decisions
 
-- **The manifest is the product**: everything derives from the manifest schema (types, docs, validation, playground)
+- **The manifest is the product**: everything derives from the manifest schema (types, docs, validation)
 - **Safety is non-negotiable**: no eval, no sandbox escape, default-deny capabilities
 - **JavaScript is the modding language**: not because it's perfect, but because it's known
 - **Incremental adoption**: three tiers (expressions only, simple bindings, full scripting)
