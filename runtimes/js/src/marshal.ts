@@ -1,5 +1,15 @@
 import type { QuickJSContext, QuickJSHandle } from "quickjs-emscripten";
 
+function isStaticHandle(context: QuickJSContext, handle: QuickJSHandle): boolean {
+	return handle === context.undefined || handle === context.null || handle === context.true || handle === context.false;
+}
+
+export function safeDispose(context: QuickJSContext, handle: QuickJSHandle): void {
+	if (!isStaticHandle(context, handle)) {
+		handle.dispose();
+	}
+}
+
 export function marshalToQuickJS(context: QuickJSContext, value: unknown): QuickJSHandle {
 	if (value === undefined) return context.undefined;
 	if (value === null) return context.null;
@@ -12,9 +22,7 @@ export function marshalToQuickJS(context: QuickJSContext, value: unknown): Quick
 		for (let i = 0; i < value.length; i++) {
 			const element = marshalToQuickJS(context, value[i]);
 			context.setProp(arr, i, element);
-			if (element !== context.undefined && element !== context.null && element !== context.true && element !== context.false) {
-				element.dispose();
-			}
+			safeDispose(context, element);
 		}
 		return arr;
 	}
@@ -24,22 +32,10 @@ export function marshalToQuickJS(context: QuickJSContext, value: unknown): Quick
 		for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
 			const propHandle = marshalToQuickJS(context, val);
 			context.setProp(obj, key, propHandle);
-			if (propHandle !== context.undefined && propHandle !== context.null && propHandle !== context.true && propHandle !== context.false) {
-				propHandle.dispose();
-			}
+			safeDispose(context, propHandle);
 		}
 		return obj;
 	}
 
 	return context.undefined;
-}
-
-function isStaticHandle(context: QuickJSContext, handle: QuickJSHandle): boolean {
-	return handle === context.undefined || handle === context.null || handle === context.true || handle === context.false;
-}
-
-export function safeDispose(context: QuickJSContext, handle: QuickJSHandle): void {
-	if (!isStaticHandle(context, handle)) {
-		handle.dispose();
-	}
 }

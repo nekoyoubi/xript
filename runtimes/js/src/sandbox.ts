@@ -10,6 +10,41 @@ import { shouldInterruptAfterDeadline } from "quickjs-emscripten";
 import { BindingError, CapabilityDeniedError } from "./errors.js";
 import { marshalToQuickJS, safeDispose } from "./marshal.js";
 
+function createCapabilityError(
+	context: QuickJSContext | QuickJSAsyncContext,
+	binding: string,
+	capability: string,
+): { error: QuickJSHandle } {
+	const err = context.newError(
+		`calling "${binding}" requires the "${capability}" capability, which has not been granted to this script.`,
+	);
+	const nameStr = context.newString("CapabilityDeniedError");
+	context.setProp(err, "name", nameStr);
+	nameStr.dispose();
+	const capStr = context.newString(capability);
+	context.setProp(err, "capability", capStr);
+	capStr.dispose();
+	const bindStr = context.newString(binding);
+	context.setProp(err, "binding", bindStr);
+	bindStr.dispose();
+	return { error: err };
+}
+
+function createBindingError(
+	context: QuickJSContext | QuickJSAsyncContext,
+	binding: string,
+	message: string,
+): { error: QuickJSHandle } {
+	const err = context.newError(`${binding}: ${message}`);
+	const nameStr = context.newString("BindingError");
+	context.setProp(err, "name", nameStr);
+	nameStr.dispose();
+	const bindStr = context.newString(binding);
+	context.setProp(err, "binding", bindStr);
+	bindStr.dispose();
+	return { error: err };
+}
+
 interface Manifest {
 	xript: string;
 	name: string;
@@ -160,30 +195,11 @@ function createHostFunctionWrapper(
 ): QuickJSHandle {
 	return context.newFunction(qualifiedName, (...handles: QuickJSHandle[]) => {
 		if (binding.capability && !grantedCapabilities.has(binding.capability)) {
-			const err = context.newError(
-				`calling "${qualifiedName}" requires the "${binding.capability}" capability, which has not been granted to this script.`,
-			);
-			const nameStr = context.newString("CapabilityDeniedError");
-			context.setProp(err, "name", nameStr);
-			nameStr.dispose();
-			const capStr = context.newString(binding.capability);
-			context.setProp(err, "capability", capStr);
-			capStr.dispose();
-			const bindStr = context.newString(qualifiedName);
-			context.setProp(err, "binding", bindStr);
-			bindStr.dispose();
-			return { error: err };
+			return createCapabilityError(context, qualifiedName, binding.capability);
 		}
 
 		if (!hostFn) {
-			const err = context.newError(`${qualifiedName}: no host implementation provided`);
-			const nameStr = context.newString("BindingError");
-			context.setProp(err, "name", nameStr);
-			nameStr.dispose();
-			const bindStr = context.newString(qualifiedName);
-			context.setProp(err, "binding", bindStr);
-			bindStr.dispose();
-			return { error: err };
+			return createBindingError(context, qualifiedName, "no host implementation provided");
 		}
 
 		try {
@@ -192,37 +208,13 @@ function createHostFunctionWrapper(
 			return marshalToQuickJS(context, result);
 		} catch (e) {
 			if (e instanceof CapabilityDeniedError) {
-				const err = context.newError(e.message);
-				const nameStr = context.newString("CapabilityDeniedError");
-				context.setProp(err, "name", nameStr);
-				nameStr.dispose();
-				const capStr = context.newString(e.capability);
-				context.setProp(err, "capability", capStr);
-				capStr.dispose();
-				const bindStr = context.newString(e.binding);
-				context.setProp(err, "binding", bindStr);
-				bindStr.dispose();
-				return { error: err };
+				return createCapabilityError(context, e.binding, e.capability);
 			}
 			if (e instanceof BindingError) {
-				const err = context.newError(e.message);
-				const nameStr = context.newString("BindingError");
-				context.setProp(err, "name", nameStr);
-				nameStr.dispose();
-				const bindStr = context.newString(e.binding);
-				context.setProp(err, "binding", bindStr);
-				bindStr.dispose();
-				return { error: err };
+				return createBindingError(context, e.binding, e.message.replace(`${e.binding}: `, ""));
 			}
 			const message = e instanceof Error ? e.message : String(e);
-			const err = context.newError(`${qualifiedName}: ${message}`);
-			const nameStr = context.newString("BindingError");
-			context.setProp(err, "name", nameStr);
-			nameStr.dispose();
-			const bindStr = context.newString(qualifiedName);
-			context.setProp(err, "binding", bindStr);
-			bindStr.dispose();
-			return { error: err };
+			return createBindingError(context, qualifiedName, message);
 		}
 	});
 }
@@ -246,37 +238,13 @@ function registerAsyncBinding(
 				return marshalToQuickJS(context, result);
 			} catch (e) {
 				if (e instanceof CapabilityDeniedError) {
-					const err = context.newError(e.message);
-					const nameStr = context.newString("CapabilityDeniedError");
-					context.setProp(err, "name", nameStr);
-					nameStr.dispose();
-					const capStr = context.newString(e.capability);
-					context.setProp(err, "capability", capStr);
-					capStr.dispose();
-					const bindStr = context.newString(e.binding);
-					context.setProp(err, "binding", bindStr);
-					bindStr.dispose();
-					return { error: err };
+					return createCapabilityError(context, e.binding, e.capability);
 				}
 				if (e instanceof BindingError) {
-					const err = context.newError(e.message);
-					const nameStr = context.newString("BindingError");
-					context.setProp(err, "name", nameStr);
-					nameStr.dispose();
-					const bindStr = context.newString(e.binding);
-					context.setProp(err, "binding", bindStr);
-					bindStr.dispose();
-					return { error: err };
+					return createBindingError(context, e.binding, e.message.replace(`${e.binding}: `, ""));
 				}
 				const message = e instanceof Error ? e.message : String(e);
-				const err = context.newError(`${qualifiedName}: ${message}`);
-				const nameStr = context.newString("BindingError");
-				context.setProp(err, "name", nameStr);
-				nameStr.dispose();
-				const bindStr = context.newString(qualifiedName);
-				context.setProp(err, "binding", bindStr);
-				bindStr.dispose();
-				return { error: err };
+				return createBindingError(context, qualifiedName, message);
 			}
 		});
 		context.setProp(context.global, asyncKey, asyncImpl);
@@ -416,11 +384,7 @@ export function createSandboxSync(
 
 	const context = runtime.newContext();
 
-	const sandboxConsole = options.console || {
-		log: () => {},
-		warn: () => {},
-		error: () => {},
-	};
+	const sandboxConsole = options.console ?? { log: () => {}, warn: () => {}, error: () => {} };
 
 	injectConsole(context, sandboxConsole);
 	blockCodeGeneration(context);
@@ -524,11 +488,7 @@ export async function createSandboxAsync(
 		runtime.setMaxStackSize(limits.max_stack_depth * 1024);
 	}
 
-	const sandboxConsole = options.console || {
-		log: () => {},
-		warn: () => {},
-		error: () => {},
-	};
+	const sandboxConsole = options.console ?? { log: () => {}, warn: () => {}, error: () => {} };
 
 	injectConsole(context, sandboxConsole);
 	blockCodeGeneration(context);
