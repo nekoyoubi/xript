@@ -1,9 +1,11 @@
 ---
 title: Runtime
-description: Reference JavaScript runtime for sandboxed script execution with manifest-driven bindings.
+description: Universal JavaScript runtime for sandboxed script execution with manifest-driven bindings.
 ---
 
-The reference runtime (`@xript/runtime-js`) executes user scripts inside a secure sandbox. It reads a manifest to determine which bindings to expose, enforces capability gates, and prevents access to anything outside the declared surface.
+The universal runtime (`@xript/runtime-js`) executes user scripts inside a secure QuickJS WASM sandbox. It reads a manifest to determine which bindings to expose, enforces capability gates, and prevents access to anything outside the declared surface. It runs in any JavaScript environment: browser, Node.js, Deno, Bun, and Cloudflare Workers.
+
+For Node.js-only applications that need `createRuntimeFromFile` or full JSON Schema validation, see `@xript/runtime-node`.
 
 ## Installation
 
@@ -11,43 +13,46 @@ The reference runtime (`@xript/runtime-js`) executes user scripts inside a secur
 npm install @xript/runtime-js
 ```
 
-The runtime uses Node.js's built-in `vm` module for sandboxing. No native dependencies.
+The runtime uses QuickJS compiled to WebAssembly for sandboxing. No native dependencies.
 
 ## Creating a Runtime
 
-### From an inline manifest
+The runtime uses a factory pattern. First, initialize the WASM module (done once), then create runtimes from it:
 
 ```javascript
-import { createRuntime } from "@xript/runtime-js";
+import { initXript } from "@xript/runtime-js";
 
-const runtime = createRuntime(manifest, {
+const xript = await initXript();
+const runtime = xript.createRuntime(manifest, {
   hostBindings: { greet: (name) => `Hello, ${name}!` },
 });
 ```
 
-`createRuntime(manifest, options)` is synchronous. It performs structural validation on the manifest (checks required fields, correct types, valid limits) and throws `ManifestValidationError` if anything is wrong.
+`initXript()` loads the QuickJS WASM module asynchronously and returns a factory. `createRuntime()` on the factory is synchronous — create as many runtimes as you need without additional async overhead.
 
-### From a file
+For applications with async host bindings, use the async variant:
 
 ```javascript
-import { createRuntimeFromFile } from "@xript/runtime-js";
+import { initXriptAsync } from "@xript/runtime-js";
 
-const runtime = await createRuntimeFromFile("./manifest.json", {
-  hostBindings: { greet: (name) => `Hello, ${name}!` },
+const xript = await initXriptAsync();
+const runtime = await xript.createRuntime(manifest, {
+  hostBindings: {
+    getData: async (key) => await db.get(key),
+  },
 });
 ```
 
-`createRuntimeFromFile(path, options)` is asynchronous. It validates the manifest against the full JSON Schema (via `@xript/manifest-validator`) by default, then creates the runtime.
+`initXriptAsync()` uses the asyncified WASM build, which allows host functions to return Promises that scripts can `await`.
 
 ## Options
 
-Both functions accept the same `RuntimeOptions` object:
+`createRuntime()` accepts a `RuntimeOptions` object:
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `hostBindings` | `HostBindings` | (required) | Map of binding names to host functions |
 | `capabilities` | `string[]` | `[]` | List of capabilities granted to this script |
-| `validate` | `boolean` | `true` for file, N/A for inline | Whether to run full JSON Schema validation |
 | `console` | `{ log, warn, error }` | no-op functions | Console output routing |
 
 ### Host Bindings
@@ -72,7 +77,7 @@ Every binding declared in the manifest should have a corresponding host function
 Capabilities are an opt-in security layer. By default, no capabilities are granted. Pass the capability names the script should have access to:
 
 ```javascript
-const runtime = createRuntime(manifest, {
+const runtime = xript.createRuntime(manifest, {
   hostBindings,
   capabilities: ["modify-player", "storage"],
 });
@@ -105,19 +110,29 @@ const result = await runtime.executeAsync("return await data.get('score');");
 
 `executeAsync(code)` wraps the code in an async function. Use `return` and `await` as needed. Returns a Promise resolving to an `ExecutionResult`.
 
+## Cleanup
+
+When you're done with a runtime, call `dispose()` to free the underlying WASM resources:
+
+```javascript
+runtime.dispose();
+```
+
+Failing to call `dispose()` will leak WASM memory. In long-running applications, always dispose runtimes when they're no longer needed.
+
 ## Error Types
 
 The runtime exports four error classes, all available as named imports:
 
 ### ManifestValidationError
 
-Thrown when the manifest fails structural or schema validation.
+Thrown when the manifest fails structural validation.
 
 ```javascript
 import { ManifestValidationError } from "@xript/runtime-js";
 
 try {
-  createRuntime({}, { hostBindings: {} });
+  xript.createRuntime({}, { hostBindings: {} });
 } catch (e) {
   // e.name === "ManifestValidationError"
   // e.issues === [{ path: "/xript", message: "required field..." }, ...]
@@ -160,7 +175,7 @@ import { ExecutionLimitError } from "@xript/runtime-js";
 
 ## Sandbox Details
 
-The sandbox provides a restricted JavaScript environment:
+The sandbox provides a restricted JavaScript environment powered by QuickJS compiled to WebAssembly:
 
 **Available:** `Math`, `JSON`, `Date`, `Number`, `String`, `Boolean`, `Array`, `Object`, `Map`, `Set`, `WeakMap`, `WeakSet`, `Promise`, `RegExp`, `Symbol`, `Proxy`, `Reflect`, typed arrays, `parseInt`, `parseFloat`, `isNaN`, `isFinite`, and all standard error constructors.
 
@@ -168,4 +183,19 @@ The sandbox provides a restricted JavaScript environment:
 
 **Frozen namespaces:** Namespace objects are frozen with `Object.freeze`. Scripts cannot add, remove, or reassign namespace members.
 
-**Execution limits:** The `timeout_ms` field in the manifest's `limits` section controls how long a script can run. Default is 5000ms.
+**Execution limits:** The `timeout_ms` field in the manifest's `limits` section controls how long a script can run. Default is 5000ms. The `memory_mb` field controls maximum memory usage.
+
+## Browser Usage
+
+Since the runtime uses QuickJS WASM, it works in browsers without any Node.js-specific APIs:
+
+```javascript
+import { initXript } from "@xript/runtime-js";
+
+const xript = await initXript();
+const runtime = xript.createRuntime(manifest, { hostBindings });
+const result = runtime.execute("greet('World')");
+runtime.dispose();
+```
+
+Bundle with any standard bundler (Vite, webpack, esbuild, Rollup). The WASM binary is loaded automatically by `quickjs-emscripten`.

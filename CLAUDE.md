@@ -12,7 +12,8 @@ This is a monorepo managed via npm workspaces.
 xript/
 ├── spec/           # the specification (manifest schema, capability model, etc.)
 ├── runtimes/       # language-specific runtime implementations
-│   └── js/         # reference runtime (@xript/runtime-js, Node.js vm-based)
+│   ├── js/         # universal runtime (@xript/runtime-js, QuickJS WASM sandbox)
+│   └── node/       # Node.js-optimized runtime (@xript/runtime-node, vm-based)
 ├── tools/          # ecosystem tooling (validator, typegen, docgen)
 ├── docs/           # documentation site (Astro + Starlight), deployed to xript.dev
 └── examples/       # example manifests and integrations
@@ -23,7 +24,8 @@ xript/
 - **Docs site**: Astro with Starlight, deployed to GitHub Pages via GitHub Actions
 - **Package management**: npm workspaces
 - **Language**: TypeScript throughout
-- **Runtime sandbox**: Node.js `vm` module with `codeGeneration: { strings: false, wasm: false }`
+- **Runtime sandbox (js)**: QuickJS compiled to WASM via `quickjs-emscripten` — runs in browser, Node, Deno, and more
+- **Runtime sandbox (node)**: Node.js `vm` module with `codeGeneration: { strings: false, wasm: false }`
 - **Test runner**: Node.js built-in test runner (`node --test`)
 
 ## Development Commands
@@ -34,8 +36,10 @@ npm run docs:dev                       # run the docs site locally on port 4351
 npm run docs:build                     # build the docs site for production
 
 # build and test individual packages
-npm run build --workspace=runtimes/js              # build the runtime
-npm test --workspace=runtimes/js                   # run runtime tests (60 tests)
+npm run build --workspace=runtimes/js              # build the universal runtime
+npm test --workspace=runtimes/js                   # run universal runtime tests (58 tests)
+npm run build --workspace=runtimes/node            # build the Node.js runtime
+npm test --workspace=runtimes/node                 # run Node.js runtime tests (60 tests)
 npm run build --workspace=tools/manifest-validator # build the validator
 npm test --workspace=tools/manifest-validator      # run validator tests (11 tests)
 npm run build --workspace=tools/typegen            # build the type generator
@@ -67,12 +71,13 @@ node examples/plugin-system/src/demo.js          # tier 2 demo
 All v0.1 milestones are complete:
 
 - **Spec v0.1**: manifest schema (JSON Schema draft 2020-12), capability model, binding conventions, and security guarantees documented in `spec/`
-- **Reference Runtime**: `@xript/runtime-js` in `runtimes/js/` -- Node.js vm-based sandbox with capability enforcement, 60 tests (38 unit + 22 integration)
+- **Universal Runtime**: `@xript/runtime-js` in `runtimes/js/` -- QuickJS WASM sandbox with capability enforcement, 58 tests (36 unit + 22 integration)
+- **Node.js Runtime**: `@xript/runtime-node` in `runtimes/node/` -- Node.js vm-based sandbox with `createRuntimeFromFile` and full schema validation, 60 tests
 - **Toolchain**: manifest validator, type generator, and doc generator all built and tested in `tools/` (45 tests across 3 packages)
 - **Developer Experience**: docs site at xript.dev (14 pages), getting started guide, runtime API reference, two example walkthroughs, CI with smoke tests
 - **Hardening**: integration tests, manifest validation in runtime, example smoke tests in CI
 
-Total test count: 105 across 5 packages. All green.
+Total test count: 163 across 6 packages. All green.
 
 ## Key Design Decisions
 
@@ -80,3 +85,4 @@ Total test count: 105 across 5 packages. All green.
 - **Safety is non-negotiable**: no eval, no sandbox escape, default-deny capabilities
 - **JavaScript is the modding language**: not because it's perfect, but because it's known
 - **Incremental adoption**: three tiers (expressions only, simple bindings, full scripting)
+- **Universal portability**: QuickJS WASM sandbox runs anywhere JavaScript runs (browser, Node, Deno, Bun, Cloudflare Workers)

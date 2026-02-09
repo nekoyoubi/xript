@@ -1,4 +1,4 @@
-import { createRuntime } from "../../../runtimes/js/dist/index.js";
+import { initXript } from "../../../runtimes/js/dist/index.js";
 import { readFile } from "node:fs/promises";
 
 const manifestRaw = await readFile(new URL("../manifest.json", import.meta.url), "utf-8");
@@ -40,9 +40,11 @@ function createHostBindings() {
 	};
 }
 
+const xript = await initXript();
+
 function runPlugin(name, code, capabilities) {
 	console.log(`\n--- Plugin: "${name}" (capabilities: [${capabilities.join(", ")}]) ---`);
-	const runtime = createRuntime(manifest, {
+	const runtime = xript.createRuntime(manifest, {
 		hostBindings: createHostBindings(),
 		capabilities,
 		console: {
@@ -64,6 +66,8 @@ function runPlugin(name, code, capabilities) {
 			console.log(`    => ERROR: ${e.message}`);
 		}
 	}
+
+	runtime.dispose();
 }
 
 console.log("=== xript Plugin System Demo (Tier 2) ===");
