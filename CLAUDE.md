@@ -74,14 +74,14 @@ All v0.1 milestones are complete:
 - **Universal Runtime**: `@xript/runtime-js` in `runtimes/js/` -- QuickJS WASM sandbox with capability enforcement, 58 tests (36 unit + 22 integration)
 - **Node.js Runtime**: `@xript/runtime-node` in `runtimes/node/` -- Node.js vm-based sandbox with `createRuntimeFromFile` and full schema validation, 60 tests
 - **Toolchain**: manifest validator, type generator, and doc generator all built and tested in `tools/` (45 tests across 3 packages)
-- **Developer Experience**: docs site at xript.dev (14 pages), getting started guide, runtime API reference, two example walkthroughs, CI with smoke tests
+- **Developer Experience**: docs site at xript.dev (16 pages), getting started guide, runtime API reference, two example walkthroughs, CI with smoke tests
 - **Hardening**: integration tests, manifest validation in runtime, example smoke tests in CI
 
 Total test count: 163 across 6 packages. All green.
 
 ## Key Design Decisions
 
-- **The manifest is the product**: everything derives from the manifest schema (types, docs, validation, playground)
+- **The manifest is the product**: everything derives from the manifest schema (types, docs, validation)
 - **Safety is non-negotiable**: no eval, no sandbox escape, default-deny capabilities
 - **JavaScript is the modding language**: not because it's perfect, but because it's known
 - **Incremental adoption**: three tiers (expressions only, simple bindings, full scripting)
