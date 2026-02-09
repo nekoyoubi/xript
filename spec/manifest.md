@@ -244,7 +244,7 @@ The application exposes a few functions. No capabilities needed because everythi
 
 The complete model. Namespaces organize a rich API. Capabilities gate sensitive operations. Custom types describe complex data. Examples document usage.
 
-See [examples/game-mod-system.json](../examples/game-mod-system.json) for a full tier 3 manifest.
+See the [game mod system example](../examples/game-mod-system/) for a full tier 3 manifest and walkthrough.
 
 ## Schema Evolution
 

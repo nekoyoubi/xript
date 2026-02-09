@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { initXriptAsync } from "../dist/index.js";
 
-const manifestRaw = await readFile(new URL("../../../examples/game-mod-system.json", import.meta.url), "utf-8");
+const manifestRaw = await readFile(new URL("../../../examples/game-mod-system/manifest.json", import.meta.url), "utf-8");
 const manifest = JSON.parse(manifestRaw);
 
 let xript;

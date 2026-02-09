@@ -17,7 +17,7 @@ xript is designed so that no application needs to go all-in. The three adoption 
 | **Execution limits** | Optional | Optional | Yes |
 | **Inline examples** | No | No | Yes |
 | **Async bindings** | No | Optional | Yes |
-| **Example** | [Expression Evaluator](/examples/expression-evaluator) | [Plugin System](/examples/plugin-system) | Game Mod System |
+| **Example** | [Expression Evaluator](/examples/expression-evaluator) | [Plugin System](/examples/plugin-system) | [Game Mod System](/examples/game-mod-system) |
 
 ## Tier 1: Expressions Only
 
