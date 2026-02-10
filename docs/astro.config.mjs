@@ -7,11 +7,22 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: "xript",
+			favicon: "/favicon.svg",
 			social: [
 				{
 					icon: "github",
 					label: "GitHub",
 					href: "https://github.com/nekoyoubi/xript",
+				},
+			],
+			components: {
+				ThemeSelect: "./src/components/ThemeSelect.astro",
+				SiteTitle: "./src/components/SiteTitle.astro",
+			},
+			head: [
+				{
+					tag: "script",
+					content: `(function(){var s=localStorage.getItem('starlight-color-scheme');if(s)document.documentElement.setAttribute('data-color-scheme',s);window.addEventListener('DOMContentLoaded',function(){requestAnimationFrame(function(){document.documentElement.classList.add('theme-transitions')})})})();`,
 				},
 			],
 			sidebar: [
@@ -45,13 +56,24 @@ export default defineConfig({
 				{
 					label: "Examples",
 					items: [
-						{ label: "Expression Evaluator", slug: "examples/expression-evaluator" },
+						{
+							label: "Expression Evaluator",
+							slug: "examples/expression-evaluator",
+						},
 						{ label: "Plugin System", slug: "examples/plugin-system" },
-						{ label: "Game Mod System", slug: "examples/game-mod-system" },
+						{
+							label: "Game Mod System",
+							slug: "examples/game-mod-system",
+						},
 					],
 				},
 			],
-			customCss: ["./src/styles/custom.css"],
+			customCss: [
+				"@fontsource-variable/inter",
+				"@fontsource/jetbrains-mono/400.css",
+				"@fontsource/jetbrains-mono/600.css",
+				"./src/styles/custom.css",
+			],
 			editLink: {
 				baseUrl: "https://github.com/nekoyoubi/xript/edit/main/docs/",
 			},
