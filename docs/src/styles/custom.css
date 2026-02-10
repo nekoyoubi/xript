@@ -1,33 +1,211 @@
+@font-face { font-family: "Badeen Display"; src: url("/fonts/BadeenDisplay-Regular.ttf") format("truetype"); font-display: swap; }
+@font-face { font-family: "Knewave"; src: url("/fonts/Knewave-Regular.ttf") format("truetype"); font-display: swap; }
+@font-face { font-family: "Potta One"; src: url("/fonts/PottaOne-Regular.ttf") format("truetype"); font-display: swap; }
+@font-face { font-family: "Sigmar"; src: url("/fonts/Sigmar-Regular.ttf") format("truetype"); font-display: swap; }
+@font-face { font-family: "m3x6"; src: url("/fonts/m3x6.ttf") format("truetype"); font-display: swap; }
+
 :root {
-	--sl-color-accent-low: #1a0a3e;
-	--sl-color-accent: #7c3aed;
-	--sl-color-accent-high: #c4b5fd;
-	--sl-color-white: #e8e8e8;
-	--sl-color-gray-1: #d0d0d0;
-	--sl-color-gray-2: #999;
-	--sl-color-gray-3: #666;
-	--sl-color-gray-4: #333;
-	--sl-color-gray-5: #1a1a1c;
-	--sl-color-gray-6: #111113;
-	--sl-color-black: #0a0a0b;
+	--sl-font: "Inter Variable", system-ui, sans-serif;
+	--sl-font-mono: "JetBrains Mono", ui-monospace, monospace;
+	--sl-content-width: 75rem;
+	--sl-color-accent-low: #3d2835;
+	--sl-color-accent: #e02e81;
+	--sl-color-accent-high: #de5997;
+	--sl-color-white: #e8ad72;
+	--sl-color-gray-1: #d0ccc6;
+	--sl-color-gray-2: #eeeae6;
+	--sl-color-gray-3: #97d7c8;
+	--sl-color-gray-4: #3b4b68;
+	--sl-color-gray-5: #333f58;
+	--sl-color-gray-6: #302e3a;
+	--sl-color-black: #292831;
+	--hero-glow: 238, 134, 149;
 }
 
 :root[data-theme="light"] {
-	--sl-color-accent-low: #ede9fe;
-	--sl-color-accent: #6d28d9;
-	--sl-color-accent-high: #3b0764;
-	--sl-color-white: #111113;
-	--sl-color-gray-1: #333;
-	--sl-color-gray-2: #666;
-	--sl-color-gray-3: #999;
-	--sl-color-gray-4: #d0d0d0;
-	--sl-color-gray-5: #f0f0f0;
-	--sl-color-gray-6: #fafafa;
-	--sl-color-black: #fff;
+	--sl-color-accent-low: #f5e0d8;
+	--sl-color-accent: #e02e81;
+	--sl-color-accent-high: #292831;
+	--sl-color-white: #292831;
+	--sl-color-gray-1: #333f58;
+	--sl-color-gray-2: #3b4b68;
+	--sl-color-gray-3: #6cc4b2;
+	--sl-color-gray-4: #dcc0b4;
+	--sl-color-gray-5: #f0dcd4;
+	--sl-color-gray-6: #f5e5e0;
+	--sl-color-black: #f8ebe8;
+}
+
+:root[data-color-scheme="chasm"] {
+	--sl-color-accent-low: #463c5e;
+	--sl-color-accent: #5fc9e7;
+	--sl-color-accent-high: #85daeb;
+	--sl-color-white: #f5daa7;
+	--sl-color-gray-1: #e0ca95;
+	--sl-color-gray-2: #c0b090;
+	--sl-color-gray-3: #a89a8c;
+	--sl-color-gray-4: #444774;
+	--sl-color-gray-5: #3a3548;
+	--sl-color-gray-6: #363140;
+	--sl-color-black: #32313b;
+	--hero-glow: 95, 201, 231;
+}
+
+:root[data-color-scheme="chasm"][data-theme="light"] {
+	--sl-color-accent-low: #e8e0f0;
+	--sl-color-accent: #4c60aa;
+	--sl-color-accent-high: #32313b;
+	--sl-color-white: #32313b;
+	--sl-color-gray-1: #3a3545;
+	--sl-color-gray-2: #5d5548;
+	--sl-color-gray-3: #857e72;
+	--sl-color-gray-4: #c8c0b5;
+	--sl-color-gray-5: #efe8de;
+	--sl-color-gray-6: #f5f0e8;
+	--sl-color-black: #faf5ed;
+}
+
+:root[data-color-scheme="inkpink"] {
+	--sl-color-accent-low: #3a1548;
+	--sl-color-accent: #fe6c90;
+	--sl-color-accent-high: #ffdce5;
+	--sl-color-white: #fce4ec;
+	--sl-color-gray-1: #e8c0d0;
+	--sl-color-gray-2: #c8a0b5;
+	--sl-color-gray-3: #b878a5;
+	--sl-color-gray-4: #5a2860;
+	--sl-color-gray-5: #341040;
+	--sl-color-gray-6: #2d0c3a;
+	--sl-color-black: #260d34;
+	--hero-glow: 254, 108, 144;
+}
+
+:root[data-color-scheme="inkpink"][data-theme="light"] {
+	--sl-color-accent-low: #fce4ec;
+	--sl-color-accent: #d03791;
+	--sl-color-accent-high: #260d34;
+	--sl-color-white: #260d34;
+	--sl-color-gray-1: #3a1548;
+	--sl-color-gray-2: #5a2058;
+	--sl-color-gray-3: #9a5880;
+	--sl-color-gray-4: #e0c0d0;
+	--sl-color-gray-5: #f5e8f0;
+	--sl-color-gray-6: #faf2f6;
+	--sl-color-black: #ffffff;
+}
+
+:root[data-color-scheme="fairydust"] {
+	--sl-color-accent-low: #2d2844;
+	--sl-color-accent: #2ba9b4;
+	--sl-color-accent-high: #93d4b5;
+	--sl-color-white: #f0f6e8;
+	--sl-color-gray-1: #f0dab1;
+	--sl-color-gray-2: #c8b898;
+	--sl-color-gray-3: #9882b8;
+	--sl-color-gray-4: #493f6b;
+	--sl-color-gray-5: #2d2844;
+	--sl-color-gray-6: #252038;
+	--sl-color-black: #1e1b2d;
+	--hero-glow: 43, 169, 180;
+}
+
+:root[data-color-scheme="fairydust"][data-theme="light"] {
+	--sl-color-accent-low: #e4efd8;
+	--sl-color-accent: #634b7d;
+	--sl-color-accent-high: #1e1b2d;
+	--sl-color-white: #1e1b2d;
+	--sl-color-gray-1: #2d2844;
+	--sl-color-gray-2: #493f6b;
+	--sl-color-gray-3: #7a6898;
+	--sl-color-gray-4: #c8d0b8;
+	--sl-color-gray-5: #e4efd8;
+	--sl-color-gray-6: #eaf4e0;
+	--sl-color-black: #f0f6e8;
+}
+
+.sl-container {
+	max-width: none;
+}
+
+[data-has-hero] main {
+	position: relative;
+	background: radial-gradient(
+		ellipse 80% 50% at 50% -20%,
+		rgba(var(--hero-glow), 0.15),
+		transparent
+	);
+}
+
+[data-has-hero] main::before {
+	content: "";
+	position: absolute;
+	inset: 0;
+	background-image: radial-gradient(
+		rgba(var(--hero-glow), 0.12) 1px,
+		transparent 1px
+	);
+	background-size: 24px 24px;
+	mask-image: radial-gradient(
+		ellipse 60% 80% at 50% 0%,
+		black 40%,
+		transparent 100%
+	);
+	pointer-events: none;
+	z-index: 0;
+}
+
+[data-has-hero] main > * {
+	position: relative;
+	z-index: 1;
+}
+
+.hero .tagline {
+	font-size: 1.25rem;
+	line-height: 1.6;
+	max-width: 38rem;
+	color: var(--sl-color-gray-1);
 }
 
 .hero .accent {
 	color: var(--sl-color-accent);
+	font-family: "Sigmar", sans-serif;
+}
+
+.hero .muted {
+	color: var(--sl-color-gray-3);
+	font-family: "Knewave", sans-serif;
+	position: relative;
+	top: -0.07em;
+}
+
+.card {
+	border-radius: 0.75rem;
+	border-color: var(--sl-color-gray-4);
+	background: var(--sl-color-gray-6);
+	transition: border-color 0.2s ease;
+}
+
+.card:hover {
+	border-color: var(--sl-color-accent);
+}
+
+.expressive-code {
+	border-radius: 0.5rem;
+	overflow: hidden;
+}
+
+.expressive-code .frame {
+	border: 1px solid var(--sl-color-gray-4);
+	border-radius: 0.5rem;
+}
+
+.sl-markdown-content {
+	line-height: 1.8;
+}
+
+.site-title {
+	font-weight: 800;
+	letter-spacing: -0.02em;
 }
 
 .manifest-teaser {
@@ -41,4 +219,17 @@
 	color: var(--sl-color-gray-2);
 	margin-bottom: 1rem;
 	font-style: italic;
+}
+
+.manifest-teaser .expressive-code {
+	text-align: left;
+}
+
+html.theme-transitions,
+html.theme-transitions body,
+html.theme-transitions main,
+html.theme-transitions nav,
+html.theme-transitions .sidebar,
+html.theme-transitions .header {
+	transition: background-color 0.3s ease, color 0.3s ease;
 }
