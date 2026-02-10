@@ -99,10 +99,8 @@
 	const outputArea = document.getElementById("output-area")!;
 	const statusBadge = document.getElementById("status-badge")!;
 
-	function formatParams(params?: Array<{ name: string; type: string }>) {
-		if (!params) return "()";
-		return "(" + params.map((p) => p.name).join(", ") + ")";
-	}
+	const formatParams = (params?: Array<{ name: string; type: string }>) =>
+		params ? `(${params.map(p => p.name).join(", ")})` : "()";
 
 	function renderBindings() {
 		bindingsListEl.innerHTML = "";
@@ -116,11 +114,7 @@
 			checkbox.className = "binding-toggle";
 			checkbox.checked = enabled;
 			checkbox.addEventListener("change", () => {
-				if (checkbox.checked) {
-					enabledBindings.add(name);
-				} else {
-					enabledBindings.delete(name);
-				}
+				checkbox.checked ? enabledBindings.add(name) : enabledBindings.delete(name);
 				renderBindings();
 			});
 
@@ -128,8 +122,8 @@
 			info.className = "binding-info";
 
 			const nameEl = document.createElement("div");
-			nameEl.className = "binding-name" + (enabled ? "" : " disabled");
-			nameEl.textContent = name + formatParams(binding.params);
+			nameEl.className = enabled ? "binding-name" : "binding-name disabled";
+			nameEl.textContent = `${name}${formatParams(binding.params)}`;
 
 			const descEl = document.createElement("div");
 			descEl.className = "binding-desc";
@@ -143,13 +137,8 @@
 		}
 	}
 
-	function formatValue(val: unknown): string {
-		if (val === undefined) return "undefined";
-		if (val === null) return "null";
-		if (typeof val === "string") return JSON.stringify(val);
-		if (typeof val === "object") return JSON.stringify(val);
-		return String(val);
-	}
+	const formatValue = (val: unknown): string =>
+		typeof val === "string" || typeof val === "object" ? JSON.stringify(val) : String(val);
 
 	function addOutput(expression: string, result: unknown, isError: boolean, durationMs?: number) {
 		const placeholder = outputArea.querySelector(".output-placeholder");
@@ -163,8 +152,8 @@
 		exprEl.textContent = expression;
 
 		const resultEl = document.createElement("div");
-		resultEl.className = "output-result " + (isError ? "error" : "success");
-		resultEl.textContent = isError ? "ERROR: " + result : formatValue(result);
+		resultEl.className = `output-result ${isError ? "error" : "success"}`;
+		resultEl.textContent = isError ? `ERROR: ${result}` : formatValue(result);
 
 		entry.appendChild(exprEl);
 		entry.appendChild(resultEl);
@@ -172,7 +161,7 @@
 		if (durationMs !== undefined) {
 			const timeEl = document.createElement("div");
 			timeEl.className = "output-time";
-			timeEl.textContent = durationMs.toFixed(1) + "ms";
+			timeEl.textContent = `${durationMs.toFixed(1)}ms`;
 			entry.appendChild(timeEl);
 		}
 
@@ -243,7 +232,7 @@
 				});
 			});
 		} catch (err: any) {
-			loadingEl.innerHTML = '<p style="color: #f87171;">Failed to load xript sandbox: ' + err.message + "</p>";
+			loadingEl.innerHTML = `<p style="color: #f87171;">Failed to load xript sandbox: ${err.message}</p>`;
 		}
 	}
 
