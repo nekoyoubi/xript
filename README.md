@@ -15,11 +15,11 @@ One JSON manifest. Everything else is derived.
 ## Quick Start
 
 ```sh
-npm install @xript/runtime-js
+npm install @xript/runtime
 ```
 
 ```javascript
-import { initXript } from "@xript/runtime-js";
+import { initXript } from "@xript/runtime";
 
 const xript = await initXript();
 const runtime = xript.createRuntime(
@@ -70,7 +70,7 @@ runtime.dispose();
 xript/
 ├── spec/           # the specification (manifest schema, capabilities, bindings, security)
 ├── runtimes/
-│   ├── js/         # universal runtime (@xript/runtime-js, QuickJS WASM sandbox)
+│   ├── js/         # universal runtime (@xript/runtime, QuickJS WASM sandbox)
 │   └── node/       # Node.js-optimized runtime (@xript/runtime-node, vm-based)
 ├── tools/
 │   ├── manifest-validator/  # @xript/manifest-validator
@@ -105,7 +105,7 @@ npx xript-docgen manifest.json -o docs/  # generate documentation
 | Universal Runtime | Complete -- QuickJS WASM sandbox, runs in browser/Node/Deno/Bun |
 | Node.js Runtime | Complete -- Node.js vm-based sandbox with `createRuntimeFromFile` and JSON Schema validation |
 | Toolchain | Complete -- validator, typegen, docgen |
-| Developer Experience | Complete -- 17-page docs site, getting started guide, runtime API reference, example walkthroughs |
+| Developer Experience | Complete -- 19-page docs site, getting started guide, runtime API reference, example walkthroughs, live demos |
 | Hardening | Complete -- 163 tests across 6 packages, manifest validation, CI smoke tests |
 
 ## License

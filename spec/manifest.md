@@ -1,6 +1,6 @@
 # xript Manifest Specification
 
-The xript manifest is the single source of truth for an application's scripting API. It declares what functionality is exposed to scripts, how it is organized, what capabilities gate access, and what types are involved. From the manifest, everything else is derived: documentation, TypeScript definitions, and validation. Interactive playgrounds are planned as a future toolchain output.
+The xript manifest is the single source of truth for an application's scripting API. It declares what functionality is exposed to scripts, how it is organized, what capabilities gate access, and what types are involved. From the manifest, everything else is derived: documentation, TypeScript definitions, and validation. Interactive playgrounds are also supported as a toolchain output.
 
 This document explains the structure of the manifest, the rationale behind key decisions, and how the manifest supports xript's three adoption tiers.
 

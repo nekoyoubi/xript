@@ -72,7 +72,7 @@ The xript manifest is not configuration — it *is* the API. It defines bindings
 - Documentation sites
 - TypeScript definitions
 - Validation rules
-- Interactive playgrounds (planned)
+- Interactive playgrounds
 
 If it's not in the manifest, it doesn't exist. If it is, it's documented, typed, and enforceable.
 

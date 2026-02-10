@@ -18,7 +18,7 @@ This installs dependencies for all workspace packages. The repo is a monorepo ma
 xript/
 ├── spec/           # the specification (manifest schema, capability model, etc.)
 ├── runtimes/
-│   ├── js/         # universal runtime (@xript/runtime-js, QuickJS WASM sandbox)
+│   ├── js/         # universal runtime (@xript/runtime, QuickJS WASM sandbox)
 │   └── node/       # Node.js-optimized runtime (@xript/runtime-node, vm-based)
 ├── tools/          # ecosystem tooling (validator, typegen, docgen)
 ├── docs/           # documentation site (Astro + Starlight) → xript.dev

@@ -10,7 +10,7 @@ This guide walks through adding xript to an application from scratch. By the end
 The universal runtime uses QuickJS compiled to WebAssembly — it works in browsers, Node.js, Deno, and more.
 
 ```sh
-npm install @xript/runtime-js
+npm install @xript/runtime
 ```
 
 ## Write a Manifest
@@ -58,7 +58,7 @@ const hostBindings = {
 Initialize the WASM sandbox, then wire the manifest and bindings together:
 
 ```javascript
-import { initXript } from "@xript/runtime-js";
+import { initXript } from "@xript/runtime";
 
 const xript = await initXript();
 const runtime = xript.createRuntime(manifest, {
