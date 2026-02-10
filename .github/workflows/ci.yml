@@ -35,9 +35,9 @@ jobs:
       - name: test docgen
         run: npm test --workspace=tools/docgen
 
-      - name: build runtime-js
+      - name: build runtime
         run: npm run build --workspace=runtimes/js
-      - name: test runtime-js
+      - name: test runtime
         run: npm test --workspace=runtimes/js
 
       - name: build runtime-node
@@ -61,7 +61,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: build runtime-js
+      - name: build runtime
         run: npm run build --workspace=runtimes/js
       - name: build docs
         run: npm run docs:build

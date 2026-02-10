@@ -103,7 +103,7 @@ Each plugin gets its own runtime instance but shares the same underlying `taskSt
 The factory is initialized once, then each plugin creates a runtime from it:
 
 ```javascript
-import { initXript } from "@xript/runtime-js";
+import { initXript } from "@xript/runtime";
 const xript = await initXript();
 ```
 
