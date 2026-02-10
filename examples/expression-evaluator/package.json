@@ -3,7 +3,7 @@
 	"version": "1.0.0",
 	"private": true,
 	"type": "module",
-	"description": "Example: expression evaluator using @xript/runtime-js",
+	"description": "Example: expression evaluator using @xript/runtime",
 	"scripts": {
 		"start": "node src/host.js",
 		"demo": "node src/demo.js"
