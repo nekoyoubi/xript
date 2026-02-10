@@ -39,7 +39,7 @@ npm run docs:build                     # build the docs site for production
 npm run build --workspace=runtimes/js              # build the universal runtime
 npm test --workspace=runtimes/js                   # run universal runtime tests (58 tests)
 npm run build --workspace=runtimes/node            # build the Node.js runtime
-npm test --workspace=runtimes/node                 # run Node.js runtime tests (60 tests)
+npm test --workspace=runtimes/node                 # run Node.js runtime tests (62 tests)
 npm run build --workspace=tools/manifest-validator # build the validator
 npm test --workspace=tools/manifest-validator      # run validator tests (11 tests)
 npm run build --workspace=tools/typegen            # build the type generator
@@ -73,12 +73,12 @@ All v0.1 milestones are complete:
 
 - **Spec v0.1**: manifest schema (JSON Schema draft 2020-12), capability model, binding conventions, and security guarantees documented in `spec/`
 - **Universal Runtime**: `@xript/runtime` in `runtimes/js/` -- QuickJS WASM sandbox with capability enforcement, 58 tests (36 unit + 22 integration)
-- **Node.js Runtime**: `@xript/runtime-node` in `runtimes/node/` -- Node.js vm-based sandbox with `createRuntimeFromFile` and full schema validation, 60 tests
+- **Node.js Runtime**: `@xript/runtime-node` in `runtimes/node/` -- Node.js vm-based sandbox with `createRuntimeFromFile` and full schema validation, 62 tests
 - **Toolchain**: manifest validator, type generator, and doc generator all built and tested in `tools/` (45 tests across 3 packages)
 - **Developer Experience**: docs site at xript.dev (19 pages), getting started guide, runtime API reference, three example walkthroughs, three interactive live demos (browser-only QuickJS WASM), CI with smoke tests
 - **Hardening**: integration tests, manifest validation in runtime, example smoke tests in CI
 
-Total test count: 163 across 6 packages. All green.
+Total test count: 165 across 6 packages. All green.
 
 ## Key Design Decisions
 

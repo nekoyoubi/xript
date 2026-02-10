@@ -106,7 +106,7 @@ npx xript-docgen manifest.json -o docs/  # generate documentation
 | Node.js Runtime | Complete -- Node.js vm-based sandbox with `createRuntimeFromFile` and JSON Schema validation |
 | Toolchain | Complete -- validator, typegen, docgen |
 | Developer Experience | Complete -- 19-page docs site, getting started guide, runtime API reference, example walkthroughs, live demos |
-| Hardening | Complete -- 163 tests across 6 packages, manifest validation, CI smoke tests |
+| Hardening | Complete -- 165 tests across 6 packages, manifest validation, CI smoke tests |
 
 ## License
 
