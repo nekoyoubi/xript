@@ -179,17 +179,13 @@
 		for (const [name, cap] of Object.entries(manifest.capabilities) as [string, { description: string; risk: string }][]) {
 			const enabled = enabledCapabilities.has(name);
 			const toggle = document.createElement("label");
-			toggle.className = "cap-toggle" + (enabled ? " enabled" : "");
+			toggle.className = enabled ? "cap-toggle enabled" : "cap-toggle";
 
 			const checkbox = document.createElement("input");
 			checkbox.type = "checkbox";
 			checkbox.checked = enabled;
 			checkbox.addEventListener("change", () => {
-				if (checkbox.checked) {
-					enabledCapabilities.add(name);
-				} else {
-					enabledCapabilities.delete(name);
-				}
+				checkbox.checked ? enabledCapabilities.add(name) : enabledCapabilities.delete(name);
 				renderCapabilities();
 			});
 
@@ -224,16 +220,16 @@
 		if (placeholder) placeholder.remove();
 
 		const line = document.createElement("div");
-		line.className = "console-line " + level;
+		line.className = `console-line ${level}`;
 		const prefix = level === "log" ? "[log] " : level === "warn" ? "[warn] " : level === "error" ? "[error] " : "=> ";
-		line.textContent = prefix + text;
+		line.textContent = `${prefix}${text}`;
 		consoleOutput.appendChild(line);
 		consoleOutput.scrollTop = consoleOutput.scrollHeight;
 	}
 
 	function renderTasks() {
 		taskListEl.innerHTML = "";
-		taskCountEl.textContent = taskStore.length + " task" + (taskStore.length !== 1 ? "s" : "");
+		taskCountEl.textContent = `${taskStore.length} task${taskStore.length !== 1 ? "s" : ""}`;
 
 		if (taskStore.length === 0) {
 			taskListEl.innerHTML = '<div class="output-placeholder">No tasks yet.</div>';
@@ -242,7 +238,7 @@
 
 		for (const task of taskStore) {
 			const row = document.createElement("div");
-			row.className = "task-row" + (task.done ? " done" : "");
+			row.className = task.done ? "task-row done" : "task-row";
 
 			const status = document.createElement("span");
 			status.className = "task-status";
@@ -253,12 +249,12 @@
 			title.textContent = task.title;
 
 			const priority = document.createElement("span");
-			priority.className = "task-priority priority-" + task.priority;
+			priority.className = `task-priority priority-${task.priority}`;
 			priority.textContent = task.priority;
 
 			const id = document.createElement("span");
 			id.className = "task-id";
-			id.textContent = "#" + task.id;
+			id.textContent = `#${task.id}`;
 
 			row.appendChild(status);
 			row.appendChild(title);
@@ -304,12 +300,12 @@
 						},
 					});
 
-					const wrappedCode = "(function(){\n" + code + "\n})()";
+					const wrappedCode = `(function(){\n${code}\n})()`;
 					const result = runtime.execute(wrappedCode);
 					if (result.value !== undefined) {
 						addConsoleMessage(JSON.stringify(result.value, null, 2), "result");
 					}
-					addConsoleMessage(result.duration_ms.toFixed(1) + "ms", "log");
+					addConsoleMessage(`${result.duration_ms.toFixed(1)}ms`, "log");
 				} catch (err: any) {
 					addConsoleMessage(err.message, "error");
 				} finally {
@@ -339,7 +335,7 @@
 				consoleOutput.innerHTML = '<div class="output-placeholder">Run a plugin to see console output here.</div>';
 			});
 		} catch (err: any) {
-			loadingEl.innerHTML = '<p style="color: #f87171;">Failed to load xript sandbox: ' + err.message + "</p>";
+			loadingEl.innerHTML = `<p style="color: #f87171;">Failed to load xript sandbox: ${err.message}</p>`;
 		}
 	}
 

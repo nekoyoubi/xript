@@ -209,10 +209,7 @@
 		line.textContent = msg;
 		logEl.appendChild(line);
 		logEl.scrollTop = logEl.scrollHeight;
-
-		while (logEl.children.length > 6) {
-			logEl.removeChild(logEl.firstChild!);
-		}
+		while (logEl.children.length > 6) logEl.removeChild(logEl.firstChild!);
 	}
 
 	function movePlayer(dx: number, dy: number) {
@@ -224,10 +221,10 @@
 			const sword = gameState.player.inventory.find((i) => i.type === "weapon");
 			const damage = sword?.damage || 5;
 			enemy.health -= damage;
-			addGameLog("Hit " + enemy.type + " for " + damage + " dmg!");
+			addGameLog(`Hit ${enemy.type} for ${damage} dmg!`);
 			if (enemy.health <= 0) {
 				gameState.world.enemies = gameState.world.enemies.filter((e) => e.id !== enemy.id);
-				addGameLog(enemy.type + " defeated!");
+				addGameLog(`${enemy.type} defeated!`);
 			}
 			enemyTurn();
 			renderGame();
@@ -241,7 +238,7 @@
 
 		if (gameState.world.grid[ny][nx] === TILE_EXIT) {
 			gameState.world.currentLevel++;
-			addGameLog("Descended to level " + gameState.world.currentLevel + "!");
+			addGameLog(`Descended to level ${gameState.world.currentLevel}!`);
 			generateDungeon();
 		}
 
@@ -258,7 +255,7 @@
 			if (dist <= 1) {
 				const damage = enemy.type === "dragon" ? 20 : enemy.type === "skeleton" ? 8 : enemy.type === "goblin" ? 5 : 3;
 				gameState.player.health = Math.max(0, gameState.player.health - damage);
-				addGameLog(enemy.type + " hits you for " + damage + "!");
+				addGameLog(`${enemy.type} hits you for ${damage}!`);
 				if (gameState.player.health <= 0) {
 					addGameLog("You died! Restarting...");
 					gameState.player.health = gameState.player.maxHealth;
@@ -309,19 +306,19 @@
 
 		const hpEl = document.createElement("span");
 		hpEl.className = "hud-hp";
-		hpEl.innerHTML = '<span class="hp-bar"><span class="hp-fill" style="width:' + hpPct + "%;background:" + hpColor + '"></span></span> ' + p.health + "/" + p.maxHealth;
+		hpEl.innerHTML = `<span class="hp-bar"><span class="hp-fill" style="width:${hpPct}%;background:${hpColor}"></span></span> ${p.health}/${p.maxHealth}`;
 
 		const lvlEl = document.createElement("span");
 		lvlEl.className = "hud-level";
-		lvlEl.textContent = "Lv." + gameState.world.currentLevel;
+		lvlEl.textContent = `Lv.${gameState.world.currentLevel}`;
 
 		const posEl = document.createElement("span");
 		posEl.className = "hud-pos";
-		posEl.textContent = "(" + p.position.x + "," + p.position.y + ")";
+		posEl.textContent = `(${p.position.x},${p.position.y})`;
 
 		const invEl = document.createElement("span");
 		invEl.className = "hud-inv";
-		invEl.textContent = p.inventory.length + " items";
+		invEl.textContent = `${p.inventory.length} items`;
 
 		row.appendChild(nameEl);
 		row.appendChild(hpEl);
@@ -429,14 +426,13 @@
 		for (const [name, cap] of Object.entries(manifest.capabilities) as [string, { description: string; risk: string }][]) {
 			const enabled = enabledCapabilities.has(name);
 			const toggle = document.createElement("label");
-			toggle.className = "cap-toggle" + (enabled ? " enabled" : "");
+			toggle.className = enabled ? "cap-toggle enabled" : "cap-toggle";
 
 			const checkbox = document.createElement("input");
 			checkbox.type = "checkbox";
 			checkbox.checked = enabled;
 			checkbox.addEventListener("change", () => {
-				if (checkbox.checked) enabledCapabilities.add(name);
-				else enabledCapabilities.delete(name);
+				checkbox.checked ? enabledCapabilities.add(name) : enabledCapabilities.delete(name);
 				renderCapabilities();
 			});
 
@@ -466,9 +462,9 @@
 		if (placeholder) placeholder.remove();
 
 		const line = document.createElement("div");
-		line.className = "console-line " + level;
+		line.className = `console-line ${level}`;
 		const prefix = level === "log" ? "[log] " : level === "error" ? "[error] " : "=> ";
-		line.textContent = prefix + text;
+		line.textContent = `${prefix}${text}`;
 		el.appendChild(line);
 		el.scrollTop = el.scrollHeight;
 	}
@@ -522,7 +518,7 @@
 					if (result.value !== undefined) {
 						addModConsole(JSON.stringify(result.value), "result");
 					}
-					addModConsole(result.duration_ms.toFixed(1) + "ms", "log");
+					addModConsole(`${result.duration_ms.toFixed(1)}ms`, "log");
 				} catch (err: any) {
 					addModConsole(err.message, "error");
 				} finally {
@@ -584,11 +580,11 @@
 				}
 			});
 
-			addGameLog("Welcome to level " + gameState.world.currentLevel + "!");
+			addGameLog(`Welcome to level ${gameState.world.currentLevel}!`);
 			addGameLog("Use arrow keys or WASD to move.");
 		} catch (err: any) {
 			const loadingEl = document.getElementById("dungeon-loading")!;
-			loadingEl.innerHTML = '<p style="color: #f87171;">Failed to load: ' + err.message + "</p>";
+			loadingEl.innerHTML = `<p style="color: #f87171;">Failed to load: ${err.message}</p>`;
 		}
 	}
 
