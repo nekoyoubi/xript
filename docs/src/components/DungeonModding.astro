@@ -1,0 +1,967 @@
+---
+---
+
+<div id="dungeon-modding">
+	<div class="dungeon-loading" id="dungeon-loading">
+		<div class="loading-spinner"></div>
+		<p>Loading xript sandbox...</p>
+	</div>
+	<div class="dungeon-container" id="dungeon-container" style="display:none">
+		<div class="dungeon-left">
+			<div class="panel game-panel">
+				<div class="panel-header">
+					<h3>Dungeon Crawler</h3>
+					<span class="panel-badge">arrow keys / WASD</span>
+				</div>
+				<div class="game-hud" id="game-hud"></div>
+				<div class="game-grid" id="game-grid"></div>
+				<div class="game-log" id="game-log"></div>
+			</div>
+		</div>
+		<div class="dungeon-right">
+			<div class="panel cap-panel">
+				<div class="panel-header">
+					<h3>Capabilities</h3>
+				</div>
+				<div class="cap-toggles" id="dungeon-cap-toggles"></div>
+			</div>
+			<div class="panel editor-panel">
+				<div class="panel-header">
+					<h3>Mod Editor</h3>
+					<select id="mod-select">
+						<option value="">Select a mod...</option>
+						<option value="heal">Healing Potion</option>
+						<option value="scout">Enemy Scout</option>
+						<option value="inventory">Inventory Manager</option>
+						<option value="save">Save Checkpoint</option>
+						<option value="load">Load Checkpoint</option>
+						<option value="spawn">Spawn Dragon</option>
+					</select>
+				</div>
+				<textarea id="mod-editor" spellcheck="false" autocomplete="off" rows="8"></textarea>
+				<div class="editor-footer">
+					<span class="editor-hint">Ctrl+Enter to run</span>
+					<button id="run-mod-btn" class="run-button">Run Mod</button>
+				</div>
+			</div>
+			<div class="panel console-panel">
+				<div class="panel-header">
+					<h3>Console</h3>
+					<button id="dungeon-clear-btn" class="clear-button">Clear</button>
+				</div>
+				<div class="mod-console" id="mod-console">
+					<div class="output-placeholder">Run a mod to see output here.</div>
+				</div>
+			</div>
+		</div>
+	</div>
+</div>
+
+<script>
+	import { initXriptAsync } from "@xript/runtime-js";
+
+	const GRID_W = 16;
+	const GRID_H = 10;
+	const TILE_WALL = "#";
+	const TILE_FLOOR = ".";
+	const TILE_PLAYER = "@";
+	const TILE_EXIT = ">";
+
+	const enemyGlyphs: Record<string, string> = {
+		skeleton: "S",
+		goblin: "G",
+		slime: "s",
+		dragon: "D",
+		mimic: "M",
+	};
+
+	const manifest = {
+		xript: "0.1",
+		name: "dungeon-crawler",
+		version: "1.2.0",
+		title: "Dungeon Crawler",
+		description: "A roguelike dungeon crawler with mod support.",
+		bindings: {
+			log: { description: "Writes a message to the mod console.", params: [{ name: "message", type: "string" }] },
+			player: {
+				description: "Functions for reading and modifying the player.",
+				members: {
+					getName: { description: "Returns the player's name.", returns: "string" },
+					getHealth: { description: "Returns current health.", returns: "number" },
+					getMaxHealth: { description: "Returns max health.", returns: "number" },
+					getPosition: { description: "Returns the player's position.", returns: "Position" },
+					setHealth: { description: "Sets the player's health.", params: [{ name: "value", type: "number" }], capability: "modify-player" },
+					getInventory: { description: "Returns all items.", returns: { array: "Item" } },
+					addItem: { description: "Adds an item.", params: [{ name: "item", type: "Item" }], capability: "modify-player" },
+				},
+			},
+			world: {
+				description: "Functions for querying the game world.",
+				members: {
+					getCurrentLevel: { description: "Returns the current level.", returns: "number" },
+					getEnemies: { description: "Returns all enemies.", returns: { array: "Enemy" }, async: true },
+					spawnEnemy: { description: "Spawns an enemy.", params: [{ name: "type", type: "EnemyType" }, { name: "position", type: "Position" }], capability: "modify-world" },
+				},
+			},
+			data: {
+				description: "Persistent storage for mods.",
+				members: {
+					get: { description: "Reads a value.", params: [{ name: "key", type: "string" }], returns: { optional: "string" }, capability: "storage", async: true },
+					set: { description: "Writes a value.", params: [{ name: "key", type: "string" }, { name: "value", type: "string" }], capability: "storage", async: true },
+				},
+			},
+		},
+		capabilities: {
+			"modify-player": { description: "Modify the player's stats and inventory.", risk: "medium" },
+			"modify-world": { description: "Spawn or remove entities in the world.", risk: "high" },
+			storage: { description: "Read and write persistent mod data.", risk: "low" },
+		},
+		limits: { timeout_ms: 2000, memory_mb: 32, max_stack_depth: 128 },
+	};
+
+	const modExamples: Record<string, string> = {
+		heal: 'const hp = player.getHealth()\nconst max = player.getMaxHealth()\nlog("Current HP: " + hp + "/" + max)\nplayer.setHealth(max)\nlog("Healed to full! HP: " + player.getHealth() + "/" + max)\nreturn player.getHealth()',
+		scout: 'const level = world.getCurrentLevel()\nconst enemies = await world.getEnemies()\nlog("Scouting level " + level + "...")\nlog("Found " + enemies.length + " enemies:")\nfor (const e of enemies) {\n  log("  " + e.type + " (HP:" + e.health + ") at (" + e.position.x + "," + e.position.y + ")")\n}\nreturn enemies.length',
+		inventory: 'const items = player.getInventory()\nlog("Inventory (" + items.length + " items):")\nfor (const item of items) {\n  log("  " + item.name + " [" + item.type + "]")\n}\nplayer.addItem({ id: "potion-2", name: "Greater Potion", type: "consumable", healing: 50 })\nlog("Added Greater Potion!")\nreturn player.getInventory().length',
+		save: 'const hp = player.getHealth()\nconst pos = player.getPosition()\nawait data.set("checkpoint", hp + "|" + pos.x + "," + pos.y)\nlog("Saved checkpoint: HP=" + hp + " at (" + pos.x + "," + pos.y + ")")\nreturn "saved"',
+		load: 'const saved = await data.get("checkpoint")\nif (saved) {\n  log("Loaded checkpoint: " + saved)\n} else {\n  log("No checkpoint found. Run Save first!")\n}\nreturn saved',
+		spawn: 'log("Spawning a dragon...")\nworld.spawnEnemy("dragon", { x: 8, y: 5 })\nlog("Dragon spawned at (8, 5)!")\nreturn "spawned"',
+	};
+
+	interface Position { x: number; y: number }
+	interface Enemy { id: string; type: string; health: number; position: Position }
+	interface Item { id: string; name: string; type: string; damage?: number; healing?: number }
+
+	let nextEnemyId = 10;
+
+	const gameState = {
+		player: {
+			name: "Adventurer",
+			health: 80,
+			maxHealth: 100,
+			position: { x: 1, y: 1 } as Position,
+			inventory: [
+				{ id: "sword-1", name: "Iron Sword", type: "weapon", damage: 15 },
+				{ id: "potion-1", name: "Health Potion", type: "consumable", healing: 25 },
+			] as Item[],
+		},
+		world: {
+			currentLevel: 3,
+			enemies: [] as Enemy[],
+			grid: [] as string[][],
+		},
+		storage: new Map<string, string>(),
+	};
+
+	const enabledCapabilities = new Set(["modify-player", "storage"]);
+
+	function generateDungeon() {
+		const grid: string[][] = [];
+		for (let y = 0; y < GRID_H; y++) {
+			grid[y] = [];
+			for (let x = 0; x < GRID_W; x++) {
+				if (y === 0 || y === GRID_H - 1 || x === 0 || x === GRID_W - 1) {
+					grid[y][x] = TILE_WALL;
+				} else {
+					grid[y][x] = TILE_FLOOR;
+				}
+			}
+		}
+
+		const walls = [
+			[3, 2], [3, 3], [3, 4], [7, 1], [7, 2], [7, 3],
+			[5, 6], [5, 7], [5, 8], [10, 3], [10, 4], [10, 5],
+			[12, 1], [12, 2], [13, 6], [13, 7], [13, 8],
+			[2, 6], [8, 8], [11, 7],
+		];
+		for (const [x, y] of walls) {
+			if (x > 0 && x < GRID_W - 1 && y > 0 && y < GRID_H - 1) {
+				grid[y][x] = TILE_WALL;
+			}
+		}
+
+		grid[GRID_H - 2][GRID_W - 2] = TILE_EXIT;
+
+		gameState.world.grid = grid;
+		gameState.player.position = { x: 1, y: 1 };
+
+		gameState.world.enemies = [
+			{ id: "e1", type: "skeleton", health: 30, position: { x: 5, y: 3 } },
+			{ id: "e2", type: "goblin", health: 20, position: { x: 9, y: 2 } },
+			{ id: "e3", type: "slime", health: 10, position: { x: 4, y: 7 } },
+			{ id: "e4", type: "goblin", health: 20, position: { x: 11, y: 5 } },
+		];
+	}
+
+	function isWalkable(x: number, y: number): boolean {
+		if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H) return false;
+		return gameState.world.grid[y][x] !== TILE_WALL;
+	}
+
+	function getEnemyAt(x: number, y: number): Enemy | undefined {
+		return gameState.world.enemies.find((e) => e.position.x === x && e.position.y === y);
+	}
+
+	function addGameLog(msg: string) {
+		const logEl = document.getElementById("game-log")!;
+		const line = document.createElement("div");
+		line.className = "log-line";
+		line.textContent = msg;
+		logEl.appendChild(line);
+		logEl.scrollTop = logEl.scrollHeight;
+		while (logEl.children.length > 6) logEl.removeChild(logEl.firstChild!);
+	}
+
+	function movePlayer(dx: number, dy: number) {
+		const nx = gameState.player.position.x + dx;
+		const ny = gameState.player.position.y + dy;
+
+		const enemy = getEnemyAt(nx, ny);
+		if (enemy) {
+			const sword = gameState.player.inventory.find((i) => i.type === "weapon");
+			const damage = sword?.damage || 5;
+			enemy.health -= damage;
+			addGameLog(`Hit ${enemy.type} for ${damage} dmg!`);
+			if (enemy.health <= 0) {
+				gameState.world.enemies = gameState.world.enemies.filter((e) => e.id !== enemy.id);
+				addGameLog(`${enemy.type} defeated!`);
+			}
+			enemyTurn();
+			renderGame();
+			return;
+		}
+
+		if (!isWalkable(nx, ny)) return;
+
+		gameState.player.position.x = nx;
+		gameState.player.position.y = ny;
+
+		if (gameState.world.grid[ny][nx] === TILE_EXIT) {
+			gameState.world.currentLevel++;
+			addGameLog(`Descended to level ${gameState.world.currentLevel}!`);
+			generateDungeon();
+		}
+
+		enemyTurn();
+		renderGame();
+	}
+
+	function enemyTurn() {
+		for (const enemy of gameState.world.enemies) {
+			const dx = gameState.player.position.x - enemy.position.x;
+			const dy = gameState.player.position.y - enemy.position.y;
+			const dist = Math.abs(dx) + Math.abs(dy);
+
+			if (dist <= 1) {
+				const damage = enemy.type === "dragon" ? 20 : enemy.type === "skeleton" ? 8 : enemy.type === "goblin" ? 5 : 3;
+				gameState.player.health = Math.max(0, gameState.player.health - damage);
+				addGameLog(`${enemy.type} hits you for ${damage}!`);
+				if (gameState.player.health <= 0) {
+					addGameLog("You died! Restarting...");
+					gameState.player.health = gameState.player.maxHealth;
+					generateDungeon();
+				}
+				continue;
+			}
+
+			if (dist > 6) continue;
+
+			let mx = 0;
+			let my = 0;
+			if (Math.abs(dx) > Math.abs(dy)) {
+				mx = dx > 0 ? 1 : -1;
+			} else {
+				my = dy > 0 ? 1 : -1;
+			}
+
+			const enx = enemy.position.x + mx;
+			const eny = enemy.position.y + my;
+
+			if (isWalkable(enx, eny) && !getEnemyAt(enx, eny) && !(enx === gameState.player.position.x && eny === gameState.player.position.y)) {
+				enemy.position.x = enx;
+				enemy.position.y = eny;
+			}
+		}
+	}
+
+	function renderGame() {
+		renderHud();
+		renderGrid();
+	}
+
+	function renderHud() {
+		const hud = document.getElementById("game-hud")!;
+		const p = gameState.player;
+		const hpPct = (p.health / p.maxHealth) * 100;
+		const hpColor = hpPct > 60 ? "#4ade80" : hpPct > 30 ? "#fbbf24" : "#f87171";
+
+		hud.innerHTML = "";
+
+		const row = document.createElement("div");
+		row.className = "hud-row";
+
+		const nameEl = document.createElement("span");
+		nameEl.className = "hud-name";
+		nameEl.textContent = p.name;
+
+		const hpEl = document.createElement("span");
+		hpEl.className = "hud-hp";
+		hpEl.innerHTML = `<span class="hp-bar"><span class="hp-fill" style="width:${hpPct}%;background:${hpColor}"></span></span> ${p.health}/${p.maxHealth}`;
+
+		const lvlEl = document.createElement("span");
+		lvlEl.className = "hud-level";
+		lvlEl.textContent = `Lv.${gameState.world.currentLevel}`;
+
+		const posEl = document.createElement("span");
+		posEl.className = "hud-pos";
+		posEl.textContent = `(${p.position.x},${p.position.y})`;
+
+		const invEl = document.createElement("span");
+		invEl.className = "hud-inv";
+		invEl.textContent = `${p.inventory.length} items`;
+
+		row.appendChild(nameEl);
+		row.appendChild(hpEl);
+		row.appendChild(lvlEl);
+		row.appendChild(posEl);
+		row.appendChild(invEl);
+		hud.appendChild(row);
+	}
+
+	function renderGrid() {
+		const gridEl = document.getElementById("game-grid")!;
+		gridEl.innerHTML = "";
+
+		for (let y = 0; y < GRID_H; y++) {
+			const rowEl = document.createElement("div");
+			rowEl.className = "grid-row";
+
+			for (let x = 0; x < GRID_W; x++) {
+				const cell = document.createElement("span");
+				cell.className = "grid-cell";
+
+				if (x === gameState.player.position.x && y === gameState.player.position.y) {
+					cell.textContent = TILE_PLAYER;
+					cell.classList.add("cell-player");
+				} else {
+					const enemy = getEnemyAt(x, y);
+					if (enemy) {
+						cell.textContent = enemyGlyphs[enemy.type] || "?";
+						cell.classList.add("cell-enemy");
+						if (enemy.type === "dragon") cell.classList.add("cell-dragon");
+					} else {
+						const tile = gameState.world.grid[y][x];
+						cell.textContent = tile;
+						if (tile === TILE_WALL) cell.classList.add("cell-wall");
+						else if (tile === TILE_EXIT) cell.classList.add("cell-exit");
+						else cell.classList.add("cell-floor");
+					}
+				}
+
+				rowEl.appendChild(cell);
+			}
+
+			gridEl.appendChild(rowEl);
+		}
+	}
+
+	function createHostBindings() {
+		return {
+			log: (message: string) => addModConsole(String(message), "log"),
+			player: {
+				getName: () => gameState.player.name,
+				getHealth: () => gameState.player.health,
+				getMaxHealth: () => gameState.player.maxHealth,
+				getPosition: () => ({ ...gameState.player.position }),
+				setHealth: (value: number) => {
+					gameState.player.health = Math.max(0, Math.min(value, gameState.player.maxHealth));
+					renderGame();
+					return gameState.player.health;
+				},
+				getInventory: () => gameState.player.inventory.map((i) => ({ ...i })),
+				addItem: (item: Item) => {
+					gameState.player.inventory.push({ ...item });
+					renderGame();
+				},
+			},
+			world: {
+				getCurrentLevel: () => gameState.world.currentLevel,
+				getEnemies: async () => {
+					await delay(10);
+					return gameState.world.enemies.map((e) => ({ ...e, position: { ...e.position } }));
+				},
+				spawnEnemy: (type: string, position: Position) => {
+					const enemy = { id: "e" + nextEnemyId++, type, health: type === "dragon" ? 100 : 50, position: { ...position } };
+					gameState.world.enemies.push(enemy);
+					renderGame();
+					return enemy;
+				},
+			},
+			data: {
+				get: async (key: string) => {
+					await delay(5);
+					return gameState.storage.get(key) ?? undefined;
+				},
+				set: async (key: string, value: string) => {
+					await delay(5);
+					gameState.storage.set(key, value);
+				},
+			},
+		};
+	}
+
+	function delay(ms: number) {
+		return new Promise((resolve) => setTimeout(resolve, ms));
+	}
+
+	const riskColors: Record<string, string> = {
+		low: "#4ade80",
+		medium: "#fbbf24",
+		high: "#f87171",
+	};
+
+	function renderCapabilities() {
+		const el = document.getElementById("dungeon-cap-toggles")!;
+		el.innerHTML = "";
+		for (const [name, cap] of Object.entries(manifest.capabilities) as [string, { description: string; risk: string }][]) {
+			const enabled = enabledCapabilities.has(name);
+			const toggle = document.createElement("label");
+			toggle.className = enabled ? "cap-toggle enabled" : "cap-toggle";
+
+			const checkbox = document.createElement("input");
+			checkbox.type = "checkbox";
+			checkbox.checked = enabled;
+			checkbox.addEventListener("change", () => {
+				checkbox.checked ? enabledCapabilities.add(name) : enabledCapabilities.delete(name);
+				renderCapabilities();
+			});
+
+			const info = document.createElement("span");
+			info.className = "cap-info";
+
+			const nameSpan = document.createElement("span");
+			nameSpan.className = "cap-name";
+			nameSpan.textContent = name;
+
+			const riskSpan = document.createElement("span");
+			riskSpan.className = "cap-risk";
+			riskSpan.textContent = cap.risk;
+			riskSpan.style.color = riskColors[cap.risk] || "#94a3b8";
+
+			info.appendChild(nameSpan);
+			info.appendChild(riskSpan);
+			toggle.appendChild(checkbox);
+			toggle.appendChild(info);
+			el.appendChild(toggle);
+		}
+	}
+
+	function addModConsole(text: string, level: "log" | "error" | "result") {
+		const el = document.getElementById("mod-console")!;
+		const placeholder = el.querySelector(".output-placeholder");
+		if (placeholder) placeholder.remove();
+
+		const line = document.createElement("div");
+		line.className = `console-line ${level}`;
+		const prefix = level === "log" ? "[log] " : level === "error" ? "[error] " : "=> ";
+		line.textContent = `${prefix}${text}`;
+		el.appendChild(line);
+		el.scrollTop = el.scrollHeight;
+	}
+
+	async function boot() {
+		try {
+			const xriptFactory = await initXriptAsync();
+
+			const loadingEl = document.getElementById("dungeon-loading")!;
+			const containerEl = document.getElementById("dungeon-container")!;
+
+			loadingEl.style.display = "none";
+			containerEl.style.display = "grid";
+
+			generateDungeon();
+			renderGame();
+			renderCapabilities();
+
+			const modEditor = document.getElementById("mod-editor") as HTMLTextAreaElement;
+			const modSelect = document.getElementById("mod-select") as HTMLSelectElement;
+			const runBtn = document.getElementById("run-mod-btn")!;
+			const clearBtn = document.getElementById("dungeon-clear-btn")!;
+
+			modEditor.value = modExamples.heal;
+
+			modSelect.addEventListener("change", () => {
+				if (modSelect.value && modExamples[modSelect.value]) {
+					modEditor.value = modExamples[modSelect.value];
+				}
+			});
+
+			async function runMod() {
+				const code = modEditor.value.trim();
+				if (!code) return;
+
+				addModConsole("--- running mod ---", "log");
+
+				let runtime = null;
+				try {
+					runtime = await xriptFactory.createRuntime(manifest, {
+						hostBindings: createHostBindings(),
+						capabilities: Array.from(enabledCapabilities),
+						console: {
+							log: (...args: unknown[]) => addModConsole(args.join(" "), "log"),
+							warn: (...args: unknown[]) => addModConsole(args.join(" "), "log"),
+							error: (...args: unknown[]) => addModConsole(args.join(" "), "error"),
+						},
+					});
+
+					const result = await runtime.executeAsync(code);
+					if (result.value !== undefined) {
+						addModConsole(JSON.stringify(result.value), "result");
+					}
+					addModConsole(`${result.duration_ms.toFixed(1)}ms`, "log");
+				} catch (err: any) {
+					addModConsole(err.message, "error");
+				} finally {
+					if (runtime) runtime.dispose();
+				}
+
+				renderGame();
+			}
+
+			runBtn.addEventListener("click", runMod);
+
+			modEditor.addEventListener("keydown", (e: KeyboardEvent) => {
+				if (e.key === "Enter" && e.ctrlKey) {
+					e.preventDefault();
+					runMod();
+				}
+				if (e.key === "Tab") {
+					e.preventDefault();
+					const start = modEditor.selectionStart;
+					const end = modEditor.selectionEnd;
+					modEditor.value = modEditor.value.substring(0, start) + "  " + modEditor.value.substring(end);
+					modEditor.selectionStart = modEditor.selectionEnd = start + 2;
+				}
+			});
+
+			clearBtn.addEventListener("click", () => {
+				const el = document.getElementById("mod-console")!;
+				el.innerHTML = '<div class="output-placeholder">Run a mod to see output here.</div>';
+			});
+
+			document.addEventListener("keydown", (e: KeyboardEvent) => {
+				if (document.activeElement === modEditor) return;
+
+				switch (e.key) {
+					case "ArrowUp":
+					case "w":
+					case "W":
+						e.preventDefault();
+						movePlayer(0, -1);
+						break;
+					case "ArrowDown":
+					case "s":
+					case "S":
+						e.preventDefault();
+						movePlayer(0, 1);
+						break;
+					case "ArrowLeft":
+					case "a":
+					case "A":
+						e.preventDefault();
+						movePlayer(-1, 0);
+						break;
+					case "ArrowRight":
+					case "d":
+					case "D":
+						e.preventDefault();
+						movePlayer(1, 0);
+						break;
+				}
+			});
+
+			addGameLog(`Welcome to level ${gameState.world.currentLevel}!`);
+			addGameLog("Use arrow keys or WASD to move.");
+		} catch (err: any) {
+			const loadingEl = document.getElementById("dungeon-loading")!;
+			loadingEl.innerHTML = `<p style="color: #f87171;">Failed to load: ${err.message}</p>`;
+		}
+	}
+
+	boot();
+</script>
+
+<style>
+	#dungeon-modding {
+		margin-top: 1rem;
+	}
+
+	.dungeon-loading {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		padding: 4rem 2rem;
+		color: var(--sl-color-gray-2);
+	}
+
+	.loading-spinner {
+		width: 2rem;
+		height: 2rem;
+		border: 3px solid var(--sl-color-gray-5);
+		border-top-color: var(--sl-color-accent);
+		border-radius: 50%;
+		animation: spin 0.8s linear infinite;
+		margin-bottom: 1rem;
+	}
+
+	@keyframes spin {
+		to { transform: rotate(360deg); }
+	}
+
+	.dungeon-container {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 1rem;
+		min-height: 500px;
+	}
+
+	@media (max-width: 900px) {
+		.dungeon-container {
+			grid-template-columns: 1fr;
+		}
+	}
+
+	.panel {
+		background: var(--sl-color-gray-6);
+		border: 1px solid var(--sl-color-gray-5);
+		border-radius: 0.5rem;
+		overflow: hidden;
+	}
+
+	.panel-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 0.5rem 0.75rem;
+		border-bottom: 1px solid var(--sl-color-gray-5);
+		background: var(--sl-color-black);
+	}
+
+	.panel-header h3 {
+		margin: 0;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--sl-color-gray-2);
+	}
+
+	.panel-badge {
+		font-size: 0.6875rem;
+		color: var(--sl-color-gray-3);
+		font-family: var(--sl-font-mono);
+	}
+
+	.game-panel {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.game-hud {
+		padding: 0.375rem 0.75rem;
+		border-bottom: 1px solid var(--sl-color-gray-5);
+		font-family: var(--sl-font-mono);
+		font-size: 0.75rem;
+	}
+
+	:global(.hud-row) {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		flex-wrap: wrap;
+	}
+
+	:global(.hud-name) {
+		color: var(--sl-color-accent);
+		font-weight: 600;
+	}
+
+	:global(.hud-hp) {
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+		color: var(--sl-color-gray-2);
+	}
+
+	:global(.hp-bar) {
+		display: inline-block;
+		width: 60px;
+		height: 8px;
+		background: var(--sl-color-gray-5);
+		border-radius: 4px;
+		overflow: hidden;
+	}
+
+	:global(.hp-fill) {
+		display: block;
+		height: 100%;
+		border-radius: 4px;
+		transition: width 0.3s, background-color 0.3s;
+	}
+
+	:global(.hud-level) {
+		color: var(--sl-color-gray-3);
+	}
+
+	:global(.hud-pos) {
+		color: var(--sl-color-gray-4);
+	}
+
+	:global(.hud-inv) {
+		color: var(--sl-color-gray-4);
+	}
+
+	.game-grid {
+		padding: 0.5rem;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		background: var(--sl-color-black);
+		flex: 1;
+	}
+
+	:global(.grid-row) {
+		display: flex;
+		line-height: 1;
+	}
+
+	:global(.grid-cell) {
+		width: 1.5rem;
+		height: 1.5rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-family: var(--sl-font-mono);
+		font-size: 0.875rem;
+		font-weight: 700;
+	}
+
+	:global(.cell-wall) {
+		color: var(--sl-color-gray-4);
+	}
+
+	:global(.cell-floor) {
+		color: var(--sl-color-gray-5);
+	}
+
+	:global(.cell-player) {
+		color: var(--sl-color-accent);
+		text-shadow: 0 0 6px var(--sl-color-accent);
+	}
+
+	:global(.cell-enemy) {
+		color: #f87171;
+	}
+
+	:global(.cell-dragon) {
+		color: #fb923c;
+		text-shadow: 0 0 6px rgba(251, 146, 60, 0.5);
+	}
+
+	:global(.cell-exit) {
+		color: #4ade80;
+		text-shadow: 0 0 4px rgba(74, 222, 128, 0.5);
+	}
+
+	.game-log {
+		padding: 0.375rem 0.75rem;
+		border-top: 1px solid var(--sl-color-gray-5);
+		font-family: var(--sl-font-mono);
+		font-size: 0.6875rem;
+		color: var(--sl-color-gray-3);
+		max-height: 80px;
+		overflow-y: auto;
+	}
+
+	:global(.log-line) {
+		padding: 0.0625rem 0;
+	}
+
+	.dungeon-right {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+
+	.cap-panel .cap-toggles {
+		display: flex;
+		gap: 0.5rem;
+		padding: 0.5rem;
+		flex-wrap: wrap;
+	}
+
+	:global(.cap-toggle) {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.375rem;
+		margin: 0;
+		padding: 0.375rem 0.5rem;
+		background: var(--sl-color-black);
+		border: 1px solid var(--sl-color-gray-5);
+		border-radius: 0.25rem;
+		cursor: pointer;
+		transition: border-color 0.15s;
+		font-size: 0.75rem;
+	}
+
+	:global(.cap-toggle:hover) {
+		border-color: var(--sl-color-gray-3);
+	}
+
+	:global(.cap-toggle.enabled) {
+		border-color: var(--sl-color-accent);
+	}
+
+	:global(.cap-toggle input[type="checkbox"]) {
+		margin-top: 0.0625rem;
+		accent-color: var(--sl-color-accent);
+	}
+
+	:global(.cap-info) {
+		display: flex;
+		flex-direction: column;
+		gap: 0.0625rem;
+	}
+
+	:global(.cap-name) {
+		font-family: var(--sl-font-mono);
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--sl-color-white);
+	}
+
+	:global(.cap-risk) {
+		font-size: 0.625rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	.editor-panel {
+		display: flex;
+		flex-direction: column;
+		flex: 1;
+	}
+
+	.panel-header select {
+		font-family: var(--sl-font-mono);
+		font-size: 0.6875rem;
+		padding: 0.125rem 0.375rem;
+		background: var(--sl-color-gray-5);
+		color: var(--sl-color-gray-2);
+		border: 1px solid var(--sl-color-gray-4);
+		border-radius: 0.25rem;
+		cursor: pointer;
+	}
+
+	#mod-editor {
+		flex: 1;
+		font-family: var(--sl-font-mono);
+		font-size: 0.75rem;
+		padding: 0.5rem;
+		background: var(--sl-color-black);
+		color: var(--sl-color-white);
+		border: none;
+		resize: none;
+		outline: none;
+		line-height: 1.5;
+		tab-size: 2;
+		min-height: 120px;
+	}
+
+	.editor-footer {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 0.375rem 0.5rem;
+		border-top: 1px solid var(--sl-color-gray-5);
+	}
+
+	.editor-hint {
+		font-size: 0.625rem;
+		color: var(--sl-color-gray-4);
+	}
+
+	.run-button {
+		padding: 0.25rem 0.75rem;
+		background: var(--sl-color-accent);
+		color: var(--sl-color-black);
+		border: none;
+		border-radius: 0.25rem;
+		font-weight: 600;
+		font-size: 0.75rem;
+		cursor: pointer;
+		transition: opacity 0.15s;
+	}
+
+	.run-button:hover {
+		opacity: 0.85;
+	}
+
+	.clear-button {
+		font-size: 0.625rem;
+		padding: 0.0625rem 0.375rem;
+		background: transparent;
+		color: var(--sl-color-gray-3);
+		border: 1px solid var(--sl-color-gray-4);
+		border-radius: 0.25rem;
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.clear-button:hover {
+		color: var(--sl-color-white);
+		border-color: var(--sl-color-gray-3);
+	}
+
+	.console-panel {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.mod-console {
+		padding: 0.5rem;
+		min-height: 80px;
+		max-height: 150px;
+		overflow-y: auto;
+		font-family: var(--sl-font-mono);
+		font-size: 0.6875rem;
+		line-height: 1.4;
+	}
+
+	:global(.output-placeholder) {
+		color: var(--sl-color-gray-3);
+		font-style: italic;
+		font-family: var(--sl-font);
+		font-size: 0.75rem;
+	}
+
+	:global(.console-line) {
+		padding: 0.0625rem 0;
+		white-space: pre-wrap;
+		word-break: break-all;
+	}
+
+	:global(.console-line.log) {
+		color: var(--sl-color-gray-2);
+	}
+
+	:global(.console-line.error) {
+		color: #f87171;
+	}
+
+	:global(.console-line.result) {
+		color: var(--sl-color-accent);
+	}
+</style>

@@ -61,5 +61,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: build runtime-js
+        run: npm run build --workspace=runtimes/js
       - name: build docs
         run: npm run docs:build
