@@ -5,11 +5,11 @@ description: Node.js-optimized xript runtime with file-based manifest loading an
 
 The Node.js runtime (`@xript/runtime-node`) executes user scripts inside a sandboxed Node.js `vm` context. It provides `createRuntimeFromFile` for loading manifests directly from disk and full JSON Schema validation via `@xript/manifest-validator`. Use this runtime when your application runs exclusively on Node.js and you want file-based workflows or stricter manifest validation.
 
-For applications that need to run in browsers, Deno, Bun, or other environments, use the [universal runtime](/tools/runtime) (`@xript/runtime-js`) instead.
+For applications that need to run in browsers, Deno, Bun, or other environments, use the [universal runtime](/tools/runtime) (`@xript/runtime`) instead.
 
 ## When to Use Which Runtime
 
-| | Universal (`@xript/runtime-js`) | Node.js (`@xript/runtime-node`) |
+| | Universal (`@xript/runtime`) | Node.js (`@xript/runtime-node`) |
 |---|---|---|
 | **Sandbox** | QuickJS WASM | Node.js `vm` module |
 | **Environments** | Browser, Node, Deno, Bun, Workers | Node.js only |

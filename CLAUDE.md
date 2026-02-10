@@ -12,7 +12,7 @@ This is a monorepo managed via npm workspaces.
 xript/
 ├── spec/           # the specification (manifest schema, capability model, etc.)
 ├── runtimes/       # language-specific runtime implementations
-│   ├── js/         # universal runtime (@xript/runtime-js, QuickJS WASM sandbox)
+│   ├── js/         # universal runtime (@xript/runtime, QuickJS WASM sandbox)
 │   └── node/       # Node.js-optimized runtime (@xript/runtime-node, vm-based)
 ├── tools/          # ecosystem tooling (validator, typegen, docgen)
 ├── docs/           # documentation site (Astro + Starlight), deployed to xript.dev
@@ -21,7 +21,7 @@ xript/
 
 ## Tech Stack
 
-- **Docs site**: Astro with Starlight, deployed to GitHub Pages via GitHub Actions (live demos depend on `@xript/runtime-js` -- CI builds the runtime before docs)
+- **Docs site**: Astro with Starlight, deployed to GitHub Pages via GitHub Actions (live demos depend on `@xript/runtime` -- CI builds the runtime before docs)
 - **Package management**: npm workspaces
 - **Language**: TypeScript throughout
 - **Runtime sandbox (js)**: QuickJS compiled to WASM via `quickjs-emscripten` — runs in browser, Node, Deno, and more
@@ -72,10 +72,10 @@ node examples/game-mod-system/src/demo.js        # tier 3 demo
 All v0.1 milestones are complete:
 
 - **Spec v0.1**: manifest schema (JSON Schema draft 2020-12), capability model, binding conventions, and security guarantees documented in `spec/`
-- **Universal Runtime**: `@xript/runtime-js` in `runtimes/js/` -- QuickJS WASM sandbox with capability enforcement, 58 tests (36 unit + 22 integration)
+- **Universal Runtime**: `@xript/runtime` in `runtimes/js/` -- QuickJS WASM sandbox with capability enforcement, 58 tests (36 unit + 22 integration)
 - **Node.js Runtime**: `@xript/runtime-node` in `runtimes/node/` -- Node.js vm-based sandbox with `createRuntimeFromFile` and full schema validation, 60 tests
 - **Toolchain**: manifest validator, type generator, and doc generator all built and tested in `tools/` (45 tests across 3 packages)
-- **Developer Experience**: docs site at xript.dev (20 pages), getting started guide, runtime API reference, three example walkthroughs, three interactive live demos (browser-only QuickJS WASM), CI with smoke tests
+- **Developer Experience**: docs site at xript.dev (19 pages), getting started guide, runtime API reference, three example walkthroughs, three interactive live demos (browser-only QuickJS WASM), CI with smoke tests
 - **Hardening**: integration tests, manifest validation in runtime, example smoke tests in CI
 
 Total test count: 163 across 6 packages. All green.

@@ -1,5 +1,5 @@
 {
-	"name": "@xript/runtime-js",
+	"name": "@xript/runtime",
 	"version": "0.2.0",
 	"description": "Universal JavaScript runtime for xript — QuickJS WASM sandbox for browser, Node, Deno, and more.",
 	"type": "module",

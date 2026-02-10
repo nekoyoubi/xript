@@ -4,6 +4,7 @@ import starlight from "@astrojs/starlight";
 
 export default defineConfig({
 	site: "https://xript.dev",
+	prefetch: false,
 	integrations: [
 		starlight({
 			title: "xript",
@@ -98,7 +99,7 @@ export default defineConfig({
 	],
 	vite: {
 		optimizeDeps: {
-			exclude: ["@xript/runtime-js", "quickjs-emscripten"],
+			exclude: ["@xript/runtime", "quickjs-emscripten"],
 		},
 	},
 	server: {
