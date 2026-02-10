@@ -91,6 +91,16 @@ const result = await runtime.executeAsync("return await data.get('score');");
 
 `executeAsync` wraps code in an async function. Use `return` and `await` as needed.
 
+## Cleanup
+
+Call `dispose()` when you are done with a runtime:
+
+```javascript
+runtime.dispose();
+```
+
+The Node.js runtime does not require explicit cleanup, but `dispose()` is provided for API parity with the universal runtime. Code written against one runtime works identically on the other.
+
 ## Error Types
 
 The Node.js runtime exports the same error classes as the universal runtime:

@@ -434,6 +434,20 @@ describe("manifest validation", () => {
 	});
 });
 
+describe("dispose", () => {
+	it("is callable without throwing", () => {
+		const runtime = createRuntime(minimalManifest, { hostBindings: {} });
+		runtime.execute("1 + 1");
+		runtime.dispose();
+	});
+
+	it("can be called multiple times", () => {
+		const runtime = createRuntime(minimalManifest, { hostBindings: {} });
+		runtime.dispose();
+		runtime.dispose();
+	});
+});
+
 describe("createRuntimeFromFile validation", () => {
 	it("validates manifest by default", async () => {
 		const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
