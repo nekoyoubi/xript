@@ -28,7 +28,7 @@
 				</div>
 				<div class="try-these">
 					<span class="try-label">Try these:</span>
-					<button class="try-btn" data-expr="clamp(42, 0, 10)">clamp(42, 0, 10)</button>
+					<button class="try-btn" data-expr='slugify("I&apos;m some COOL string!!")'>slugify</button>
 					<button class="try-btn" data-expr='upper("hello") + " " + lower("WORLD")'>upper + lower</button>
 					<button class="try-btn" data-expr="abs(min(-3, -7))">abs(min(-3, -7))</button>
 					<button class="try-btn" data-expr='concat(upper("xr"), lower("IPT"))'>concat names</button>
@@ -68,6 +68,7 @@
 			lower: { description: "Converts a string to lowercase.", params: [{ name: "s", type: "string" }], returns: "string" },
 			len: { description: "Returns the length of a string.", params: [{ name: "s", type: "string" }], returns: "number" },
 			concat: { description: "Concatenates two strings.", params: [{ name: "a", type: "string" }, { name: "b", type: "string" }], returns: "string" },
+		slugify: { description: "Converts a string to a URL-friendly slug.", params: [{ name: "s", type: "string" }], returns: "string" },
 		},
 	};
 
@@ -85,6 +86,7 @@
 		lower: (s: string) => String(s).toLowerCase(),
 		len: (s: string) => String(s).length,
 		concat: (a: string, b: string) => String(a) + String(b),
+		slugify: (s: string) => String(s).toLowerCase().replace(/[^\w\s-]/g, "").trim().replace(/[\s_]+/g, "-").replace(/-+/g, "-"),
 	};
 
 	const enabledBindings = new Set(Object.keys(manifest.bindings));
