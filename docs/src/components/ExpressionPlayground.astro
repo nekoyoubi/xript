@@ -28,10 +28,10 @@
 				</div>
 				<div class="try-these">
 					<span class="try-label">Try these:</span>
-					<button class="try-btn" data-expr='slugify("I&apos;m some COOL string!!")'>slugify</button>
+					<button class="try-btn" data-expr="clamp(42, 0, 10)">clamp(42, 0, 10)</button>
 					<button class="try-btn" data-expr='upper("hello") + " " + lower("WORLD")'>upper + lower</button>
 					<button class="try-btn" data-expr="abs(min(-3, -7))">abs(min(-3, -7))</button>
-					<button class="try-btn" data-expr='concat(upper("xr"), lower("IPT"))'>concat names</button>
+					<button class="try-btn" data-expr='slugify("I&apos;m some COOL string!!")'>slugify</button>
 				</div>
 			</div>
 			<div class="panel output-panel">
@@ -441,7 +441,7 @@
 		flex-wrap: wrap;
 		gap: 0.375rem;
 		padding: 0 0.75rem 0.75rem;
-		align-items: center;
+		align-items: baseline;
 	}
 
 	.try-label {
