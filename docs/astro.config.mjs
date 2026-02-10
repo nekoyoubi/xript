@@ -67,6 +67,23 @@ export default defineConfig({
 						},
 					],
 				},
+				{
+					label: "Live Demos",
+					items: [
+						{
+							label: "Expression Playground",
+							slug: "demos/expression-playground",
+						},
+						{
+							label: "Plugin Workshop",
+							slug: "demos/plugin-workshop",
+						},
+						{
+							label: "Dungeon Modding",
+							slug: "demos/dungeon-modding",
+						},
+					],
+				},
 			],
 			customCss: [
 				"@fontsource-variable/inter",
@@ -79,6 +96,11 @@ export default defineConfig({
 			},
 		}),
 	],
+	vite: {
+		optimizeDeps: {
+			exclude: ["@xript/runtime-js", "quickjs-emscripten"],
+		},
+	},
 	server: {
 		port: 4351,
 	},
