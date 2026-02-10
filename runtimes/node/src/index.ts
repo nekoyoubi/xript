@@ -46,6 +46,7 @@ export interface XriptRuntime {
 	readonly manifest: Manifest;
 	execute(code: string): ExecutionResult;
 	executeAsync(code: string): Promise<ExecutionResult>;
+	dispose(): void;
 }
 
 function checkBasicStructure(manifest: unknown): Manifest {
@@ -108,6 +109,7 @@ export function createRuntime(manifest: unknown, options: RuntimeOptions): Xript
 		manifest: m,
 		execute: sandbox.execute,
 		executeAsync: sandbox.executeAsync,
+		dispose() {},
 	};
 }
 
