@@ -1,0 +1,543 @@
+---
+---
+
+<div id="expression-playground">
+	<div class="playground-loading" id="playground-loading">
+		<div class="loading-spinner"></div>
+		<p>Loading xript sandbox...</p>
+	</div>
+	<div class="playground-container" id="playground-container" style="display:none">
+		<div class="playground-left">
+			<div class="panel">
+				<div class="panel-header">
+					<h3>Manifest Bindings</h3>
+					<span class="panel-badge">toggle to enable/disable</span>
+				</div>
+				<div class="bindings-list" id="bindings-list"></div>
+			</div>
+		</div>
+		<div class="playground-right">
+			<div class="panel">
+				<div class="panel-header">
+					<h3>Expression</h3>
+					<span class="panel-badge" id="status-badge">ready</span>
+				</div>
+				<div class="input-row">
+					<textarea id="expression-input" rows="1" placeholder="Type a JavaScript expression..." spellcheck="false" autocomplete="off"></textarea>
+					<button id="run-btn" class="run-button">Run</button>
+				</div>
+				<div class="try-these">
+					<span class="try-label">Try these:</span>
+					<button class="try-btn" data-expr="clamp(42, 0, 10)">clamp(42, 0, 10)</button>
+					<button class="try-btn" data-expr='upper("hello") + " " + lower("WORLD")'>upper + lower</button>
+					<button class="try-btn" data-expr="abs(min(-3, -7))">abs(min(-3, -7))</button>
+					<button class="try-btn" data-expr='concat(upper("xr"), lower("IPT"))'>concat names</button>
+				</div>
+			</div>
+			<div class="panel output-panel">
+				<div class="panel-header">
+					<h3>Output</h3>
+					<button id="clear-btn" class="clear-button">Clear</button>
+				</div>
+				<div class="output-area" id="output-area">
+					<div class="output-placeholder">Run an expression to see results here.</div>
+				</div>
+			</div>
+		</div>
+	</div>
+</div>
+
+<script>
+	import { initXript } from "@xript/runtime-js";
+
+	const manifest = {
+		xript: "0.1",
+		name: "expression-evaluator",
+		version: "1.0.0",
+		title: "Expression Evaluator",
+		description: "Safe expression evaluation in a sandboxed environment.",
+		bindings: {
+			abs: { description: "Returns the absolute value of a number.", params: [{ name: "x", type: "number" }], returns: "number" },
+			round: { description: "Rounds a number to the nearest integer.", params: [{ name: "x", type: "number" }], returns: "number" },
+			floor: { description: "Rounds down to nearest integer.", params: [{ name: "x", type: "number" }], returns: "number" },
+			ceil: { description: "Rounds up to nearest integer.", params: [{ name: "x", type: "number" }], returns: "number" },
+			min: { description: "Returns the smaller of two numbers.", params: [{ name: "a", type: "number" }, { name: "b", type: "number" }], returns: "number" },
+			max: { description: "Returns the larger of two numbers.", params: [{ name: "a", type: "number" }, { name: "b", type: "number" }], returns: "number" },
+			clamp: { description: "Clamps a value between min and max.", params: [{ name: "value", type: "number" }, { name: "lo", type: "number" }, { name: "hi", type: "number" }], returns: "number" },
+			upper: { description: "Converts a string to uppercase.", params: [{ name: "s", type: "string" }], returns: "string" },
+			lower: { description: "Converts a string to lowercase.", params: [{ name: "s", type: "string" }], returns: "string" },
+			len: { description: "Returns the length of a string.", params: [{ name: "s", type: "string" }], returns: "number" },
+			concat: { description: "Concatenates two strings.", params: [{ name: "a", type: "string" }, { name: "b", type: "string" }], returns: "string" },
+		},
+	};
+
+	type BindingDef = { description: string; params?: Array<{ name: string; type: string }>; returns?: string };
+
+	const allHostBindings: Record<string, (...args: any[]) => any> = {
+		abs: (x: number) => Math.abs(x),
+		round: (x: number) => Math.round(x),
+		floor: (x: number) => Math.floor(x),
+		ceil: (x: number) => Math.ceil(x),
+		min: (a: number, b: number) => Math.min(a, b),
+		max: (a: number, b: number) => Math.max(a, b),
+		clamp: (value: number, lo: number, hi: number) => Math.min(Math.max(value, lo), hi),
+		upper: (s: string) => String(s).toUpperCase(),
+		lower: (s: string) => String(s).toLowerCase(),
+		len: (s: string) => String(s).length,
+		concat: (a: string, b: string) => String(a) + String(b),
+	};
+
+	const enabledBindings = new Set(Object.keys(manifest.bindings));
+	const loadingEl = document.getElementById("playground-loading")!;
+	const containerEl = document.getElementById("playground-container")!;
+	const bindingsListEl = document.getElementById("bindings-list")!;
+	const expressionInput = document.getElementById("expression-input") as HTMLTextAreaElement;
+	const runBtn = document.getElementById("run-btn")!;
+	const clearBtn = document.getElementById("clear-btn")!;
+	const outputArea = document.getElementById("output-area")!;
+	const statusBadge = document.getElementById("status-badge")!;
+
+	function formatParams(params?: Array<{ name: string; type: string }>) {
+		if (!params) return "()";
+		return "(" + params.map((p) => p.name).join(", ") + ")";
+	}
+
+	function renderBindings() {
+		bindingsListEl.innerHTML = "";
+		for (const [name, binding] of Object.entries(manifest.bindings) as [string, BindingDef][]) {
+			const enabled = enabledBindings.has(name);
+			const item = document.createElement("div");
+			item.className = "binding-item";
+
+			const checkbox = document.createElement("input");
+			checkbox.type = "checkbox";
+			checkbox.className = "binding-toggle";
+			checkbox.checked = enabled;
+			checkbox.addEventListener("change", () => {
+				if (checkbox.checked) {
+					enabledBindings.add(name);
+				} else {
+					enabledBindings.delete(name);
+				}
+				renderBindings();
+			});
+
+			const info = document.createElement("div");
+			info.className = "binding-info";
+
+			const nameEl = document.createElement("div");
+			nameEl.className = "binding-name" + (enabled ? "" : " disabled");
+			nameEl.textContent = name + formatParams(binding.params);
+
+			const descEl = document.createElement("div");
+			descEl.className = "binding-desc";
+			descEl.textContent = binding.description;
+
+			info.appendChild(nameEl);
+			info.appendChild(descEl);
+			item.appendChild(checkbox);
+			item.appendChild(info);
+			bindingsListEl.appendChild(item);
+		}
+	}
+
+	function formatValue(val: unknown): string {
+		if (val === undefined) return "undefined";
+		if (val === null) return "null";
+		if (typeof val === "string") return JSON.stringify(val);
+		if (typeof val === "object") return JSON.stringify(val);
+		return String(val);
+	}
+
+	function addOutput(expression: string, result: unknown, isError: boolean, durationMs?: number) {
+		const placeholder = outputArea.querySelector(".output-placeholder");
+		if (placeholder) placeholder.remove();
+
+		const entry = document.createElement("div");
+		entry.className = "output-entry";
+
+		const exprEl = document.createElement("div");
+		exprEl.className = "output-expr";
+		exprEl.textContent = expression;
+
+		const resultEl = document.createElement("div");
+		resultEl.className = "output-result " + (isError ? "error" : "success");
+		resultEl.textContent = isError ? "ERROR: " + result : formatValue(result);
+
+		entry.appendChild(exprEl);
+		entry.appendChild(resultEl);
+
+		if (durationMs !== undefined) {
+			const timeEl = document.createElement("div");
+			timeEl.className = "output-time";
+			timeEl.textContent = durationMs.toFixed(1) + "ms";
+			entry.appendChild(timeEl);
+		}
+
+		outputArea.appendChild(entry);
+		outputArea.scrollTop = outputArea.scrollHeight;
+	}
+
+	async function boot() {
+		try {
+			const xriptFactory = await initXript();
+
+			loadingEl.style.display = "none";
+			containerEl.style.display = "grid";
+			statusBadge.textContent = "ready";
+			renderBindings();
+
+			function runExpression() {
+				const expression = expressionInput.value.trim();
+				if (!expression) return;
+
+				const activeManifest = JSON.parse(JSON.stringify(manifest));
+				const activeHostBindings: Record<string, (...args: any[]) => any> = {};
+				const activeBindings: Record<string, unknown> = {};
+
+				for (const name of enabledBindings) {
+					activeBindings[name] = manifest.bindings[name as keyof typeof manifest.bindings];
+					activeHostBindings[name] = allHostBindings[name];
+				}
+				activeManifest.bindings = activeBindings;
+
+				let runtime = null;
+				try {
+					runtime = xriptFactory.createRuntime(activeManifest, {
+						hostBindings: activeHostBindings,
+						console: {
+							log: (...args: unknown[]) => addOutput("console.log", args.join(" "), false),
+							warn: (...args: unknown[]) => addOutput("console.warn", args.join(" "), false),
+							error: (...args: unknown[]) => addOutput("console.error", args.join(" "), true),
+						},
+					});
+
+					const result = runtime.execute(expression);
+					addOutput(expression, result.value, false, result.duration_ms);
+				} catch (err: any) {
+					addOutput(expression, err.message, true);
+				} finally {
+					if (runtime) runtime.dispose();
+				}
+			}
+
+			runBtn.addEventListener("click", runExpression);
+
+			expressionInput.addEventListener("keydown", (e: KeyboardEvent) => {
+				if (e.key === "Enter" && !e.shiftKey) {
+					e.preventDefault();
+					runExpression();
+				}
+			});
+
+			clearBtn.addEventListener("click", () => {
+				outputArea.innerHTML = '<div class="output-placeholder">Run an expression to see results here.</div>';
+			});
+
+			document.querySelectorAll(".try-btn").forEach((btn) => {
+				btn.addEventListener("click", () => {
+					expressionInput.value = (btn as HTMLElement).dataset.expr || "";
+					expressionInput.focus();
+				});
+			});
+		} catch (err: any) {
+			loadingEl.innerHTML = '<p style="color: #f87171;">Failed to load xript sandbox: ' + err.message + "</p>";
+		}
+	}
+
+	boot();
+</script>
+
+<style>
+	#expression-playground {
+		margin-top: 1rem;
+	}
+
+	.playground-loading {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		padding: 4rem 2rem;
+		color: var(--sl-color-gray-2);
+	}
+
+	.loading-spinner {
+		width: 2rem;
+		height: 2rem;
+		border: 3px solid var(--sl-color-gray-5);
+		border-top-color: var(--sl-color-accent);
+		border-radius: 50%;
+		animation: spin 0.8s linear infinite;
+		margin-bottom: 1rem;
+	}
+
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
+	.playground-container {
+		display: grid;
+		grid-template-columns: 320px 1fr;
+		gap: 1rem;
+		min-height: 500px;
+	}
+
+	@media (max-width: 768px) {
+		.playground-container {
+			grid-template-columns: 1fr;
+		}
+	}
+
+	.panel {
+		background: var(--sl-color-gray-6);
+		border: 1px solid var(--sl-color-gray-5);
+		border-radius: 0.5rem;
+		overflow: hidden;
+	}
+
+	.panel-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 0.625rem 0.875rem;
+		border-bottom: 1px solid var(--sl-color-gray-5);
+		background: var(--sl-color-black);
+	}
+
+	.panel-header h3 {
+		margin: 0;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--sl-color-gray-2);
+	}
+
+	.panel-badge {
+		font-size: 0.6875rem;
+		color: var(--sl-color-gray-3);
+		font-family: var(--sl-font-mono);
+	}
+
+	.bindings-list {
+		padding: 0.5rem;
+		max-height: 450px;
+		overflow-y: auto;
+	}
+
+	:global(.binding-item) {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.5rem;
+		padding: 0.375rem 0.5rem;
+		border-radius: 0.375rem;
+		transition: background-color 0.15s;
+	}
+
+	:global(.binding-item:hover) {
+		background: var(--sl-color-gray-5);
+	}
+
+	:global(.binding-toggle) {
+		appearance: none;
+		width: 1rem;
+		height: 1rem;
+		border: 2px solid var(--sl-color-gray-3);
+		border-radius: 0.25rem;
+		cursor: pointer;
+		flex-shrink: 0;
+		margin-top: 0.125rem;
+		background: transparent;
+		transition: all 0.15s;
+	}
+
+	:global(.binding-toggle:checked) {
+		background: var(--sl-color-accent);
+		border-color: var(--sl-color-accent);
+	}
+
+	:global(.binding-info) {
+		flex: 1;
+		min-width: 0;
+	}
+
+	:global(.binding-name) {
+		font-family: var(--sl-font-mono);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: var(--sl-color-white);
+	}
+
+	:global(.binding-name.disabled) {
+		color: var(--sl-color-gray-3);
+		text-decoration: line-through;
+	}
+
+	:global(.binding-desc) {
+		font-size: 0.6875rem;
+		color: var(--sl-color-gray-3);
+		line-height: 1.4;
+	}
+
+	.playground-right {
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+	}
+
+	.input-row {
+		display: flex;
+		gap: 0.5rem;
+		padding: 0.75rem;
+	}
+
+	#expression-input {
+		flex: 1;
+		font-family: var(--sl-font-mono);
+		font-size: 0.875rem;
+		padding: 0.5rem 0.75rem;
+		background: var(--sl-color-black);
+		color: var(--sl-color-white);
+		border: 1px solid var(--sl-color-gray-4);
+		border-radius: 0.375rem;
+		resize: vertical;
+		outline: none;
+		min-height: 2.25rem;
+		line-height: 1.4;
+	}
+
+	#expression-input:focus {
+		border-color: var(--sl-color-accent);
+	}
+
+	.run-button {
+		padding: 0.5rem 1.25rem;
+		background: var(--sl-color-accent);
+		color: var(--sl-color-black);
+		border: none;
+		border-radius: 0.375rem;
+		font-weight: 600;
+		font-size: 0.8125rem;
+		cursor: pointer;
+		white-space: nowrap;
+		transition: opacity 0.15s;
+	}
+
+	.run-button:hover {
+		opacity: 0.85;
+	}
+
+	.run-button:active {
+		opacity: 0.7;
+	}
+
+	.try-these {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.375rem;
+		padding: 0 0.75rem 0.75rem;
+		align-items: center;
+	}
+
+	.try-label {
+		font-size: 0.75rem;
+		color: var(--sl-color-gray-3);
+	}
+
+	.try-btn {
+		font-family: var(--sl-font-mono);
+		font-size: 0.6875rem;
+		padding: 0.25rem 0.5rem;
+		background: var(--sl-color-gray-5);
+		color: var(--sl-color-gray-2);
+		border: 1px solid var(--sl-color-gray-4);
+		border-radius: 0.25rem;
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.try-btn:hover {
+		border-color: var(--sl-color-accent);
+		color: var(--sl-color-white);
+	}
+
+	.output-panel {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.clear-button {
+		font-size: 0.6875rem;
+		padding: 0.125rem 0.5rem;
+		background: transparent;
+		color: var(--sl-color-gray-3);
+		border: 1px solid var(--sl-color-gray-4);
+		border-radius: 0.25rem;
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.clear-button:hover {
+		color: var(--sl-color-white);
+		border-color: var(--sl-color-gray-3);
+	}
+
+	.output-area {
+		flex: 1;
+		padding: 0.75rem;
+		min-height: 200px;
+		max-height: 400px;
+		overflow-y: auto;
+		font-family: var(--sl-font-mono);
+		font-size: 0.8125rem;
+	}
+
+	:global(.output-placeholder) {
+		color: var(--sl-color-gray-3);
+		font-style: italic;
+		font-family: var(--sl-font);
+	}
+
+	:global(.output-entry) {
+		padding: 0.375rem 0;
+		border-bottom: 1px solid var(--sl-color-gray-5);
+	}
+
+	:global(.output-entry:last-child) {
+		border-bottom: none;
+	}
+
+	:global(.output-expr) {
+		color: var(--sl-color-gray-3);
+		margin-bottom: 0.25rem;
+		word-break: break-all;
+	}
+
+	:global(.output-expr::before) {
+		content: "> ";
+		color: var(--sl-color-accent);
+	}
+
+	:global(.output-result) {
+		color: var(--sl-color-white);
+		padding-left: 1rem;
+	}
+
+	:global(.output-result.success) {
+		color: var(--sl-color-gray-1);
+	}
+
+	:global(.output-result.error) {
+		color: #f87171;
+	}
+
+	:global(.output-time) {
+		font-size: 0.625rem;
+		color: var(--sl-color-gray-4);
+		padding-left: 1rem;
+	}
+</style>

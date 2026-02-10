@@ -1,0 +1,732 @@
+---
+---
+
+<div id="plugin-workshop">
+	<div class="workshop-loading" id="workshop-loading">
+		<div class="loading-spinner"></div>
+		<p>Loading xript sandbox...</p>
+	</div>
+	<div class="workshop-container" id="workshop-container" style="display:none">
+		<div class="workshop-top">
+			<div class="capabilities-bar">
+				<div class="cap-section">
+					<h3>Capabilities</h3>
+					<div class="cap-toggles" id="cap-toggles"></div>
+				</div>
+				<div class="cap-section">
+					<h3>Types</h3>
+					<div class="type-badges">
+						<span class="type-badge">Task <span class="type-fields">id, title, done, priority, createdAt</span></span>
+						<span class="type-badge">Priority <span class="type-fields">low | medium | high | urgent</span></span>
+					</div>
+				</div>
+			</div>
+		</div>
+		<div class="workshop-main">
+			<div class="workshop-editor">
+				<div class="panel">
+					<div class="panel-header">
+						<h3>Plugin Editor</h3>
+						<div class="example-selector">
+							<select id="example-select">
+								<option value="">Select an example...</option>
+								<option value="list">List all tasks</option>
+								<option value="add">Add a task</option>
+								<option value="complete">Complete a task</option>
+								<option value="delete">Delete a task</option>
+								<option value="report">Priority report</option>
+							</select>
+						</div>
+					</div>
+					<div class="editor-area">
+						<textarea id="code-editor" spellcheck="false" autocomplete="off" rows="10"></textarea>
+					</div>
+					<div class="editor-footer">
+						<span class="editor-hint">Ctrl+Enter to run</span>
+						<button id="run-plugin-btn" class="run-button">Run Plugin</button>
+					</div>
+				</div>
+			</div>
+			<div class="workshop-output">
+				<div class="panel output-console-panel">
+					<div class="panel-header">
+						<h3>Console</h3>
+						<button id="clear-console-btn" class="clear-button">Clear</button>
+					</div>
+					<div class="console-output" id="console-output">
+						<div class="output-placeholder">Run a plugin to see console output here.</div>
+					</div>
+				</div>
+				<div class="panel task-state-panel">
+					<div class="panel-header">
+						<h3>Task State</h3>
+						<span class="panel-badge" id="task-count">0 tasks</span>
+					</div>
+					<div class="task-list" id="task-list">
+						<div class="output-placeholder">No tasks yet.</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+</div>
+
+<script>
+	import { initXript } from "@xript/runtime-js";
+
+	const manifest = {
+		xript: "0.1",
+		name: "task-manager",
+		version: "1.0.0",
+		title: "Task Manager",
+		description: "A simple task manager demonstrating xript's tier 2 adoption.",
+		bindings: {
+			tasks: {
+				description: "Read and manage tasks.",
+				members: {
+					list: { description: "Returns all tasks.", returns: { array: "Task" } },
+					get: { description: "Returns a task by ID.", params: [{ name: "id", type: "string" }], returns: { optional: "Task" } },
+					add: { description: "Creates a new task.", params: [{ name: "title", type: "string" }, { name: "priority", type: "Priority", default: "medium" }], returns: "Task", capability: "manage-tasks" },
+					complete: { description: "Marks a task as done.", params: [{ name: "id", type: "string" }], returns: "boolean", capability: "manage-tasks" },
+					remove: { description: "Permanently removes a task.", params: [{ name: "id", type: "string" }], returns: "boolean", capability: "admin" },
+				},
+			},
+			log: { description: "Writes a message to the plugin console.", params: [{ name: "message", type: "string" }] },
+		},
+		capabilities: {
+			"manage-tasks": { description: "Create and complete tasks.", risk: "medium" },
+			admin: { description: "Delete tasks and perform administrative operations.", risk: "high" },
+		},
+		types: {
+			Task: {
+				description: "A task in the task manager.",
+				fields: {
+					id: { type: "string" },
+					title: { type: "string" },
+					done: { type: "boolean" },
+					priority: { type: "Priority" },
+					createdAt: { type: "string" },
+				},
+			},
+			Priority: { description: "Task priority levels.", values: ["low", "medium", "high", "urgent"] },
+		},
+		limits: { timeout_ms: 2000, memory_mb: 16, max_stack_depth: 128 },
+	};
+
+	const examplePlugins: Record<string, string> = {
+		list: 'const all = tasks.list()\nlog("Found " + all.length + " tasks")\nfor (const t of all) {\n  log("  [" + (t.done ? "x" : " ") + "] " + t.title + " (" + t.priority + ")")\n}\nreturn tasks.list()',
+		add: 'tasks.add("Write xript plugins", "high")\ntasks.add("Review pull requests", "medium")\ntasks.add("Deploy to production", "urgent")\nlog("Created 3 new tasks!")\nreturn tasks.list()',
+		complete: 'const all = tasks.list()\nif (all.length === 0) {\n  log("No tasks to complete!")\n} else {\n  const target = all.find(t => !t.done)\n  if (target) {\n    tasks.complete(target.id)\n    log("Completed: " + target.title)\n  } else {\n    log("All tasks already done!")\n  }\n}\nreturn tasks.list()',
+		delete: 'const all = tasks.list()\nif (all.length === 0) {\n  log("No tasks to delete!")\n} else {\n  const target = all[all.length - 1]\n  tasks.remove(target.id)\n  log("Removed: " + target.title)\n}\nreturn tasks.list()',
+		report: 'const all = tasks.list()\nconst priorities = ["urgent", "high", "medium", "low"]\nlog("=== Priority Report ===")\nfor (const p of priorities) {\n  const matching = all.filter(t => t.priority === p)\n  if (matching.length > 0) {\n    log("\\n" + p.toUpperCase() + " (" + matching.length + "):")\n    for (const t of matching) {\n      log("  " + (t.done ? "[done]" : "[todo]") + " " + t.title)\n    }\n  }\n}\nlog("\\nTotal: " + all.length + " tasks, " + all.filter(t => t.done).length + " completed")',
+	};
+
+	let nextId = 1;
+	let taskStore: Array<{ id: string; title: string; done: boolean; priority: string; createdAt: string }> = [
+		{ id: String(nextId++), title: "Read the xript docs", done: false, priority: "high", createdAt: new Date().toISOString() },
+		{ id: String(nextId++), title: "Try the expression playground", done: true, priority: "medium", createdAt: new Date().toISOString() },
+		{ id: String(nextId++), title: "Build something cool", done: false, priority: "low", createdAt: new Date().toISOString() },
+	];
+
+	const enabledCapabilities = new Set(["manage-tasks"]);
+
+	const loadingEl = document.getElementById("workshop-loading")!;
+	const containerEl = document.getElementById("workshop-container")!;
+	const capTogglesEl = document.getElementById("cap-toggles")!;
+	const codeEditor = document.getElementById("code-editor") as HTMLTextAreaElement;
+	const exampleSelect = document.getElementById("example-select") as HTMLSelectElement;
+	const runBtn = document.getElementById("run-plugin-btn")!;
+	const clearConsoleBtn = document.getElementById("clear-console-btn")!;
+	const consoleOutput = document.getElementById("console-output")!;
+	const taskListEl = document.getElementById("task-list")!;
+	const taskCountEl = document.getElementById("task-count")!;
+
+	function createHostBindings() {
+		return {
+			tasks: {
+				list: () => taskStore.map((t) => ({ ...t })),
+				get: (id: string) => taskStore.find((t) => t.id === id) ?? undefined,
+				add: (title: string, priority = "medium") => {
+					const task = { id: String(nextId++), title, done: false, priority, createdAt: new Date().toISOString() };
+					taskStore.push(task);
+					return { ...task };
+				},
+				complete: (id: string) => {
+					const task = taskStore.find((t) => t.id === id);
+					if (!task) return false;
+					task.done = true;
+					return true;
+				},
+				remove: (id: string) => {
+					const idx = taskStore.findIndex((t) => t.id === id);
+					if (idx === -1) return false;
+					taskStore.splice(idx, 1);
+					return true;
+				},
+			},
+			log: (msg: string) => addConsoleMessage(String(msg), "log"),
+		};
+	}
+
+	const riskColors: Record<string, string> = {
+		low: "#4ade80",
+		medium: "#fbbf24",
+		high: "#f87171",
+	};
+
+	function renderCapabilities() {
+		capTogglesEl.innerHTML = "";
+		for (const [name, cap] of Object.entries(manifest.capabilities) as [string, { description: string; risk: string }][]) {
+			const enabled = enabledCapabilities.has(name);
+			const toggle = document.createElement("label");
+			toggle.className = "cap-toggle" + (enabled ? " enabled" : "");
+
+			const checkbox = document.createElement("input");
+			checkbox.type = "checkbox";
+			checkbox.checked = enabled;
+			checkbox.addEventListener("change", () => {
+				if (checkbox.checked) {
+					enabledCapabilities.add(name);
+				} else {
+					enabledCapabilities.delete(name);
+				}
+				renderCapabilities();
+			});
+
+			const info = document.createElement("span");
+			info.className = "cap-info";
+
+			const nameSpan = document.createElement("span");
+			nameSpan.className = "cap-name";
+			nameSpan.textContent = name;
+
+			const riskSpan = document.createElement("span");
+			riskSpan.className = "cap-risk";
+			riskSpan.textContent = cap.risk;
+			riskSpan.style.color = riskColors[cap.risk] || "#94a3b8";
+
+			const descSpan = document.createElement("span");
+			descSpan.className = "cap-desc";
+			descSpan.textContent = cap.description;
+
+			info.appendChild(nameSpan);
+			info.appendChild(riskSpan);
+			info.appendChild(descSpan);
+
+			toggle.appendChild(checkbox);
+			toggle.appendChild(info);
+			capTogglesEl.appendChild(toggle);
+		}
+	}
+
+	function addConsoleMessage(text: string, level: "log" | "warn" | "error" | "result") {
+		const placeholder = consoleOutput.querySelector(".output-placeholder");
+		if (placeholder) placeholder.remove();
+
+		const line = document.createElement("div");
+		line.className = "console-line " + level;
+		const prefix = level === "log" ? "[log] " : level === "warn" ? "[warn] " : level === "error" ? "[error] " : "=> ";
+		line.textContent = prefix + text;
+		consoleOutput.appendChild(line);
+		consoleOutput.scrollTop = consoleOutput.scrollHeight;
+	}
+
+	function renderTasks() {
+		taskListEl.innerHTML = "";
+		taskCountEl.textContent = taskStore.length + " task" + (taskStore.length !== 1 ? "s" : "");
+
+		if (taskStore.length === 0) {
+			taskListEl.innerHTML = '<div class="output-placeholder">No tasks yet.</div>';
+			return;
+		}
+
+		for (const task of taskStore) {
+			const row = document.createElement("div");
+			row.className = "task-row" + (task.done ? " done" : "");
+
+			const status = document.createElement("span");
+			status.className = "task-status";
+			status.textContent = task.done ? "[done]" : "[todo]";
+
+			const title = document.createElement("span");
+			title.className = "task-title";
+			title.textContent = task.title;
+
+			const priority = document.createElement("span");
+			priority.className = "task-priority priority-" + task.priority;
+			priority.textContent = task.priority;
+
+			const id = document.createElement("span");
+			id.className = "task-id";
+			id.textContent = "#" + task.id;
+
+			row.appendChild(status);
+			row.appendChild(title);
+			row.appendChild(priority);
+			row.appendChild(id);
+			taskListEl.appendChild(row);
+		}
+	}
+
+	async function boot() {
+		try {
+			const xriptFactory = await initXript();
+
+			loadingEl.style.display = "none";
+			containerEl.style.display = "flex";
+			renderCapabilities();
+			renderTasks();
+
+			codeEditor.value = examplePlugins.list;
+
+			exampleSelect.addEventListener("change", () => {
+				const val = exampleSelect.value;
+				if (val && examplePlugins[val]) {
+					codeEditor.value = examplePlugins[val];
+				}
+			});
+
+			function runPlugin() {
+				const code = codeEditor.value.trim();
+				if (!code) return;
+
+				addConsoleMessage("--- running plugin ---", "log");
+
+				let runtime = null;
+				try {
+					runtime = xriptFactory.createRuntime(manifest, {
+						hostBindings: createHostBindings(),
+						capabilities: Array.from(enabledCapabilities),
+						console: {
+							log: (...args: unknown[]) => addConsoleMessage(args.join(" "), "log"),
+							warn: (...args: unknown[]) => addConsoleMessage(args.join(" "), "warn"),
+							error: (...args: unknown[]) => addConsoleMessage(args.join(" "), "error"),
+						},
+					});
+
+					const wrappedCode = "(function(){\n" + code + "\n})()";
+					const result = runtime.execute(wrappedCode);
+					if (result.value !== undefined) {
+						addConsoleMessage(JSON.stringify(result.value, null, 2), "result");
+					}
+					addConsoleMessage(result.duration_ms.toFixed(1) + "ms", "log");
+				} catch (err: any) {
+					addConsoleMessage(err.message, "error");
+				} finally {
+					if (runtime) runtime.dispose();
+				}
+
+				renderTasks();
+			}
+
+			runBtn.addEventListener("click", runPlugin);
+
+			codeEditor.addEventListener("keydown", (e: KeyboardEvent) => {
+				if (e.key === "Enter" && e.ctrlKey) {
+					e.preventDefault();
+					runPlugin();
+				}
+				if (e.key === "Tab") {
+					e.preventDefault();
+					const start = codeEditor.selectionStart;
+					const end = codeEditor.selectionEnd;
+					codeEditor.value = codeEditor.value.substring(0, start) + "  " + codeEditor.value.substring(end);
+					codeEditor.selectionStart = codeEditor.selectionEnd = start + 2;
+				}
+			});
+
+			clearConsoleBtn.addEventListener("click", () => {
+				consoleOutput.innerHTML = '<div class="output-placeholder">Run a plugin to see console output here.</div>';
+			});
+		} catch (err: any) {
+			loadingEl.innerHTML = '<p style="color: #f87171;">Failed to load xript sandbox: ' + err.message + "</p>";
+		}
+	}
+
+	boot();
+</script>
+
+<style>
+	#plugin-workshop {
+		margin-top: 1rem;
+	}
+
+	.workshop-loading {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		padding: 4rem 2rem;
+		color: var(--sl-color-gray-2);
+	}
+
+	.loading-spinner {
+		width: 2rem;
+		height: 2rem;
+		border: 3px solid var(--sl-color-gray-5);
+		border-top-color: var(--sl-color-accent);
+		border-radius: 50%;
+		animation: spin 0.8s linear infinite;
+		margin-bottom: 1rem;
+	}
+
+	@keyframes spin {
+		to { transform: rotate(360deg); }
+	}
+
+	.workshop-container {
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+	}
+
+	.capabilities-bar {
+		display: flex;
+		gap: 2rem;
+		padding: 0.75rem 1rem;
+		background: var(--sl-color-gray-6);
+		border: 1px solid var(--sl-color-gray-5);
+		border-radius: 0.5rem;
+		flex-wrap: wrap;
+	}
+
+	.cap-section h3 {
+		margin: 0 0 0.5rem;
+		font-size: 0.75rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--sl-color-gray-3);
+	}
+
+	.cap-toggles {
+		display: flex;
+		gap: 0.75rem;
+		flex-wrap: wrap;
+	}
+
+	:global(.cap-toggle) {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.5rem;
+		padding: 0.5rem 0.75rem;
+		background: var(--sl-color-black);
+		border: 1px solid var(--sl-color-gray-5);
+		border-radius: 0.375rem;
+		cursor: pointer;
+		transition: border-color 0.15s;
+	}
+
+	:global(.cap-toggle:hover) {
+		border-color: var(--sl-color-gray-3);
+	}
+
+	:global(.cap-toggle.enabled) {
+		border-color: var(--sl-color-accent);
+	}
+
+	:global(.cap-toggle input[type="checkbox"]) {
+		margin-top: 0.125rem;
+		accent-color: var(--sl-color-accent);
+	}
+
+	:global(.cap-info) {
+		display: flex;
+		flex-direction: column;
+		gap: 0.125rem;
+	}
+
+	:global(.cap-name) {
+		font-family: var(--sl-font-mono);
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: var(--sl-color-white);
+	}
+
+	:global(.cap-risk) {
+		font-size: 0.6875rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	:global(.cap-desc) {
+		font-size: 0.6875rem;
+		color: var(--sl-color-gray-3);
+	}
+
+	.type-badges {
+		display: flex;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+	}
+
+	.type-badge {
+		font-family: var(--sl-font-mono);
+		font-size: 0.75rem;
+		padding: 0.375rem 0.625rem;
+		background: var(--sl-color-black);
+		border: 1px solid var(--sl-color-gray-5);
+		border-radius: 0.375rem;
+		color: var(--sl-color-accent);
+		font-weight: 600;
+	}
+
+	.type-fields {
+		color: var(--sl-color-gray-3);
+		font-weight: 400;
+		margin-left: 0.25rem;
+	}
+
+	.workshop-main {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 1rem;
+		min-height: 400px;
+	}
+
+	@media (max-width: 768px) {
+		.workshop-main {
+			grid-template-columns: 1fr;
+		}
+	}
+
+	.panel {
+		background: var(--sl-color-gray-6);
+		border: 1px solid var(--sl-color-gray-5);
+		border-radius: 0.5rem;
+		overflow: hidden;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.panel-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 0.625rem 0.875rem;
+		border-bottom: 1px solid var(--sl-color-gray-5);
+		background: var(--sl-color-black);
+	}
+
+	.panel-header h3 {
+		margin: 0;
+		font-size: 0.8125rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--sl-color-gray-2);
+	}
+
+	.panel-badge {
+		font-size: 0.6875rem;
+		color: var(--sl-color-gray-3);
+		font-family: var(--sl-font-mono);
+	}
+
+	.example-selector select {
+		font-family: var(--sl-font-mono);
+		font-size: 0.75rem;
+		padding: 0.25rem 0.5rem;
+		background: var(--sl-color-gray-5);
+		color: var(--sl-color-gray-2);
+		border: 1px solid var(--sl-color-gray-4);
+		border-radius: 0.25rem;
+		cursor: pointer;
+	}
+
+	.editor-area {
+		flex: 1;
+		display: flex;
+	}
+
+	#code-editor {
+		flex: 1;
+		font-family: var(--sl-font-mono);
+		font-size: 0.8125rem;
+		padding: 0.75rem;
+		background: var(--sl-color-black);
+		color: var(--sl-color-white);
+		border: none;
+		resize: none;
+		outline: none;
+		line-height: 1.5;
+		tab-size: 2;
+	}
+
+	.editor-footer {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 0.5rem 0.75rem;
+		border-top: 1px solid var(--sl-color-gray-5);
+	}
+
+	.editor-hint {
+		font-size: 0.6875rem;
+		color: var(--sl-color-gray-4);
+	}
+
+	.run-button {
+		padding: 0.375rem 1rem;
+		background: var(--sl-color-accent);
+		color: var(--sl-color-black);
+		border: none;
+		border-radius: 0.375rem;
+		font-weight: 600;
+		font-size: 0.8125rem;
+		cursor: pointer;
+		transition: opacity 0.15s;
+	}
+
+	.run-button:hover {
+		opacity: 0.85;
+	}
+
+	.clear-button {
+		font-size: 0.6875rem;
+		padding: 0.125rem 0.5rem;
+		background: transparent;
+		color: var(--sl-color-gray-3);
+		border: 1px solid var(--sl-color-gray-4);
+		border-radius: 0.25rem;
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.clear-button:hover {
+		color: var(--sl-color-white);
+		border-color: var(--sl-color-gray-3);
+	}
+
+	.workshop-output {
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+	}
+
+	.console-output {
+		flex: 1;
+		padding: 0.75rem;
+		min-height: 150px;
+		max-height: 250px;
+		overflow-y: auto;
+		font-family: var(--sl-font-mono);
+		font-size: 0.75rem;
+		line-height: 1.5;
+	}
+
+	:global(.output-placeholder) {
+		color: var(--sl-color-gray-3);
+		font-style: italic;
+		font-family: var(--sl-font);
+		font-size: 0.8125rem;
+	}
+
+	:global(.console-line) {
+		padding: 0.0625rem 0;
+		white-space: pre-wrap;
+		word-break: break-all;
+	}
+
+	:global(.console-line.log) {
+		color: var(--sl-color-gray-2);
+	}
+
+	:global(.console-line.warn) {
+		color: #fbbf24;
+	}
+
+	:global(.console-line.error) {
+		color: #f87171;
+	}
+
+	:global(.console-line.result) {
+		color: var(--sl-color-accent);
+	}
+
+	.task-list {
+		padding: 0.5rem;
+		max-height: 200px;
+		overflow-y: auto;
+	}
+
+	:global(.task-row) {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.375rem 0.5rem;
+		border-radius: 0.25rem;
+		font-size: 0.8125rem;
+		transition: background-color 0.15s;
+	}
+
+	:global(.task-row:hover) {
+		background: var(--sl-color-gray-5);
+	}
+
+	:global(.task-row.done) {
+		opacity: 0.6;
+	}
+
+	:global(.task-status) {
+		font-family: var(--sl-font-mono);
+		font-size: 0.75rem;
+		color: var(--sl-color-gray-3);
+		flex-shrink: 0;
+	}
+
+	:global(.task-row.done .task-status) {
+		color: #4ade80;
+	}
+
+	:global(.task-title) {
+		flex: 1;
+		color: var(--sl-color-white);
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	:global(.task-row.done .task-title) {
+		text-decoration: line-through;
+	}
+
+	:global(.task-priority) {
+		font-family: var(--sl-font-mono);
+		font-size: 0.625rem;
+		padding: 0.125rem 0.375rem;
+		border-radius: 0.25rem;
+		text-transform: uppercase;
+		font-weight: 600;
+		flex-shrink: 0;
+	}
+
+	:global(.task-priority.priority-low) {
+		color: #4ade80;
+		background: rgba(74, 222, 128, 0.1);
+	}
+
+	:global(.task-priority.priority-medium) {
+		color: #fbbf24;
+		background: rgba(251, 191, 36, 0.1);
+	}
+
+	:global(.task-priority.priority-high) {
+		color: #fb923c;
+		background: rgba(251, 146, 60, 0.1);
+	}
+
+	:global(.task-priority.priority-urgent) {
+		color: #f87171;
+		background: rgba(248, 113, 113, 0.1);
+	}
+
+	:global(.task-id) {
+		font-family: var(--sl-font-mono);
+		font-size: 0.6875rem;
+		color: var(--sl-color-gray-4);
+		flex-shrink: 0;
+	}
+</style>
