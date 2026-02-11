@@ -233,7 +233,7 @@ describe("generateDocs", () => {
 
 	it("generates full docs for the dungeon-crawler example", async () => {
 		const result = await generateDocsFromFile("../../examples/game-mod-system/manifest.json");
-		assert.equal(result.pages.length, 10);
+		assert.equal(result.pages.length, 13);
 
 		const slugs = result.pages.map((p) => p.slug).sort();
 		assert.deepEqual(slugs, [
@@ -241,6 +241,9 @@ describe("generateDocs", () => {
 			"bindings/log",
 			"bindings/player",
 			"bindings/world",
+			"hooks/onDamage",
+			"hooks/onLevelChange",
+			"hooks/onTurnStart",
 			"index",
 			"types/Enemy",
 			"types/EnemyType",
@@ -248,6 +251,68 @@ describe("generateDocs", () => {
 			"types/ItemType",
 			"types/Position",
 		]);
+	});
+
+	it("generates hook pages for non-phased hooks", () => {
+		const result = generateDocs({
+			xript: "0.1",
+			name: "test",
+			hooks: {
+				onSave: {
+					description: "Called when the game saves.",
+					params: [{ name: "slot", type: "number", description: "Save slot." }],
+				},
+			},
+		});
+		const index = result.pages.find((p) => p.slug === "index");
+		assert.ok(index.content.includes("## Hooks"));
+		assert.ok(index.content.includes("`onSave`"));
+
+		const page = result.pages.find((p) => p.slug === "hooks/onSave");
+		assert.ok(page);
+		assert.ok(page.content.includes("# onSave"));
+		assert.ok(page.content.includes("Called when the game saves."));
+		assert.ok(page.content.includes("hooks.onSave(handler: (slot: number) => void): void"));
+		assert.ok(page.content.includes("| `slot` |"));
+	});
+
+	it("generates hook pages for phased hooks", () => {
+		const result = generateDocs({
+			xript: "0.1",
+			name: "test",
+			hooks: {
+				onDamage: {
+					description: "Damage event.",
+					phases: ["pre", "post", "done"],
+					params: [{ name: "amount", type: "number" }],
+					capability: "modify-player",
+				},
+			},
+		});
+		const page = result.pages.find((p) => p.slug === "hooks/onDamage");
+		assert.ok(page);
+		assert.ok(page.content.includes("## Phases"));
+		assert.ok(page.content.includes("`pre`"));
+		assert.ok(page.content.includes("`post`"));
+		assert.ok(page.content.includes("hooks.onDamage.pre(handler:"));
+		assert.ok(page.content.includes("hooks.onDamage.post(handler:"));
+		assert.ok(page.content.includes("`modify-player`"));
+	});
+
+	it("handles deprecated hooks", () => {
+		const result = generateDocs({
+			xript: "0.1",
+			name: "test",
+			hooks: {
+				onOldEvent: {
+					description: "Legacy event.",
+					deprecated: "Use onNewEvent instead.",
+				},
+			},
+		});
+		const page = result.pages.find((p) => p.slug === "hooks/onOldEvent");
+		assert.ok(page);
+		assert.ok(page.content.includes("**Deprecated:** Use onNewEvent instead."));
 	});
 
 	it("produces minimal output for empty manifest", () => {

@@ -5,6 +5,15 @@ export interface TypegenOptions {
 	header?: string;
 }
 
+interface HookDef {
+	description: string;
+	phases?: string[];
+	params?: Parameter[];
+	capability?: string;
+	async?: boolean;
+	deprecated?: string;
+}
+
 interface Manifest {
 	xript: string;
 	name: string;
@@ -12,6 +21,7 @@ interface Manifest {
 	title?: string;
 	description?: string;
 	bindings?: Record<string, Binding>;
+	hooks?: Record<string, HookDef>;
 	capabilities?: Record<string, Capability>;
 	types?: Record<string, TypeDefinition>;
 }
@@ -274,6 +284,77 @@ function generateObjectType(name: string, def: TypeDefinition): string {
 	return lines.join("\n");
 }
 
+function generateHandlerType(hookDef: HookDef): string {
+	const params = (hookDef.params || [])
+		.map((p) => {
+			const optional = isOptionalParam(p) ? "?" : "";
+			return `${p.name}${optional}: ${resolveTypeRef(p.type)}`;
+		})
+		.join(", ");
+	return `(${params}) => void`;
+}
+
+function generateHookFunction(name: string, hookDef: HookDef): string {
+	const lines: string[] = [];
+	const handlerType = generateHandlerType(hookDef);
+
+	lines.push(
+		generateJSDoc(hookDef.description, {
+			capability: hookDef.capability,
+			deprecated: hookDef.deprecated,
+		}),
+	);
+	lines.push(`function ${name}(handler: ${handlerType}): void;`);
+	return lines.join("\n");
+}
+
+function generatePhasedHookNamespace(name: string, hookDef: HookDef): string {
+	const lines: string[] = [];
+	const handlerType = generateHandlerType(hookDef);
+
+	lines.push(
+		generateJSDoc(hookDef.description, {
+			capability: hookDef.capability,
+			deprecated: hookDef.deprecated,
+		}),
+	);
+	lines.push(`namespace ${name} {`);
+
+	const phases = hookDef.phases || [];
+	for (let i = 0; i < phases.length; i++) {
+		lines.push(indent(`function ${phases[i]}(handler: ${handlerType}): void;`, 1));
+		if (i < phases.length - 1) {
+			lines.push("");
+		}
+	}
+
+	lines.push("}");
+	return lines.join("\n");
+}
+
+function generateHooksNamespace(hooks: Record<string, HookDef>): string {
+	const lines: string[] = [];
+
+	lines.push(generateJSDoc("Hook registration functions."));
+	lines.push("declare namespace hooks {");
+
+	const hookEntries = Object.entries(hooks);
+	for (let i = 0; i < hookEntries.length; i++) {
+		const [hookName, hookDef] = hookEntries[i];
+		if (hookDef.phases && hookDef.phases.length > 0) {
+			lines.push(indent(generatePhasedHookNamespace(hookName, hookDef), 1));
+		} else {
+			lines.push(indent(generateHookFunction(hookName, hookDef), 1));
+		}
+		if (i < hookEntries.length - 1) {
+			lines.push("");
+		}
+	}
+
+	lines.push("}");
+	return lines.join("\n");
+}
+
 function generateEnumType(name: string, def: TypeDefinition): string {
 	const lines: string[] = [];
 
@@ -317,6 +398,10 @@ export function generateTypes(manifest: unknown, options?: TypegenOptions): stri
 				sections.push(generateFunction(bindingName, binding));
 			}
 		}
+	}
+
+	if (m.hooks && Object.keys(m.hooks).length > 0) {
+		sections.push(generateHooksNamespace(m.hooks));
 	}
 
 	return sections.join("\n\n") + "\n";

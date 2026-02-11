@@ -187,7 +187,7 @@ describe("capability enforcement", () => {
 		runtime.dispose();
 	});
 
-	it("includes capability name in the error message", () => {
+	it("includes capability name and guidance in the error message", () => {
 		const runtime = xript.createRuntime(manifest, {
 			hostBindings: { writeData: () => {} },
 		});
@@ -198,6 +198,7 @@ describe("capability enforcement", () => {
 		`);
 		assert.ok(String(result.value).includes("storage"));
 		assert.ok(String(result.value).includes("writeData"));
+		assert.ok(String(result.value).includes("app developer"));
 		runtime.dispose();
 	});
 
@@ -335,7 +336,7 @@ describe("execution limits", () => {
 		const runtime = xript.createRuntime(manifest, { hostBindings: {} });
 		assert.throws(
 			() => runtime.execute("while (true) {}"),
-			(err) => err.name === "ExecutionLimitError" || err.message.includes("timed out") || err.message.includes("interrupted"),
+			(err) => err.name === "ExecutionLimitError" && err.message.includes("timed out") && err.message.includes("50ms"),
 		);
 		runtime.dispose();
 	});
@@ -455,6 +456,196 @@ describe("manifest validation", () => {
 		);
 		assert.ok(runtime);
 		runtime.dispose();
+	});
+});
+
+describe("hooks", () => {
+	it("registers and fires a simple hook", () => {
+		const manifest = {
+			xript: "0.1",
+			name: "test",
+			hooks: {
+				onDamage: { description: "Fired when damage occurs.", params: [{ name: "amount", type: "number" }] },
+			},
+		};
+		const runtime = xript.createRuntime(manifest, { hostBindings: {} });
+		runtime.execute("hooks.onDamage((amount) => { globalThis._lastDamage = amount; })");
+		runtime.fireHook("onDamage", { data: 25 });
+		assert.equal(runtime.execute("globalThis._lastDamage").value, 25);
+		runtime.dispose();
+	});
+
+	it("registers and fires a phased hook", () => {
+		const manifest = {
+			xript: "0.1",
+			name: "test",
+			hooks: {
+				save: {
+					description: "Save lifecycle.",
+					phases: ["pre", "post", "done"],
+					params: [{ name: "filename", type: "string" }],
+				},
+			},
+		};
+		const runtime = xript.createRuntime(manifest, { hostBindings: {} });
+		runtime.execute(`
+			globalThis._phases = [];
+			hooks.save.pre((filename) => { globalThis._phases.push("pre:" + filename); });
+			hooks.save.post((filename) => { globalThis._phases.push("post:" + filename); });
+			hooks.save.done((filename) => { globalThis._phases.push("done:" + filename); });
+		`);
+		runtime.fireHook("save", { phase: "pre", data: "game.sav" });
+		runtime.fireHook("save", { phase: "post", data: "game.sav" });
+		runtime.fireHook("save", { phase: "done", data: "game.sav" });
+		const phases = runtime.execute("globalThis._phases").value;
+		assert.deepEqual(phases, ["pre:game.sav", "post:game.sav", "done:game.sav"]);
+		runtime.dispose();
+	});
+
+	it("returns handler results from fireHook", () => {
+		const manifest = {
+			xript: "0.1",
+			name: "test",
+			hooks: {
+				validate: { description: "Validation hook.", params: [{ name: "value", type: "number" }] },
+			},
+		};
+		const runtime = xript.createRuntime(manifest, { hostBindings: {} });
+		runtime.execute(`
+			hooks.validate((value) => value > 0);
+			hooks.validate((value) => value < 100);
+		`);
+		const results = runtime.fireHook("validate", { data: 50 });
+		assert.deepEqual(results, [true, true]);
+		runtime.dispose();
+	});
+
+	it("supports multiple handlers on the same hook", () => {
+		const manifest = {
+			xript: "0.1",
+			name: "test",
+			hooks: {
+				tick: { description: "Frame tick." },
+			},
+		};
+		const runtime = xript.createRuntime(manifest, { hostBindings: {} });
+		runtime.execute(`
+			globalThis._count = 0;
+			hooks.tick(() => { globalThis._count++; });
+			hooks.tick(() => { globalThis._count += 10; });
+		`);
+		runtime.fireHook("tick");
+		assert.equal(runtime.execute("globalThis._count").value, 11);
+		runtime.dispose();
+	});
+
+	it("returns empty array for unregistered hooks", () => {
+		const manifest = {
+			xript: "0.1",
+			name: "test",
+			hooks: {
+				unused: { description: "Nobody listens to this." },
+			},
+		};
+		const runtime = xript.createRuntime(manifest, { hostBindings: {} });
+		const results = runtime.fireHook("unused");
+		assert.deepEqual(results, []);
+		runtime.dispose();
+	});
+
+	it("returns empty array for unknown hook names", () => {
+		const runtime = xript.createRuntime(minimalManifest, { hostBindings: {} });
+		const results = runtime.fireHook("nonexistent");
+		assert.deepEqual(results, []);
+		runtime.dispose();
+	});
+
+	it("denies hook registration when capability is missing", () => {
+		const manifest = {
+			xript: "0.1",
+			name: "test",
+			hooks: {
+				restricted: { description: "Needs permission.", capability: "admin" },
+			},
+			capabilities: {
+				admin: { description: "Admin access.", risk: "high" },
+			},
+		};
+		const runtime = xript.createRuntime(manifest, { hostBindings: {} });
+		const result = runtime.execute(`
+			let caught;
+			try { hooks.restricted(() => {}); } catch (e) { caught = e.name; }
+			caught;
+		`);
+		assert.equal(result.value, "CapabilityDeniedError");
+		runtime.dispose();
+	});
+
+	it("allows hook registration when capability is granted", () => {
+		const manifest = {
+			xript: "0.1",
+			name: "test",
+			hooks: {
+				restricted: { description: "Needs permission.", capability: "admin" },
+			},
+			capabilities: {
+				admin: { description: "Admin access.", risk: "high" },
+			},
+		};
+		const runtime = xript.createRuntime(manifest, {
+			hostBindings: {},
+			capabilities: ["admin"],
+		});
+		runtime.execute("hooks.restricted(() => { globalThis._ran = true; })");
+		runtime.fireHook("restricted");
+		assert.equal(runtime.execute("globalThis._ran").value, true);
+		runtime.dispose();
+	});
+
+	it("hooks object is frozen", () => {
+		const manifest = {
+			xript: "0.1",
+			name: "test",
+			hooks: {
+				tick: { description: "Frame tick." },
+			},
+		};
+		const runtime = xript.createRuntime(manifest, { hostBindings: {} });
+		const result = runtime.execute(`
+			"use strict";
+			let tampered = false;
+			try { hooks.tick = "hacked"; } catch (e) { tampered = true; }
+			tampered;
+		`);
+		assert.equal(result.value, true);
+		runtime.dispose();
+	});
+
+	it("continues executing handlers when one throws", () => {
+		const manifest = {
+			xript: "0.1",
+			name: "test",
+			hooks: {
+				fragile: { description: "A hook with a broken handler." },
+			},
+		};
+		const runtime = xript.createRuntime(manifest, { hostBindings: {} });
+		runtime.execute(`
+			hooks.fragile(() => { throw new Error("boom"); });
+			hooks.fragile(() => { globalThis._survived = true; return "ok"; });
+		`);
+		const results = runtime.fireHook("fragile");
+		assert.equal(results[0], undefined);
+		assert.equal(results[1], "ok");
+		assert.equal(runtime.execute("globalThis._survived").value, true);
+		runtime.dispose();
+	});
+
+	it("rejects invalid hooks type in manifest", () => {
+		assert.throws(
+			() => xript.createRuntime({ xript: "0.1", name: "test", hooks: "bad" }, { hostBindings: {} }),
+			(err) => err instanceof ManifestValidationError && err.issues.some((i) => i.path === "/hooks"),
+		);
 	});
 });
 

@@ -1,0 +1,30 @@
+{
+	"name": "@xript/init",
+	"version": "0.1.0",
+	"description": "Scaffolding CLI for new xript projects.",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"files": ["dist"],
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/nekoyoubi/xript.git",
+		"directory": "tools/init"
+	},
+	"bin": {
+		"xript-init": "./dist/cli.js"
+	},
+	"scripts": {
+		"build": "tsc",
+		"test": "node --test test/*.test.js",
+		"prepublishOnly": "npm run build"
+	},
+	"keywords": ["xript", "init", "scaffolding", "code-generation"],
+	"license": "MIT"
+}

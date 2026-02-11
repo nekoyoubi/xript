@@ -14,7 +14,7 @@ xript/
 ├── runtimes/       # language-specific runtime implementations
 │   ├── js/         # universal runtime (@xript/runtime, QuickJS WASM sandbox)
 │   └── node/       # Node.js-optimized runtime (@xript/runtime-node, vm-based)
-├── tools/          # ecosystem tooling (validator, typegen, docgen)
+├── tools/          # ecosystem tooling (validator, typegen, docgen, init)
 ├── docs/           # documentation site (Astro + Starlight), deployed to xript.dev
 └── examples/       # example manifests and integrations
 ```
@@ -37,21 +37,25 @@ npm run docs:build                     # build the docs site for production
 
 # build and test individual packages
 npm run build --workspace=runtimes/js              # build the universal runtime
-npm test --workspace=runtimes/js                   # run universal runtime tests (58 tests)
+npm test --workspace=runtimes/js                   # run universal runtime tests (69 tests)
 npm run build --workspace=runtimes/node            # build the Node.js runtime
-npm test --workspace=runtimes/node                 # run Node.js runtime tests (62 tests)
+npm test --workspace=runtimes/node                 # run Node.js runtime tests (73 tests)
 npm run build --workspace=tools/manifest-validator # build the validator
 npm test --workspace=tools/manifest-validator      # run validator tests (11 tests)
 npm run build --workspace=tools/typegen            # build the type generator
-npm test --workspace=tools/typegen                 # run typegen tests (20 tests)
+npm test --workspace=tools/typegen                 # run typegen tests (24 tests)
 npm run build --workspace=tools/docgen             # build the doc generator
-npm test --workspace=tools/docgen                  # run docgen tests (14 tests)
+npm test --workspace=tools/docgen                  # run docgen tests (17 tests)
+npm run build --workspace=tools/init               # build the init CLI
+npm test --workspace=tools/init                    # run init tests (20 tests)
 
 # tools (run from repo root after npm install)
 npx xript-validate <manifest.json>     # validate a manifest against the spec schema
 npx xript-typegen <manifest.json>      # generate TypeScript definitions (stdout)
 npx xript-typegen <m.json> -o out.d.ts # generate TypeScript definitions (file)
 npx xript-docgen <m.json> -o docs/     # generate markdown documentation
+npx xript-init                         # scaffold a new xript project (interactive)
+npx xript-init --yes                   # scaffold with defaults (no prompts)
 
 # run example demos
 node examples/expression-evaluator/src/demo.js  # tier 1 demo
@@ -69,16 +73,17 @@ node examples/game-mod-system/src/demo.js        # tier 3 demo
 
 ## Current State
 
-All v0.1 milestones are complete:
+v0.1 milestones are complete and v0.2 foundations are in place:
 
-- **Spec v0.1**: manifest schema (JSON Schema draft 2020-12), capability model, binding conventions, and security guarantees documented in `spec/`
-- **Universal Runtime**: `@xript/runtime` in `runtimes/js/` -- QuickJS WASM sandbox with capability enforcement, 58 tests (36 unit + 22 integration)
-- **Node.js Runtime**: `@xript/runtime-node` in `runtimes/node/` -- Node.js vm-based sandbox with `createRuntimeFromFile` and full schema validation, 62 tests
-- **Toolchain**: manifest validator, type generator, and doc generator all built and tested in `tools/` (45 tests across 3 packages)
+- **Spec v0.2**: manifest schema (JSON Schema draft 2020-12), capability model, binding conventions, hook lifecycle, and security guarantees documented in `spec/`
+- **Universal Runtime**: `@xript/runtime` in `runtimes/js/` -- QuickJS WASM sandbox with capability enforcement, hook system, and improved error messages, 69 tests
+- **Node.js Runtime**: `@xript/runtime-node` in `runtimes/node/` -- Node.js vm-based sandbox with `createRuntimeFromFile`, full schema validation, hooks, and improved errors, 73 tests
+- **Toolchain**: manifest validator, type generator, doc generator, and init CLI all built and tested in `tools/` (72 tests across 4 packages)
+- **Init CLI**: `@xript/init` in `tools/init/` -- scaffolding CLI with interactive prompts, `--yes` flag, tier 2/3 templates, TS/JS output, 20 tests
 - **Developer Experience**: docs site at xript.dev (19 pages), getting started guide, runtime API reference, three example walkthroughs, three interactive live demos (browser-only QuickJS WASM), CI with smoke tests
 - **Hardening**: integration tests, manifest validation in runtime, example smoke tests in CI
 
-Total test count: 165 across 6 packages. All green.
+Total test count: 214 across 7 packages. All green.
 
 ## Key Design Decisions
 
