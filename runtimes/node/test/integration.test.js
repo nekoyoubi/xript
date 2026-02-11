@@ -272,7 +272,7 @@ describe("dungeon-crawler integration tests", () => {
 			});
 			assert.throws(
 				() => runtime.execute("while(true){}"),
-				(err) => err.code === "ERR_SCRIPT_EXECUTION_TIMEOUT" || err.message.includes("timed out"),
+				(err) => err.name === "ExecutionLimitError" && err.message.includes("timed out") && err.message.includes("1000ms"),
 			);
 		});
 	});

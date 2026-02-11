@@ -1,13 +1,24 @@
 import vm from "node:vm";
-import { BindingError, CapabilityDeniedError } from "./errors.js";
+import { BindingError, CapabilityDeniedError, ExecutionLimitError } from "./errors.js";
 
 interface Manifest {
 	xript: string;
 	name: string;
 	version?: string;
 	bindings?: Record<string, Binding>;
+	hooks?: Record<string, HookDef>;
 	capabilities?: Record<string, CapabilityDef>;
 	limits?: ExecutionLimits;
+}
+
+interface HookDef {
+	description: string;
+	phases?: string[];
+	params?: Parameter[];
+	capability?: string;
+	async?: boolean;
+	limits?: ExecutionLimits;
+	deprecated?: string;
 }
 
 type Binding = FunctionBinding | NamespaceBinding;
@@ -183,7 +194,7 @@ function buildFunction(
 		}
 
 		if (!hostFn) {
-			throw new BindingError(qualifiedName, "no host implementation provided");
+			throw new BindingError(qualifiedName, "not implemented by the app");
 		}
 
 		try {
@@ -220,15 +231,130 @@ function buildNamespace(
 	return Object.freeze(ns);
 }
 
+export interface FireHookOptions {
+	phase?: string;
+	data?: unknown;
+}
+
+type HookHandlerEntry = { fn: (...args: unknown[]) => unknown };
+
+interface HookRegistry {
+	handlers: Map<string, HookHandlerEntry[]>;
+	register(key: string, entry: HookHandlerEntry): void;
+}
+
+function createHookRegistry(): HookRegistry {
+	const handlers = new Map<string, HookHandlerEntry[]>();
+	return {
+		handlers,
+		register(key: string, entry: HookHandlerEntry) {
+			let list = handlers.get(key);
+			if (!list) {
+				list = [];
+				handlers.set(key, list);
+			}
+			list.push(entry);
+		},
+	};
+}
+
+function buildHooksGlobal(
+	manifest: Manifest,
+	grantedCapabilities: Set<string>,
+	hookRegistry: HookRegistry,
+): Record<string, unknown> {
+	const hooksObj: Record<string, unknown> = {};
+
+	if (!manifest.hooks) return Object.freeze(hooksObj);
+
+	for (const [hookName, hookDef] of Object.entries(manifest.hooks)) {
+		if (hookDef.phases && hookDef.phases.length > 0) {
+			const hookNs: Record<string, unknown> = {};
+
+			for (const phase of hookDef.phases) {
+				const registryKey = `${hookName}:${phase}`;
+				hookNs[phase] = (handler: (...args: unknown[]) => unknown) => {
+					if (hookDef.capability && !grantedCapabilities.has(hookDef.capability)) {
+						throw new CapabilityDeniedError(`hooks.${hookName}.${phase}`, hookDef.capability);
+					}
+					if (typeof handler !== "function") {
+						throw new BindingError(`hooks.${hookName}.${phase}`, "expected a handler function");
+					}
+					hookRegistry.register(registryKey, { fn: handler });
+				};
+			}
+
+			hooksObj[hookName] = Object.freeze(hookNs);
+		} else {
+			const registryKey = hookName;
+			hooksObj[hookName] = (handler: (...args: unknown[]) => unknown) => {
+				if (hookDef.capability && !grantedCapabilities.has(hookDef.capability)) {
+					throw new CapabilityDeniedError(`hooks.${hookName}`, hookDef.capability);
+				}
+				if (typeof handler !== "function") {
+					throw new BindingError(`hooks.${hookName}`, "expected a handler function");
+				}
+				hookRegistry.register(registryKey, { fn: handler });
+			};
+		}
+	}
+
+	return Object.freeze(hooksObj);
+}
+
+function fireHookFromRegistry(
+	hookRegistry: HookRegistry,
+	manifest: Manifest,
+	hookName: string,
+	options?: FireHookOptions,
+): unknown[] {
+	const hookDef = manifest.hooks?.[hookName];
+	if (!hookDef) return [];
+
+	let registryKey: string;
+	if (options?.phase) {
+		if (!hookDef.phases || !hookDef.phases.includes(options.phase)) {
+			return [];
+		}
+		registryKey = `${hookName}:${options.phase}`;
+	} else {
+		registryKey = hookName;
+	}
+
+	const entries = hookRegistry.handlers.get(registryKey);
+	if (!entries || entries.length === 0) return [];
+
+	const data = options?.data;
+	const args = data !== undefined
+		? (typeof data === "object" && data !== null && !Array.isArray(data)
+			? Object.values(data as Record<string, unknown>)
+			: [data])
+		: [];
+
+	const results: unknown[] = [];
+	for (const entry of entries) {
+		try {
+			results.push(entry.fn(...args));
+		} catch {
+			results.push(undefined);
+		}
+	}
+	return results;
+}
+
 export function createSandbox(options: SandboxOptions): {
 	execute: (code: string) => ExecutionResult;
 	executeAsync: (code: string) => Promise<ExecutionResult>;
+	fireHook: (hookName: string, options?: FireHookOptions) => unknown[];
 } {
-	const { manifest } = options;
+	const { manifest, capabilities = [] } = options;
+	const grantedCapabilities = new Set(capabilities);
 	const limits = manifest.limits || {};
 	const timeoutMs = limits.timeout_ms ?? 5000;
+	const hookRegistry = createHookRegistry();
 
 	const sandboxGlobals = buildSandboxGlobal(options);
+	sandboxGlobals.hooks = buildHooksGlobal(manifest, grantedCapabilities, hookRegistry);
 
 	const context = vm.createContext(sandboxGlobals, {
 		codeGeneration: {
@@ -239,23 +365,61 @@ export function createSandbox(options: SandboxOptions): {
 
 	sandboxGlobals.globalThis = context;
 
+	function cleanStack(err: Error): void {
+		if (!err.stack) return;
+		err.stack = err.stack
+			.split("\n")
+			.filter((line) => !line.includes("node:vm") && !line.includes("node:internal"))
+			.join("\n");
+	}
+
+	function isTimeoutError(e: unknown): boolean {
+		if (typeof e !== "object" || e === null) return false;
+		const err = e as Record<string, unknown>;
+		if (err.code === "ERR_SCRIPT_EXECUTION_TIMEOUT") return true;
+		return typeof err.message === "string" && err.message.includes("Script execution timed out");
+	}
+
+	function wrapTimeoutError(e: unknown): never {
+		if (isTimeoutError(e)) {
+			throw new ExecutionLimitError(
+				"timeout_ms",
+				`Script timed out after ${timeoutMs}ms. Optimize your script or ask the app developer to increase the limit.`,
+			);
+		}
+		if (e instanceof Error) cleanStack(e);
+		throw e;
+	}
+
 	function execute(code: string): ExecutionResult {
 		const start = performance.now();
 		const script = new vm.Script(code, { filename: "xript-script.js" });
-		const value = script.runInContext(context, { timeout: timeoutMs });
-		const duration_ms = performance.now() - start;
-		return { value, duration_ms };
+		try {
+			const value = script.runInContext(context, { timeout: timeoutMs });
+			const duration_ms = performance.now() - start;
+			return { value, duration_ms };
+		} catch (e) {
+			return wrapTimeoutError(e);
+		}
 	}
 
 	async function executeAsync(code: string): Promise<ExecutionResult> {
 		const start = performance.now();
 		const wrappedCode = `(async () => { ${code} })()`;
 		const script = new vm.Script(wrappedCode, { filename: "xript-script.js" });
-		const promise = script.runInContext(context, { timeout: timeoutMs });
-		const value = await promise;
-		const duration_ms = performance.now() - start;
-		return { value, duration_ms };
+		try {
+			const promise = script.runInContext(context, { timeout: timeoutMs });
+			const value = await promise;
+			const duration_ms = performance.now() - start;
+			return { value, duration_ms };
+		} catch (e) {
+			return wrapTimeoutError(e);
+		}
 	}
 
-	return { execute, executeAsync };
+	function fireHook(hookName: string, opts?: FireHookOptions): unknown[] {
+		return fireHookFromRegistry(hookRegistry, manifest, hookName, opts);
+	}
+
+	return { execute, executeAsync, fireHook };
 }

@@ -16,7 +16,7 @@ function createCapabilityError(
 	capability: string,
 ): { error: QuickJSHandle } {
 	const err = context.newError(
-		`calling "${binding}" requires the "${capability}" capability, which has not been granted to this script.`,
+		`${binding}() requires the "${capability}" capability, which hasn't been granted to this script. Ask the app developer to enable it.`,
 	);
 	const nameStr = context.newString("CapabilityDeniedError");
 	context.setProp(err, "name", nameStr);
@@ -35,7 +35,7 @@ function createBindingError(
 	binding: string,
 	message: string,
 ): { error: QuickJSHandle } {
-	const err = context.newError(`${binding}: ${message}`);
+	const err = context.newError(`${binding}(): ${message}`);
 	const nameStr = context.newString("BindingError");
 	context.setProp(err, "name", nameStr);
 	nameStr.dispose();
@@ -50,8 +50,19 @@ interface Manifest {
 	name: string;
 	version?: string;
 	bindings?: Record<string, Binding>;
+	hooks?: Record<string, HookDef>;
 	capabilities?: Record<string, CapabilityDef>;
 	limits?: ExecutionLimits;
+}
+
+interface HookDef {
+	description: string;
+	phases?: string[];
+	params?: Parameter[];
+	capability?: string;
+	async?: boolean;
+	limits?: ExecutionLimits;
+	deprecated?: string;
 }
 
 type Binding = FunctionBinding | NamespaceBinding;
@@ -168,14 +179,14 @@ function injectErrorClasses(context: QuickJSContext | QuickJSAsyncContext): void
 	evalAndDispose(context, `
 		class BindingError extends Error {
 			constructor(binding, message) {
-				super(binding + ": " + message);
+				super(binding + "(): " + message);
 				this.name = "BindingError";
 				this.binding = binding;
 			}
 		}
 		class CapabilityDeniedError extends Error {
 			constructor(binding, capability) {
-				super('calling "' + binding + '" requires the "' + capability + '" capability, which has not been granted to this script.');
+				super(binding + '() requires the "' + capability + '" capability, which hasn\\'t been granted to this script. Ask the app developer to enable it.');
 				this.name = "CapabilityDeniedError";
 				this.capability = capability;
 				this.binding = binding;
@@ -199,7 +210,7 @@ function createHostFunctionWrapper(
 		}
 
 		if (!hostFn) {
-			return createBindingError(context, qualifiedName, "no host implementation provided");
+			return createBindingError(context, qualifiedName, "not implemented by the app");
 		}
 
 		try {
@@ -258,7 +269,7 @@ function registerAsyncBinding(
 	if (capabilityDenied) {
 		wrapperCode = `(function() { throw new CapabilityDeniedError("${escapedName}", "${escapedCap}"); })`;
 	} else if (missingImpl) {
-		wrapperCode = `(function() { throw new BindingError("${escapedName}", "no host implementation provided"); })`;
+		wrapperCode = `(function() { throw new BindingError("${escapedName}", "not implemented by the app"); })`;
 	} else {
 		wrapperCode = `(function(...args) { return globalThis["${asyncKey}"](...args); })`;
 	}
@@ -358,9 +369,181 @@ function freezeNamespaces(context: QuickJSContext | QuickJSAsyncContext, manifes
 	evalAndDispose(context, freezeCode);
 }
 
+export interface FireHookOptions {
+	phase?: string;
+	data?: unknown;
+}
+
+function injectHookHelpers(context: QuickJSContext | QuickJSAsyncContext): void {
+	evalAndDispose(context, `
+		globalThis.__xript_hook_handlers = {};
+		globalThis.__xript_register_handler = function(key, handler) {
+			if (!globalThis.__xript_hook_handlers[key]) {
+				globalThis.__xript_hook_handlers[key] = [];
+			}
+			globalThis.__xript_hook_handlers[key].push(handler);
+		};
+		globalThis.__xript_fire_handlers = function(key, data) {
+			var handlers = globalThis.__xript_hook_handlers[key];
+			if (!handlers || handlers.length === 0) return [];
+			var args;
+			if (data === undefined) {
+				args = [];
+			} else if (typeof data === "object" && data !== null && !Array.isArray(data)) {
+				args = Object.values(data);
+			} else {
+				args = [data];
+			}
+			var results = [];
+			for (var i = 0; i < handlers.length; i++) {
+				try {
+					results.push(handlers[i].apply(null, args));
+				} catch(e) {
+					results.push(undefined);
+				}
+			}
+			return results;
+		};
+	`);
+}
+
+function registerHandlerInContext(
+	context: QuickJSContext | QuickJSAsyncContext,
+	registryKey: string,
+	handlerHandle: QuickJSHandle,
+): void {
+	const registerFn = context.getProp(context.global, "__xript_register_handler");
+	const keyStr = context.newString(registryKey);
+	const callResult = context.callFunction(registerFn, context.undefined, keyStr, handlerHandle);
+	keyStr.dispose();
+	registerFn.dispose();
+	if (callResult.error) callResult.error.dispose();
+	else callResult.value.dispose();
+}
+
+function injectHooks(
+	context: QuickJSContext | QuickJSAsyncContext,
+	manifest: Manifest,
+	grantedCapabilities: Set<string>,
+): void {
+	injectHookHelpers(context);
+
+	if (!manifest.hooks) {
+		evalAndDispose(context, "globalThis.hooks = Object.freeze({});");
+		return;
+	}
+
+	const hooksObj = context.newObject();
+
+	for (const [hookName, hookDef] of Object.entries(manifest.hooks)) {
+		if (hookDef.phases && hookDef.phases.length > 0) {
+			const hookNs = context.newObject();
+
+			for (const phase of hookDef.phases) {
+				const registryKey = `${hookName}:${phase}`;
+				const regFn = context.newFunction(`hooks.${hookName}.${phase}`, (...handles: QuickJSHandle[]) => {
+					if (hookDef.capability && !grantedCapabilities.has(hookDef.capability)) {
+						return createCapabilityError(context, `hooks.${hookName}.${phase}`, hookDef.capability);
+					}
+					if (handles.length === 0) {
+						return createBindingError(context, `hooks.${hookName}.${phase}`, "expected a handler function");
+					}
+					registerHandlerInContext(context, registryKey, handles[0]);
+				});
+				context.setProp(hookNs, phase, regFn);
+				regFn.dispose();
+			}
+
+			context.setProp(hooksObj, hookName, hookNs);
+			hookNs.dispose();
+		} else {
+			const registryKey = hookName;
+			const regFn = context.newFunction(`hooks.${hookName}`, (...handles: QuickJSHandle[]) => {
+				if (hookDef.capability && !grantedCapabilities.has(hookDef.capability)) {
+					return createCapabilityError(context, `hooks.${hookName}`, hookDef.capability);
+				}
+				if (handles.length === 0) {
+					return createBindingError(context, `hooks.${hookName}`, "expected a handler function");
+				}
+				registerHandlerInContext(context, registryKey, handles[0]);
+			});
+			context.setProp(hooksObj, hookName, regFn);
+			regFn.dispose();
+		}
+	}
+
+	context.setProp(context.global, "hooks", hooksObj);
+	hooksObj.dispose();
+
+	const hookNsNames = Object.entries(manifest.hooks)
+		.filter(([_, h]) => h.phases && h.phases.length > 0)
+		.map(([name]) => name);
+
+	if (hookNsNames.length > 0) {
+		const freezeCode = hookNsNames.map((n) => `Object.freeze(hooks.${n});`).join("\n");
+		evalAndDispose(context, `Object.freeze(hooks);\n${freezeCode}`);
+	} else {
+		evalAndDispose(context, "Object.freeze(hooks);");
+	}
+}
+
+function fireHookInContext(
+	context: QuickJSContext | QuickJSAsyncContext,
+	manifest: Manifest,
+	hookName: string,
+	options?: FireHookOptions,
+): unknown[] {
+	const hookDef = manifest.hooks?.[hookName];
+	if (!hookDef) return [];
+
+	let registryKey: string;
+	if (options?.phase) {
+		if (!hookDef.phases || !hookDef.phases.includes(options.phase)) {
+			return [];
+		}
+		registryKey = `${hookName}:${options.phase}`;
+	} else {
+		registryKey = hookName;
+	}
+
+	const fireFn = context.getProp(context.global, "__xript_fire_handlers");
+	const keyStr = context.newString(registryKey);
+
+	const data = options?.data;
+	const dataHandle = data !== undefined
+		? marshalToQuickJS(context, data)
+		: context.undefined;
+
+	const callResult = context.callFunction(fireFn, context.undefined, keyStr, dataHandle);
+	keyStr.dispose();
+	if (data !== undefined) safeDispose(context, dataHandle);
+	fireFn.dispose();
+
+	if (callResult.error) {
+		callResult.error.dispose();
+		return [];
+	}
+
+	const arrHandle = callResult.value;
+	const lengthHandle = context.getProp(arrHandle, "length");
+	const length = context.dump(lengthHandle) as number;
+	lengthHandle.dispose();
+
+	const results: unknown[] = [];
+	for (let i = 0; i < length; i++) {
+		const elemHandle = context.getProp(arrHandle, String(i));
+		results.push(context.dump(elemHandle));
+		elemHandle.dispose();
+	}
+
+	arrHandle.dispose();
+	return results;
+}
+
 export interface SandboxResult {
 	execute: (code: string) => ExecutionResult;
 	executeAsync: (code: string) => Promise<ExecutionResult>;
+	fireHook: (hookName: string, options?: FireHookOptions) => unknown[];
 	dispose: () => void;
 }
 
@@ -390,6 +573,7 @@ export function createSandboxSync(
 	blockCodeGeneration(context);
 	injectErrorClasses(context);
 	injectBindings(context, manifest, hostBindings, grantedCapabilities, false);
+	injectHooks(context, manifest, grantedCapabilities);
 
 	function execute(code: string): ExecutionResult {
 		runtime.setInterruptHandler(shouldInterruptAfterDeadline(Date.now() + timeoutMs));
@@ -403,7 +587,7 @@ export function createSandboxSync(
 			result.error.dispose();
 
 			if (errorObj && typeof errorObj === "object" && errorObj.message && typeof errorObj.message === "string" && errorObj.message.includes("interrupted")) {
-				throw Object.assign(new Error("Script execution timed out"), { name: "ExecutionLimitError", limit: "timeout_ms" });
+				throw Object.assign(new Error(`Script timed out after ${timeoutMs}ms. Optimize your script or ask the app developer to increase the limit.`), { name: "ExecutionLimitError", limit: "timeout_ms" });
 			}
 
 			const err = new Error(errorObj?.message || String(errorObj));
@@ -429,7 +613,7 @@ export function createSandboxSync(
 			if (result.error.alive) result.error.dispose();
 
 			if (errorObj && typeof errorObj === "object" && errorObj.message && typeof errorObj.message === "string" && errorObj.message.includes("interrupted")) {
-				throw Object.assign(new Error("Script execution timed out"), { name: "ExecutionLimitError", limit: "timeout_ms" });
+				throw Object.assign(new Error(`Script timed out after ${timeoutMs}ms. Optimize your script or ask the app developer to increase the limit.`), { name: "ExecutionLimitError", limit: "timeout_ms" });
 			}
 
 			const err = new Error(errorObj?.message || String(errorObj));
@@ -460,12 +644,16 @@ export function createSandboxSync(
 		return { value, duration_ms };
 	}
 
+	function fireHook(hookName: string, opts?: FireHookOptions): unknown[] {
+		return fireHookInContext(context, manifest, hookName, opts);
+	}
+
 	function dispose(): void {
 		context.dispose();
 		runtime.dispose();
 	}
 
-	return { execute, executeAsync, dispose };
+	return { execute, executeAsync, fireHook, dispose };
 }
 
 export async function createSandboxAsync(
@@ -494,6 +682,7 @@ export async function createSandboxAsync(
 	blockCodeGeneration(context);
 	injectErrorClasses(context);
 	injectBindings(context, manifest, hostBindings, grantedCapabilities, true);
+	injectHooks(context, manifest, grantedCapabilities);
 
 	function execute(code: string): ExecutionResult {
 		runtime.setInterruptHandler(shouldInterruptAfterDeadline(Date.now() + timeoutMs));
@@ -507,7 +696,7 @@ export async function createSandboxAsync(
 			result.error.dispose();
 
 			if (errorObj && typeof errorObj === "object" && errorObj.message && typeof errorObj.message === "string" && errorObj.message.includes("interrupted")) {
-				throw Object.assign(new Error("Script execution timed out"), { name: "ExecutionLimitError", limit: "timeout_ms" });
+				throw Object.assign(new Error(`Script timed out after ${timeoutMs}ms. Optimize your script or ask the app developer to increase the limit.`), { name: "ExecutionLimitError", limit: "timeout_ms" });
 			}
 
 			const err = new Error(errorObj?.message || String(errorObj));
@@ -534,7 +723,7 @@ export async function createSandboxAsync(
 			const duration_ms = performance.now() - start;
 
 			if (errorObj && typeof errorObj === "object" && errorObj.message && typeof errorObj.message === "string" && errorObj.message.includes("interrupted")) {
-				throw Object.assign(new Error("Script execution timed out"), { name: "ExecutionLimitError", limit: "timeout_ms" });
+				throw Object.assign(new Error(`Script timed out after ${timeoutMs}ms. Optimize your script or ask the app developer to increase the limit.`), { name: "ExecutionLimitError", limit: "timeout_ms" });
 			}
 
 			const err = new Error(errorObj?.message || String(errorObj));
@@ -565,10 +754,14 @@ export async function createSandboxAsync(
 		return { value, duration_ms };
 	}
 
+	function fireHook(hookName: string, opts?: FireHookOptions): unknown[] {
+		return fireHookInContext(context, manifest, hookName, opts);
+	}
+
 	function dispose(): void {
 		context.dispose();
 		runtime.dispose();
 	}
 
-	return { execute, executeAsync, dispose };
+	return { execute, executeAsync, fireHook, dispose };
 }

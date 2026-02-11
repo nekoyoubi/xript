@@ -106,6 +106,30 @@
 		}
 	},
 
+	"hooks": {
+		"onTurnStart": {
+			"description": "Called at the start of each turn.",
+			"params": [
+				{ "name": "turnNumber", "type": "number", "description": "The current turn number." }
+			]
+		},
+		"onDamage": {
+			"description": "Called when damage is dealt to any entity.",
+			"phases": ["pre", "post", "done"],
+			"params": [
+				{ "name": "target", "type": "string", "description": "The entity receiving damage." },
+				{ "name": "amount", "type": "number", "description": "The damage amount." }
+			],
+			"capability": "modify-player"
+		},
+		"onLevelChange": {
+			"description": "Called when the player moves to a new dungeon level.",
+			"params": [
+				{ "name": "newLevel", "type": "number", "description": "The new level number." }
+			]
+		}
+	},
+
 	"capabilities": {
 		"modify-player": {
 			"description": "Modify the player's stats, inventory, and equipment.",
