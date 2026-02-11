@@ -280,6 +280,76 @@ describe("generateTypes", () => {
 		assert.ok(result.includes("declare function getTags(): string[];"));
 	});
 
+	it("generates hooks namespace for non-phased hooks", () => {
+		const manifest = {
+			xript: "0.1",
+			name: "test",
+			hooks: {
+				onSave: {
+					description: "Called when the game saves.",
+					params: [{ name: "slot", type: "number" }],
+				},
+			},
+		};
+		const result = generateTypes(manifest);
+		assert.ok(result.includes("declare namespace hooks {"));
+		assert.ok(result.includes("function onSave(handler: (slot: number) => void): void;"));
+		assert.ok(result.includes("* Called when the game saves."));
+	});
+
+	it("generates phased hook namespaces", () => {
+		const manifest = {
+			xript: "0.1",
+			name: "test",
+			hooks: {
+				onDamage: {
+					description: "Damage event.",
+					phases: ["pre", "post", "done"],
+					params: [
+						{ name: "target", type: "string" },
+						{ name: "amount", type: "number" },
+					],
+					capability: "modify-player",
+				},
+			},
+		};
+		const result = generateTypes(manifest);
+		assert.ok(result.includes("declare namespace hooks {"));
+		assert.ok(result.includes("namespace onDamage {"));
+		assert.ok(result.includes("function pre(handler: (target: string, amount: number) => void): void;"));
+		assert.ok(result.includes("function post(handler: (target: string, amount: number) => void): void;"));
+		assert.ok(result.includes("@remarks Requires capability: `modify-player`"));
+	});
+
+	it("generates hooks with no params", () => {
+		const manifest = {
+			xript: "0.1",
+			name: "test",
+			hooks: {
+				onReady: {
+					description: "Called when ready.",
+				},
+			},
+		};
+		const result = generateTypes(manifest);
+		assert.ok(result.includes("function onReady(handler: () => void): void;"));
+	});
+
+	it("includes deprecated annotation on hooks", () => {
+		const manifest = {
+			xript: "0.1",
+			name: "test",
+			hooks: {
+				onOldEvent: {
+					description: "Legacy.",
+					deprecated: "Use onNewEvent instead.",
+				},
+			},
+		};
+		const result = generateTypes(manifest);
+		assert.ok(result.includes("@deprecated Use onNewEvent instead."));
+	});
+
 	it("generates full output for the dungeon-crawler example", async () => {
 		const result = await generateTypesFromFile("../../examples/game-mod-system/manifest.json");
 		assert.ok(result.content.includes("interface Position {"));
@@ -293,6 +363,10 @@ describe("generateTypes", () => {
 		assert.ok(result.content.includes("declare namespace data {"));
 		assert.ok(result.content.includes("Promise<Enemy[]>"));
 		assert.ok(result.content.includes("Promise<string | undefined>"));
+		assert.ok(result.content.includes("declare namespace hooks {"));
+		assert.ok(result.content.includes("function onTurnStart(handler:"));
+		assert.ok(result.content.includes("namespace onDamage {"));
+		assert.ok(result.content.includes("function onLevelChange(handler:"));
 	});
 
 	it("produces empty output for minimal manifest", () => {

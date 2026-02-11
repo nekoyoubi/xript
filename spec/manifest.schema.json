@@ -61,6 +61,13 @@
 				"$ref": "#/$defs/typeDefinition"
 			}
 		},
+		"hooks": {
+			"description": "Hooks that scripts can register handlers for. Hooks are fired by the host and handled by scripts — the reverse direction of bindings.",
+			"type": "object",
+			"additionalProperties": {
+				"$ref": "#/$defs/hook"
+			}
+		},
 		"limits": {
 			"$ref": "#/$defs/executionLimits"
 		}
@@ -278,6 +285,55 @@
 				"description": {
 					"type": "string",
 					"description": "Explanation of what this example demonstrates."
+				}
+			},
+			"additionalProperties": false
+		},
+		"hook": {
+			"description": "A hook that scripts can register handlers for. Hooks are the reverse of bindings: the host fires them, and scripts handle them.",
+			"type": "object",
+			"required": ["description"],
+			"properties": {
+				"description": {
+					"type": "string",
+					"description": "What this hook represents and when it fires. Shown in generated docs."
+				},
+				"phases": {
+					"type": "array",
+					"items": {
+						"type": "string",
+						"enum": ["pre", "post", "done", "error"]
+					},
+					"minItems": 1,
+					"uniqueItems": true,
+					"description": "Lifecycle phases for this hook. If omitted, the hook is a simple notification with no lifecycle."
+				},
+				"params": {
+					"type": "array",
+					"items": { "$ref": "#/$defs/parameter" },
+					"description": "The parameters passed to hook handlers when fired."
+				},
+				"capability": {
+					"type": "string",
+					"description": "The capability required to register for this hook. If omitted, any script can register."
+				},
+				"async": {
+					"type": "boolean",
+					"description": "Whether handlers run asynchronously. Host-controlled. Defaults to false.",
+					"default": false
+				},
+				"limits": {
+					"$ref": "#/$defs/executionLimits",
+					"description": "Per-handler execution limits. Overrides the manifest-level defaults for this hook's handlers."
+				},
+				"examples": {
+					"type": "array",
+					"items": { "$ref": "#/$defs/example" },
+					"description": "Usage examples for documentation."
+				},
+				"deprecated": {
+					"type": "string",
+					"description": "If present, this hook is deprecated. The value describes the migration path."
 				}
 			},
 			"additionalProperties": false

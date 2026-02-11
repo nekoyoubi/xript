@@ -178,6 +178,67 @@ Anywhere a type is expected, you can use:
 
 The shorthand `"string[]"` is equivalent to `{ "array": "string" }`. Both are valid. The shorthand exists because array types are common and the verbose form is noisy for simple cases.
 
+## Hooks
+
+Hooks are the reverse of bindings. While bindings let scripts call the host, hooks let the host call scripts. They enable the event-driven programming model that real modding requires: "when the player takes damage," "before the game saves," "after a level loads."
+
+### Simple Hooks
+
+A hook without lifecycle phases is a simple notification:
+
+```json
+{
+  "hooks": {
+    "playerDamage": {
+      "description": "Fired when the player takes damage.",
+      "params": [
+        { "name": "amount", "type": "number", "description": "Damage amount." },
+        { "name": "source", "type": "string", "description": "What caused the damage." }
+      ]
+    }
+  }
+}
+```
+
+Scripts register handlers: `hooks.playerDamage((amount, source) => { ... })`. The host fires the hook via `runtime.fireHook("playerDamage", { amount: 25, source: "trap" })`.
+
+### Phased Hooks
+
+Hooks can declare lifecycle phases for structured interception:
+
+```json
+{
+  "hooks": {
+    "save": {
+      "description": "Fired during the save lifecycle.",
+      "phases": ["pre", "post", "done", "error"],
+      "capability": "persistence",
+      "params": [
+        { "name": "data", "type": "SaveData" }
+      ]
+    }
+  }
+}
+```
+
+Scripts register per-phase: `hooks.save.pre((data) => { ... })`. Multiple handlers per phase run in registration order.
+
+The four standard phases are `pre` (before execution), `post` (after execution, can modify), `done` (after all post-processing, sealed), and `error` (after failure). Hosts declare which phases apply and control firing order.
+
+### Hook Properties
+
+Optional fields on hooks mirror bindings where appropriate:
+
+- **`phases`** — lifecycle phases (`pre`, `post`, `done`, `error`). Omit for simple hooks.
+- **`params`** — parameters passed to handlers when the hook fires
+- **`capability`** — capability required to register for this hook
+- **`async`** — whether handlers run asynchronously (host-controlled, defaults to `false`)
+- **`limits`** — per-handler execution limits, overriding manifest defaults
+- **`examples`** — usage examples for documentation
+- **`deprecated`** — marks the hook as deprecated with a migration message
+
+See [hooks.md](./hooks.md) for the full hook conventions, error handling, and TypeScript mapping.
+
 ## Execution Limits
 
 The `limits` section sets default bounds for script execution:
