@@ -1,6 +1,15 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { resolve, join } from "node:path";
 
+interface HookDef {
+	description: string;
+	phases?: string[];
+	params?: Parameter[];
+	capability?: string;
+	async?: boolean;
+	deprecated?: string;
+}
+
 interface Manifest {
 	xript: string;
 	name: string;
@@ -8,6 +17,7 @@ interface Manifest {
 	title?: string;
 	description?: string;
 	bindings?: Record<string, Binding>;
+	hooks?: Record<string, HookDef>;
 	capabilities?: Record<string, Capability>;
 	types?: Record<string, TypeDefinition>;
 }
@@ -165,6 +175,18 @@ function generateIndexPage(manifest: Manifest): DocPage {
 			}
 			lines.push("");
 		}
+	}
+
+	if (manifest.hooks) {
+		lines.push("## Hooks");
+		lines.push("");
+
+		for (const [name, hook] of Object.entries(manifest.hooks)) {
+			const phaseInfo =
+				hook.phases && hook.phases.length > 0 ? ` *(${hook.phases.join(", ")})*` : "";
+			lines.push(`- [\`${name}\`](./hooks/${name}.md) — ${hook.description}${phaseInfo}`);
+		}
+		lines.push("");
 	}
 
 	if (manifest.types) {
@@ -403,6 +425,77 @@ function generateTypePage(name: string, def: TypeDefinition): DocPage {
 	return { slug: `types/${name}`, title: name, content: lines.join("\n") };
 }
 
+function generateHookPage(name: string, hookDef: HookDef): DocPage {
+	const lines: string[] = [];
+
+	lines.push(`# ${name}`);
+	lines.push("");
+	if (hookDef.deprecated) {
+		lines.push(`> **Deprecated:** ${hookDef.deprecated}`);
+		lines.push("");
+	}
+	lines.push(hookDef.description);
+	lines.push("");
+
+	const params = hookDef.params || [];
+	const handlerParams = params
+		.map((p) => {
+			const opt = isOptionalParam(p) ? "?" : "";
+			return `${p.name}${opt}: ${typeRefToCode(p.type)}`;
+		})
+		.join(", ");
+	const handlerType = `(${handlerParams}) => void`;
+
+	if (hookDef.phases && hookDef.phases.length > 0) {
+		lines.push("## Phases");
+		lines.push("");
+		for (const phase of hookDef.phases) {
+			lines.push(`- \`${phase}\``);
+		}
+		lines.push("");
+
+		lines.push("## Registration");
+		lines.push("");
+		lines.push("```typescript");
+		for (const phase of hookDef.phases) {
+			lines.push(`hooks.${name}.${phase}(handler: ${handlerType}): void`);
+		}
+		lines.push("```");
+		lines.push("");
+	} else {
+		lines.push("## Registration");
+		lines.push("");
+		lines.push("```typescript");
+		lines.push(`hooks.${name}(handler: ${handlerType}): void`);
+		lines.push("```");
+		lines.push("");
+	}
+
+	if (params.length > 0) {
+		lines.push("## Handler Parameters");
+		lines.push("");
+		lines.push("| Name | Type | Required | Description |");
+		lines.push("|------|------|----------|-------------|");
+		for (const p of params) {
+			const req = isOptionalParam(p) ? "No" : "Yes";
+			const desc = p.description || "";
+			const defaultNote =
+				p.default !== undefined ? ` (default: \`${JSON.stringify(p.default)}\`)` : "";
+			lines.push(`| \`${p.name}\` | ${formatTypeRef(p.type)} | ${req} | ${desc}${defaultNote} |`);
+		}
+		lines.push("");
+	}
+
+	if (hookDef.capability) {
+		lines.push("## Requires Capability");
+		lines.push("");
+		lines.push(`This hook requires the \`${hookDef.capability}\` capability.`);
+		lines.push("");
+	}
+
+	return { slug: `hooks/${name}`, title: name, content: lines.join("\n") };
+}
+
 export function generateDocs(manifest: unknown): DocgenResult {
 	const m = manifest as Manifest;
 	const pages: DocPage[] = [];
@@ -416,6 +509,12 @@ export function generateDocs(manifest: unknown): DocgenResult {
 			} else {
 				pages.push(generateFunctionPage(name, binding));
 			}
+		}
+	}
+
+	if (m.hooks) {
+		for (const [name, hookDef] of Object.entries(m.hooks)) {
+			pages.push(generateHookPage(name, hookDef));
 		}
 	}
 

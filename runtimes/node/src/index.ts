@@ -1,10 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { validateManifest, type ValidationResult } from "@xript/manifest-validator";
-import { createSandbox, type HostBindings, type HostFunction, type SandboxOptions, type ExecutionResult } from "./sandbox.js";
+import { createSandbox, type HostBindings, type HostFunction, type SandboxOptions, type ExecutionResult, type FireHookOptions } from "./sandbox.js";
 
 export { BindingError, CapabilityDeniedError, ExecutionLimitError } from "./errors.js";
-export type { HostBindings, HostFunction, ExecutionResult } from "./sandbox.js";
+export type { HostBindings, HostFunction, ExecutionResult, FireHookOptions } from "./sandbox.js";
 export type { ValidationResult };
 
 interface Manifest {
@@ -12,6 +12,7 @@ interface Manifest {
 	name: string;
 	version?: string;
 	bindings?: Record<string, unknown>;
+	hooks?: Record<string, unknown>;
 	capabilities?: Record<string, unknown>;
 	limits?: {
 		timeout_ms?: number;
@@ -46,6 +47,7 @@ export interface XriptRuntime {
 	readonly manifest: Manifest;
 	execute(code: string): ExecutionResult;
 	executeAsync(code: string): Promise<ExecutionResult>;
+	fireHook(hookName: string, options?: FireHookOptions): unknown[];
 	dispose(): void;
 }
 
@@ -68,6 +70,10 @@ function checkBasicStructure(manifest: unknown): Manifest {
 
 	if (m.bindings !== undefined && (typeof m.bindings !== "object" || m.bindings === null)) {
 		issues.push({ path: "/bindings", message: "'bindings' must be an object" });
+	}
+
+	if (m.hooks !== undefined && (typeof m.hooks !== "object" || m.hooks === null)) {
+		issues.push({ path: "/hooks", message: "'hooks' must be an object" });
 	}
 
 	if (m.capabilities !== undefined && (typeof m.capabilities !== "object" || m.capabilities === null)) {
@@ -109,6 +115,7 @@ export function createRuntime(manifest: unknown, options: RuntimeOptions): Xript
 		manifest: m,
 		execute: sandbox.execute,
 		executeAsync: sandbox.executeAsync,
+		fireHook: sandbox.fireHook,
 		dispose() {},
 	};
 }

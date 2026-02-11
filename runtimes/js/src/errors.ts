@@ -2,7 +2,7 @@ export class BindingError extends Error {
 	public readonly binding: string;
 
 	constructor(binding: string, message: string) {
-		super(`${binding}: ${message}`);
+		super(`${binding}(): ${message}`);
 		this.name = "BindingError";
 		this.binding = binding;
 	}
@@ -14,7 +14,7 @@ export class CapabilityDeniedError extends Error {
 
 	constructor(binding: string, capability: string) {
 		super(
-			`calling "${binding}" requires the "${capability}" capability, which has not been granted to this script.`,
+			`${binding}() requires the "${capability}" capability, which hasn't been granted to this script. Ask the app developer to enable it.`,
 		);
 		this.name = "CapabilityDeniedError";
 		this.capability = capability;

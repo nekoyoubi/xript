@@ -276,7 +276,7 @@ describe("dungeon-crawler integration tests", () => {
 			const runtime = await xript.createRuntime(manifest, { hostBindings: bindings });
 			assert.throws(
 				() => runtime.execute("while(true){}"),
-				(err) => err.name === "ExecutionLimitError" || err.message.includes("timed out") || err.message.includes("interrupted"),
+				(err) => err.name === "ExecutionLimitError" && err.message.includes("timed out") && err.message.includes("1000ms"),
 			);
 			runtime.dispose();
 		});
