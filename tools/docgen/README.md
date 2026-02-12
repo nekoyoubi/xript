@@ -48,7 +48,7 @@ Generates markdown documentation from a manifest object.
 Reads a manifest JSON file and generates markdown documentation.
 
 **Options:**
-- `outputDir` — directory to write output files
+- `outputDir`: directory to write output files
 
 ## What it generates
 
@@ -61,7 +61,7 @@ Reads a manifest JSON file and generates markdown documentation.
 
 ## Documentation
 
-[xript.dev](https://xript.dev) — full docs and manifest specification.
+[xript.dev](https://xript.dev): full docs and manifest specification.
 
 ## License
 

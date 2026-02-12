@@ -19,9 +19,10 @@ xript/
 ├── spec/           # the specification (manifest schema, capability model, etc.)
 ├── runtimes/
 │   ├── js/         # universal runtime (@xriptjs/runtime, QuickJS WASM sandbox)
-│   └── node/       # Node.js-optimized runtime (@xriptjs/runtime-node, vm-based)
+│   ├── node/       # Node.js-optimized runtime (@xriptjs/runtime-node, vm-based)
+│   └── rust/       # native Rust runtime (xript-runtime, QuickJS via rquickjs)
 ├── tools/          # ecosystem tooling (validator, typegen, docgen, init)
-├── docs/           # documentation site (Astro + Starlight) → xript.dev
+├── docs/           # documentation site (Astro + Starlight), deployed to xript.dev
 └── examples/       # example manifests and integrations
 ```
 
@@ -47,6 +48,10 @@ npm test --workspace=tools/docgen
 
 npm run build --workspace=tools/init
 npm test --workspace=tools/init
+
+# Rust runtime (requires Rust toolchain)
+cd runtimes/rust && cargo build
+cd runtimes/rust && cargo test
 ```
 
 The docs site runs locally with:
@@ -76,7 +81,7 @@ PRs are merged with merge commits (not squash) to preserve full commit history.
 
 ## Pull Requests
 
-- Keep PRs focused — one theme per PR
+- Keep PRs focused: one theme per PR
 - Include tests for new functionality
 - Run the relevant package's test suite before opening the PR
 - PR descriptions should include a summary and test plan

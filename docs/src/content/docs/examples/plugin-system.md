@@ -1,6 +1,6 @@
 ---
 title: "Example: Plugin System"
-description: A tier 2 integration walkthrough — namespaces, capabilities, and custom types.
+description: "A tier 2 integration walkthrough: namespaces, capabilities, and custom types."
 ---
 
 This example demonstrates a full-featured plugin system using xript's tier 2 features: namespaces to organize bindings, capabilities to gate destructive operations, and custom types to describe data structures. Five plugins run against the same host, each with a different permission profile.
@@ -34,9 +34,9 @@ The manifest declares a `tasks` namespace with five methods and a top-level `log
 
 Key observations:
 
-- `tasks.list` and `tasks.get` have **no capability gate** -- any plugin can read tasks
+- `tasks.list` and `tasks.get` have **no capability gate**: any plugin can read tasks
 - `tasks.add` and `tasks.complete` require the **`manage-tasks`** capability
-- `tasks.remove` requires the **`admin`** capability -- a higher privilege tier
+- `tasks.remove` requires the **`admin`** capability, a higher privilege tier
 - `log` is a top-level function with no gate
 
 ### Capabilities
@@ -73,7 +73,7 @@ Key observations:
 }
 ```
 
-Types do not enforce runtime validation -- they serve as documentation for plugin authors and feed into tools like `xript-typegen` and `xript-docgen`.
+Types do not enforce runtime validation; they serve as documentation for extenders and feed into tools like `xript-typegen` and `xript-docgen`.
 
 ## The Host
 
@@ -98,7 +98,7 @@ const hostBindings = {
 };
 ```
 
-Each plugin gets its own runtime instance but shares the same underlying `taskStore`. This means plugins can see each other's changes -- a deliberate design choice for this example.
+Each plugin gets its own runtime instance but shares the same underlying `taskStore`. This means plugins can see each other's changes: a deliberate design choice for this example.
 
 The factory is initialized once, then each plugin creates a runtime from it:
 
@@ -137,7 +137,7 @@ runtime.execute('tasks.list().filter(t => !t.done).length'); // works
 runtime.execute('tasks.add("Sneaky task", "low")');          // CapabilityDeniedError
 ```
 
-Demonstrates that even after other plugins have created tasks, a plugin without capabilities still cannot modify them.
+Demonstrates that a plugin without capabilities still cannot modify tasks, even after other plugins have created them.
 
 ### 4. Admin Cleanup (manage-tasks + admin)
 
@@ -155,7 +155,7 @@ const runtime = xript.createRuntime(manifest, { hostBindings, capabilities: ["ma
 runtime.execute('tasks.remove("2")'); // CapabilityDeniedError: requires "admin"
 ```
 
-Having `manage-tasks` does not grant `admin`. Each capability must be explicitly granted.
+Having `manage-tasks` does not grant `admin`; each capability must be explicitly granted.
 
 ## Running the Demo
 
@@ -183,5 +183,5 @@ Tier 2 is the right choice when:
 
 - You need to **organize bindings into logical groups** (namespaces)
 - Some operations are **destructive or sensitive** and need permission gating
-- You want to **document data structures** for plugin authors
+- You want to **document data structures** for extenders
 - Different plugins need **different permission levels**

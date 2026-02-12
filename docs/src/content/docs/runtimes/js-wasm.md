@@ -5,7 +5,7 @@ description: Universal JavaScript runtime for sandboxed script execution with ma
 
 The universal runtime (`@xriptjs/runtime`) executes user scripts inside a secure QuickJS WASM sandbox. It reads a manifest to determine which bindings to expose, enforces capability gates, and prevents access to anything outside the declared surface. It runs in any JavaScript environment: browser, Node.js, Deno, Bun, and Cloudflare Workers.
 
-For Node.js-only applications that need `createRuntimeFromFile` or native V8 performance, see the [Node.js Runtime](/runtimes/node).
+For Node.js-only applications that need `createRuntimeFromFile` or native V8 performance, see the [Node.js Runtime](/runtimes/node). For Rust host applications, see the [Rust Runtime](/runtimes/rust).
 
 ## Installation
 
@@ -28,7 +28,7 @@ const runtime = xript.createRuntime(manifest, {
 });
 ```
 
-`initXript()` loads the QuickJS WASM module asynchronously and returns a factory. `createRuntime()` on the factory is synchronous — create as many runtimes as you need without additional async overhead.
+`initXript()` loads the QuickJS WASM module asynchronously and returns a factory. `createRuntime()` on the factory is synchronous: create as many runtimes as you need without additional async overhead.
 
 For applications with async host bindings, use the async variant:
 

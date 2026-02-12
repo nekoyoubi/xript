@@ -45,7 +45,7 @@ console.log(dts);
 Generates TypeScript declarations from a manifest object.
 
 **Options:**
-- `header` — custom header comment (replaces the default auto-generated header)
+- `header`: custom header comment (replaces the default auto-generated header)
 
 ### `generateTypesFromFile(path, options?): Promise<{ content: string; filePath: string }>`
 
@@ -62,7 +62,7 @@ Reads a manifest JSON file and generates TypeScript declarations.
 
 ## Documentation
 
-[xript.dev](https://xript.dev) — full docs, manifest specification, and examples.
+[xript.dev](https://xript.dev): full docs, manifest specification, and examples.
 
 ## License
 

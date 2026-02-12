@@ -25,8 +25,8 @@ Running without flags starts an interactive session:
 ```
 $ npx @xriptjs/init my-mod
 Project name (my-mod):
-Tier — 2 (bindings) or 3 (full scripting)? (2):
-Language — typescript or javascript? (typescript):
+Tier: 2 (bindings) or 3 (full scripting)? (2):
+Language: typescript or javascript? (typescript):
 
 ✓ Created my-mod in /path/to/my-mod
 
@@ -66,9 +66,9 @@ Defaults: tier 2, TypeScript.
 
 The init CLI generates project scaffolding tailored to two adoption tiers:
 
-**Tier 2 (Bindings)** — Simple host bindings with capability gating. Good for apps that need a few extension points like custom formatting, data transformations, or simple plugins.
+**Tier 2 (Bindings)**: Simple host bindings with capability gating. Good for apps that need a few extension points like custom formatting, data transformations, or simple plugins.
 
-**Tier 3 (Full Scripting)** — Namespace bindings, hooks, custom types, and capabilities. Designed for apps with rich modding APIs like game engines, content tools, or extensible platforms.
+**Tier 3 (Full Scripting)**: Namespace bindings, hooks, custom types, and capabilities. Designed for apps with rich extension APIs like game engines, content tools, or extensible platforms.
 
 Tier 1 (expression-only) is simple enough that no scaffolding is needed.
 

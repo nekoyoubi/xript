@@ -1,6 +1,6 @@
 # @xriptjs/runtime
 
-Universal JavaScript runtime for [xript](https://github.com/nekoyoubi/xript) — a QuickJS WASM sandbox that runs in the browser, Node.js, Deno, Bun, and anywhere else JavaScript runs.
+Universal JavaScript runtime for [xript](https://github.com/nekoyoubi/xript). This is a QuickJS WASM sandbox that runs in the browser, Node.js, Deno, Bun, and anywhere else JavaScript runs.
 
 [![npm](https://img.shields.io/npm/v/@xriptjs/runtime)](https://www.npmjs.com/package/@xriptjs/runtime)
 
@@ -41,7 +41,7 @@ runtime.dispose();
 ## What it does
 
 - Runs user-provided JavaScript inside a QuickJS WASM sandbox
-- Only functions declared in the manifest are available to scripts — everything else is blocked
+- Only functions declared in the manifest are available to scripts; everything else is blocked
 - Supports capability-gated bindings, namespace bindings, hooks, and resource limits
 - No `eval`, no `Function`, no access to the host environment
 
@@ -60,9 +60,9 @@ Same as `initXript`, but creates runtimes that support async host bindings (uses
 Creates a sandboxed runtime from a manifest object and host binding implementations.
 
 **Options:**
-- `hostBindings` — object mapping binding names to host functions
-- `capabilities` — array of capability names to grant
-- `console` — `{ log, warn, error }` for script console output
+- `hostBindings`: object mapping binding names to host functions
+- `capabilities`: array of capability names to grant
+- `console`: `{ log, warn, error }` for script console output
 
 ### `runtime.execute(code): ExecutionResult`
 
@@ -76,21 +76,22 @@ Fires a hook by name, calling all registered handlers. Returns an array of handl
 
 Frees the WASM sandbox resources.
 
-## When to use this vs `@xriptjs/runtime-node`
+## When to use this vs other runtimes
 
-| | `@xriptjs/runtime` | `@xriptjs/runtime-node` |
-|---|---|---|
-| Runs in browser | Yes | No |
-| Runs in Node.js | Yes | Yes |
-| Sandbox mechanism | QuickJS WASM | Node.js `vm` module |
-| Zero dependencies on Node | Yes | Requires Node.js |
-| Performance | Good (WASM overhead) | Native V8 speed |
+| | `@xriptjs/runtime` | `@xriptjs/runtime-node` | `xript-runtime` (Rust) |
+|---|---|---|---|
+| Runs in browser | Yes | No | No |
+| Runs in Node.js | Yes | Yes | No |
+| Sandbox mechanism | QuickJS WASM | Node.js `vm` module | QuickJS (native) |
+| Zero dependencies on Node | Yes | Requires Node.js | Rust crate |
+| Performance | Good (WASM overhead) | Native V8 speed | Native QuickJS speed |
+| Async bindings | Via asyncify WASM | Native `async`/`await` | Not yet |
 
-Use this package when you need **universal portability** (browser, edge, serverless). Use `@xriptjs/runtime-node` when you're Node.js-only and want native V8 performance.
+Use this package when you need **universal portability** (browser, edge, serverless). Use `@xriptjs/runtime-node` when you're Node.js-only and want native V8 performance. Use `xript-runtime` when your host application is written in Rust.
 
 ## Documentation
 
-[xript.dev](https://xript.dev) — full docs, getting started guide, and live demos.
+[xript.dev](https://xript.dev): full docs, getting started guide, and live demos.
 
 ## License
 

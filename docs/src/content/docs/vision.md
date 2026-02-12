@@ -1,58 +1,62 @@
 ---
 title: Vision
-description: The guiding principles behind xript — making every application moddable.
----
-
-**eXtensible Runtime Interface Protocol Tooling**
-
+description: "The guiding principles behind xript: making any application moddable."
 ---
 
 ## The Problem
 
-Software is closed by default.
+Software, games, the web, and embedded processes are closed by default.
 
-Every application is an island. Every game reinvents modding from scratch — or doesn't bother. Every tool locks its users into whatever the original developers imagined. And when extensibility does exist, it's bespoke: a unique API, a unique sandbox (or none at all), a unique set of conventions that modders must learn from zero.
+Applications are isolated. Games reinvent modding from scratch, or skip it. Tools lock people into whatever the original authors imagined. When extensibility exists, it's bespoke: a unique API, a unique sandbox (or none at all), a unique set of conventions that extenders must learn from zero.
 
-The result is a world where the people who *use* software have no voice in how it *works*.
+The result: users have no voice in how the software they run actually works.
 
-The Elder Scrolls series proved something decades ago: when you give a community the tools to extend your work, they don't just use it — they *sustain* it. Skyrim lives not because Bethesda perfected it, but because they had the foresight to let others finish what they started. Modders turned a game into a living ecosystem.
+The Elder Scrolls series showed decades ago that when you give a community the tools to extend your work, they sustain it. Skyrim still thrives over a decade later because Bethesda let their community finish what they started. That principle shouldn't be limited to a handful of franchises.
 
-That principle shouldn't be limited to one franchise, or to games at all.
+---
+
+## The Three Roles
+
+xript centers on three roles:
+
+- **Authors** build applications and define their extensibility surface. They write the manifest.
+- **Extenders** write scripts and mods. They consume the manifest and add functionality.
+- **Users** run the application, with or without mods. They benefit from both.
 
 ---
 
 ## The Vision
 
-**Every application should be moddable. xript exists to make that inevitable.**
+**Every application should be moddable. xript exists to make that practical.**
 
-xript is not a programming language. It is a *platform specification* — a standard for how software exposes functionality to its users in a safe, consistent, and well-documented way.
+xript is not a programming language. It is a *platform specification*: a standard for how software exposes functionality in a safe, consistent, and well-documented way.
 
-Users write JavaScript. They already know it, their tools already support it, and LLMs already speak it fluently. xript doesn't reinvent the language. It standardizes *everything else*: the bindings, the capability model, the sandboxing guarantees, the documentation, and the tooling.
+Extenders write JavaScript. They already know it, their tools already support it, and LLMs already speak it fluently. xript doesn't reinvent the language. It standardizes everything else: the bindings, the capability model, the sandboxing guarantees, the documentation, and the tooling.
 
-When an application is xript-enabled, modders get:
+When an application is xript-enabled, extenders get:
 
 - A familiar language with nothing to install
 - Type-safe bindings with editor support
-- Beautiful, generated documentation
+- Generated documentation
 - A sandbox they can't escape and don't need to fear
-- Confidence that their work won't break the host — or anyone using it
+- Confidence that their work won't break the host or anyone using it
 
-When a developer integrates xript, they get:
+When authors integrate xript, they get:
 
 - A declarative manifest that *is* the documentation
 - Sandboxed execution with fine-grained capability gating
-- Generated types, docs, and validation — from a single source of truth
-- A growing community of modders who already know the system
+- Generated types, docs, and validation from a single source of truth
+- A growing community of extenders who already know the system
 
 ---
 
 ## Guiding Principles
 
-### 1. The Modder Is the Customer's Customer
+### 1. The Extender Is the Customer's Customer
 
 Every decision flows through one question: *How does this affect the person writing the script?*
 
-Integrators adopt xript to access a community of modders. Modders stay because the experience respects their time. The modder's joy is the entire flywheel.
+Authors adopt xript to access a community of extenders. Extenders stay because the experience respects their time. That experience drives the whole adoption loop.
 
 ### 2. Safety Is Not Optional
 
@@ -67,7 +71,7 @@ A user running someone else's mod should never have to wonder if it's safe. It i
 
 ### 3. The Manifest Is the Product
 
-The xript manifest is not configuration — it *is* the API. It defines bindings, capabilities, types, descriptions, and examples in one place. From it, everything else is derived:
+The xript manifest is not configuration. It *is* the API. It defines bindings, capabilities, types, descriptions, and examples in one place. From it, everything else is derived:
 
 - Documentation sites
 - TypeScript definitions
@@ -88,19 +92,19 @@ Each level stands on its own. Each level is a reason to adopt.
 
 ### 5. The Language Is Commodity
 
-JavaScript is the runtime language — not because it's perfect, but because it's *known*. Modders don't want to learn a new syntax to add a feature to their favorite app. They want to open an editor and start writing.
+JavaScript is the runtime language, not because it's perfect but because it's *known*. Extenders don't want to learn a new syntax to add a feature. They want to open an editor and start writing.
 
 xript's value is never in the syntax. It is in the bindings, the safety model, the tooling, and the ecosystem.
 
 ### 6. Standards Outlive Implementations
 
-The xript specification is more important than any single runtime. Runtimes will come and go — QuickJS today, something else tomorrow. The spec endures.
+The xript specification is more important than any single runtime. Runtimes will come and go. QuickJS today, something else tomorrow. The spec endures.
 
 A manifest written for xript-spec v1.0 should be implementable in any language, on any platform, for decades. That's the bar.
 
 ### 7. Documentation Is Not an Afterthought
 
-If a modder can't find how to use a binding, it doesn't matter that it exists. xript treats documentation as a first-class output — generated, versioned, and always in sync with the manifest.
+If an extender can't find how to use a binding, it doesn't matter that it exists. xript treats documentation as a first-class output: generated, versioned, and always in sync with the manifest.
 
 The quality of xript.dev and every generated doc site is as much a part of the product as the runtime itself.
 
@@ -112,7 +116,7 @@ The quality of xript.dev and every generated doc site is as much a part of the p
 
 Before USB, every device had its own connector, its own driver model, its own limitations. After USB, you plug things in and they work.
 
-Before xript, every application reinvents extensibility from scratch — or ships without it. After xript, developers declare a manifest and their software becomes a platform. Modders learn one system and can extend *anything*.
+Before xript, applications reinvent extensibility from scratch, or ship without it. After xript, authors declare a manifest and their software becomes a platform. Extenders learn one system and can extend anything.
 
 ---
 
@@ -137,11 +141,15 @@ Before xript, every application reinvents extensibility from scratch — or ship
 
 xript succeeds when:
 
-- A modder can look at any xript-enabled application and immediately know how to extend it.
-- A developer can make their application moddable in an afternoon.
-- A community can sustain and transform a product beyond what its creators imagined.
+- An extender can look at any xript-enabled application and immediately know how to extend it.
+- An author can make their application moddable in an afternoon.
+- A community can sustain and transform a product beyond what its authors imagined.
 - The question changes from *"Can users extend this?"* to *"Why can't they?"*
 
 ---
 
 *xript.dev — mod the it*
+
+---
+
+And before anyone asks, yes, it was backronymed: **eXtensible Runtime Interface Protocol Tooling**, but the 'xr' is real.

@@ -1,6 +1,6 @@
 ---
 title: Adoption Tiers
-description: xript's three-tier incremental adoption model — from safe eval replacement to full modding system.
+description: xript's three-tier incremental adoption model, from safe eval replacement to full modding system.
 ---
 
 xript is designed so that no application needs to go all-in. The three adoption tiers let you start simple and add complexity only when you need it. Each tier stands on its own as a valid integration point.
@@ -21,7 +21,7 @@ xript is designed so that no application needs to go all-in. The three adoption 
 
 ## Tier 1: Expressions Only
 
-**The safe eval replacement.** Your application needs to evaluate user-provided expressions — formula fields, template logic, calculated columns — and you want a sandbox that guarantees safety.
+**The safe eval replacement.** Your application needs to evaluate user-provided expressions: formula fields, template logic, calculated columns. You want a sandbox that guarantees safety.
 
 The manifest is minimal:
 
@@ -34,7 +34,7 @@ The manifest is minimal:
 
 No bindings, no capabilities, no types. Users get the JavaScript language itself inside a sandbox. They can write `2 + 2`, `[1,2,3].map(x => x * 2)`, or any pure expression. They cannot access `process`, `eval`, `fetch`, or anything outside standard JavaScript.
 
-You can optionally expose flat helper functions (like `abs`, `round`, `upper`) to make expressions more useful. These are declared as bindings with no capability gates — every function is always available.
+You can optionally expose flat helper functions (like `abs`, `round`, `upper`) to make expressions more useful. These are declared as bindings with no capability gates, so every function is always available.
 
 **Choose tier 1 when:**
 - You want a drop-in replacement for `eval()` that is actually safe
@@ -75,7 +75,7 @@ The manifest adds bindings, capabilities, and custom types:
 }
 ```
 
-Namespaces group related functions (`tasks.list()`, `tasks.add()`). Capabilities create a permission hierarchy — read-only operations are always available, writes require `manage-tasks`, destructive operations require `admin`. Custom types document the data structures plugin authors will work with.
+Namespaces group related functions (`tasks.list()`, `tasks.add()`). Capabilities create a permission hierarchy: read-only operations are always available, writes require `manage-tasks`, destructive operations require `admin`. Custom types document the data structures extenders will work with.
 
 **Choose tier 2 when:**
 - You need to organize bindings into logical groups
@@ -95,7 +95,7 @@ A tier 3 manifest uses everything the spec offers:
 - **Capability tiers** from low-risk (`storage`) through medium (`modify-player`) to high (`modify-world`)
 - **Object and enum types** that describe the full data model (`Position`, `Item`, `Enemy`, `ItemType`)
 - **Async bindings** for I/O-bound operations (`world.getEnemies()`, `data.get()`)
-- **Inline examples** showing modders how to use each binding
+- **Inline examples** showing extenders how to use each binding
 - **Execution limits** tuned for the application's performance requirements
 
 The manifest becomes the complete contract between your application and its modding community. From it, the toolchain generates TypeScript definitions, API documentation, and validation rules.
@@ -104,25 +104,25 @@ The manifest becomes the complete contract between your application and its modd
 - You are building a modding system or extensibility platform
 - Your API surface is large enough to need careful organization
 - You want generated docs and types that are always in sync with the API
-- Modders will write multi-line scripts, not just expressions
+- Extenders will write multi-line scripts, not just expressions
 - You need async operations (database access, network calls, file I/O)
 
 ## Progressing Between Tiers
 
-The tiers are not walls — they are waypoints. Moving from one tier to the next is additive:
+The tiers are not walls; they are waypoints. Moving from one tier to the next is additive:
 
 **Tier 1 → Tier 2:** Add a `bindings` section with namespaces. Add `capabilities` for anything sensitive. Optionally add `types` to document your data structures. Your existing flat bindings (if any) continue to work unchanged.
 
-**Tier 2 → Tier 3:** Add `examples` to bindings so modders can see usage patterns. Add `async: true` to bindings that need it. Add `limits` tuned for your use case. Expand your type definitions to cover the full data model. The structure you already built in tier 2 is the foundation.
+**Tier 2 → Tier 3:** Add `examples` to bindings so extenders can see usage patterns. Add `async: true` to bindings that need it. Add `limits` tuned for your use case. Expand your type definitions to cover the full data model. The structure you already built in tier 2 is the foundation.
 
-Nothing breaks when you add complexity. A tier 1 manifest is a valid tier 3 manifest — it just uses fewer features.
+Nothing breaks when you add complexity. A tier 1 manifest is a valid tier 3 manifest: it just uses fewer features.
 
 ## The Manifest Drives Everything
 
 Regardless of tier, the manifest is the single source of truth. The toolchain reads it and generates:
 
-- **TypeScript definitions** via `xript-typegen` — editor autocomplete and type checking for modders
-- **API documentation** via `xript-docgen` — always in sync, always accurate
-- **Validation** via `xript-validate` — catch manifest errors before runtime
+- **TypeScript definitions** via `xript-typegen`: editor autocomplete and type checking for extenders
+- **API documentation** via `xript-docgen`: always in sync, always accurate
+- **Validation** via `xript-validate`: catch manifest errors before runtime
 
 A tier 1 manifest generates simpler output. A tier 3 manifest generates richer output. But the workflow is the same at every level: declare your API in JSON, and let the tools do the rest.

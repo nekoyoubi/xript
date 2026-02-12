@@ -1,6 +1,6 @@
 ---
 title: "Example: Expression Evaluator"
-description: A tier 1 integration walkthrough — safe expression evaluation with flat bindings.
+description: "A tier 1 integration walkthrough: safe expression evaluation with flat bindings."
 ---
 
 This example demonstrates the simplest way to use xript: exposing a set of flat functions to user scripts with no capabilities, no namespaces, and no custom types. This is **tier 1** adoption.
@@ -27,7 +27,7 @@ The manifest declares 11 bindings across two categories: math operations and str
 }
 ```
 
-*(Truncated for readability -- the full manifest includes `floor`, `ceil`, `min`, `max`, `lower`, and `len`.)*
+*(Truncated for readability. The full manifest includes `floor`, `ceil`, `min`, `max`, `lower`, and `len`.)*
 
 There are no `capabilities`, no `types`, and no `limits` sections. This is as minimal as it gets while still being useful.
 
@@ -56,7 +56,7 @@ const xript = await initXript();
 const runtime = xript.createRuntime(manifest, { hostBindings });
 ```
 
-Each binding is a pure function with no side effects. This is the safest kind of integration -- users can compose expressions but cannot modify any application state.
+Each binding is a pure function with no side effects. This is the safest kind of integration: users can compose expressions but cannot modify any application state.
 
 ## What Users Can Do
 

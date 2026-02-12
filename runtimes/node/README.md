@@ -1,6 +1,6 @@
 # @xriptjs/runtime-node
 
-Node.js-optimized runtime for [xript](https://github.com/nekoyoubi/xript) — sandboxed script execution via the Node.js `vm` module with native V8 performance.
+Node.js-optimized runtime for [xript](https://github.com/nekoyoubi/xript): sandboxed script execution via the Node.js `vm` module with native V8 performance.
 
 [![npm](https://img.shields.io/npm/v/@xriptjs/runtime-node)](https://www.npmjs.com/package/@xriptjs/runtime-node)
 
@@ -58,16 +58,16 @@ const runtime = await createRuntimeFromFile("./manifest.json", {
 
 ### `createRuntime(manifest, options): XriptRuntime`
 
-Creates a sandboxed runtime from a manifest object and host binding implementations. No async initialization needed — this is synchronous.
+Creates a sandboxed runtime from a manifest object and host binding implementations. No async initialization needed; this is synchronous.
 
 ### `createRuntimeFromFile(path, options): Promise<XriptRuntime>`
 
 Reads a manifest JSON file from disk and creates a runtime.
 
 **Options (both functions):**
-- `hostBindings` — object mapping binding names to host functions
-- `capabilities` — array of capability names to grant
-- `console` — `{ log, warn, error }` for script console output
+- `hostBindings`: object mapping binding names to host functions
+- `capabilities`: array of capability names to grant
+- `console`: `{ log, warn, error }` for script console output
 
 ### `runtime.execute(code): ExecutionResult`
 
@@ -77,13 +77,13 @@ Executes JavaScript code in the sandbox. Returns `{ value, duration_ms }`.
 
 Fires a hook by name, calling all registered handlers.
 
-## When to use this vs `@xriptjs/runtime`
+## When to use this vs other runtimes
 
-Use this package when you're running **Node.js only** and want native V8 performance without WASM overhead. Use `@xriptjs/runtime` when you need to run in the browser, edge workers, or other non-Node environments.
+Use this package when you're running **Node.js only** and want native V8 performance without WASM overhead. Use `@xriptjs/runtime` when you need to run in the browser, edge workers, or other non-Node environments. Use `xript-runtime` when your host application is written in Rust.
 
 ## Documentation
 
-[xript.dev](https://xript.dev) — full docs, getting started guide, and examples.
+[xript.dev](https://xript.dev): full docs, getting started guide, and examples.
 
 ## License
 
