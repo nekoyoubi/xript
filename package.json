@@ -8,7 +8,7 @@
 		"tools/*"
 	],
 	"scripts": {
-		"docs:dev": "npm run dev -w @xript/docs",
-		"docs:build": "npm run build -w @xript/docs"
+		"docs:dev": "npm run dev -w @xriptjs/docs",
+		"docs:build": "npm run build -w @xriptjs/docs"
 	}
 }

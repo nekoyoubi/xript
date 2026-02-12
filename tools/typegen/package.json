@@ -1,5 +1,5 @@
 {
-	"name": "@xript/typegen",
+	"name": "@xriptjs/typegen",
 	"version": "0.1.0",
 	"description": "Generate TypeScript definitions from xript manifests.",
 	"type": "module",
@@ -27,6 +27,10 @@
 	},
 	"keywords": ["xript", "typegen", "typescript", "code-generation"],
 	"license": "MIT",
+	"publishConfig": {
+		"access": "public",
+		"provenance": true
+	},
 	"devDependencies": {
 		"typescript": "^5.7.0",
 		"@types/node": "^22.0.0"

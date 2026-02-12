@@ -15,11 +15,11 @@ One JSON manifest. Everything else is derived.
 ## Quick Start
 
 ```sh
-npm install @xript/runtime
+npm install @xriptjs/runtime
 ```
 
 ```javascript
-import { initXript } from "@xript/runtime";
+import { initXript } from "@xriptjs/runtime";
 
 const xript = await initXript();
 const runtime = xript.createRuntime(
@@ -70,12 +70,12 @@ runtime.dispose();
 xript/
 ├── spec/           # the specification (manifest schema, capabilities, bindings, security)
 ├── runtimes/
-│   ├── js/         # universal runtime (@xript/runtime, QuickJS WASM sandbox)
-│   └── node/       # Node.js-optimized runtime (@xript/runtime-node, vm-based)
+│   ├── js/         # universal runtime (@xriptjs/runtime, QuickJS WASM sandbox)
+│   └── node/       # Node.js-optimized runtime (@xriptjs/runtime-node, vm-based)
 ├── tools/
-│   ├── manifest-validator/  # @xript/manifest-validator
-│   ├── typegen/             # @xript/typegen
-│   └── docgen/              # @xript/docgen
+│   ├── validate/            # @xriptjs/validate
+│   ├── typegen/             # @xriptjs/typegen
+│   └── docgen/              # @xriptjs/docgen
 ├── docs/           # documentation site (Astro + Starlight) → xript.dev
 └── examples/
     ├── expression-evaluator/  # tier 1 "safe eval replacement" demo
@@ -87,9 +87,9 @@ xript/
 
 | Tool | Package | What it does |
 |------|---------|-------------|
-| Manifest Validator | `@xript/manifest-validator` | Validates manifests against the spec schema |
-| Type Generator | `@xript/typegen` | Generates TypeScript `.d.ts` from manifests |
-| Doc Generator | `@xript/docgen` | Generates markdown API docs from manifests |
+| Manifest Validator | `@xriptjs/validate` | Validates manifests against the spec schema |
+| Type Generator | `@xriptjs/typegen` | Generates TypeScript `.d.ts` from manifests |
+| Doc Generator | `@xriptjs/docgen` | Generates markdown API docs from manifests |
 
 ```sh
 npx xript-validate manifest.json      # validate

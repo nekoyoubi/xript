@@ -36,7 +36,7 @@ There are no `capabilities`, no `types`, and no `limits` sections. This is as mi
 The host provides one JavaScript function for each binding:
 
 ```javascript
-import { initXript } from "@xript/runtime";
+import { initXript } from "@xriptjs/runtime";
 
 const hostBindings = {
   abs: (x) => Math.abs(x),

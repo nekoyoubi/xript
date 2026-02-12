@@ -1,5 +1,5 @@
 {
-	"name": "@xript/runtime",
+	"name": "@xriptjs/runtime",
 	"version": "0.2.0",
 	"description": "Universal JavaScript runtime for xript — QuickJS WASM sandbox for browser, Node, Deno, and more.",
 	"type": "module",
@@ -24,6 +24,10 @@
 	},
 	"keywords": ["xript", "runtime", "sandbox", "scripting", "modding", "quickjs", "wasm"],
 	"license": "MIT",
+	"publishConfig": {
+		"access": "public",
+		"provenance": true
+	},
 	"dependencies": {
 		"quickjs-emscripten": "^0.31.0"
 	},

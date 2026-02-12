@@ -131,9 +131,9 @@ describe("generateProjectFiles", () => {
 		assert.ok(pkg.scripts.demo.includes("demo.ts"));
 	});
 
-	it("host imports from @xript/runtime", () => {
+	it("host imports from @xriptjs/runtime", () => {
 		const files = generateProjectFiles({ name: "test", tier: 2, language: "javascript" });
-		assert.ok(files["src/host.js"].includes('@xript/runtime'));
+		assert.ok(files["src/host.js"].includes('@xriptjs/runtime'));
 	});
 
 	it("title-cases hyphenated names", () => {
