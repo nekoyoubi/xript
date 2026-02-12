@@ -27,7 +27,7 @@ Format: `major.minor` (e.g., `"0.1"`). Patch versions are intentionally excluded
 
 ### `name` (required)
 
-A machine-readable identifier for the application. Used in generated package names (`@xript/<name>-types`), documentation URLs, and tooling output.
+A machine-readable identifier for the application. Used in generated package names (`@xriptjs/<name>-types`), documentation URLs, and tooling output.
 
 Constraints: lowercase letters, numbers, and hyphens. Must start with a letter. Maximum 64 characters. This mirrors npm package naming conventions because the generated types will live in that ecosystem.
 

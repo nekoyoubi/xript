@@ -1,5 +1,5 @@
 {
-	"name": "@xript/docgen",
+	"name": "@xriptjs/docgen",
 	"version": "0.1.0",
 	"description": "Generate documentation from xript manifests.",
 	"type": "module",
@@ -27,6 +27,10 @@
 	},
 	"keywords": ["xript", "docgen", "documentation", "markdown"],
 	"license": "MIT",
+	"publishConfig": {
+		"access": "public",
+		"provenance": true
+	},
 	"devDependencies": {
 		"typescript": "^5.7.0",
 		"@types/node": "^22.0.0"

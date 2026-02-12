@@ -20,10 +20,10 @@ jobs:
           cache: npm
       - run: npm ci
 
-      - name: build manifest-validator
-        run: npm run build --workspace=tools/manifest-validator
-      - name: test manifest-validator
-        run: npm test --workspace=tools/manifest-validator
+      - name: build validate
+        run: npm run build --workspace=tools/validate
+      - name: test validate
+        run: npm test --workspace=tools/validate
 
       - name: build typegen
         run: npm run build --workspace=tools/typegen

@@ -1,11 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { validateManifest, type ValidationResult } from "@xript/manifest-validator";
 import { createSandbox, type HostBindings, type HostFunction, type SandboxOptions, type ExecutionResult, type FireHookOptions } from "./sandbox.js";
 
 export { BindingError, CapabilityDeniedError, ExecutionLimitError } from "./errors.js";
 export type { HostBindings, HostFunction, ExecutionResult, FireHookOptions } from "./sandbox.js";
-export type { ValidationResult };
 
 interface Manifest {
 	xript: string;
@@ -35,7 +33,6 @@ export class ManifestValidationError extends Error {
 export interface RuntimeOptions {
 	hostBindings: HostBindings;
 	capabilities?: string[];
-	validate?: boolean;
 	console?: {
 		log: (...args: unknown[]) => void;
 		warn: (...args: unknown[]) => void;
@@ -128,14 +125,5 @@ export async function createRuntimeFromFile(
 	const raw = await readFile(absolutePath, "utf-8");
 	const manifest = JSON.parse(raw) as unknown;
 
-	const shouldValidate = options.validate !== false;
-
-	if (shouldValidate) {
-		const result = await validateManifest(manifest);
-		if (!result.valid) {
-			throw new ManifestValidationError(result.errors);
-		}
-	}
-
-	return createRuntime(manifest, { ...options, validate: false });
+	return createRuntime(manifest, options);
 }

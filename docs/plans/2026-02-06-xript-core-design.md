@@ -64,7 +64,7 @@ Four projects drive the initial design:
 What owners interact with in code:
 
 ```typescript
-import { createRuntime } from '@xript/runtime';
+import { createRuntime } from '@xriptjs/runtime';
 
 // 1. Create a sandbox
 const runtime = await createRuntime();
@@ -347,7 +347,7 @@ xript replaces the existing string-based scripting system. The game is built wit
 
 ## Next Steps
 
-1. Build the QuickJS WASM runtime wrapper (`@xript/runtime`)
+1. Build the QuickJS WASM runtime wrapper (`@xriptjs/runtime`)
 2. Implement `expose()` API and manifest extraction
 3. Build type generator from manifest
 4. Create a minimal proof-of-concept in one target app (likely epixtory or efx)

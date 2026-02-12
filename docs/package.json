@@ -1,5 +1,5 @@
 {
-	"name": "@xript/docs",
+	"name": "@xriptjs/docs",
 	"type": "module",
 	"version": "0.0.1",
 	"private": true,
@@ -12,7 +12,7 @@
 		"@astrojs/starlight": "^0.37.6",
 		"@fontsource-variable/inter": "^5.2.8",
 		"@fontsource/jetbrains-mono": "^5.2.8",
-		"@xript/runtime": "^0.2.0",
+		"@xriptjs/runtime": "^0.2.0",
 		"astro": "^5.17.1"
 	}
 }
