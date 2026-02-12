@@ -1,0 +1,65 @@
+name: Publish to npm
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@latest
+      - run: npm ci
+
+      - name: build validate
+        run: npm run build --workspace=tools/validate
+      - name: build typegen
+        run: npm run build --workspace=tools/typegen
+      - name: build docgen
+        run: npm run build --workspace=tools/docgen
+      - name: build init
+        run: npm run build --workspace=tools/init
+      - name: build runtime
+        run: npm run build --workspace=runtimes/js
+      - name: build runtime-node
+        run: npm run build --workspace=runtimes/node
+
+      - name: test validate
+        run: npm test --workspace=tools/validate
+      - name: test typegen
+        run: npm test --workspace=tools/typegen
+      - name: test docgen
+        run: npm test --workspace=tools/docgen
+      - name: test init
+        run: npm test --workspace=tools/init
+      - name: test runtime
+        run: npm test --workspace=runtimes/js
+      - name: test runtime-node
+        run: npm test --workspace=runtimes/node
+
+      - name: publish validate
+        run: npm publish --workspace=tools/validate        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: publish typegen
+        run: npm publish --workspace=tools/typegen        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: publish docgen
+        run: npm publish --workspace=tools/docgen        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: publish init
+        run: npm publish --workspace=tools/init        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: publish runtime
+        run: npm publish --workspace=runtimes/js        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: publish runtime-node
+        run: npm publish --workspace=runtimes/node        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -99,7 +99,7 @@ export default defineConfig({
 	],
 	vite: {
 		optimizeDeps: {
-			exclude: ["@xript/runtime", "quickjs-emscripten"],
+			exclude: ["@xriptjs/runtime", "quickjs-emscripten"],
 		},
 	},
 	server: {

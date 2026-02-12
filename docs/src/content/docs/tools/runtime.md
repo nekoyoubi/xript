@@ -3,14 +3,14 @@ title: Runtime
 description: Universal JavaScript runtime for sandboxed script execution with manifest-driven bindings.
 ---
 
-The universal runtime (`@xript/runtime`) executes user scripts inside a secure QuickJS WASM sandbox. It reads a manifest to determine which bindings to expose, enforces capability gates, and prevents access to anything outside the declared surface. It runs in any JavaScript environment: browser, Node.js, Deno, Bun, and Cloudflare Workers.
+The universal runtime (`@xriptjs/runtime`) executes user scripts inside a secure QuickJS WASM sandbox. It reads a manifest to determine which bindings to expose, enforces capability gates, and prevents access to anything outside the declared surface. It runs in any JavaScript environment: browser, Node.js, Deno, Bun, and Cloudflare Workers.
 
-For Node.js-only applications that need `createRuntimeFromFile` or full JSON Schema validation, see `@xript/runtime-node`.
+For Node.js-only applications that need `createRuntimeFromFile` or full JSON Schema validation, see `@xriptjs/runtime-node`.
 
 ## Installation
 
 ```sh
-npm install @xript/runtime
+npm install @xriptjs/runtime
 ```
 
 The runtime uses QuickJS compiled to WebAssembly for sandboxing. No native dependencies.
@@ -20,7 +20,7 @@ The runtime uses QuickJS compiled to WebAssembly for sandboxing. No native depen
 The runtime uses a factory pattern. First, initialize the WASM module (done once), then create runtimes from it:
 
 ```javascript
-import { initXript } from "@xript/runtime";
+import { initXript } from "@xriptjs/runtime";
 
 const xript = await initXript();
 const runtime = xript.createRuntime(manifest, {
@@ -33,7 +33,7 @@ const runtime = xript.createRuntime(manifest, {
 For applications with async host bindings, use the async variant:
 
 ```javascript
-import { initXriptAsync } from "@xript/runtime";
+import { initXriptAsync } from "@xriptjs/runtime";
 
 const xript = await initXriptAsync();
 const runtime = await xript.createRuntime(manifest, {
@@ -129,7 +129,7 @@ The runtime exports four error classes, all available as named imports:
 Thrown when the manifest fails structural validation.
 
 ```javascript
-import { ManifestValidationError } from "@xript/runtime";
+import { ManifestValidationError } from "@xriptjs/runtime";
 
 try {
   xript.createRuntime({}, { hostBindings: {} });
@@ -146,7 +146,7 @@ The `issues` array contains every problem found, with a `path` and `message` for
 Thrown when a host function throws or is not provided.
 
 ```javascript
-import { BindingError } from "@xript/runtime";
+import { BindingError } from "@xriptjs/runtime";
 // e.name === "BindingError"
 // e.binding === "player.getHealth"
 // e.message includes the original error message
@@ -157,7 +157,7 @@ import { BindingError } from "@xript/runtime";
 Thrown when calling a capability-gated binding without the required capability.
 
 ```javascript
-import { CapabilityDeniedError } from "@xript/runtime";
+import { CapabilityDeniedError } from "@xriptjs/runtime";
 // e.name === "CapabilityDeniedError"
 // e.capability === "modify-player"
 // e.binding === "player.setHealth"
@@ -168,7 +168,7 @@ import { CapabilityDeniedError } from "@xript/runtime";
 Thrown when the script exceeds configured execution limits (timeout, memory).
 
 ```javascript
-import { ExecutionLimitError } from "@xript/runtime";
+import { ExecutionLimitError } from "@xriptjs/runtime";
 // e.name === "ExecutionLimitError"
 // e.limit === "timeout_ms"
 ```
@@ -190,7 +190,7 @@ The sandbox provides a restricted JavaScript environment powered by QuickJS comp
 Since the runtime uses QuickJS WASM, it works in browsers without any Node.js-specific APIs:
 
 ```javascript
-import { initXript } from "@xript/runtime";
+import { initXript } from "@xriptjs/runtime";
 
 const xript = await initXript();
 const runtime = xript.createRuntime(manifest, { hostBindings });

@@ -3,12 +3,12 @@ title: Doc Generator
 description: Generate structured markdown documentation from xript manifests.
 ---
 
-The doc generator (`@xript/docgen`) reads an xript manifest and produces a structured set of markdown documentation pages. Every binding, type, and capability gets its own page with signatures, parameter tables, and examples.
+The doc generator (`@xriptjs/docgen`) reads an xript manifest and produces a structured set of markdown documentation pages. Every binding, type, and capability gets its own page with signatures, parameter tables, and examples.
 
 ## Installation
 
 ```sh
-npm install @xript/docgen
+npm install @xriptjs/docgen
 ```
 
 ## CLI Usage
@@ -72,7 +72,7 @@ For enum types:
 ## Programmatic Usage
 
 ```javascript
-import { generateDocs, generateDocsFromFile, writeDocsToDirectory } from "@xript/docgen";
+import { generateDocs, generateDocsFromFile, writeDocsToDirectory } from "@xriptjs/docgen";
 
 // From a manifest object
 const result = generateDocs(manifest);

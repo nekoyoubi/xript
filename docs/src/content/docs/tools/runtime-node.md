@@ -1,20 +1,20 @@
 ---
 title: Node.js Runtime
-description: Node.js-optimized xript runtime with file-based manifest loading and JSON Schema validation.
+description: Node.js-optimized xript runtime with file-based manifest loading.
 ---
 
-The Node.js runtime (`@xript/runtime-node`) executes user scripts inside a sandboxed Node.js `vm` context. It provides `createRuntimeFromFile` for loading manifests directly from disk and full JSON Schema validation via `@xript/manifest-validator`. Use this runtime when your application runs exclusively on Node.js and you want file-based workflows or stricter manifest validation.
+The Node.js runtime (`@xriptjs/runtime-node`) executes user scripts inside a sandboxed Node.js `vm` context. It provides `createRuntimeFromFile` for loading manifests directly from disk. Use this runtime when your application runs exclusively on Node.js and you want file-based workflows.
 
-For applications that need to run in browsers, Deno, Bun, or other environments, use the [universal runtime](/tools/runtime) (`@xript/runtime`) instead.
+For applications that need to run in browsers, Deno, Bun, or other environments, use the [universal runtime](/tools/runtime) (`@xriptjs/runtime`) instead.
 
 ## When to Use Which Runtime
 
-| | Universal (`@xript/runtime`) | Node.js (`@xript/runtime-node`) |
+| | Universal (`@xriptjs/runtime`) | Node.js (`@xriptjs/runtime-node`) |
 |---|---|---|
 | **Sandbox** | QuickJS WASM | Node.js `vm` module |
 | **Environments** | Browser, Node, Deno, Bun, Workers | Node.js only |
 | **Manifest loading** | Pass manifest object directly | `createRuntimeFromFile` loads from disk |
-| **Validation** | Basic structural checks | Full JSON Schema validation |
+| **Validation** | Basic structural checks | Basic structural checks |
 | **Async bindings** | Via `initXriptAsync()` (asyncify WASM) | Native `async`/`await` |
 | **Memory isolation** | Separate WASM heap per runtime | Shared Node.js process memory |
 | **Best for** | Cross-platform apps, browser-based tools | Node.js servers, CLI tools, build pipelines |
@@ -24,7 +24,7 @@ Both runtimes implement the same xript specification and enforce the same securi
 ## Installation
 
 ```sh
-npm install @xript/runtime-node
+npm install @xriptjs/runtime-node
 ```
 
 ## Creating a Runtime
@@ -32,7 +32,7 @@ npm install @xript/runtime-node
 ### From a Manifest Object
 
 ```javascript
-import { createRuntime } from "@xript/runtime-node";
+import { createRuntime } from "@xriptjs/runtime-node";
 
 const runtime = createRuntime(manifest, {
   hostBindings: { greet: (name) => `Hello, ${name}!` },
@@ -44,23 +44,14 @@ const runtime = createRuntime(manifest, {
 ### From a Manifest File
 
 ```javascript
-import { createRuntimeFromFile } from "@xript/runtime-node";
+import { createRuntimeFromFile } from "@xriptjs/runtime-node";
 
 const runtime = await createRuntimeFromFile("./manifest.json", {
   hostBindings: { greet: (name) => `Hello, ${name}!` },
 });
 ```
 
-`createRuntimeFromFile` reads the manifest from disk, validates it against the full JSON Schema (via `@xript/manifest-validator`), and creates a runtime. This is the recommended approach for Node.js applications — it catches manifest errors at load time with detailed diagnostics.
-
-To skip JSON Schema validation (e.g., for performance in production where the manifest is known-good):
-
-```javascript
-const runtime = await createRuntimeFromFile("./manifest.json", {
-  hostBindings,
-  validate: false,
-});
-```
+`createRuntimeFromFile` reads the manifest from disk, performs structural validation, and creates a runtime. For full JSON Schema validation, use [`@xriptjs/validate`](/tools/validator) before creating the runtime.
 
 ## Options
 
@@ -70,7 +61,6 @@ const runtime = await createRuntimeFromFile("./manifest.json", {
 |--------|------|---------|-------------|
 | `hostBindings` | `HostBindings` | (required) | Map of binding names to host functions |
 | `capabilities` | `string[]` | `[]` | List of capabilities granted to this script |
-| `validate` | `boolean` | `true` | Whether to run JSON Schema validation (file-based only) |
 | `console` | `{ log, warn, error }` | no-op functions | Console output routing |
 
 ## Executing Scripts
@@ -117,7 +107,7 @@ import {
   BindingError,
   CapabilityDeniedError,
   ExecutionLimitError,
-} from "@xript/runtime-node";
+} from "@xriptjs/runtime-node";
 ```
 
 ## Sandbox Details

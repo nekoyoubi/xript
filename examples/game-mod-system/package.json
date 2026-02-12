@@ -1,5 +1,5 @@
 {
-	"name": "@xript/example-game-mod-system",
+	"name": "@xriptjs/example-game-mod-system",
 	"version": "1.0.0",
 	"private": true,
 	"type": "module",
