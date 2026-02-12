@@ -1,9 +1,9 @@
 ---
-title: Manifest Validator
+title: Validator
 description: Validate xript manifests against the specification schema.
 ---
 
-The manifest validator (`@xriptjs/validate`) checks that your manifest conforms to the xript specification schema. It catches structural errors, invalid field names, wrong types, and missing required fields before you ship.
+The validator (`@xriptjs/validate`) checks that your manifest conforms to the xript specification schema. It catches structural errors, invalid field names, wrong types, and missing required fields before you ship.
 
 ## Installation
 

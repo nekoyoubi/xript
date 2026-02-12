@@ -45,13 +45,19 @@ export default defineConfig({
 					],
 				},
 				{
+					label: "Runtimes",
+					items: [
+						{ label: "JS/WASM Runtime", slug: "runtimes/js-wasm" },
+						{ label: "Node.js Runtime", slug: "runtimes/node" },
+					],
+				},
+				{
 					label: "Tools",
 					items: [
-						{ label: "Runtime", slug: "tools/runtime" },
-						{ label: "Node.js Runtime", slug: "tools/runtime-node" },
-						{ label: "Manifest Validator", slug: "tools/validator" },
+						{ label: "Validator", slug: "tools/validator" },
 						{ label: "Type Generator", slug: "tools/typegen" },
 						{ label: "Doc Generator", slug: "tools/docgen" },
+						{ label: "Init CLI", slug: "tools/init" },
 					],
 				},
 				{

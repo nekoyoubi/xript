@@ -56,8 +56,8 @@ runtime.dispose();
 - [Vision](https://xript.dev/vision) -- the guiding principles
 - [Adoption Tiers](https://xript.dev/adoption-tiers) -- the three-tier incremental adoption model
 - [Getting Started](https://xript.dev/getting-started) -- five-minute integration guide
-- [Runtime API](https://xript.dev/tools/runtime) -- the universal runtime (QuickJS WASM)
-- [Node.js Runtime](https://xript.dev/tools/runtime-node) -- the Node.js-optimized runtime
+- [JS/WASM Runtime](https://xript.dev/runtimes/js-wasm) -- the universal runtime (QuickJS WASM)
+- [Node.js Runtime](https://xript.dev/runtimes/node) -- the Node.js-optimized runtime
 - [Manifest Spec](https://xript.dev/spec/manifest) -- the manifest format
 - [Security Guarantees](https://xript.dev/spec/security) -- what the sandbox promises
 - [Expression Evaluator](https://xript.dev/examples/expression-evaluator) -- tier 1 walkthrough
@@ -75,7 +75,8 @@ xript/
 ├── tools/
 │   ├── validate/            # @xriptjs/validate
 │   ├── typegen/             # @xriptjs/typegen
-│   └── docgen/              # @xriptjs/docgen
+│   ├── docgen/              # @xriptjs/docgen
+│   └── init/                # @xriptjs/init
 ├── docs/           # documentation site (Astro + Starlight) → xript.dev
 └── examples/
     ├── expression-evaluator/  # tier 1 "safe eval replacement" demo
@@ -87,14 +88,16 @@ xript/
 
 | Tool | Package | What it does |
 |------|---------|-------------|
-| Manifest Validator | `@xriptjs/validate` | Validates manifests against the spec schema |
+| Validator | `@xriptjs/validate` | Validates manifests against the spec schema |
 | Type Generator | `@xriptjs/typegen` | Generates TypeScript `.d.ts` from manifests |
 | Doc Generator | `@xriptjs/docgen` | Generates markdown API docs from manifests |
+| Init CLI | `@xriptjs/init` | Scaffolds new xript projects |
 
 ```sh
-npx xript-validate manifest.json      # validate
-npx xript-typegen manifest.json       # generate TypeScript types
+npx xript-validate manifest.json         # validate
+npx xript-typegen manifest.json          # generate TypeScript types
 npx xript-docgen manifest.json -o docs/  # generate documentation
+npx @xriptjs/init my-project            # scaffold a new project
 ```
 
 ## Project Status
@@ -107,7 +110,7 @@ npx xript-docgen manifest.json -o docs/  # generate documentation
 | Toolchain | Complete -- validator, typegen, docgen, init CLI |
 | Developer Experience | Complete -- 19-page docs site, getting started guide, runtime API reference, example walkthroughs, live demos |
 | Hardening | Complete -- 212 tests across 7 packages, manifest validation, CI smoke tests |
-| Publishing | Ready -- `@xriptjs` npm scope, manual-dispatch publish workflow with provenance |
+| Publishing | Live -- all 6 packages on npm under `@xriptjs`, OIDC trusted publishing with provenance |
 
 ## License
 
