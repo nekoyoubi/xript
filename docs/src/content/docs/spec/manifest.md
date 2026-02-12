@@ -1,9 +1,9 @@
 ---
 title: Manifest Specification
-description: The xript manifest format — how applications declare their scripting API.
+description: "The xript manifest format: how applications declare their scripting API."
 ---
 
-The xript manifest is the single source of truth for an application's scripting API. It declares what functionality is exposed to scripts, how it is organized, what capabilities gate access, and what types are involved. From the manifest, everything else is derived: documentation, TypeScript definitions, and validation. Interactive playgrounds are also supported as a toolchain output.
+The xript manifest is the single source of truth for an application's scripting API. It declares what functionality is exposed to scripts, how it is organized, what capabilities gate access, and what types are involved. From the manifest, everything else is derived: documentation, TypeScript definitions, validation, and interactive playgrounds.
 
 ## Overview
 
@@ -22,7 +22,7 @@ From there, complexity is layered on only as needed. Every field beyond `xript` 
 
 ### `xript` (required)
 
-The specification version this manifest conforms to. This is not the application's version — it's the version of the xript spec the manifest was written against.
+The specification version this manifest conforms to. This is not the application's version; it's the version of the xript spec the manifest was written against.
 
 Format: `major.minor` (e.g., `"0.1"`).
 
@@ -42,7 +42,7 @@ A human-readable display name. Used in documentation headers and UI.
 
 ### `description`
 
-A brief description aimed at modders. Used in documentation landing pages and registry listings.
+A brief description aimed at extenders. Used in documentation landing pages and registry listings.
 
 ## Bindings
 
@@ -91,7 +91,7 @@ Namespaces group related functions using the `members` field:
 }
 ```
 
-Namespaces can nest, but deep nesting is discouraged — two levels is usually plenty.
+Namespaces can nest, but deep nesting is discouraged. Two levels is usually plenty.
 
 ## Capabilities
 

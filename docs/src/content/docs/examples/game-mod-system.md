@@ -1,6 +1,6 @@
 ---
 title: "Example: Game Mod System"
-description: A tier 3 integration walkthrough — namespaces, capabilities, async bindings, custom types, and execution limits.
+description: "A tier 3 integration walkthrough: namespaces, capabilities, async bindings, custom types, and execution limits."
 ---
 
 This example demonstrates the full xript scripting model: namespaces to organize a rich API, capabilities at three risk levels, async bindings for I/O operations, custom types for complex data structures, and execution limits to prevent runaway scripts. This is **tier 3** adoption.
@@ -54,9 +54,9 @@ The manifest declares a dungeon crawler modding API with four binding groups, th
 Key observations:
 
 - **Four binding groups**: `log` is flat (top-level), while `player`, `world`, and `data` are namespaces with members
-- **Read operations are ungated**: `player.getHealth()`, `world.getCurrentLevel()`, `player.getInventory()` — any mod can read game state
+- **Read operations are ungated**: `player.getHealth()`, `world.getCurrentLevel()`, `player.getInventory()`. Any mod can read game state
 - **Write operations require capabilities**: `player.setHealth()` needs `modify-player`, `world.spawnEnemy()` needs `modify-world`, `data.get()`/`data.set()` need `storage`
-- **Async bindings**: `world.getEnemies()`, `data.get()`, and `data.set()` are asynchronous — mods use `await` to call them
+- **Async bindings**: `world.getEnemies()`, `data.get()`, and `data.set()` are asynchronous. Mods use `await` to call them
 
 ### Capabilities
 
@@ -86,7 +86,7 @@ Three risk levels demonstrate how a game might gate its API: reading persistent 
 }
 ```
 
-Types describe the data structures modders will work with. They feed into `xript-typegen` (TypeScript definitions) and `xript-docgen` (API documentation) so modders get editor autocomplete and generated docs.
+Types describe the data structures extenders will work with. They feed into `xript-typegen` (TypeScript definitions) and `xript-docgen` (API documentation) so extenders get editor autocomplete and generated docs.
 
 ### Execution Limits
 
@@ -215,7 +215,7 @@ world.spawnEnemy("dragon", { x: 5, y: 5 });
 // => CapabilityDeniedError: requires "modify-world"
 ```
 
-The runtime blocks the call entirely — no partial execution, no side effects.
+The runtime blocks the call entirely: no partial execution, no side effects.
 
 ### 7. Authorized World Mod (modify-player + modify-world)
 
@@ -263,7 +263,7 @@ node src/demo.js
 Tier 3 is the right choice when:
 
 - Your API surface is large enough to need **namespaces and capability tiers**
-- Modders will write **multi-line scripts**, not just expressions
+- Extenders will write **multi-line scripts**, not just expressions
 - You need **async operations** (database access, network calls, file I/O)
 - You want **generated docs and types** that are always in sync with the API
 - You need to enforce **execution limits** to protect the host application

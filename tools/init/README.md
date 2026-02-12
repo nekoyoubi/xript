@@ -15,8 +15,8 @@ Walks you through creating a new xript project with interactive prompts:
 ```
 $ npx @xriptjs/init my-mod
 Project name (my-mod):
-Tier — 2 (bindings) or 3 (full scripting)? (2):
-Language — typescript or javascript? (typescript):
+Tier: 2 (bindings) or 3 (full scripting)? (2):
+Language: typescript or javascript? (typescript):
 
 ✓ Created my-mod in /path/to/my-mod
 
@@ -76,7 +76,7 @@ Returns the file contents as a `Record<string, string>` without writing to disk.
 
 ## Documentation
 
-[xript.dev](https://xript.dev) — full docs, adoption tiers, and getting started guide.
+[xript.dev](https://xript.dev): full docs, adoption tiers, and getting started guide.
 
 ## License
 

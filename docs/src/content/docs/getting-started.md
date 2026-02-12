@@ -7,7 +7,7 @@ This guide walks through adding xript to an application from scratch. By the end
 
 ## Install the Runtime
 
-The universal runtime uses QuickJS compiled to WebAssembly — it works in browsers, Node.js, Deno, and more.
+The universal runtime uses QuickJS compiled to WebAssembly: it works in browsers, Node.js, Deno, and more.
 
 ```sh
 npm install @xriptjs/runtime
@@ -68,7 +68,7 @@ const runtime = xript.createRuntime(manifest, {
 });
 ```
 
-`initXript()` loads the QuickJS WASM module once. After that, `createRuntime()` is synchronous — create as many runtimes as you need.
+`initXript()` loads the QuickJS WASM module once. After that, `createRuntime()` is synchronous: create as many runtimes as you need.
 
 ## Execute Scripts
 

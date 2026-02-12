@@ -51,18 +51,19 @@ runtime.dispose();
 
 ## Documentation
 
-**[xript.dev](https://xript.dev)** -- the full documentation site.
+**[xript.dev](https://xript.dev)**: the full documentation site.
 
-- [Vision](https://xript.dev/vision) -- the guiding principles
-- [Adoption Tiers](https://xript.dev/adoption-tiers) -- the three-tier incremental adoption model
-- [Getting Started](https://xript.dev/getting-started) -- five-minute integration guide
-- [JS/WASM Runtime](https://xript.dev/runtimes/js-wasm) -- the universal runtime (QuickJS WASM)
-- [Node.js Runtime](https://xript.dev/runtimes/node) -- the Node.js-optimized runtime
-- [Manifest Spec](https://xript.dev/spec/manifest) -- the manifest format
-- [Security Guarantees](https://xript.dev/spec/security) -- what the sandbox promises
-- [Expression Evaluator](https://xript.dev/examples/expression-evaluator) -- tier 1 walkthrough
-- [Plugin System](https://xript.dev/examples/plugin-system) -- tier 2 walkthrough
-- [Game Mod System](https://xript.dev/examples/game-mod-system) -- tier 3 walkthrough
+- [Vision](https://xript.dev/vision): the guiding principles
+- [Adoption Tiers](https://xript.dev/adoption-tiers): the three-tier incremental adoption model
+- [Getting Started](https://xript.dev/getting-started): five-minute integration guide
+- [JS/WASM Runtime](https://xript.dev/runtimes/js-wasm): the universal runtime (QuickJS WASM)
+- [Node.js Runtime](https://xript.dev/runtimes/node): the Node.js-optimized runtime
+- [Rust Runtime](https://xript.dev/runtimes/rust): the native Rust runtime (QuickJS via rquickjs)
+- [Manifest Spec](https://xript.dev/spec/manifest): the manifest format
+- [Security Guarantees](https://xript.dev/spec/security): what the sandbox promises
+- [Expression Evaluator](https://xript.dev/examples/expression-evaluator): tier 1 walkthrough
+- [Plugin System](https://xript.dev/examples/plugin-system): tier 2 walkthrough
+- [Game Mod System](https://xript.dev/examples/game-mod-system): tier 3 walkthrough
 
 ## Repository Structure
 
@@ -71,7 +72,8 @@ xript/
 ├── spec/           # the specification (manifest schema, capabilities, bindings, security)
 ├── runtimes/
 │   ├── js/         # universal runtime (@xriptjs/runtime, QuickJS WASM sandbox)
-│   └── node/       # Node.js-optimized runtime (@xriptjs/runtime-node, vm-based)
+│   ├── node/       # Node.js-optimized runtime (@xriptjs/runtime-node, vm-based)
+│   └── rust/       # native Rust runtime (xript-runtime, QuickJS via rquickjs)
 ├── tools/
 │   ├── validate/            # @xriptjs/validate
 │   ├── typegen/             # @xriptjs/typegen
@@ -104,13 +106,14 @@ npx @xriptjs/init my-project            # scaffold a new project
 
 | Milestone | Status |
 |-----------|--------|
-| Spec v0.2 | Complete -- manifest schema, capabilities, bindings, hook lifecycle, security |
-| Universal Runtime | Complete -- QuickJS WASM sandbox, runs in browser/Node/Deno/Bun |
-| Node.js Runtime | Complete -- Node.js vm-based sandbox with `createRuntimeFromFile`, hooks, improved errors |
-| Toolchain | Complete -- validator, typegen, docgen, init CLI |
-| Developer Experience | Complete -- 19-page docs site, getting started guide, runtime API reference, example walkthroughs, live demos |
-| Hardening | Complete -- 212 tests across 7 packages, manifest validation, CI smoke tests |
-| Publishing | Live -- all 6 packages on npm under `@xriptjs`, OIDC trusted publishing with provenance |
+| Spec v0.2 | Complete: manifest schema, capabilities, bindings, hook lifecycle, security |
+| Universal Runtime | Complete: QuickJS WASM sandbox, runs in browser/Node/Deno/Bun |
+| Node.js Runtime | Complete: Node.js vm-based sandbox with `createRuntimeFromFile`, hooks, improved errors |
+| Rust Runtime | Complete: native QuickJS sandbox via rquickjs, host bindings, capability enforcement |
+| Toolchain | Complete: validator, typegen, docgen, init CLI |
+| Developer Experience | Complete: 20-page docs site, getting started guide, runtime API reference, example walkthroughs, live demos |
+| Hardening | Complete: 229 tests across 8 packages, manifest validation, CI smoke tests |
+| Publishing | Live: all 6 npm packages under `@xriptjs` (OIDC trusted publishing), Rust crate on crates.io |
 
 ## License
 

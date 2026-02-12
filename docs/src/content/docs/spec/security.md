@@ -1,6 +1,6 @@
 ---
 title: Security Guarantees
-description: The security guarantees xript runtimes must provide — sandbox isolation, resource limits, capability enforcement, and eval prohibition.
+description: "The security guarantees xript runtimes must provide: sandbox isolation, resource limits, capability enforcement, and eval prohibition."
 ---
 
 This document defines the security guarantees that xript-conformant runtimes must provide. These guarantees exist so that users running third-party scripts never have to wonder whether a script is safe. It is safe. That is the contract.
@@ -25,7 +25,7 @@ Scripts cannot access anything the host has not explicitly exposed through bindi
 
 Objects returned from bindings must be copies or proxies, not direct references to host-internal objects. A script receiving a player position object must not be able to traverse prototype chains or property references to reach host internals. Runtimes should either deep-copy returned values or use membrane patterns that intercept property access.
 
-**Failure mode:** If a script attempts to access something outside the sandbox (e.g., through a prototype chain exploit or a globalThis property not in the allowed set), the access must return `undefined` or throw a `TypeError`. It must never succeed silently.
+**Failure mode:** If a script attempts to access something outside the sandbox (through a prototype chain exploit or a globalThis property not in the allowed set), the access must return `undefined` or throw a `TypeError`. It must never succeed silently.
 
 ### 2. No Denial of Service
 
@@ -33,7 +33,7 @@ Scripts cannot consume unbounded resources. The manifest's `executionLimits` sec
 
 **Execution time:**
 
-Every script invocation has a maximum wall-clock duration. The default is 5000ms. When the timeout is reached, the runtime must terminate the script. Termination is immediate — the script does not get a grace period or a chance to clean up.
+Every script invocation has a maximum wall-clock duration. The default is 5000ms. When the timeout is reached, the runtime must terminate the script. Termination is immediate: the script does not get a grace period or a chance to clean up.
 
 **Memory:**
 
@@ -41,7 +41,7 @@ Every script invocation has a maximum memory allocation. The default is 64 MB. W
 
 **Stack depth:**
 
-Every script invocation has a maximum call stack depth. The default is 256 frames. When the limit is reached, the runtime must throw a `RangeError` (the standard JavaScript stack overflow error). Unlike timeout and memory violations, stack overflow is catchable — a script can catch the `RangeError` and continue operating within its remaining resource budget.
+Every script invocation has a maximum call stack depth. The default is 256 frames. When the limit is reached, the runtime must throw a `RangeError` (the standard JavaScript stack overflow error). Unlike timeout and memory violations, stack overflow is catchable: a script can catch the `RangeError` and continue operating within its remaining resource budget.
 
 **Infinite loop protection:**
 
@@ -55,7 +55,7 @@ Runtimes must detect and terminate scripts that enter infinite loops or infinite
 | Memory | `executionLimits.memory_mb` | Script terminated | No |
 | Stack | `executionLimits.max_stack_depth` | `RangeError` thrown | Yes |
 
-Timeout and memory violations are not catchable because a script that has exhausted these resources cannot be trusted to handle errors correctly. Stack overflow is catchable because the stack unwinds naturally and the script may have legitimate recovery logic (e.g., switching from recursive to iterative algorithms).
+Timeout and memory violations are not catchable because a script that has exhausted these resources cannot be trusted to handle errors correctly. Stack overflow is catchable because the stack unwinds naturally and the script may have legitimate recovery logic (switching from recursive to iterative algorithms).
 
 ### 3. No Implicit Trust
 
@@ -63,7 +63,7 @@ Scripts start with zero capabilities and can only call ungated bindings until ca
 
 **Default-deny posture:**
 
-When a script is loaded, it has access to ungated bindings only. The host must explicitly grant each capability the script needs. There is no "allow all" shortcut in the spec — if a host application wants to grant everything, it must enumerate every capability.
+When a script is loaded, it has access to ungated bindings only. The host must explicitly grant each capability the script needs. There is no "allow all" shortcut in the spec: if a host application wants to grant everything, it must enumerate every capability.
 
 **Grant immutability:**
 
@@ -77,7 +77,7 @@ Having capability A does not imply access to capability B, even if A and B are r
 
 Scripts cannot grant capabilities to other scripts. Only the host makes grant decisions.
 
-**Failure mode:** Calling a gated function without the required capability throws a `CapabilityDeniedError`. The function does not execute — not partially, not with reduced functionality. The error is catchable, and the script continues running with its existing capabilities.
+**Failure mode:** Calling a gated function without the required capability throws a `CapabilityDeniedError`. The function does not execute: not partially, not with reduced functionality. The error is catchable, and the script continues running with its existing capabilities.
 
 ### 4. No Eval
 
@@ -95,7 +95,7 @@ Scripts cannot dynamically generate and execute code. The `eval()` function, the
 
 Dynamic code generation is the primary vector for code injection attacks in scripting environments. A script that can construct and execute arbitrary code can bypass every other security guarantee. Banning eval at the runtime level closes this vector entirely.
 
-**What modders should use instead:**
+**What extenders should use instead:**
 
 - Data-driven dispatch: Use objects or maps to select behavior based on runtime values
 - Higher-order functions: Pass functions as arguments rather than constructing them from strings
@@ -115,7 +115,7 @@ These are required for scripts to function as normal JavaScript:
 - `Object`, `Array`, `Map`, `Set`, `WeakMap`, `WeakSet`
 - `Promise`, `async`/`await` support
 - `JSON.parse()`, `JSON.stringify()`
-- `Math`, `Date` (read-only current time; whether `Date.now()` returns real time or simulated time is host-determined)
+- `Math`, `Date` (read-only current time; whether `Date.now()` returns real or simulated time is host-determined)
 - `Error`, `TypeError`, `RangeError`, `SyntaxError`, `ReferenceError`
 - `RegExp`
 - `console.log()`, `console.warn()`, `console.error()` (output routed to the host's mod console)
@@ -163,11 +163,11 @@ The xript trust model defines the relationships between the four actors in the s
 
 **The user trusts the host application.** By installing and running the application, the user extends trust to it. The host application is responsible for providing accurate manifests and a conformant runtime.
 
-**The host application trusts the runtime.** The host delegates script execution to the runtime and trusts it to enforce the security guarantees. If the runtime is non-conformant, the host's security promises are void.
+**The host application trusts the runtime.** The host delegates script execution to the runtime and trusts it to enforce the security guarantees. If the runtime is non-conformant, the host's security promises become void.
 
 **Nobody trusts scripts by default.** Scripts are untrusted code from the user's perspective. The capability model exists precisely because scripts cannot be assumed safe. Users grant capabilities based on their own risk assessment, informed by the manifest's capability descriptions and risk levels.
 
-**The runtime does not trust scripts.** The runtime enforces all guarantees regardless of which capabilities a script has been granted. A script with every capability is still sandboxed, still resource-limited, and still prohibited from eval.
+**The runtime does not trust scripts.** The runtime enforces all guarantees regardless of which capabilities a script has been granted. A script with every capability is still sandboxed, resource-limited, and prohibited from eval.
 
 ### What Trust Does Not Flow Through
 
@@ -233,6 +233,6 @@ Runtime implementors must verify their implementation against each item in this 
 
 The security guarantees build on and complement the other xript spec documents:
 
-- **[Manifest](/spec/manifest)**: Declares `executionLimits` that this document's resource guarantees enforce. Also declares capabilities that the trust model relies on.
+- **[Manifest](/spec/manifest)**: Declares `executionLimits` that this document's resource guarantees enforce, plus capabilities that the trust model relies on.
 - **[Capabilities](/spec/capabilities)**: Defines the capability model that this document's "no implicit trust" guarantee enforces. The capability spec covers declaration and lifecycle; this document covers the security properties those mechanisms must provide.
 - **[Bindings](/spec/bindings)**: Defines how bindings behave at runtime, including the error types (`BindingError`, `CapabilityDeniedError`, `TypeError`) referenced throughout this document.

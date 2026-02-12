@@ -2,10 +2,12 @@
 name = "xript-runtime"
 version = "0.1.0"
 edition = "2024"
-description = "Rust runtime for xript — sandboxed JavaScript execution via QuickJS."
+description = "Rust runtime for xript. Sandboxed JavaScript execution via QuickJS."
 license = "MIT"
 repository = "https://github.com/nekoyoubi/xript"
+readme = "README.md"
 keywords = ["xript", "runtime", "sandbox", "scripting", "quickjs"]
+categories = ["game-development", "wasm", "embedded"]
 
 [dependencies]
 rquickjs = { version = "0.10", features = ["parallel"] }

@@ -1,9 +1,9 @@
 ---
 title: Binding Conventions
-description: Runtime conventions for xript bindings — error handling, versioning, and TypeScript type mapping.
+description: "Runtime conventions for xript bindings: error handling, versioning, and TypeScript type mapping."
 ---
 
-Bindings are the bridge between the host application and modder scripts. The [manifest schema](/spec/manifest) defines how bindings are declared. This document covers the runtime conventions that govern how bindings behave: error handling, versioning, and the mapping from manifest declarations to generated TypeScript types.
+Bindings are the bridge between the host application and extender scripts. The [manifest schema](/spec/manifest) defines how bindings are declared. This document covers the runtime conventions that govern how bindings behave: error handling, versioning, and the mapping from manifest declarations to generated TypeScript types.
 
 ## Error Handling
 
@@ -15,10 +15,10 @@ When a binding function throws an error inside the host application, the runtime
 2. **Wrap it** in a `BindingError` with:
    - The original error message
    - The binding name (e.g., `"player.setHealth"`)
-   - No stack trace from the host (this would leak implementation details outside the sandbox)
-3. **Throw the `BindingError`** into the script context so the modder can catch and handle it
+   - No stack trace from the host (this would leak implementation details)
+3. **Throw the `BindingError`** into the script context so the extender can catch and handle it
 
-Example from the modder's perspective:
+Example from the extender's perspective:
 
 ```javascript
 try {
@@ -33,7 +33,7 @@ try {
 
 ### Script-Side Error Handling
 
-Modders can wrap binding calls in try/catch. Uncaught errors from bindings terminate the script with the error message logged to the host's mod console.
+Extenders can wrap binding calls in try/catch. Uncaught errors from bindings terminate the script with the error message logged to the host's mod console.
 
 ### Error Types
 
@@ -49,9 +49,9 @@ Runtimes may add additional error types, but these three must be present.
 
 ### Type Validation
 
-Runtimes should validate argument types before invoking the host binding. If a binding declares `params: [{ "name": "value", "type": "number" }]` and the modder passes a string, the runtime should throw a `TypeError` without calling the host function. This prevents unexpected values from reaching the host and provides clear feedback to the modder.
+Runtimes should validate argument types before invoking the host binding. If a binding declares `params: [{ "name": "value", "type": "number" }]` and the extender passes a string, the runtime should throw a `TypeError` without calling the host function. This prevents unexpected values from reaching the host and provides clear feedback to the extender.
 
-Type validation is recommended but not strictly required — some runtimes may defer to the host's own type checking for performance reasons.
+Type validation is recommended but not strictly required. Some runtimes may defer to the host's own type checking for performance reasons.
 
 ## Versioning
 
@@ -86,7 +86,7 @@ Runtimes should:
 
 When a manifest's major version increments, scripts written for the previous major version may break. Host applications should document breaking changes and consider supporting a compatibility mode during the transition.
 
-The `xript` spec version (e.g., `"0.1"`) is separate from the manifest API version. A new spec version does not require a new API version — they track different things.
+The `xript` spec version (e.g., `"0.1"`) is separate from the manifest API version. A new spec version does not require a new API version: they track different things.
 
 ## Manifest-to-TypeScript Mapping
 

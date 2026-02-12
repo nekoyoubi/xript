@@ -5,21 +5,21 @@ description: Node.js-optimized xript runtime with file-based manifest loading.
 
 The Node.js runtime (`@xriptjs/runtime-node`) executes user scripts inside a sandboxed Node.js `vm` context. It provides `createRuntimeFromFile` for loading manifests directly from disk. Use this runtime when your application runs exclusively on Node.js and you want file-based workflows.
 
-For applications that need to run in browsers, Deno, Bun, or other environments, use the [JS/WASM Runtime](/runtimes/js-wasm) (`@xriptjs/runtime`) instead.
+For applications that need to run in browsers, Deno, Bun, or other environments, use the [JS/WASM Runtime](/runtimes/js-wasm) (`@xriptjs/runtime`) instead. For Rust host applications, see the [Rust Runtime](/runtimes/rust).
 
 ## When to Use Which Runtime
 
-| | Universal (`@xriptjs/runtime`) | Node.js (`@xriptjs/runtime-node`) |
-|---|---|---|
-| **Sandbox** | QuickJS WASM | Node.js `vm` module |
-| **Environments** | Browser, Node, Deno, Bun, Workers | Node.js only |
-| **Manifest loading** | Pass manifest object directly | `createRuntimeFromFile` loads from disk |
-| **Validation** | Basic structural checks | Basic structural checks |
-| **Async bindings** | Via `initXriptAsync()` (asyncify WASM) | Native `async`/`await` |
-| **Memory isolation** | Separate WASM heap per runtime | Shared Node.js process memory |
-| **Best for** | Cross-platform apps, browser-based tools | Node.js servers, CLI tools, build pipelines |
+| | Universal (`@xriptjs/runtime`) | Node.js (`@xriptjs/runtime-node`) | Rust (`xript-runtime`) |
+|---|---|---|---|
+| **Sandbox** | QuickJS WASM | Node.js `vm` module | QuickJS via rquickjs (native) |
+| **Environments** | Browser, Node, Deno, Bun, Workers | Node.js only | Any Rust application |
+| **Manifest loading** | Pass manifest object directly | `createRuntimeFromFile` loads from disk | `create_runtime` (JSON string), `create_runtime_from_file` |
+| **Validation** | Basic structural checks | Basic structural checks | Basic structural checks |
+| **Async bindings** | Via `initXriptAsync()` (asyncify WASM) | Native `async`/`await` | Not yet (sync only) |
+| **Memory isolation** | Separate WASM heap per runtime | Shared Node.js process memory | Separate QuickJS heap per runtime |
+| **Best for** | Cross-platform apps, browser-based tools | Node.js servers, CLI tools, build pipelines | Rust applications, game engines, native tools |
 
-Both runtimes implement the same xript specification and enforce the same security guarantees. Scripts written for one runtime work identically on the other.
+All three runtimes implement the same xript specification and enforce the same security guarantees. Scripts written for one runtime work identically on the others.
 
 ## Installation
 
@@ -114,7 +114,7 @@ import {
 
 The Node.js runtime creates a `vm.Context` with a restricted global environment:
 
-- **Code generation disabled:** `vm.createContext` is configured with `codeGeneration: { strings: false, wasm: false }`, blocking `eval()` and `new Function()` at the V8 level
+- **Code generation disabled:** `vm.createContext` is configured with `codeGeneration: { strings: false, wasm: false }`. This blocks `eval()` and `new Function()` at the V8 level.
 - **Standard globals available:** `Math`, `JSON`, `Date`, `Number`, `String`, `Boolean`, `Array`, `Object`, `Map`, `Set`, `Promise`, `RegExp`, `Symbol`, `Proxy`, `Reflect`, typed arrays, and standard error constructors
 - **Blocked:** `process`, `require`, `import`, `fetch`, `setTimeout`, `setInterval`, `Buffer`, `__dirname`, `__filename`
 - **Frozen namespaces:** Namespace objects are frozen with `Object.freeze`

@@ -73,7 +73,7 @@ interface ValidationError {
 
 ## Documentation
 
-[xript.dev](https://xript.dev) — full docs and manifest specification.
+[xript.dev](https://xript.dev): full docs and manifest specification.
 
 ## License
 
