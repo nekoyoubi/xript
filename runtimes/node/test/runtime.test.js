@@ -629,65 +629,6 @@ describe("dispose", () => {
 	});
 });
 
-describe("createRuntimeFromFile validation", () => {
-	it("validates manifest by default", async () => {
-		const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
-			hostBindings: {
-				log: (msg) => msg,
-				player: {
-					getName: () => "Hero",
-					getHealth: () => 100,
-					getMaxHealth: () => 100,
-					getPosition: () => ({ x: 0, y: 0 }),
-					setHealth: () => {},
-					getInventory: () => [],
-					addItem: () => {},
-				},
-				world: {
-					getCurrentLevel: () => 1,
-					getEnemies: async () => [],
-					spawnEnemy: () => {},
-				},
-				data: {
-					get: async () => undefined,
-					set: async () => {},
-				},
-			},
-			capabilities: ["modify-player", "modify-world", "storage"],
-		});
-		assert.ok(runtime);
-	});
-
-	it("can skip validation with validate: false", async () => {
-		const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {
-			hostBindings: {
-				log: (msg) => msg,
-				player: {
-					getName: () => "Hero",
-					getHealth: () => 100,
-					getMaxHealth: () => 100,
-					getPosition: () => ({ x: 0, y: 0 }),
-					setHealth: () => {},
-					getInventory: () => [],
-					addItem: () => {},
-				},
-				world: {
-					getCurrentLevel: () => 1,
-					getEnemies: async () => [],
-					spawnEnemy: () => {},
-				},
-				data: {
-					get: async () => undefined,
-					set: async () => {},
-				},
-			},
-			capabilities: ["modify-player", "modify-world", "storage"],
-			validate: false,
-		});
-		assert.ok(runtime);
-	});
-});
-
 describe("createRuntimeFromFile", () => {
 	it("loads a manifest from a file", async () => {
 		const runtime = await createRuntimeFromFile("../../examples/game-mod-system/manifest.json", {

@@ -1,5 +1,5 @@
 {
-	"name": "@xript/init",
+	"name": "@xriptjs/init",
 	"version": "0.1.0",
 	"description": "Scaffolding CLI for new xript projects.",
 	"type": "module",
@@ -26,5 +26,9 @@
 		"prepublishOnly": "npm run build"
 	},
 	"keywords": ["xript", "init", "scaffolding", "code-generation"],
-	"license": "MIT"
+	"license": "MIT",
+	"publishConfig": {
+		"access": "public",
+		"provenance": true
+	}
 }

@@ -18,9 +18,9 @@ This installs dependencies for all workspace packages. The repo is a monorepo ma
 xript/
 ├── spec/           # the specification (manifest schema, capability model, etc.)
 ├── runtimes/
-│   ├── js/         # universal runtime (@xript/runtime, QuickJS WASM sandbox)
-│   └── node/       # Node.js-optimized runtime (@xript/runtime-node, vm-based)
-├── tools/          # ecosystem tooling (validator, typegen, docgen)
+│   ├── js/         # universal runtime (@xriptjs/runtime, QuickJS WASM sandbox)
+│   └── node/       # Node.js-optimized runtime (@xriptjs/runtime-node, vm-based)
+├── tools/          # ecosystem tooling (validator, typegen, docgen, init)
 ├── docs/           # documentation site (Astro + Starlight) → xript.dev
 └── examples/       # example manifests and integrations
 ```
@@ -36,14 +36,17 @@ npm test --workspace=runtimes/js
 npm run build --workspace=runtimes/node
 npm test --workspace=runtimes/node
 
-npm run build --workspace=tools/manifest-validator
-npm test --workspace=tools/manifest-validator
+npm run build --workspace=tools/validate
+npm test --workspace=tools/validate
 
 npm run build --workspace=tools/typegen
 npm test --workspace=tools/typegen
 
 npm run build --workspace=tools/docgen
 npm test --workspace=tools/docgen
+
+npm run build --workspace=tools/init
+npm test --workspace=tools/init
 ```
 
 The docs site runs locally with:

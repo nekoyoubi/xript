@@ -107,7 +107,7 @@ A 1-second timeout is appropriate for game mods that run per-frame or per-event.
 The host simulates a dungeon crawler with in-memory game state:
 
 ```javascript
-import { initXriptAsync } from "@xript/runtime";
+import { initXriptAsync } from "@xriptjs/runtime";
 
 const xript = await initXriptAsync();
 const runtime = await xript.createRuntime(manifest, {

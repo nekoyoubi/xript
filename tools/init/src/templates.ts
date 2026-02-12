@@ -115,7 +115,7 @@ function generatePackageJson(options: TemplateOptions): string {
 	};
 
 	pkg.dependencies = {
-		"@xript/runtime": "^0.2.0",
+		"@xriptjs/runtime": "^0.2.0",
 	};
 
 	if (options.language === "typescript") {
@@ -154,7 +154,7 @@ function generateTier2Host(options: TemplateOptions): string {
 	const ts = options.language === "typescript";
 	const lines: string[] = [];
 
-	lines.push(`import { initXript } from "@xript/runtime";`);
+	lines.push(`import { initXript } from "@xriptjs/runtime";`);
 	lines.push(`import { readFile } from "node:fs/promises";`);
 	lines.push(``);
 	lines.push(`const manifestRaw = await readFile(new URL("../manifest.json", import.meta.url), "utf-8");`);
@@ -218,7 +218,7 @@ function generateTier3Host(options: TemplateOptions): string {
 	const ts = options.language === "typescript";
 	const lines: string[] = [];
 
-	lines.push(`import { initXript } from "@xript/runtime";`);
+	lines.push(`import { initXript } from "@xriptjs/runtime";`);
 	lines.push(`import { readFile } from "node:fs/promises";`);
 	lines.push(``);
 	lines.push(`const manifestRaw = await readFile(new URL("../manifest.json", import.meta.url), "utf-8");`);

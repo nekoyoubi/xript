@@ -1,5 +1,5 @@
 {
-	"name": "@xript/runtime-node",
+	"name": "@xriptjs/runtime-node",
 	"version": "0.1.0",
 	"description": "Node.js-optimized xript runtime — sandboxed script execution via Node.js vm module.",
 	"type": "module",
@@ -24,8 +24,9 @@
 	},
 	"keywords": ["xript", "runtime", "sandbox", "scripting", "modding", "node", "vm"],
 	"license": "MIT",
-	"dependencies": {
-		"@xript/manifest-validator": "^0.1.0"
+	"publishConfig": {
+		"access": "public",
+		"provenance": true
 	},
 	"devDependencies": {
 		"typescript": "^5.7.0",
