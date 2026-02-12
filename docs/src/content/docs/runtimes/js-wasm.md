@@ -1,11 +1,11 @@
 ---
-title: Runtime
+title: JS/WASM Runtime
 description: Universal JavaScript runtime for sandboxed script execution with manifest-driven bindings.
 ---
 
 The universal runtime (`@xriptjs/runtime`) executes user scripts inside a secure QuickJS WASM sandbox. It reads a manifest to determine which bindings to expose, enforces capability gates, and prevents access to anything outside the declared surface. It runs in any JavaScript environment: browser, Node.js, Deno, Bun, and Cloudflare Workers.
 
-For Node.js-only applications that need `createRuntimeFromFile` or full JSON Schema validation, see `@xriptjs/runtime-node`.
+For Node.js-only applications that need `createRuntimeFromFile` or native V8 performance, see the [Node.js Runtime](/runtimes/node).
 
 ## Installation
 
