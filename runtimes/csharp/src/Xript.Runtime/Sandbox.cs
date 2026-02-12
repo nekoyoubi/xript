@@ -66,17 +66,10 @@ internal sealed class Sandbox : IDisposable
         var hookDef = _manifest.Hooks?.GetValueOrDefault(hookName);
         if (hookDef is null) return [];
 
-        string registryKey;
-        if (options?.Phase is { } phase)
-        {
-            if (hookDef.Phases is null || !hookDef.Phases.Contains(phase))
-                return [];
-            registryKey = $"{hookName}:{phase}";
-        }
-        else
-        {
-            registryKey = hookName;
-        }
+        if (options?.Phase is { } phase && hookDef.Phases?.Contains(phase) != true)
+            return [];
+
+        var registryKey = options?.Phase is { } p ? $"{hookName}:{p}" : hookName;
 
         try
         {
@@ -199,9 +192,8 @@ internal sealed class Sandbox : IDisposable
             if (TryGetCapability(memberDef, out var capability) && !granted.Contains(capability))
             {
                 var msg = $"{fullName}() requires the \"{capability}\" capability, which hasn't been granted to this script";
-                var escaped = msg.Replace("\\", "\\\\").Replace("\"", "\\\"");
                 _engine.Execute(
-                    $"globalThis['{EscapeJs(name)}']['{EscapeJs(memberName)}'] = function() {{ throw new Error(\"{escaped}\"); }};");
+                    $"globalThis['{EscapeJs(name)}']['{EscapeJs(memberName)}'] = function() {{ throw new Error(\"{EscapeJsDoubleQuote(msg)}\"); }};");
                 continue;
             }
 
@@ -211,9 +203,8 @@ internal sealed class Sandbox : IDisposable
             if (hostFn is null)
             {
                 var msg = $"host binding '{fullName}' is not provided";
-                var escaped = msg.Replace("\\", "\\\\").Replace("\"", "\\\"");
                 _engine.Execute(
-                    $"globalThis['{EscapeJs(name)}']['{EscapeJs(memberName)}'] = function() {{ throw new Error(\"{escaped}\"); }};");
+                    $"globalThis['{EscapeJs(name)}']['{EscapeJs(memberName)}'] = function() {{ throw new Error(\"{EscapeJsDoubleQuote(msg)}\"); }};");
                 continue;
             }
 
@@ -263,9 +254,8 @@ internal sealed class Sandbox : IDisposable
 
     private void RegisterThrowingFunction(string name, string message)
     {
-        var escaped = message.Replace("\\", "\\\\").Replace("\"", "\\\"");
         _engine.Execute(
-            $"globalThis['{EscapeJs(name)}'] = function() {{ throw new Error(\"{escaped}\"); }};");
+            $"globalThis['{EscapeJs(name)}'] = function() {{ throw new Error(\"{EscapeJsDoubleQuote(message)}\"); }};");
     }
 
     private void RegisterHooks(HashSet<string> granted)
@@ -364,6 +354,9 @@ internal sealed class Sandbox : IDisposable
 
     private static string EscapeJs(string s) =>
         s.Replace("\\", "\\\\").Replace("'", "\\'");
+
+    private static string EscapeJsDoubleQuote(string s) =>
+        s.Replace("\\", "\\\\").Replace("\"", "\\\"");
 
     private JsonElement JsValueToJsonElement(JsValue value)
     {
