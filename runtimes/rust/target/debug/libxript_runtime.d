@@ -1,1 +1,0 @@
-C:\Users\nekoy\source\repos\xript\runtimes\rust\target\debug\libxript_runtime.rlib: C:\Users\nekoy\source\repos\xript\runtimes\rust\src\error.rs C:\Users\nekoy\source\repos\xript\runtimes\rust\src\lib.rs C:\Users\nekoy\source\repos\xript\runtimes\rust\src\manifest.rs C:\Users\nekoy\source\repos\xript\runtimes\rust\src\sandbox.rs
