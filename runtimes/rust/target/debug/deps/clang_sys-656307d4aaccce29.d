@@ -1,0 +1,14 @@
+C:\Users\nekoy\source\repos\xript\runtimes\rust\target\debug\deps\clang_sys-656307d4aaccce29.d: C:\Users\nekoy\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.8.1\src\lib.rs C:\Users\nekoy\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.8.1\src\support.rs C:\Users\nekoy\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.8.1\src\link.rs C:\Users\nekoy\source\repos\xript\runtimes\rust\target\debug\build\clang-sys-d4ee34803836b773\out/macros.rs C:\Users\nekoy\source\repos\xript\runtimes\rust\target\debug\build\clang-sys-d4ee34803836b773\out/common.rs C:\Users\nekoy\source\repos\xript\runtimes\rust\target\debug\build\clang-sys-d4ee34803836b773\out/dynamic.rs
+
+C:\Users\nekoy\source\repos\xript\runtimes\rust\target\debug\deps\libclang_sys-656307d4aaccce29.rlib: C:\Users\nekoy\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.8.1\src\lib.rs C:\Users\nekoy\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.8.1\src\support.rs C:\Users\nekoy\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.8.1\src\link.rs C:\Users\nekoy\source\repos\xript\runtimes\rust\target\debug\build\clang-sys-d4ee34803836b773\out/macros.rs C:\Users\nekoy\source\repos\xript\runtimes\rust\target\debug\build\clang-sys-d4ee34803836b773\out/common.rs C:\Users\nekoy\source\repos\xript\runtimes\rust\target\debug\build\clang-sys-d4ee34803836b773\out/dynamic.rs
+
+C:\Users\nekoy\source\repos\xript\runtimes\rust\target\debug\deps\libclang_sys-656307d4aaccce29.rmeta: C:\Users\nekoy\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.8.1\src\lib.rs C:\Users\nekoy\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.8.1\src\support.rs C:\Users\nekoy\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.8.1\src\link.rs C:\Users\nekoy\source\repos\xript\runtimes\rust\target\debug\build\clang-sys-d4ee34803836b773\out/macros.rs C:\Users\nekoy\source\repos\xript\runtimes\rust\target\debug\build\clang-sys-d4ee34803836b773\out/common.rs C:\Users\nekoy\source\repos\xript\runtimes\rust\target\debug\build\clang-sys-d4ee34803836b773\out/dynamic.rs
+
+C:\Users\nekoy\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.8.1\src\lib.rs:
+C:\Users\nekoy\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.8.1\src\support.rs:
+C:\Users\nekoy\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\clang-sys-1.8.1\src\link.rs:
+C:\Users\nekoy\source\repos\xript\runtimes\rust\target\debug\build\clang-sys-d4ee34803836b773\out/macros.rs:
+C:\Users\nekoy\source\repos\xript\runtimes\rust\target\debug\build\clang-sys-d4ee34803836b773\out/common.rs:
+C:\Users\nekoy\source\repos\xript\runtimes\rust\target\debug\build\clang-sys-d4ee34803836b773\out/dynamic.rs:
+
+# env-dep:OUT_DIR=C:\\Users\\nekoy\\source\\repos\\xript\\runtimes\\rust\\target\\debug\\build\\clang-sys-d4ee34803836b773\\out
