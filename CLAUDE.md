@@ -39,7 +39,7 @@ npm run docs:build                     # build the docs site for production
 npm run build --workspace=runtimes/js              # build the universal runtime
 npm test --workspace=runtimes/js                   # run universal runtime tests (69 tests)
 npm run build --workspace=runtimes/node            # build the Node.js runtime
-npm test --workspace=runtimes/node                 # run Node.js runtime tests (73 tests)
+npm test --workspace=runtimes/node                 # run Node.js runtime tests (71 tests)
 npm run build --workspace=tools/validate            # build the validator
 npm test --workspace=tools/validate                 # run validator tests (11 tests)
 npm run build --workspace=tools/typegen            # build the type generator
