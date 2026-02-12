@@ -101,12 +101,13 @@ npx xript-docgen manifest.json -o docs/  # generate documentation
 
 | Milestone | Status |
 |-----------|--------|
-| Spec v0.1 | Complete -- manifest schema, capabilities, bindings, security |
+| Spec v0.2 | Complete -- manifest schema, capabilities, bindings, hook lifecycle, security |
 | Universal Runtime | Complete -- QuickJS WASM sandbox, runs in browser/Node/Deno/Bun |
-| Node.js Runtime | Complete -- Node.js vm-based sandbox with `createRuntimeFromFile` and JSON Schema validation |
-| Toolchain | Complete -- validator, typegen, docgen |
+| Node.js Runtime | Complete -- Node.js vm-based sandbox with `createRuntimeFromFile`, hooks, improved errors |
+| Toolchain | Complete -- validator, typegen, docgen, init CLI |
 | Developer Experience | Complete -- 19-page docs site, getting started guide, runtime API reference, example walkthroughs, live demos |
-| Hardening | Complete -- 165 tests across 6 packages, manifest validation, CI smoke tests |
+| Hardening | Complete -- 212 tests across 7 packages, manifest validation, CI smoke tests |
+| Publishing | Ready -- `@xriptjs` npm scope, manual-dispatch publish workflow with provenance |
 
 ## License
 

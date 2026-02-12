@@ -82,6 +82,7 @@ v0.1 milestones are complete and v0.2 foundations are in place:
 - **Init CLI**: `@xriptjs/init` in `tools/init/` -- scaffolding CLI with interactive prompts, `--yes` flag, tier 2/3 templates, TS/JS output, 20 tests
 - **Developer Experience**: docs site at xript.dev (19 pages), getting started guide, runtime API reference, three example walkthroughs, three interactive live demos (browser-only QuickJS WASM), CI with smoke tests
 - **Hardening**: integration tests, manifest validation in runtime, example smoke tests in CI
+- **Publishing**: npm scope is `@xriptjs` (not `@xript` -- that scope was squatted), manual-dispatch publish workflow in `.github/workflows/publish.yml` with provenance, all 6 publishable packages have `publishConfig` with `access: public`
 
 Total test count: 212 across 7 packages. All green.
 

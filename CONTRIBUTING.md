@@ -20,7 +20,7 @@ xript/
 ├── runtimes/
 │   ├── js/         # universal runtime (@xriptjs/runtime, QuickJS WASM sandbox)
 │   └── node/       # Node.js-optimized runtime (@xriptjs/runtime-node, vm-based)
-├── tools/          # ecosystem tooling (validator, typegen, docgen)
+├── tools/          # ecosystem tooling (validator, typegen, docgen, init)
 ├── docs/           # documentation site (Astro + Starlight) → xript.dev
 └── examples/       # example manifests and integrations
 ```
@@ -44,6 +44,9 @@ npm test --workspace=tools/typegen
 
 npm run build --workspace=tools/docgen
 npm test --workspace=tools/docgen
+
+npm run build --workspace=tools/init
+npm test --workspace=tools/init
 ```
 
 The docs site runs locally with:
