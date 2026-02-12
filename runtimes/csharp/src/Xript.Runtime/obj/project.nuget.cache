@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "dgSpecHash": "6Wll/GhVrkY=",
+  "success": true,
+  "projectFilePath": "C:\\Users\\nekoy\\source\\repos\\xript\\runtimes\\csharp\\src\\Xript.Runtime\\Xript.Runtime.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\nekoy\\.nuget\\packages\\acornima\\1.2.0\\acornima.1.2.0.nupkg.sha512",
+    "C:\\Users\\nekoy\\.nuget\\packages\\jint\\4.5.0\\jint.4.5.0.nupkg.sha512"
+  ],
+  "logs": []
+}

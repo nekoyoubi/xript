@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Xript.Runtime</RootNamespace>
+
+    <PackageId>Xript.Runtime</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>nekoyoubi</Authors>
+    <Description>C# runtime for xript — sandboxed JavaScript execution via Jint with manifest-driven bindings and capability enforcement.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/nekoyoubi/xript</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/nekoyoubi/xript</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>xript;modding;scripting;sandbox;jint;javascript</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Jint" Version="4.*" />
+  </ItemGroup>
+
+</Project>

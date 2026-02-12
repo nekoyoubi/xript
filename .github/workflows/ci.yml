@@ -52,6 +52,18 @@ jobs:
       - name: smoke test game-mod-system example
         run: node examples/game-mod-system/src/demo.js
 
+  test-csharp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: build
+        run: dotnet build runtimes/csharp/Xript.Runtime.sln --configuration Release
+      - name: test
+        run: dotnet test runtimes/csharp/Xript.Runtime.sln --configuration Release --no-build
+
   docs:
     runs-on: ubuntu-latest
     steps:
