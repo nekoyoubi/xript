@@ -60,7 +60,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: rm package-lock.json && npm install
       - name: build runtime
         run: npm run build --workspace=runtimes/js
       - name: build docs
