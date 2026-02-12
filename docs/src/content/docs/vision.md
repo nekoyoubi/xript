@@ -151,5 +151,3 @@ xript succeeds when:
 *xript.dev — mod the it*
 
 ---
-
-And before anyone asks, yes, it was backronymed: **eXtensible Runtime Interface Protocol Tooling**, but the 'xr' is real.

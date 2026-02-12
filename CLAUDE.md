@@ -2,7 +2,7 @@
 
 ## What is xript?
 
-xript (eXtensible Runtime Interface Protocol Tooling) is a platform specification for making any application moddable. Users write JavaScript; xript standardizes the bindings, capability model, sandboxing guarantees, documentation, and tooling. See [spec/vision.md](spec/vision.md) for the full vision.
+xript is a platform specification for making any application moddable. Users write JavaScript; xript standardizes the bindings, capability model, sandboxing guarantees, documentation, and tooling. See [spec/vision.md](spec/vision.md) for the full vision.
 
 ## Repository Structure
 
