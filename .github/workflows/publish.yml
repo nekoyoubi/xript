@@ -46,20 +46,14 @@ jobs:
         run: npm test --workspace=runtimes/node
 
       - name: publish validate
-        run: npm publish --workspace=tools/validate        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --workspace=tools/validate
       - name: publish typegen
-        run: npm publish --workspace=tools/typegen        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --workspace=tools/typegen
       - name: publish docgen
-        run: npm publish --workspace=tools/docgen        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --workspace=tools/docgen
       - name: publish init
-        run: npm publish --workspace=tools/init        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --workspace=tools/init
       - name: publish runtime
-        run: npm publish --workspace=runtimes/js        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --workspace=runtimes/js
       - name: publish runtime-node
-        run: npm publish --workspace=runtimes/node        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --workspace=runtimes/node
