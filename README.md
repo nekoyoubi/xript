@@ -1,10 +1,12 @@
 # xript
 
-**eXtensible Runtime Interface Protocol Tooling**
-
 *mod the it*
 
 [![CI](https://github.com/nekoyoubi/xript/actions/workflows/ci.yml/badge.svg)](https://github.com/nekoyoubi/xript/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@xriptjs/runtime?label=npm)](https://www.npmjs.com/package/@xriptjs/runtime)
+[![crates.io](https://img.shields.io/crates/v/xript-runtime?label=crates.io)](https://crates.io/crates/xript-runtime)
+[![docs](https://img.shields.io/badge/docs-xript.dev-blue)](https://xript.dev)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
 

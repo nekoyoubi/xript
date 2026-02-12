@@ -1,7 +1,5 @@
 # xript — Vision
 
-**eXtensible Runtime Interface Protocol Tooling**
-
 ---
 
 ## The Problem
