@@ -50,7 +50,7 @@ export default defineConfig({
 						{ label: "JS/WASM Runtime", slug: "runtimes/js-wasm" },
 						{ label: "Node.js Runtime", slug: "runtimes/node" },
 						{ label: "Rust Runtime", slug: "runtimes/rust" },
-					{ label: "C# Runtime", slug: "runtimes/csharp" },
+						{ label: "C# Runtime", slug: "runtimes/csharp" },
 					],
 				},
 				{

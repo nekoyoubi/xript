@@ -94,7 +94,7 @@ v0.1 milestones are complete and v0.2 foundations are in place:
 - **C# Runtime**: `Xript.Runtime` in `runtimes/csharp/` -- Jint sandbox with host bindings, capability enforcement, hooks, and resource limits, 72 tests
 - **Toolchain**: manifest validator, type generator, doc generator, and init CLI all built and tested in `tools/` (72 tests across 4 packages)
 - **Init CLI**: `@xriptjs/init` in `tools/init/` -- scaffolding CLI with interactive prompts, `--yes` flag, tier 2/3 templates, TS/JS output, 20 tests
-- **Developer Experience**: docs site at xript.dev (20 pages), getting started guide, runtime API reference, three example walkthroughs, three interactive live demos (browser-only QuickJS WASM), CI with smoke tests
+- **Developer Experience**: docs site at xript.dev (22 pages), getting started guide, runtime API reference, three example walkthroughs, three interactive live demos (browser-only QuickJS WASM), CI with smoke tests
 - **Hardening**: integration tests, manifest validation in runtime, example smoke tests in CI
 - **Publishing**: all 6 npm packages live under `@xriptjs` scope (OIDC trusted publishing, provenance attestations), Rust crate on crates.io, C# package on NuGet
 
