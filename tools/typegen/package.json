@@ -1,6 +1,6 @@
 {
 	"name": "@xriptjs/typegen",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Generate TypeScript definitions from xript manifests.",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -17,6 +17,7 @@
 		"url": "https://github.com/nekoyoubi/xript.git",
 		"directory": "tools/typegen"
 	},
+	"homepage": "https://xript.dev",
 	"bin": {
 		"xript-typegen": "./dist/cli.js"
 	},

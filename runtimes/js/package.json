@@ -1,6 +1,6 @@
 {
 	"name": "@xriptjs/runtime",
-	"version": "0.2.0",
+	"version": "0.2.1",
 	"description": "Universal JavaScript runtime for xript — QuickJS WASM sandbox for browser, Node, Deno, and more.",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -17,6 +17,7 @@
 		"url": "https://github.com/nekoyoubi/xript.git",
 		"directory": "runtimes/js"
 	},
+	"homepage": "https://xript.dev",
 	"scripts": {
 		"build": "tsc",
 		"test": "node --test test/*.test.js",

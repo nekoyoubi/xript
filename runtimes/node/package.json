@@ -1,6 +1,6 @@
 {
 	"name": "@xriptjs/runtime-node",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Node.js-optimized xript runtime — sandboxed script execution via Node.js vm module.",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -17,6 +17,7 @@
 		"url": "https://github.com/nekoyoubi/xript.git",
 		"directory": "runtimes/node"
 	},
+	"homepage": "https://xript.dev",
 	"scripts": {
 		"build": "tsc",
 		"test": "node --test test/*.test.js",

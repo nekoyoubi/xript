@@ -1,6 +1,6 @@
 {
 	"name": "@xriptjs/validate",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Validate xript manifests against the specification schema.",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -17,6 +17,7 @@
 		"url": "https://github.com/nekoyoubi/xript.git",
 		"directory": "tools/validate"
 	},
+	"homepage": "https://xript.dev",
 	"bin": {
 		"xript-validate": "./dist/cli.js"
 	},
