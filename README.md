@@ -117,7 +117,7 @@ npx @xriptjs/init my-project            # scaffold a new project
 | Rust Runtime | Complete: native QuickJS sandbox via rquickjs, host bindings, capability enforcement |
 | C# Runtime | Complete: Jint sandbox, host bindings, capability enforcement, hooks, resource limits |
 | Toolchain | Complete: validator, typegen, docgen, init CLI |
-| Developer Experience | Complete: 24-page docs site, getting started guide, runtime API reference, example walkthroughs, live demos |
+| Developer Experience | Complete: 23-page docs site, getting started guide, runtime API reference, example walkthroughs, live demos |
 | Hardening | Complete: 301 tests across 9 packages, manifest validation, CI smoke tests |
 | Publishing | Live: all 6 npm packages under `@xriptjs` (OIDC trusted publishing), Rust crate on crates.io, C# package on NuGet |
 
