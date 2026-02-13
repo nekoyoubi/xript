@@ -5,21 +5,7 @@ description: C# runtime for sandboxed xript script execution via Jint.
 
 The C# runtime (`Xript.Runtime`) executes user scripts inside a Jint-powered JavaScript sandbox. It provides the same manifest-driven binding model and capability enforcement as the JS/WASM, Node.js, and Rust runtimes, but as a NuGet package for .NET applications.
 
-For applications that need to run in browsers or other JavaScript environments, use the [JS/WASM Runtime](/runtimes/js-wasm). For Node.js-only applications, see the [Node.js Runtime](/runtimes/node). For native Rust applications, see the [Rust Runtime](/runtimes/rust).
-
-## When to Use Which Runtime
-
-| | Universal | Node.js | Rust | C# |
-|---|---|---|---|---|
-| **Sandbox** | QuickJS WASM | Node.js `vm` | QuickJS (native) | Jint (pure C#) |
-| **Environments** | Browser, Node, Deno, Bun, Workers | Node.js only | Any Rust app | Any .NET app |
-| **Manifest loading** | Pass object directly | `createRuntimeFromFile` | `create_runtime` (JSON) | `XriptRuntime.Create` (JSON) |
-| **Validation** | Basic structural checks | Basic structural checks | Basic structural checks | Basic structural checks |
-| **Async bindings** | Via `initXriptAsync()` | Native `async`/`await` | Not yet (sync only) | Not yet (sync only) |
-| **Memory isolation** | Separate WASM heap | Shared Node.js process | Separate QuickJS heap | Jint engine per runtime |
-| **Best for** | Cross-platform, browser | Node.js servers, CLI | Rust apps, game engines | Unity, Godot (.NET), enterprise |
-
-All four runtimes implement the same xript specification and enforce the same security guarantees.
+For applications that need to run in browsers or other JavaScript environments, use the [JS/WASM Runtime](/runtimes/js-wasm). For Node.js-only applications, see the [Node.js Runtime](/runtimes/node). For native Rust applications, see the [Rust Runtime](/runtimes/rust). For a comparison of all runtimes, see [Choosing a Runtime](/runtimes/overview).
 
 ## Installation
 

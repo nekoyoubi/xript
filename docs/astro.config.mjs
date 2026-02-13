@@ -47,6 +47,7 @@ export default defineConfig({
 				{
 					label: "Runtimes",
 					items: [
+						{ label: "Choosing a Runtime", slug: "runtimes/overview" },
 						{ label: "JS/WASM Runtime", slug: "runtimes/js-wasm" },
 						{ label: "Node.js Runtime", slug: "runtimes/node" },
 						{ label: "Rust Runtime", slug: "runtimes/rust" },
