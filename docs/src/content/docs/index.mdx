@@ -3,10 +3,12 @@ title: xript
 description: The USB of software extensibility. A platform specification for making any application moddable.
 tableOfContents: false
 hero:
+  image:
+    html: '<div id="hero-playground-slot"></div>'
   title: |
     <span class="accent">xr</span><span class="muted">ipt</span>
   tagline: |
-    Every application should be moddable.
+    Every game is more fun with mods, every app more powerful with plugins, every website comfortable with extensions, and every device more capable with addons; every runtime needs extensibility.
     xript is a platform specification for how software exposes functionality to its users: safely, consistently, and with documentation that writes itself.
   actions:
     - text: Get Started
@@ -24,6 +26,8 @@ hero:
 ---
 
 import { Card, CardGrid, Code } from '@astrojs/starlight/components';
+import CodeTabs from '../../components/CodeTabs.astro';
+import HeroPlayground from '../../components/HeroPlayground.astro';
 
 export const manifestSample = `{
   "xript": "0.1",
@@ -46,22 +50,66 @@ export const manifestSample = `{
   }
 }`;
 
+export const modSample = `const hp = player.getHealth()
+const max = player.getMaxHealth()
+
+log("Current HP: " + hp + "/" + max)
+
+player.setHealth(max)
+
+log("Healed to full! HP: " + player.getHealth())`;
+
+<HeroPlayground />
+
 <div class="manifest-teaser">
-	<p class="teaser-label">One manifest. Everything else is generated.</p>
-	<Code code={manifestSample} lang="json" title="xript.manifest.json" />
+	<p class="teaser-label">One manifest. Users write mods against the bindings you declare.</p>
+	<CodeTabs labels={["xript.manifest.json", "healing-potion.js"]}>
+		<Code code={manifestSample} lang="json" slot="panel-0" />
+		<Code code={modSample} lang="javascript" slot="panel-1" />
+	</CodeTabs>
+</div>
+
+<div class="ecosystem-badges">
+	<div class="badge-row">
+		<span class="badge-label">Write in</span>
+		<span class="badge lang">JavaScript</span>
+		<span class="badge lang">TypeScript</span>
+	</div>
+	<div class="badge-row">
+		<span class="badge-label">Integrate with</span>
+		<span class="badge integrate">Rust</span>
+		<span class="badge integrate">C# / .NET</span>
+		<span class="badge integrate">Node.js</span>
+	</div>
+	<div class="badge-row">
+		<span class="badge-label">Run on</span>
+		<span class="badge platform">Browser</span>
+		<span class="badge platform">Node.js</span>
+		<span class="badge platform">Deno</span>
+		<span class="badge platform">Bun</span>
+		<span class="badge platform">Workers</span>
+		<span class="badge platform">Unity</span>
+		<span class="badge platform">Godot</span>
+	</div>
 </div>
 
 <CardGrid stagger>
 	<Card title="Familiar Language" icon="seti:javascript">
-		Users write JavaScript. No new syntax to learn, no tools to install. LLMs already speak it fluently.
+		Users write JavaScript — the most widely known programming language on the planet. No proprietary syntax to learn, no specialized tools to install, no compilation step. If a user has ever opened a browser console, they already know enough to write their first mod.
 	</Card>
 	<Card title="Safe by Default" icon="approve-check-circle">
-		No sandbox escape. No denial of service. No implicit trust. No eval. Ever. Running someone else's mod should never be a question of trust.
+		Scripts execute inside a sandboxed QuickJS WASM engine with no access to the host filesystem, network, or process. Capabilities are opt-in and default-deny — a mod can only call what you explicitly allow. `eval()` and `new Function()` are blocked at the engine level. Running someone else's mod should never be a question of trust.
 	</Card>
 	<Card title="The Manifest Is the Product" icon="document">
-		One declarative manifest defines bindings, capabilities, types, and examples. From it, everything is derived: docs, types, and validation.
+		A single JSON manifest declares every binding, capability, type, and example your application exposes. From it, the toolchain generates TypeScript definitions, markdown documentation, and validation — automatically. Change the manifest, and everything downstream updates. No hand-written docs to forget, no types to keep in sync.
 	</Card>
 	<Card title="Incremental Adoption" icon="rocket">
-		Five minutes for safe expressions. An afternoon for simple bindings. A few days for full scripting. Each level stands on its own.
+		Start with safe expression evaluation in five minutes — no bindings, no capabilities, just math and string processing. Add simple host bindings in an afternoon for read-only data access. Graduate to full scripting with namespaces, capabilities, hooks, and persistent storage when you're ready. Each tier stands on its own; you never need the next one.
+	</Card>
+	<Card title="Universal Portability" icon="laptop">
+		The JS/WASM runtime compiles QuickJS to WebAssembly, giving you one sandbox that runs identically in browsers, Node.js, Deno, Bun, and Cloudflare Workers. For native performance, drop in the Rust runtime (QuickJS via rquickjs) or the C# runtime (Jint) for Unity and Godot. Same manifest, same scripts, every platform.
+	</Card>
+	<Card title="LLM-Friendly" icon="puzzle">
+		JavaScript is the most-represented language in LLM training data. Your users can ask an AI to write their mods, and the manifest gives the AI everything it needs: every binding, parameter, type, and capability documented in one machine-readable file. No guessing, no hallucinated APIs.
 	</Card>
 </CardGrid>

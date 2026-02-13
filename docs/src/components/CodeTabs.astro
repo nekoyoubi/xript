@@ -1,0 +1,101 @@
+---
+interface Props {
+	labels: string[];
+}
+const { labels } = Astro.props;
+---
+
+<div class="code-tabs">
+	<div class="code-tabs-bar">
+		{labels.map((label, i) => (
+			<button
+				class:list={["code-tab", { active: i === 0 }]}
+				data-tab-index={i}
+			>
+				{label}
+			</button>
+		))}
+	</div>
+	<div class="code-tabs-panels">
+		<div class="code-tab-panel" data-panel-index="0">
+			<slot name="panel-0" />
+		</div>
+		<div class="code-tab-panel" data-panel-index="1" style="display:none">
+			<slot name="panel-1" />
+		</div>
+	</div>
+</div>
+
+<script>
+	document.querySelectorAll(".code-tabs").forEach((container) => {
+		const buttons = container.querySelectorAll<HTMLButtonElement>(".code-tab");
+		const panels = container.querySelectorAll<HTMLElement>(".code-tab-panel");
+		buttons.forEach((btn) => {
+			btn.addEventListener("click", () => {
+				const idx = btn.dataset.tabIndex;
+				buttons.forEach((b) => b.classList.remove("active"));
+				panels.forEach((p) => (p.style.display = "none"));
+				btn.classList.add("active");
+				const target = container.querySelector<HTMLElement>(
+					`[data-panel-index="${idx}"]`,
+				);
+				if (target) target.style.display = "";
+			});
+		});
+	});
+</script>
+
+<style>
+	.code-tabs-bar {
+		display: flex;
+		align-items: center;
+		background: var(--sl-color-gray-6);
+		border-radius: 0.5rem 0.5rem 0 0;
+		border: 1px solid var(--sl-color-gray-4);
+		padding: 0;
+	}
+
+	.code-tab {
+		background: none;
+		border: none;
+		margin: 0;
+		padding: 0.5rem 1.25rem;
+		cursor: pointer;
+		font-family: var(--sl-font-mono);
+		font-size: 0.85rem;
+		line-height: 1;
+		color: var(--sl-color-gray-3);
+		border-bottom: 2px solid transparent;
+		transition: color 0.15s ease, border-color 0.15s ease;
+	}
+
+	.code-tab:hover {
+		color: var(--sl-color-gray-1);
+	}
+
+	.code-tab.active {
+		color: var(--sl-color-white);
+		border-bottom-color: var(--sl-color-accent);
+		font-weight: 600;
+	}
+
+	.code-tabs-panels,
+	.code-tab-panel {
+		margin-top: 0 !important;
+	}
+
+	.code-tab-panel :global(.expressive-code) {
+		margin: 0;
+		border-radius: 0 0 0.5rem 0.5rem;
+	}
+
+	.code-tab-panel :global(.expressive-code .frame) {
+		border-radius: 0 0 0.5rem 0.5rem;
+		border-top: none;
+	}
+
+	.code-tab-panel :global(.expressive-code pre) {
+		border-top: none;
+		border-radius: 0 0 0.5rem 0.5rem;
+	}
+</style>

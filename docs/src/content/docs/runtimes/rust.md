@@ -5,21 +5,7 @@ description: Native Rust runtime for sandboxed xript script execution via QuickJ
 
 The Rust runtime (`xript-runtime`) executes user scripts inside a native QuickJS sandbox powered by [rquickjs](https://github.com/niclas-aspect/rquickjs). It provides the same manifest-driven binding model and capability enforcement as the JS/WASM and Node.js runtimes, but as a Rust crate with no WASM overhead.
 
-For applications that need to run in browsers or other JavaScript environments, use the [JS/WASM Runtime](/runtimes/js-wasm). For Node.js-only applications, see the [Node.js Runtime](/runtimes/node).
-
-## When to Use Which Runtime
-
-| | Universal (`@xriptjs/runtime`) | Node.js (`@xriptjs/runtime-node`) | Rust (`xript-runtime`) |
-|---|---|---|---|
-| **Sandbox** | QuickJS WASM | Node.js `vm` module | QuickJS via rquickjs (native) |
-| **Environments** | Browser, Node, Deno, Bun, Workers | Node.js only | Any Rust application |
-| **Manifest loading** | Pass manifest object directly | `createRuntimeFromFile` loads from disk | `create_runtime` (JSON string), `create_runtime_from_file` |
-| **Validation** | Basic structural checks | Basic structural checks | Basic structural checks |
-| **Async bindings** | Via `initXriptAsync()` (asyncify WASM) | Native `async`/`await` | Not yet (sync only) |
-| **Memory isolation** | Separate WASM heap per runtime | Shared Node.js process memory | Separate QuickJS heap per runtime |
-| **Best for** | Cross-platform apps, browser-based tools | Node.js servers, CLI tools, build pipelines | Rust applications, game engines, native tools |
-
-All three runtimes implement the same xript specification and enforce the same security guarantees.
+For applications that need to run in browsers or other JavaScript environments, use the [JS/WASM Runtime](/runtimes/js-wasm). For Node.js-only applications, see the [Node.js Runtime](/runtimes/node). For .NET applications, see the [C# Runtime](/runtimes/csharp). For a comparison of all runtimes, see [Choosing a Runtime](/runtimes/overview).
 
 ## Installation
 

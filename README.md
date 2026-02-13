@@ -5,6 +5,7 @@
 [![CI](https://github.com/nekoyoubi/xript/actions/workflows/ci.yml/badge.svg)](https://github.com/nekoyoubi/xript/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@xriptjs/runtime?label=npm)](https://www.npmjs.com/package/@xriptjs/runtime)
 [![crates.io](https://img.shields.io/crates/v/xript-runtime?label=crates.io)](https://crates.io/crates/xript-runtime)
+[![NuGet](https://img.shields.io/nuget/v/Xript.Runtime?label=nuget)](https://www.nuget.org/packages/Xript.Runtime)
 [![docs](https://img.shields.io/badge/docs-xript.dev-blue)](https://xript.dev)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -61,6 +62,7 @@ runtime.dispose();
 - [JS/WASM Runtime](https://xript.dev/runtimes/js-wasm): the universal runtime (QuickJS WASM)
 - [Node.js Runtime](https://xript.dev/runtimes/node): the Node.js-optimized runtime
 - [Rust Runtime](https://xript.dev/runtimes/rust): the native Rust runtime (QuickJS via rquickjs)
+- [C# Runtime](https://xript.dev/runtimes/csharp): the C# runtime (Jint sandbox)
 - [Manifest Spec](https://xript.dev/spec/manifest): the manifest format
 - [Security Guarantees](https://xript.dev/spec/security): what the sandbox promises
 - [Expression Evaluator](https://xript.dev/examples/expression-evaluator): tier 1 walkthrough
@@ -75,7 +77,8 @@ xript/
 ├── runtimes/
 │   ├── js/         # universal runtime (@xriptjs/runtime, QuickJS WASM sandbox)
 │   ├── node/       # Node.js-optimized runtime (@xriptjs/runtime-node, vm-based)
-│   └── rust/       # native Rust runtime (xript-runtime, QuickJS via rquickjs)
+│   ├── rust/       # native Rust runtime (xript-runtime, QuickJS via rquickjs)
+│   └── csharp/     # C# runtime (Xript.Runtime, Jint sandbox)
 ├── tools/
 │   ├── validate/            # @xriptjs/validate
 │   ├── typegen/             # @xriptjs/typegen
@@ -112,10 +115,11 @@ npx @xriptjs/init my-project            # scaffold a new project
 | Universal Runtime | Complete: QuickJS WASM sandbox, runs in browser/Node/Deno/Bun |
 | Node.js Runtime | Complete: Node.js vm-based sandbox with `createRuntimeFromFile`, hooks, improved errors |
 | Rust Runtime | Complete: native QuickJS sandbox via rquickjs, host bindings, capability enforcement |
+| C# Runtime | Complete: Jint sandbox, host bindings, capability enforcement, hooks, resource limits |
 | Toolchain | Complete: validator, typegen, docgen, init CLI |
-| Developer Experience | Complete: 20-page docs site, getting started guide, runtime API reference, example walkthroughs, live demos |
-| Hardening | Complete: 229 tests across 8 packages, manifest validation, CI smoke tests |
-| Publishing | Live: all 6 npm packages under `@xriptjs` (OIDC trusted publishing), Rust crate on crates.io |
+| Developer Experience | Complete: 23-page docs site, getting started guide, runtime API reference, example walkthroughs, live demos |
+| Hardening | Complete: 301 tests across 9 packages, manifest validation, CI smoke tests |
+| Publishing | Live: all 6 npm packages under `@xriptjs` (OIDC trusted publishing), Rust crate on crates.io, C# package on NuGet |
 
 ## License
 

@@ -1,0 +1,1153 @@
+---
+---
+
+<div id="hero-playground">
+	<div class="hero-loading" id="hero-loading">
+		<div class="hero-spinner"></div>
+		<p>Loading sandbox...</p>
+	</div>
+	<noscript>
+		<div class="hero-noscript">
+			<p>Enable JavaScript to interact with the playground.</p>
+		</div>
+	</noscript>
+	<div class="hero-pg-container" id="hero-pg-container" style="display:none">
+		<div class="hero-top-bar">
+			<select id="hero-sim-select"></select>
+		</div>
+		<div class="hero-bottom">
+			<div class="hero-editor-wrap">
+				<div class="hero-panel-header">
+					<h3>Mod Editor</h3>
+					<span class="hero-hint">Ctrl+Enter to run</span>
+				</div>
+				<textarea id="hero-editor" spellcheck="false" autocomplete="off" rows="10"></textarea>
+				<div class="hero-editor-footer">
+					<button id="hero-run-btn" class="hero-run-button">Run</button>
+				</div>
+			</div>
+			<div class="hero-console-wrap">
+				<div class="hero-panel-header">
+					<h3>Console</h3>
+					<button id="hero-clear-btn" class="hero-clear-button">Clear</button>
+				</div>
+				<div class="hero-console" id="hero-console">
+					<div class="hero-placeholder">Run the mod to see output here.</div>
+				</div>
+			</div>
+		</div>
+	</div>
+</div>
+
+<script>
+	import { initXript } from "@xriptjs/runtime";
+
+	function readCSSColor(varName: string): string {
+		return getComputedStyle(document.documentElement)
+			.getPropertyValue(varName)
+			.trim();
+	}
+
+	function getAccentColor(): string {
+		return readCSSColor("--sl-color-accent") || "#e02e81";
+	}
+
+	// --- Game of Life -----------------------------------------------------------
+
+	interface LifeState {
+		grid: Uint8Array;
+		cols: number;
+		rows: number;
+		generation: number;
+		speed: number;
+		color: string;
+		cellSize: number;
+		lastTick: number;
+	}
+
+	function lifeInit(
+		_canvas: HTMLCanvasElement,
+		w: number,
+		h: number
+	): LifeState {
+		const cellSize = 10;
+		const cols = Math.floor(w / cellSize);
+		const rows = Math.floor(h / cellSize);
+		const grid = new Uint8Array(cols * rows);
+		const state: LifeState = {
+			grid,
+			cols,
+			rows,
+			generation: 0,
+			speed: 8,
+			color: getAccentColor(),
+			cellSize,
+			lastTick: 0,
+		};
+		lifeRandomize(state);
+		return state;
+	}
+
+	function lifeRandomize(state: LifeState) {
+		for (let i = 0; i < state.grid.length; i++) {
+			state.grid[i] = Math.random() < 0.3 ? 1 : 0;
+		}
+		state.generation = 0;
+	}
+
+	function lifeSetPattern(state: LifeState, pattern: string) {
+		state.grid.fill(0);
+		state.generation = 0;
+		const cx = Math.floor(state.cols / 2);
+		const cy = Math.min(Math.floor(state.rows / 2), 15);
+		const set = (dx: number, dy: number) => {
+			const x = cx + dx;
+			const y = cy + dy;
+			if (x >= 0 && x < state.cols && y >= 0 && y < state.rows)
+				state.grid[y * state.cols + x] = 1;
+		};
+		if (pattern === "glider") {
+			set(0, -1);
+			set(1, 0);
+			set(-1, 1);
+			set(0, 1);
+			set(1, 1);
+		} else if (pattern === "pulsar") {
+			const offsets = [
+				[-2, -1],
+				[-3, -1],
+				[-4, -1],
+				[2, -1],
+				[3, -1],
+				[4, -1],
+				[-2, 1],
+				[-3, 1],
+				[-4, 1],
+				[2, 1],
+				[3, 1],
+				[4, 1],
+				[-1, -2],
+				[-1, -3],
+				[-1, -4],
+				[1, -2],
+				[1, -3],
+				[1, -4],
+				[-1, 2],
+				[-1, 3],
+				[-1, 4],
+				[1, 2],
+				[1, 3],
+				[1, 4],
+				[-6, -2],
+				[-6, -3],
+				[-6, -4],
+				[6, -2],
+				[6, -3],
+				[6, -4],
+				[-6, 2],
+				[-6, 3],
+				[-6, 4],
+				[6, 2],
+				[6, 3],
+				[6, 4],
+				[-2, -6],
+				[-3, -6],
+				[-4, -6],
+				[2, -6],
+				[3, -6],
+				[4, -6],
+				[-2, 6],
+				[-3, 6],
+				[-4, 6],
+				[2, 6],
+				[3, 6],
+				[4, 6],
+			];
+			for (const [dx, dy] of offsets) set(dx, dy);
+		} else {
+			lifeRandomize(state);
+		}
+	}
+
+	function lifeStep(state: LifeState) {
+		const { cols, rows, grid } = state;
+		const next = new Uint8Array(cols * rows);
+		for (let y = 0; y < rows; y++) {
+			for (let x = 0; x < cols; x++) {
+				let neighbors = 0;
+				for (let dy = -1; dy <= 1; dy++) {
+					for (let dx = -1; dx <= 1; dx++) {
+						if (dx === 0 && dy === 0) continue;
+						const nx = (x + dx + cols) % cols;
+						const ny = (y + dy + rows) % rows;
+						neighbors += grid[ny * cols + nx];
+					}
+				}
+				const idx = y * cols + x;
+				if (grid[idx]) {
+					next[idx] = neighbors === 2 || neighbors === 3 ? 1 : 0;
+				} else {
+					next[idx] = neighbors === 3 ? 1 : 0;
+				}
+			}
+		}
+		state.grid = next;
+		state.generation++;
+	}
+
+	function lifeRender(
+		ctx: CanvasRenderingContext2D,
+		w: number,
+		h: number,
+		state: LifeState
+	) {
+		const now = performance.now();
+		const interval = 1000 / state.speed;
+		if (now - state.lastTick > interval) {
+			lifeStep(state);
+			state.lastTick = now;
+		}
+
+		ctx.clearRect(0, 0, w, h);
+		const { cols, rows, grid, cellSize, color } = state;
+		for (let y = 0; y < rows; y++) {
+			for (let x = 0; x < cols; x++) {
+				if (grid[y * cols + x]) {
+					ctx.fillStyle = color;
+					ctx.fillRect(x * cellSize, y * cellSize, cellSize - 1, cellSize - 1);
+					ctx.fillStyle = color + "44";
+					ctx.fillRect(
+						x * cellSize - 1,
+						y * cellSize - 1,
+						cellSize + 1,
+						cellSize + 1
+					);
+				}
+			}
+		}
+	}
+
+	// --- Grid Walker ------------------------------------------------------------
+
+	interface WalkerState {
+		x: number;
+		y: number;
+		cellSize: number;
+		cols: number;
+		rows: number;
+		color: string;
+		trailEnabled: boolean;
+		trail: Set<string>;
+		lastMove: number;
+		moveInterval: number;
+	}
+
+	function walkerInit(
+		_canvas: HTMLCanvasElement,
+		w: number,
+		h: number
+	): WalkerState {
+		const cellSize = 28;
+		const cols = Math.floor(w / cellSize);
+		const rows = Math.floor(h / cellSize);
+		return {
+			x: Math.floor(cols / 2),
+			y: Math.floor(rows * 0.15),
+			cellSize,
+			cols,
+			rows,
+			color: getAccentColor(),
+			trailEnabled: true,
+			trail: new Set(),
+			lastMove: 0,
+			moveInterval: 120,
+		};
+	}
+
+	function walkerMove(state: WalkerState, dir: string) {
+		if (state.trailEnabled) state.trail.add(`${state.x},${state.y}`);
+		switch (dir) {
+			case "up":
+				state.y = (state.y - 1 + state.rows) % state.rows;
+				break;
+			case "down":
+				state.y = (state.y + 1) % state.rows;
+				break;
+			case "left":
+				state.x = (state.x - 1 + state.cols) % state.cols;
+				break;
+			case "right":
+				state.x = (state.x + 1) % state.cols;
+				break;
+		}
+	}
+
+	function walkerAutoMove(state: WalkerState) {
+		const dirs = ["up", "down", "left", "right"];
+		walkerMove(state, dirs[Math.floor(Math.random() * 4)]);
+	}
+
+	function walkerRender(
+		ctx: CanvasRenderingContext2D,
+		w: number,
+		h: number,
+		state: WalkerState
+	) {
+		const now = performance.now();
+		if (now - state.lastMove > state.moveInterval) {
+			walkerAutoMove(state);
+			state.lastMove = now;
+		}
+
+		ctx.clearRect(0, 0, w, h);
+		const { cellSize, color, trail } = state;
+
+		for (const key of trail) {
+			const [tx, ty] = key.split(",").map(Number);
+			ctx.fillStyle = color + "22";
+			ctx.fillRect(tx * cellSize, ty * cellSize, cellSize - 1, cellSize - 1);
+		}
+
+		ctx.fillStyle = color;
+		ctx.fillRect(
+			state.x * cellSize,
+			state.y * cellSize,
+			cellSize - 1,
+			cellSize - 1
+		);
+		ctx.fillStyle = color + "66";
+		ctx.fillRect(
+			state.x * cellSize - 2,
+			state.y * cellSize - 2,
+			cellSize + 3,
+			cellSize + 3
+		);
+	}
+
+	// --- L-System ---------------------------------------------------------------
+
+	interface LSystemState {
+		axiom: string;
+		rules: Record<string, string>;
+		angle: number;
+		iterations: number;
+		color: string;
+		length: number;
+		needsRedraw: boolean;
+	}
+
+	function lsystemInit(
+		_canvas: HTMLCanvasElement,
+		_w: number,
+		_h: number
+	): LSystemState {
+		return {
+			axiom: "F",
+			rules: { F: "FF+[+F-F-F]-[-F+F+F]" },
+			angle: 25,
+			iterations: 4,
+			color: getAccentColor(),
+			length: 40,
+			needsRedraw: true,
+		};
+	}
+
+	function lsystemGenerate(state: LSystemState): string {
+		let current = state.axiom;
+		for (let i = 0; i < state.iterations; i++) {
+			let next = "";
+			for (const ch of current) {
+				next += state.rules[ch] ?? ch;
+			}
+			current = next;
+		}
+		return current;
+	}
+
+	function lsystemRender(
+		ctx: CanvasRenderingContext2D,
+		w: number,
+		h: number,
+		state: LSystemState
+	) {
+		if (!state.needsRedraw) return;
+		state.needsRedraw = false;
+
+		ctx.clearRect(0, 0, w, h);
+		const instructions = lsystemGenerate(state);
+		const rad = (state.angle * Math.PI) / 180;
+
+		let x = w * 0.5;
+		let y = 0;
+		let a = Math.PI / 2;
+		const stack: { x: number; y: number; a: number }[] = [];
+
+		ctx.strokeStyle = state.color;
+		ctx.lineWidth = 1;
+		ctx.globalAlpha = 0.8;
+		ctx.beginPath();
+		ctx.moveTo(x, y);
+
+		for (const ch of instructions) {
+			switch (ch) {
+				case "F":
+					x += Math.cos(a) * state.length;
+					y += Math.sin(a) * state.length;
+					ctx.lineTo(x, y);
+					break;
+				case "+":
+					a += rad;
+					break;
+				case "-":
+					a -= rad;
+					break;
+				case "[":
+					stack.push({ x, y, a });
+					break;
+				case "]":
+					if (stack.length) {
+						const s = stack.pop()!;
+						x = s.x;
+						y = s.y;
+						a = s.a;
+						ctx.moveTo(x, y);
+					}
+					break;
+			}
+		}
+		ctx.stroke();
+		ctx.globalAlpha = 1;
+	}
+
+	// --- Simulation registry ----------------------------------------------------
+
+	interface Simulation {
+		name: string;
+		label: string;
+		manifest: object;
+		defaultCode: string;
+		apiHint: string;
+		state: any;
+		init: (canvas: HTMLCanvasElement, w: number, h: number) => any;
+		render: (ctx: CanvasRenderingContext2D, w: number, h: number, state: any) => void;
+		createBindings: (state: any, log: (msg: string) => void) => Record<string, any>;
+	}
+
+	const SIMS: Simulation[] = [
+		{
+			name: "life",
+			label: "Game of Life",
+			manifest: {
+				xript: "0.1",
+				name: "game-of-life",
+				version: "1.0.0",
+				title: "Game of Life",
+				description: "Conway's Game of Life with mod support.",
+				bindings: {
+					log: {
+						description: "Writes a message to the console.",
+						params: [{ name: "message", type: "string" }],
+					},
+					cells: {
+						description: "Controls for the cellular automaton.",
+						members: {
+							setPattern: {
+								description: 'Sets a pattern: "glider", "pulsar", or "random".',
+								params: [{ name: "pattern", type: "string" }],
+							},
+							step: { description: "Advances the simulation by one generation." },
+							setSpeed: {
+								description: "Sets simulation speed in steps per second (1-30).",
+								params: [{ name: "speed", type: "number" }],
+							},
+							setColor: {
+								description: "Sets cell color (hex string).",
+								params: [{ name: "hex", type: "string" }],
+							},
+							getGeneration: {
+								description: "Returns the current generation count.",
+								returns: "number",
+							},
+							getPopulation: {
+								description: "Returns the number of living cells.",
+								returns: "number",
+							},
+							clear: {
+								description: "Kills all cells.",
+								capability: "modify-world",
+							},
+						},
+					},
+				},
+				capabilities: {
+					"modify-world": {
+						description: "Destructive operations on the simulation.",
+						risk: "medium",
+					},
+				},
+				limits: { timeout_ms: 2000, memory_mb: 16 },
+			},
+			apiHint: `cells.setPattern("glider"|"pulsar"|"random")
+cells.setSpeed(n)    cells.setColor("#hex")
+cells.step()         cells.getGeneration()
+cells.getPopulation()  cells.clear()
+log(message)`,
+			defaultCode: `log("Modding the Game of Life...")
+
+// patterns: "glider", "pulsar", "random"
+cells.setPattern("random")
+cells.setSpeed(12)
+cells.setColor("#5fc9e7")
+
+log("Generation: " + cells.getGeneration())
+log("Population: " + cells.getPopulation())
+
+// try uncommenting the line below!
+// eval("alert('hi')")`,
+			state: null,
+			init: lifeInit,
+			render: lifeRender,
+			createBindings: (state: LifeState, log) => ({
+				log: (message: unknown) => log(String(message)),
+				cells: {
+					setPattern: (p: string) => lifeSetPattern(state, p),
+					step: () => lifeStep(state),
+					setSpeed: (s: number) => {
+						state.speed = Math.max(1, Math.min(30, Number(s) || 8));
+					},
+					setColor: (hex: string) => {
+						if (typeof hex === "string" && /^#[0-9a-fA-F]{3,8}$/.test(hex))
+							state.color = hex;
+					},
+					getGeneration: () => state.generation,
+					getPopulation: () => {
+						let count = 0;
+						for (let i = 0; i < state.grid.length; i++) count += state.grid[i];
+						return count;
+					},
+					clear: () => {
+						state.grid.fill(0);
+						state.generation = 0;
+					},
+				},
+			}),
+		},
+		{
+			name: "walker",
+			label: "Grid Walker",
+			manifest: {
+				xript: "0.1",
+				name: "grid-walker",
+				version: "1.0.0",
+				title: "Grid Walker",
+				description: "A wandering entity leaving trails on a grid.",
+				bindings: {
+					log: {
+						description: "Writes a message to the console.",
+						params: [{ name: "message", type: "string" }],
+					},
+					walker: {
+						description: "Controls for the grid walker.",
+						members: {
+							move: {
+								description: 'Moves the walker: "up", "down", "left", "right".',
+								params: [{ name: "direction", type: "string" }],
+							},
+							setColor: {
+								description: "Sets walker color (hex string).",
+								params: [{ name: "hex", type: "string" }],
+							},
+							setTrail: {
+								description: "Enables or disables the trail.",
+								params: [{ name: "enabled", type: "boolean" }],
+							},
+							getPosition: {
+								description: "Returns the walker's current grid position.",
+								returns: "object",
+							},
+							reset: {
+								description: "Resets walker to center and clears trail.",
+								capability: "modify-world",
+							},
+						},
+					},
+				},
+				capabilities: {
+					"modify-world": {
+						description: "Reset the walker's state.",
+						risk: "medium",
+					},
+				},
+				limits: { timeout_ms: 2000, memory_mb: 16 },
+			},
+			apiHint: `walker.move("up"|"down"|"left"|"right")
+walker.setColor("#hex")  walker.setTrail(bool)
+walker.getPosition()     walker.reset()
+log(message)`,
+			defaultCode: `log("Modding the Grid Walker...")
+
+walker.setColor("#e02e81")
+walker.setTrail(true)
+
+// directions: "up", "down", "left", "right"
+for (let i = 0; i < 10; i++) {
+  walker.move("right")
+}
+for (let i = 0; i < 5; i++) {
+  walker.move("down")
+}
+
+log("Position: " + JSON.stringify(walker.getPosition()))
+
+// try uncommenting the line below!
+// eval("alert('hi')")`,
+			state: null,
+			init: walkerInit,
+			render: walkerRender,
+			createBindings: (state: WalkerState, log) => ({
+				log: (message: unknown) => log(String(message)),
+				walker: {
+					move: (dir: string) => {
+						const valid = ["up", "down", "left", "right"];
+						if (valid.includes(dir)) walkerMove(state, dir);
+					},
+					setColor: (hex: string) => {
+						if (typeof hex === "string" && /^#[0-9a-fA-F]{3,8}$/.test(hex))
+							state.color = hex;
+					},
+					setTrail: (enabled: boolean) => {
+						state.trailEnabled = !!enabled;
+					},
+					getPosition: () => ({ x: state.x, y: state.y }),
+					reset: () => {
+						state.x = Math.floor(state.cols / 2);
+						state.y = Math.floor(state.rows / 2);
+						state.trail.clear();
+					},
+				},
+			}),
+		},
+		{
+			name: "lsystem",
+			label: "L-System",
+			manifest: {
+				xript: "0.1",
+				name: "l-system",
+				version: "1.0.0",
+				title: "L-System Fractal",
+				description: "Turtle-graphics fractal tree generator.",
+				bindings: {
+					log: {
+						description: "Writes a message to the console.",
+						params: [{ name: "message", type: "string" }],
+					},
+					tree: {
+						description: "Controls for the L-System fractal.",
+						members: {
+							setAxiom: {
+								description: "Sets the starting axiom string.",
+								params: [{ name: "axiom", type: "string" }],
+							},
+							setAngle: {
+								description: "Sets the branching angle in degrees.",
+								params: [{ name: "degrees", type: "number" }],
+							},
+							setIterations: {
+								description: "Sets the iteration depth (1-6).",
+								params: [{ name: "n", type: "number" }],
+							},
+							setColor: {
+								description: "Sets the line color (hex string).",
+								params: [{ name: "hex", type: "string" }],
+							},
+							setLength: {
+								description: "Sets the segment length in pixels.",
+								params: [{ name: "px", type: "number" }],
+							},
+							draw: { description: "Triggers a redraw of the fractal." },
+							reset: {
+								description: "Resets to default fractal parameters.",
+								capability: "modify-world",
+							},
+						},
+					},
+				},
+				capabilities: {
+					"modify-world": {
+						description: "Reset the fractal state.",
+						risk: "medium",
+					},
+				},
+				limits: { timeout_ms: 2000, memory_mb: 16 },
+			},
+			apiHint: `tree.setAxiom(str)     tree.setAngle(1-90)
+tree.setIterations(1-6)  tree.setLength(1-100)
+tree.setColor("#hex")    tree.draw()
+tree.reset()             log(message)`,
+			defaultCode: `log("Modding the L-System fractal...")
+
+tree.setAxiom("F")
+tree.setAngle(22)
+tree.setIterations(4)
+tree.setColor("#93d4b5")
+tree.setLength(40)
+tree.draw()
+
+log("Fractal redrawn!")
+
+// try uncommenting the line below!
+// eval("alert('hi')")`,
+			state: null,
+			init: lsystemInit,
+			render: lsystemRender,
+			createBindings: (state: LSystemState, log) => ({
+				log: (message: unknown) => log(String(message)),
+				tree: {
+					setAxiom: (axiom: string) => {
+						if (typeof axiom === "string") state.axiom = axiom;
+					},
+					setAngle: (deg: number) => {
+						state.angle = Math.max(1, Math.min(90, Number(deg) || 25));
+					},
+					setIterations: (n: number) => {
+						state.iterations = Math.max(1, Math.min(6, Math.floor(Number(n) || 4)));
+						state.needsRedraw = true;
+					},
+					setColor: (hex: string) => {
+						if (typeof hex === "string" && /^#[0-9a-fA-F]{3,8}$/.test(hex))
+							state.color = hex;
+						state.needsRedraw = true;
+					},
+					setLength: (px: number) => {
+						state.length = Math.max(1, Math.min(100, Number(px) || 40));
+						state.needsRedraw = true;
+					},
+					draw: () => {
+						state.needsRedraw = true;
+					},
+					reset: () => {
+						state.axiom = "F";
+						state.rules = { F: "FF+[+F-F-F]-[-F+F+F]" };
+						state.angle = 25;
+						state.iterations = 4;
+						state.length = 40;
+						state.color = getAccentColor();
+						state.needsRedraw = true;
+					},
+				},
+			}),
+		},
+	];
+
+	// --- Boot -------------------------------------------------------------------
+
+	let animId = 0;
+	let canvasW = 0;
+	let canvasH = 0;
+	let currentSim: Simulation | null = null;
+	let bgCanvas: HTMLCanvasElement | null = null;
+
+	function addConsole(text: string, level: "log" | "error") {
+		const el = document.getElementById("hero-console")!;
+		const placeholder = el.querySelector(".hero-placeholder");
+		if (placeholder) placeholder.remove();
+
+		const line = document.createElement("div");
+		line.className = `hero-console-line ${level}`;
+		const prefix = level === "error" ? "[error] " : "[log] ";
+		line.textContent = `${prefix}${text}`;
+		el.appendChild(line);
+		el.scrollTop = el.scrollHeight;
+	}
+
+	function clearConsole() {
+		const el = document.getElementById("hero-console")!;
+		const hint = currentSim?.apiHint || "";
+		el.innerHTML = hint
+			? `<div class="hero-api-hint"><div class="hero-api-label">Available bindings:</div><pre>${hint}</pre></div>`
+			: '<div class="hero-placeholder">Run the mod to see output here.</div>';
+	}
+
+	async function boot() {
+		const slot = document.getElementById("hero-playground-slot");
+		const playground = document.getElementById("hero-playground");
+		if (slot && playground) slot.appendChild(playground);
+
+		const loadingEl = document.getElementById("hero-loading")!;
+		const containerEl = document.getElementById("hero-pg-container")!;
+		const editor = document.getElementById("hero-editor") as HTMLTextAreaElement;
+		const runBtn = document.getElementById("hero-run-btn")!;
+		const clearBtn = document.getElementById("hero-clear-btn")!;
+		const simSelect = document.getElementById(
+			"hero-sim-select"
+		) as HTMLSelectElement;
+
+		try {
+			const xript = await initXript();
+
+			// --- inject canvas into hero background ---
+			const heroMain = document.querySelector("[data-has-hero] main");
+			if (heroMain) {
+				bgCanvas = document.createElement("canvas");
+				bgCanvas.id = "hero-canvas";
+				heroMain.prepend(bgCanvas);
+			}
+
+			loadingEl.style.display = "none";
+			containerEl.style.display = "flex";
+
+			// --- populate sim dropdown ---
+			for (const sim of SIMS) {
+				const opt = document.createElement("option");
+				opt.value = sim.name;
+				opt.textContent = sim.label;
+				simSelect.appendChild(opt);
+			}
+
+			// --- canvas sizing ---
+			function sizeCanvas() {
+				if (!bgCanvas || !heroMain) return;
+				const rect = (heroMain as HTMLElement).getBoundingClientRect();
+				const newW = Math.floor(rect.width);
+				const newH = Math.floor(rect.height);
+				const widthChanged = newW !== canvasW;
+				canvasW = newW;
+				canvasH = newH;
+				bgCanvas.width = canvasW;
+				bgCanvas.height = canvasH;
+				if (widthChanged && currentSim) {
+					currentSim.state = currentSim.init(bgCanvas, canvasW, canvasH);
+				}
+			}
+
+			if (heroMain) {
+				const ro = new ResizeObserver(sizeCanvas);
+				ro.observe(heroMain as HTMLElement);
+			}
+			sizeCanvas();
+
+			// --- switch simulation ---
+			function switchSim(name: string) {
+				cancelAnimationFrame(animId);
+				const sim = SIMS.find((s) => s.name === name);
+				if (!sim || !bgCanvas) return;
+				currentSim = sim;
+				sim.state = sim.init(bgCanvas, canvasW, canvasH);
+				editor.value = sim.defaultCode;
+				clearConsole();
+				startLoop();
+			}
+
+			// --- animation loop ---
+			function startLoop() {
+				if (!bgCanvas || !currentSim) return;
+				const ctx = bgCanvas.getContext("2d")!;
+				function frame() {
+					if (currentSim && bgCanvas) {
+						currentSim.render(ctx, canvasW, canvasH, currentSim.state);
+					}
+					animId = requestAnimationFrame(frame);
+				}
+				animId = requestAnimationFrame(frame);
+			}
+
+			simSelect.value = SIMS[0].name;
+			switchSim(SIMS[0].name);
+
+			simSelect.addEventListener("change", () => switchSim(simSelect.value));
+
+			// --- theme observer ---
+			const themeObserver = new MutationObserver(() => {
+				if (currentSim?.state) {
+					currentSim.state.color = getAccentColor();
+					if ("needsRedraw" in currentSim.state) {
+						currentSim.state.needsRedraw = true;
+					}
+				}
+			});
+			themeObserver.observe(document.documentElement, {
+				attributes: true,
+				attributeFilter: ["data-theme", "data-color-scheme"],
+			});
+
+			// --- run mod ---
+			function runMod() {
+				const code = editor.value.trim();
+				if (!code || !currentSim) return;
+
+				addConsole("--- running mod ---", "log");
+
+				let runtime = null;
+				try {
+					const bindings = currentSim.createBindings(
+						currentSim.state,
+						(msg: string) => addConsole(msg, "log")
+					);
+					runtime = xript.createRuntime(currentSim.manifest, {
+						hostBindings: bindings,
+						capabilities: ["modify-world"],
+						console: {
+							log: (...args: unknown[]) =>
+								addConsole(args.join(" "), "log"),
+							warn: (...args: unknown[]) =>
+								addConsole(args.join(" "), "log"),
+							error: (...args: unknown[]) =>
+								addConsole(args.join(" "), "error"),
+						},
+					});
+
+					const result = runtime.execute(code);
+					if (result.value !== undefined) {
+						addConsole("=> " + JSON.stringify(result.value), "log");
+					}
+					addConsole(`${result.duration_ms.toFixed(1)}ms`, "log");
+				} catch (err: any) {
+					addConsole(err.message, "error");
+				} finally {
+					if (runtime) runtime.dispose();
+				}
+			}
+
+			runBtn.addEventListener("click", runMod);
+
+			editor.addEventListener("keydown", (e: KeyboardEvent) => {
+				if (e.key === "Enter" && e.ctrlKey) {
+					e.preventDefault();
+					runMod();
+				}
+				if (e.key === "Tab") {
+					e.preventDefault();
+					const start = editor.selectionStart;
+					const end = editor.selectionEnd;
+					editor.value =
+						editor.value.substring(0, start) +
+						"  " +
+						editor.value.substring(end);
+					editor.selectionStart = editor.selectionEnd = start + 2;
+				}
+			});
+
+			clearBtn.addEventListener("click", clearConsole);
+		} catch (err: any) {
+			loadingEl.innerHTML = `<p style="color: #f87171;">Failed to load sandbox: ${err.message}</p>`;
+		}
+	}
+
+	boot();
+</script>
+
+<style>
+	#hero-playground {
+		max-width: 55rem;
+		margin: 1rem auto 2rem;
+	}
+
+	.hero-loading {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		padding: 3rem 2rem;
+		color: var(--sl-color-gray-2);
+	}
+
+	.hero-spinner {
+		width: 1.5rem;
+		height: 1.5rem;
+		border: 3px solid var(--sl-color-gray-5);
+		border-top-color: var(--sl-color-accent);
+		border-radius: 50%;
+		animation: hero-spin 0.8s linear infinite;
+		margin-bottom: 0.75rem;
+	}
+
+	@keyframes hero-spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
+	.hero-noscript {
+		text-align: center;
+		padding: 2rem;
+		color: var(--sl-color-gray-3);
+		font-style: italic;
+	}
+
+	.hero-pg-container {
+		display: flex;
+		flex-direction: column;
+		border: 1px solid var(--sl-color-gray-4);
+		border-radius: 0.5rem;
+		overflow: hidden;
+		background: var(--sl-color-gray-6);
+	}
+
+	.hero-top-bar {
+		display: flex;
+		align-items: center;
+		padding: 0.375rem 0.625rem;
+		border-bottom: 1px solid var(--sl-color-gray-5);
+		background: var(--sl-color-black);
+	}
+
+	#hero-sim-select {
+		font-family: var(--sl-font-mono);
+		font-size: 0.6875rem;
+		font-weight: 600;
+		background: var(--sl-color-gray-6);
+		color: var(--sl-color-gray-2);
+		border: 1px solid var(--sl-color-gray-4);
+		border-radius: 0.25rem;
+		padding: 0.2rem 0.5rem;
+		cursor: pointer;
+	}
+
+	.hero-bottom {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.hero-editor-wrap {
+		display: flex;
+		flex-direction: column;
+		border-bottom: 1px solid var(--sl-color-gray-4);
+	}
+
+	.hero-console-wrap {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.hero-panel-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 0.375rem 0.625rem;
+		border-bottom: 1px solid var(--sl-color-gray-5);
+		background: var(--sl-color-black);
+	}
+
+	.hero-panel-header h3 {
+		margin: 0;
+		font-size: 0.75rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--sl-color-gray-2);
+	}
+
+	.hero-hint {
+		font-size: 0.625rem;
+		color: var(--sl-color-gray-4);
+		font-family: var(--sl-font-mono);
+	}
+
+	#hero-editor {
+		flex: 1;
+		font-family: var(--sl-font-mono);
+		font-size: 0.6875rem;
+		padding: 0.5rem;
+		background: var(--sl-color-black);
+		color: var(--sl-color-white);
+		border: none;
+		resize: none;
+		outline: none;
+		line-height: 1.5;
+		tab-size: 2;
+		min-height: 160px;
+	}
+
+	.hero-editor-footer {
+		display: flex;
+		justify-content: flex-end;
+		padding: 0.25rem 0.5rem;
+		border-top: 1px solid var(--sl-color-gray-5);
+	}
+
+	.hero-run-button {
+		padding: 0.2rem 0.75rem;
+		background: var(--sl-color-accent);
+		color: var(--sl-color-black);
+		border: none;
+		border-radius: 0.25rem;
+		font-weight: 600;
+		font-size: 0.6875rem;
+		cursor: pointer;
+		transition: opacity 0.15s;
+	}
+
+	.hero-run-button:hover {
+		opacity: 0.85;
+	}
+
+	.hero-clear-button {
+		font-size: 0.5625rem;
+		padding: 0.0625rem 0.375rem;
+		background: transparent;
+		color: var(--sl-color-gray-3);
+		border: 1px solid var(--sl-color-gray-4);
+		border-radius: 0.25rem;
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.hero-clear-button:hover {
+		color: var(--sl-color-white);
+		border-color: var(--sl-color-gray-3);
+	}
+
+	.hero-console {
+		padding: 0.5rem;
+		min-height: 100px;
+		max-height: 160px;
+		overflow-y: auto;
+		font-family: var(--sl-font-mono);
+		font-size: 0.625rem;
+		line-height: 1.4;
+	}
+
+	:global(.hero-placeholder) {
+		color: var(--sl-color-gray-3);
+		font-style: italic;
+		font-family: var(--sl-font);
+		font-size: 0.6875rem;
+	}
+
+	:global(.hero-api-hint) {
+		color: var(--sl-color-gray-3);
+		font-size: 0.625rem;
+	}
+
+	:global(.hero-api-label) {
+		font-family: var(--sl-font);
+		font-size: 0.625rem;
+		font-weight: 600;
+		margin-bottom: 0.25rem;
+		color: var(--sl-color-gray-4);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	:global(.hero-api-hint pre) {
+		margin: 0;
+		font-family: var(--sl-font-mono);
+		font-size: 0.5625rem;
+		line-height: 1.5;
+		white-space: pre-wrap;
+	}
+
+	:global(.hero-console-line) {
+		padding: 0.0625rem 0;
+		white-space: pre-wrap;
+		word-break: break-all;
+	}
+
+	:global(.hero-console-line.log) {
+		color: var(--sl-color-gray-2);
+	}
+
+	:global(.hero-console-line.error) {
+		color: #f87171;
+	}
+</style>

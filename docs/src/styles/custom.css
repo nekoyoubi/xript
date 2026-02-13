@@ -159,6 +159,39 @@
 	z-index: 1;
 }
 
+#hero-canvas {
+	position: absolute;
+	inset: 0;
+	z-index: 0;
+	pointer-events: none;
+	opacity: 0.4;
+}
+
+[data-has-hero] .hero {
+	grid-template-columns: 3fr 2fr;
+	gap: 3rem;
+	padding-inline: 2rem;
+}
+
+[data-has-hero] .hero-html {
+	width: 100%;
+	max-width: none;
+	order: 0;
+}
+
+[data-has-hero] .hero .stack {
+	order: 2;
+}
+
+#hero-playground-slot {
+	width: 100%;
+}
+
+.hero-html #hero-playground {
+	max-width: none;
+	margin: 0;
+}
+
 .hero .tagline {
 	font-size: 1.25rem;
 	line-height: 1.6;
@@ -209,9 +242,10 @@
 }
 
 .manifest-teaser {
-	max-width: 40rem;
-	margin: 2rem auto 3rem;
 	text-align: center;
+	max-width: 55rem;
+	margin: 2rem auto 3rem;
+	padding-inline: 1rem;
 }
 
 .manifest-teaser .teaser-label {
@@ -223,6 +257,71 @@
 
 .manifest-teaser .expressive-code {
 	text-align: left;
+}
+
+.ecosystem-badges {
+	max-width: 40rem;
+	margin: 0 auto 3rem;
+	display: flex;
+	flex-direction: column;
+	gap: 0.75rem;
+}
+
+.badge-row {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+	justify-content: center;
+}
+
+.badge-label {
+	font-size: 0.8125rem;
+	font-weight: 600;
+	color: var(--sl-color-gray-3);
+	min-width: 5.5rem;
+	text-align: right;
+	font-family: var(--sl-font-mono);
+}
+
+.badge {
+	display: inline-block;
+	padding: 0.25rem 0.75rem;
+	border-radius: 999px;
+	font-size: 0.75rem;
+	font-weight: 600;
+	font-family: var(--sl-font-mono);
+	border: 1px solid;
+}
+
+.badge.lang {
+	color: var(--sl-color-accent);
+	border-color: var(--sl-color-accent);
+	background: var(--sl-color-accent-low);
+}
+
+.badge.integrate {
+	color: var(--sl-color-gray-1);
+	border-color: var(--sl-color-gray-3);
+	background: var(--sl-color-gray-6);
+}
+
+.badge.platform {
+	color: var(--sl-color-gray-2);
+	border-color: var(--sl-color-gray-4);
+	background: var(--sl-color-black);
+}
+
+@media (max-width: 600px) {
+	.badge-label {
+		min-width: auto;
+		width: 100%;
+		text-align: center;
+	}
+
+	.badge-row {
+		justify-content: center;
+	}
 }
 
 html.theme-transitions,

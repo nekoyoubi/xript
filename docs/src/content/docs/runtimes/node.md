@@ -5,21 +5,7 @@ description: Node.js-optimized xript runtime with file-based manifest loading.
 
 The Node.js runtime (`@xriptjs/runtime-node`) executes user scripts inside a sandboxed Node.js `vm` context. It provides `createRuntimeFromFile` for loading manifests directly from disk. Use this runtime when your application runs exclusively on Node.js and you want file-based workflows.
 
-For applications that need to run in browsers, Deno, Bun, or other environments, use the [JS/WASM Runtime](/runtimes/js-wasm) (`@xriptjs/runtime`) instead. For Rust host applications, see the [Rust Runtime](/runtimes/rust).
-
-## When to Use Which Runtime
-
-| | Universal (`@xriptjs/runtime`) | Node.js (`@xriptjs/runtime-node`) | Rust (`xript-runtime`) |
-|---|---|---|---|
-| **Sandbox** | QuickJS WASM | Node.js `vm` module | QuickJS via rquickjs (native) |
-| **Environments** | Browser, Node, Deno, Bun, Workers | Node.js only | Any Rust application |
-| **Manifest loading** | Pass manifest object directly | `createRuntimeFromFile` loads from disk | `create_runtime` (JSON string), `create_runtime_from_file` |
-| **Validation** | Basic structural checks | Basic structural checks | Basic structural checks |
-| **Async bindings** | Via `initXriptAsync()` (asyncify WASM) | Native `async`/`await` | Not yet (sync only) |
-| **Memory isolation** | Separate WASM heap per runtime | Shared Node.js process memory | Separate QuickJS heap per runtime |
-| **Best for** | Cross-platform apps, browser-based tools | Node.js servers, CLI tools, build pipelines | Rust applications, game engines, native tools |
-
-All three runtimes implement the same xript specification and enforce the same security guarantees. Scripts written for one runtime work identically on the others.
+For applications that need to run in browsers, Deno, Bun, or other environments, use the [JS/WASM Runtime](/runtimes/js-wasm) (`@xriptjs/runtime`) instead. For Rust host applications, see the [Rust Runtime](/runtimes/rust). For .NET applications, see the [C# Runtime](/runtimes/csharp). For a comparison of all runtimes, see [Choosing a Runtime](/runtimes/overview).
 
 ## Installation
 
