@@ -1,6 +1,8 @@
 name: Publish to npm
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -19,6 +21,8 @@ jobs:
       - run: npm install -g npm@latest
       - run: npm ci
 
+      - name: build sanitize
+        run: npm run build --workspace=tools/sanitize
       - name: build validate
         run: npm run build --workspace=tools/validate
       - name: build typegen
@@ -32,6 +36,8 @@ jobs:
       - name: build runtime-node
         run: npm run build --workspace=runtimes/node
 
+      - name: test sanitize
+        run: npm test --workspace=tools/sanitize
       - name: test validate
         run: npm test --workspace=tools/validate
       - name: test typegen
@@ -45,6 +51,8 @@ jobs:
       - name: test runtime-node
         run: npm test --workspace=runtimes/node
 
+      - name: publish sanitize
+        run: npm publish --workspace=tools/sanitize
       - name: publish validate
         run: npm publish --workspace=tools/validate
       - name: publish typegen

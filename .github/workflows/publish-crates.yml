@@ -1,0 +1,28 @@
+name: Publish to crates.io
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: publish xript-runtime
+        run: cargo publish -p xript-runtime
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+
+      - name: publish xript-ratatui
+        run: cargo publish -p xript-ratatui
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+
+      - name: publish xript-wiz
+        run: cargo publish -p xript-wiz
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
