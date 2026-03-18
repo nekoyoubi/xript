@@ -1,0 +1,10 @@
+<div class="health-panel">
+	<div class="player-name" data-bind="name">Unknown</div>
+	<div class="health-bar">
+		<span class="hp-current" data-bind="health">0</span>
+		<span class="hp-separator">/</span>
+		<span class="hp-max" data-bind="maxHealth">0</span>
+	</div>
+	<div data-if="health < 50" class="warning">Low health!</div>
+	<div data-if="health < 20" class="critical">Critical — find a healer!</div>
+</div>

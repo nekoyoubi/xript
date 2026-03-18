@@ -1,0 +1,20 @@
+[package]
+name = "xript-wiz"
+version = "0.1.0"
+edition = "2021"
+description = "Interactive TUI wizard for the xript toolchain — powered by xript fragments."
+license = "MIT"
+repository = "https://github.com/nekoyoubi/xript"
+
+[[bin]]
+name = "xript-wiz"
+path = "src/main.rs"
+
+[dependencies]
+xript-runtime = { path = "../../runtimes/rust" }
+xript-ratatui = { path = "../../renderers/ratatui" }
+ratatui = "0.29"
+ansi-to-tui = "7"
+crossterm = "0.28"
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }

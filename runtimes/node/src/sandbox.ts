@@ -236,14 +236,21 @@ export interface FireHookOptions {
 	data?: unknown;
 }
 
+export interface FragmentOp {
+	op: "toggle" | "addClass" | "removeClass" | "setText" | "setAttr" | "replaceChildren";
+	selector: string;
+	value?: unknown;
+	attr?: string;
+}
+
 type HookHandlerEntry = { fn: (...args: unknown[]) => unknown };
 
-interface HookRegistry {
+interface HandlerRegistry {
 	handlers: Map<string, HookHandlerEntry[]>;
 	register(key: string, entry: HookHandlerEntry): void;
 }
 
-function createHookRegistry(): HookRegistry {
+function createHandlerRegistry(): HandlerRegistry {
 	const handlers = new Map<string, HookHandlerEntry[]>();
 	return {
 		handlers,
@@ -261,49 +268,63 @@ function createHookRegistry(): HookRegistry {
 function buildHooksGlobal(
 	manifest: Manifest,
 	grantedCapabilities: Set<string>,
-	hookRegistry: HookRegistry,
+	hookRegistry: HandlerRegistry,
+	fragmentRegistry: HandlerRegistry,
 ): Record<string, unknown> {
 	const hooksObj: Record<string, unknown> = {};
 
-	if (!manifest.hooks) return Object.freeze(hooksObj);
+	if (manifest.hooks) {
+		for (const [hookName, hookDef] of Object.entries(manifest.hooks)) {
+			if (hookDef.phases && hookDef.phases.length > 0) {
+				const hookNs: Record<string, unknown> = {};
 
-	for (const [hookName, hookDef] of Object.entries(manifest.hooks)) {
-		if (hookDef.phases && hookDef.phases.length > 0) {
-			const hookNs: Record<string, unknown> = {};
+				for (const phase of hookDef.phases) {
+					const registryKey = `${hookName}:${phase}`;
+					hookNs[phase] = (handler: (...args: unknown[]) => unknown) => {
+						if (hookDef.capability && !grantedCapabilities.has(hookDef.capability)) {
+							throw new CapabilityDeniedError(`hooks.${hookName}.${phase}`, hookDef.capability);
+						}
+						if (typeof handler !== "function") {
+							throw new BindingError(`hooks.${hookName}.${phase}`, "expected a handler function");
+						}
+						hookRegistry.register(registryKey, { fn: handler });
+					};
+				}
 
-			for (const phase of hookDef.phases) {
-				const registryKey = `${hookName}:${phase}`;
-				hookNs[phase] = (handler: (...args: unknown[]) => unknown) => {
+				hooksObj[hookName] = Object.freeze(hookNs);
+			} else {
+				const registryKey = hookName;
+				hooksObj[hookName] = (handler: (...args: unknown[]) => unknown) => {
 					if (hookDef.capability && !grantedCapabilities.has(hookDef.capability)) {
-						throw new CapabilityDeniedError(`hooks.${hookName}.${phase}`, hookDef.capability);
+						throw new CapabilityDeniedError(`hooks.${hookName}`, hookDef.capability);
 					}
 					if (typeof handler !== "function") {
-						throw new BindingError(`hooks.${hookName}.${phase}`, "expected a handler function");
+						throw new BindingError(`hooks.${hookName}`, "expected a handler function");
 					}
 					hookRegistry.register(registryKey, { fn: handler });
 				};
 			}
-
-			hooksObj[hookName] = Object.freeze(hookNs);
-		} else {
-			const registryKey = hookName;
-			hooksObj[hookName] = (handler: (...args: unknown[]) => unknown) => {
-				if (hookDef.capability && !grantedCapabilities.has(hookDef.capability)) {
-					throw new CapabilityDeniedError(`hooks.${hookName}`, hookDef.capability);
-				}
-				if (typeof handler !== "function") {
-					throw new BindingError(`hooks.${hookName}`, "expected a handler function");
-				}
-				hookRegistry.register(registryKey, { fn: handler });
-			};
 		}
 	}
+
+	const fragmentNs: Record<string, unknown> = {};
+	const lifecycles = ["mount", "unmount", "update", "suspend", "resume"];
+	for (const lifecycle of lifecycles) {
+		fragmentNs[lifecycle] = (fragmentId: string, handler: (...args: unknown[]) => unknown) => {
+			if (typeof handler !== "function") {
+				throw new BindingError(`hooks.fragment.${lifecycle}`, "expected (fragmentId, handler)");
+			}
+			const registryKey = `fragment:${lifecycle}:${fragmentId}`;
+			fragmentRegistry.register(registryKey, { fn: handler });
+		};
+	}
+	hooksObj.fragment = Object.freeze(fragmentNs);
 
 	return Object.freeze(hooksObj);
 }
 
 function fireHookFromRegistry(
-	hookRegistry: HookRegistry,
+	hookRegistry: HandlerRegistry,
 	manifest: Manifest,
 	hookName: string,
 	options?: FireHookOptions,
@@ -342,19 +363,55 @@ function fireHookFromRegistry(
 	return results;
 }
 
+function fireFragmentHookFromRegistry(
+	fragmentRegistry: HandlerRegistry,
+	fragmentId: string,
+	lifecycle: string,
+	bindings?: Record<string, unknown>,
+): FragmentOp[] {
+	const registryKey = `fragment:${lifecycle}:${fragmentId}`;
+	const entries = fragmentRegistry.handlers.get(registryKey);
+	if (!entries || entries.length === 0) return [];
+
+	const allOps: FragmentOp[] = [];
+	for (const entry of entries) {
+		const ops: FragmentOp[] = [];
+		const fragmentProxy = {
+			toggle(selector: string, condition: unknown) { ops.push({ op: "toggle", selector, value: !!condition }); },
+			addClass(selector: string, className: string) { ops.push({ op: "addClass", selector, value: className }); },
+			removeClass(selector: string, className: string) { ops.push({ op: "removeClass", selector, value: className }); },
+			setText(selector: string, text: string) { ops.push({ op: "setText", selector, value: text }); },
+			setAttr(selector: string, attr: string, value: unknown) { ops.push({ op: "setAttr", selector, attr, value }); },
+			replaceChildren(selector: string, html: unknown) {
+				const content = Array.isArray(html) ? html.join("") : html;
+				ops.push({ op: "replaceChildren", selector, value: content });
+			},
+		};
+		try {
+			entry.fn(bindings, fragmentProxy);
+		} catch {
+			// swallow errors from individual handlers
+		}
+		allOps.push(...ops);
+	}
+	return allOps;
+}
+
 export function createSandbox(options: SandboxOptions): {
 	execute: (code: string) => ExecutionResult;
 	executeAsync: (code: string) => Promise<ExecutionResult>;
 	fireHook: (hookName: string, options?: FireHookOptions) => unknown[];
+	fireFragmentHook: (fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>) => FragmentOp[];
 } {
 	const { manifest, capabilities = [] } = options;
 	const grantedCapabilities = new Set(capabilities);
 	const limits = manifest.limits || {};
 	const timeoutMs = limits.timeout_ms ?? 5000;
-	const hookRegistry = createHookRegistry();
+	const hookRegistry = createHandlerRegistry();
+	const fragmentRegistry = createHandlerRegistry();
 
 	const sandboxGlobals = buildSandboxGlobal(options);
-	sandboxGlobals.hooks = buildHooksGlobal(manifest, grantedCapabilities, hookRegistry);
+	sandboxGlobals.hooks = buildHooksGlobal(manifest, grantedCapabilities, hookRegistry, fragmentRegistry);
 
 	const context = vm.createContext(sandboxGlobals, {
 		codeGeneration: {
@@ -421,5 +478,9 @@ export function createSandbox(options: SandboxOptions): {
 		return fireHookFromRegistry(hookRegistry, manifest, hookName, opts);
 	}
 
-	return { execute, executeAsync, fireHook };
+	function fireFragmentHook(fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>): FragmentOp[] {
+		return fireFragmentHookFromRegistry(fragmentRegistry, fragmentId, lifecycle, bindings);
+	}
+
+	return { execute, executeAsync, fireHook, fireFragmentHook };
 }

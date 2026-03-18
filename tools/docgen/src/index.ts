@@ -10,6 +10,14 @@ interface HookDef {
 	deprecated?: string;
 }
 
+interface SlotDef {
+	id: string;
+	accepts: string[];
+	capability?: string;
+	multiple?: boolean;
+	style?: string;
+}
+
 interface Manifest {
 	xript: string;
 	name: string;
@@ -20,6 +28,7 @@ interface Manifest {
 	hooks?: Record<string, HookDef>;
 	capabilities?: Record<string, Capability>;
 	types?: Record<string, TypeDefinition>;
+	slots?: SlotDef[];
 }
 
 type Binding = FunctionBinding | NamespaceBinding;
@@ -196,6 +205,25 @@ function generateIndexPage(manifest: Manifest): DocPage {
 			const kind = def.values ? "enum" : "interface";
 			lines.push(`- [\`${name}\`](./types/${name}.md) — ${def.description} *(${kind})*`);
 		}
+		lines.push("");
+	}
+
+	if (manifest.slots && manifest.slots.length > 0) {
+		lines.push("## UI Slots");
+		lines.push("");
+		lines.push("Available mounting points for mod UI fragments.");
+		lines.push("");
+		lines.push("| Slot | Accepts | Multiple | Style | Capability |");
+		lines.push("|------|---------|----------|-------|------------|");
+		for (const slot of manifest.slots) {
+			const accepts = slot.accepts.join(", ");
+			const multiple = slot.multiple ? "Yes" : "No";
+			const style = slot.style || "inherit";
+			const cap = slot.capability ? `\`${slot.capability}\`` : "—";
+			lines.push(`| \`${slot.id}\` | ${accepts} | ${multiple} | ${style} | ${cap} |`);
+		}
+		lines.push("");
+		lines.push("See [Fragment API](./fragment-api.md) for the sandbox fragment manipulation API.");
 		lines.push("");
 	}
 
@@ -496,6 +524,52 @@ function generateHookPage(name: string, hookDef: HookDef): DocPage {
 	return { slug: `hooks/${name}`, title: name, content: lines.join("\n") };
 }
 
+function generateFragmentAPIPage(): DocPage {
+	const lines: string[] = [];
+
+	lines.push("# Fragment API");
+	lines.push("");
+	lines.push("The sandbox fragment API provides imperative fragment manipulation from within mod scripts.");
+	lines.push("All operations use the command buffer pattern — method calls accumulate operations that the host applies after the callback returns.");
+	lines.push("");
+
+	lines.push("## Lifecycle Hooks");
+	lines.push("");
+	lines.push("```javascript");
+	lines.push('hooks.fragment.mount(fragmentId, (fragment) => { /* called on mount */ });');
+	lines.push('hooks.fragment.unmount(fragmentId, (fragment) => { /* called on unmount */ });');
+	lines.push('hooks.fragment.update(fragmentId, (bindings, fragment) => { /* called on data change */ });');
+	lines.push('hooks.fragment.suspend(fragmentId, (fragment) => { /* called on suspend */ });');
+	lines.push('hooks.fragment.resume(fragmentId, (fragment) => { /* called on resume */ });');
+	lines.push("```");
+	lines.push("");
+
+	lines.push("## Fragment Proxy Methods");
+	lines.push("");
+	lines.push("| Method | Arguments | Effect |");
+	lines.push("|--------|-----------|--------|");
+	lines.push("| `toggle(selector, condition)` | CSS selector, boolean | Show/hide matching elements |");
+	lines.push("| `addClass(selector, className)` | CSS selector, string | Add class to matching elements |");
+	lines.push("| `removeClass(selector, className)` | CSS selector, string | Remove class from matching elements |");
+	lines.push("| `setText(selector, text)` | CSS selector, string | Set text content of matching elements |");
+	lines.push("| `setAttr(selector, attr, value)` | CSS selector, string, string | Set attribute on matching elements |");
+	lines.push("| `replaceChildren(selector, html)` | CSS selector, string/string[] | Replace children of matching elements |");
+	lines.push("");
+
+	lines.push("## Example");
+	lines.push("");
+	lines.push("```javascript");
+	lines.push('hooks.fragment.update("health-panel", function (bindings, fragment) {');
+	lines.push('  fragment.toggle(".warning", bindings.health < 50);');
+	lines.push('  fragment.addClass(".bar", bindings.health < 20 ? "critical" : "normal");');
+	lines.push('  fragment.setText(".hp-text", bindings.health + "/" + bindings.maxHealth);');
+	lines.push("});");
+	lines.push("```");
+	lines.push("");
+
+	return { slug: "fragment-api", title: "Fragment API", content: lines.join("\n") };
+}
+
 export function generateDocs(manifest: unknown): DocgenResult {
 	const m = manifest as Manifest;
 	const pages: DocPage[] = [];
@@ -522,6 +596,10 @@ export function generateDocs(manifest: unknown): DocgenResult {
 		for (const [name, def] of Object.entries(m.types)) {
 			pages.push(generateTypePage(name, def));
 		}
+	}
+
+	if (m.slots && m.slots.length > 0) {
+		pages.push(generateFragmentAPIPage());
 	}
 
 	return { pages };

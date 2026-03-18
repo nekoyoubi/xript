@@ -1,0 +1,22 @@
+{
+	"xript": "0.3",
+	"name": "my-game",
+	"version": "1.0.0",
+	"capabilities": {
+		"modify-state": {
+			"description": "Modify application state.",
+			"risk": "medium"
+		}
+	},
+	"slots": [
+		{
+			"id": "sidebar.left",
+			"accepts": ["text/html"],
+			"multiple": true
+		},
+		{
+			"id": "statusbar.right",
+			"accepts": ["text/html", "text/plain"]
+		}
+	]
+}

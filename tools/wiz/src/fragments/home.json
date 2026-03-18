@@ -1,0 +1,19 @@
+["Block", {"title": " xript wizard ", "borders": "ALL", "border_type": "Rounded", "border_style": {"fg": "Cyan"}},
+  ["Layout", {"direction": "Vertical", "constraints": ["Length:2", "Length:1", "Length:1", "Length:1", "Length:1", "Fill:1"]},
+    ["Paragraph", {"style": {"fg": "DarkGray"}},
+      ["Line", {}, ["Span", {}, "Select a tool to get started:"]]
+    ],
+    ["Paragraph", {},
+      ["Line", {}, ["Span", {"data-bind": "opt0"}, "  Validate Manifest"]]
+    ],
+    ["Paragraph", {},
+      ["Line", {}, ["Span", {"data-bind": "opt1"}, "  Scaffold Project"]]
+    ],
+    ["Paragraph", {},
+      ["Line", {}, ["Span", {"data-bind": "opt2"}, "  Sanitize Fragment"]]
+    ],
+    ["Paragraph", {},
+      ["Line", {}, ["Span", {"data-bind": "opt3"}, "  Quit"]]
+    ]
+  ]
+]

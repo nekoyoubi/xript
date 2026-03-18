@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { generateProjectFiles, writeProject } from "../dist/index.js";
+import { generateProjectFiles, generateModProjectFiles, writeProject } from "../dist/index.js";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -169,6 +169,85 @@ describe("writeProject", () => {
 
 			const manifest = JSON.parse(await readFile(join(dir, "manifest.json"), "utf-8"));
 			assert.equal(manifest.name, "test");
+		} finally {
+			await rm(dir, { recursive: true });
+		}
+	});
+});
+
+describe("generateModProjectFiles", () => {
+	it("generates mod project files with --mod flag via generateProjectFiles", () => {
+		const files = generateProjectFiles({ name: "my-mod", tier: 2, language: "javascript", type: "mod" });
+		const paths = Object.keys(files).sort();
+		assert.deepEqual(paths, [
+			"fragments/panel.html",
+			"mod-manifest.json",
+			"package.json",
+			"src/mod.js",
+		]);
+	});
+
+	it("generates TypeScript mod project with tsconfig", () => {
+		const files = generateModProjectFiles({ name: "my-mod", tier: 2, language: "typescript" });
+		const paths = Object.keys(files).sort();
+		assert.deepEqual(paths, [
+			"fragments/panel.html",
+			"mod-manifest.json",
+			"package.json",
+			"src/mod.ts",
+			"tsconfig.json",
+		]);
+	});
+
+	it("mod manifest is valid JSON with required fields", () => {
+		const files = generateModProjectFiles({ name: "cool-mod", tier: 2, language: "javascript" });
+		const manifest = JSON.parse(files["mod-manifest.json"]);
+		assert.equal(manifest.xript, "0.3");
+		assert.equal(manifest.name, "cool-mod");
+		assert.equal(manifest.version, "0.1.0");
+		assert.equal(manifest.title, "Cool Mod");
+		assert.ok(manifest.entry);
+		assert.ok(Array.isArray(manifest.fragments));
+		assert.ok(manifest.fragments.length > 0);
+		assert.ok(Array.isArray(manifest.capabilities));
+	});
+
+	it("mod manifest fragment targets sidebar.left slot", () => {
+		const files = generateModProjectFiles({ name: "my-mod", tier: 2, language: "javascript" });
+		const manifest = JSON.parse(files["mod-manifest.json"]);
+		const fragment = manifest.fragments[0];
+		assert.equal(fragment.slot, "sidebar.left");
+		assert.equal(fragment.format, "text/html");
+		assert.ok(fragment.bindings);
+	});
+
+	it("fragment HTML file includes data-bind and data-if", () => {
+		const files = generateModProjectFiles({ name: "my-mod", tier: 2, language: "javascript" });
+		const html = files["fragments/panel.html"];
+		assert.ok(html.includes("data-bind"));
+		assert.ok(html.includes("data-if"));
+	});
+
+	it("mod entry script references hooks.fragment.update", () => {
+		const files = generateModProjectFiles({ name: "my-mod", tier: 2, language: "javascript" });
+		const script = files["src/mod.js"];
+		assert.ok(script.includes("hooks.fragment.update"));
+	});
+});
+
+describe("writeProject (mod)", () => {
+	it("writes mod files to disk", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "xript-init-mod-test-"));
+		try {
+			const result = await writeProject(dir, { name: "test-mod", tier: 2, language: "javascript", type: "mod" });
+			assert.equal(result.directory, dir);
+			assert.ok(result.files.includes("mod-manifest.json"));
+			assert.ok(result.files.includes("package.json"));
+			assert.ok(result.files.includes("src/mod.js"));
+			assert.ok(result.files.includes("fragments/panel.html"));
+
+			const manifest = JSON.parse(await readFile(join(dir, "mod-manifest.json"), "utf-8"));
+			assert.equal(manifest.name, "test-mod");
 		} finally {
 			await rm(dir, { recursive: true });
 		}

@@ -1,0 +1,15 @@
+{
+	"xript": "0.3",
+	"name": "my-mod",
+	"version": "1.0.0",
+	"entry": "src/mod.js",
+	"capabilities": ["modify-state"],
+	"fragments": [
+		{
+			"id": "health-panel",
+			"slot": "sidebar.left",
+			"format": "text/html",
+			"source": "fragments/panel.html"
+		}
+	]
+}

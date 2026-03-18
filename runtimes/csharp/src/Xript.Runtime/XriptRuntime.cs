@@ -40,6 +40,22 @@ public sealed class XriptRuntime : IDisposable
     public JsonElement[] FireHook(string hookName, FireHookOptions? options = null) =>
         _sandbox.FireHook(hookName, options);
 
+    public FragmentOp[] FireFragmentHook(string fragmentId, string lifecycle, Dictionary<string, object?>? bindings = null) =>
+        _sandbox.FireFragmentHook(fragmentId, lifecycle, bindings);
+
+    public ModInstance LoadMod(string modManifestJson, Dictionary<string, string>? fragmentSources = null)
+    {
+        var mod = FragmentProcessor.ValidateModManifest(modManifestJson);
+
+        var grantedCapabilities = new HashSet<string>(_sandbox.GrantedCapabilities);
+        var crossIssues = FragmentProcessor.CrossValidate(mod, Manifest, grantedCapabilities);
+        if (crossIssues.Count > 0)
+            throw new ModManifestValidationException(
+                crossIssues.Select(msg => new ValidationIssue("/fragments", msg)).ToList());
+
+        return new ModInstance(mod, fragmentSources);
+    }
+
     public void Dispose() =>
         _sandbox.Dispose();
 

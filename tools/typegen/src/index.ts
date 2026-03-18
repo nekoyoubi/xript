@@ -14,6 +14,14 @@ interface HookDef {
 	deprecated?: string;
 }
 
+interface SlotDef {
+	id: string;
+	accepts: string[];
+	capability?: string;
+	multiple?: boolean;
+	style?: string;
+}
+
 interface Manifest {
 	xript: string;
 	name: string;
@@ -24,6 +32,7 @@ interface Manifest {
 	hooks?: Record<string, HookDef>;
 	capabilities?: Record<string, Capability>;
 	types?: Record<string, TypeDefinition>;
+	slots?: SlotDef[];
 }
 
 type Binding = FunctionBinding | NamespaceBinding;
@@ -117,9 +126,7 @@ function resolveTypeRef(ref: TypeRef): string {
 }
 
 function isOptionalParam(param: Parameter): boolean {
-	if (param.default !== undefined) return true;
-	if (param.required === false) return true;
-	return false;
+	return param.default !== undefined || param.required === false;
 }
 
 function indent(text: string, level: number): string {
@@ -332,7 +339,7 @@ function generatePhasedHookNamespace(name: string, hookDef: HookDef): string {
 	return lines.join("\n");
 }
 
-function generateHooksNamespace(hooks: Record<string, HookDef>): string {
+function generateHooksNamespace(hooks: Record<string, HookDef>, slots?: SlotDef[]): string {
 	const lines: string[] = [];
 
 	lines.push(generateJSDoc("Hook registration functions."));
@@ -349,6 +356,31 @@ function generateHooksNamespace(hooks: Record<string, HookDef>): string {
 		if (i < hookEntries.length - 1) {
 			lines.push("");
 		}
+	}
+
+	if (slots && slots.length > 0) {
+		if (hookEntries.length > 0) lines.push("");
+		lines.push(indent(generateFragmentHooksNamespace(), 1));
+	}
+
+	lines.push("}");
+	return lines.join("\n");
+}
+
+function generateFragmentHooksNamespace(): string {
+	const lines: string[] = [];
+
+	lines.push(generateJSDoc("Fragment lifecycle hook registration."));
+	lines.push("namespace fragment {");
+
+	const lifecycles = ["mount", "unmount", "update", "suspend", "resume"];
+	for (let i = 0; i < lifecycles.length; i++) {
+		const lc = lifecycles[i];
+		const handlerType = lc === "update"
+			? "(bindings: Record<string, unknown>, fragment: FragmentProxy) => void"
+			: "(fragment: FragmentProxy) => void";
+		lines.push(indent(`function ${lc}(fragmentId: string, handler: ${handlerType}): void;`, 1));
+		if (i < lifecycles.length - 1) lines.push("");
 	}
 
 	lines.push("}");
@@ -401,10 +433,52 @@ export function generateTypes(manifest: unknown, options?: TypegenOptions): stri
 	}
 
 	if (m.hooks && Object.keys(m.hooks).length > 0) {
-		sections.push(generateHooksNamespace(m.hooks));
+		sections.push(generateHooksNamespace(m.hooks, m.slots));
+	} else if (m.slots && m.slots.length > 0) {
+		sections.push(generateHooksNamespace({}, m.slots));
+	}
+
+	if (m.slots && m.slots.length > 0) {
+		sections.push(generateFragmentAPITypes());
+		sections.push(generateSlotTypes(m.slots));
 	}
 
 	return sections.join("\n\n") + "\n";
+}
+
+function generateSlotTypes(slots: SlotDef[]): string {
+	const lines: string[] = [];
+
+	lines.push(generateJSDoc("Available UI slots for fragment contributions."));
+	lines.push("interface XriptSlots {");
+
+	for (const slot of slots) {
+		const doc = [`Accepts: ${slot.accepts.join(", ")}`];
+		if (slot.capability) doc.push(`Requires: \`${slot.capability}\``);
+		if (slot.multiple) doc.push("Multiple fragments allowed");
+		if (slot.style) doc.push(`Style: ${slot.style}`);
+		lines.push(indent(generateJSDoc(doc.join(". ") + "."), 1));
+		lines.push(indent(`"${slot.id}": { accepts: ${JSON.stringify(slot.accepts)}; multiple: ${slot.multiple ?? false}; style: "${slot.style ?? "inherit"}" };`, 1));
+	}
+
+	lines.push("}");
+	return lines.join("\n");
+}
+
+function generateFragmentAPITypes(): string {
+	const lines: string[] = [];
+
+	lines.push(generateJSDoc("Proxy for imperative fragment manipulation. Method calls accumulate a command buffer."));
+	lines.push("interface FragmentProxy {");
+	lines.push(indent("toggle(selector: string, condition: boolean): void;", 1));
+	lines.push(indent("addClass(selector: string, className: string): void;", 1));
+	lines.push(indent("removeClass(selector: string, className: string): void;", 1));
+	lines.push(indent("setText(selector: string, text: string): void;", 1));
+	lines.push(indent("setAttr(selector: string, attr: string, value: string): void;", 1));
+	lines.push(indent("replaceChildren(selector: string, html: string | string[]): void;", 1));
+	lines.push("}");
+
+	return lines.join("\n");
 }
 
 export async function generateTypesFromFile(

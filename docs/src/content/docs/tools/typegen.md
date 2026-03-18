@@ -82,6 +82,16 @@ The generator maps manifest types to TypeScript following the rules in the [Bind
 
 Custom object types become `interface` declarations. Enum types become string literal unions (`type Direction = "north" \| "south" \| ...`).
 
+## Fragment API Types
+
+When the manifest declares `slots`, the generator produces additional types for the fragment protocol:
+
+- **`FragmentProxy`** interface with `toggle`, `addClass`, `removeClass`, `setText`, `setAttr`, and `replaceChildren` methods
+- **`hooks.fragment`** namespace with typed lifecycle registration functions (`mount`, `unmount`, `update`, `suspend`, `resume`)
+- **`XriptSlots`** interface describing available slots with their accepted formats, multiplicity, and styling modes
+
+The `update` lifecycle handler receives `(bindings: Record<string, unknown>, fragment: FragmentProxy) => void`, giving mod authors typed access to the command buffer API.
+
 ## Generated JSDoc
 
 The generator includes JSDoc comments from manifest descriptions:

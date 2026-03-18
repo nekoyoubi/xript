@@ -1,0 +1,13 @@
+{
+	"name": "xript-example-ui-dashboard",
+	"version": "1.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Example: UI Dashboard with fragment protocol.",
+	"scripts": {
+		"demo": "node src/demo.js"
+	},
+	"dependencies": {
+		"@xriptjs/runtime": "^0.2.0"
+	}
+}

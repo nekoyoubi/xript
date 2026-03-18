@@ -12,10 +12,13 @@ internal sealed class Sandbox : IDisposable
     private readonly Engine _engine;
     private readonly Manifest _manifest;
 
+    internal HashSet<string> GrantedCapabilities { get; }
+
     internal Sandbox(Manifest manifest, RuntimeOptions options)
     {
         _manifest = manifest;
         var granted = new HashSet<string>(options.Capabilities);
+        GrantedCapabilities = granted;
 
         _engine = new Engine(cfg =>
         {
@@ -35,6 +38,7 @@ internal sealed class Sandbox : IDisposable
         RemoveDangerousGlobals();
         RegisterConsole(options.Console);
         RegisterBindings(options.HostBindings, granted);
+        RegisterFragmentHooks();
         RegisterHooks(granted);
     }
 
@@ -97,9 +101,108 @@ internal sealed class Sandbox : IDisposable
         }
     }
 
+    internal FragmentOp[] FireFragmentHook(
+        string fragmentId, string lifecycle, Dictionary<string, object?>? bindings = null)
+    {
+        try
+        {
+            var key = $"fragment:{lifecycle}:{fragmentId}";
+
+            JsValue dataArg = JsValue.Undefined;
+            if (bindings is not null)
+            {
+                var json = System.Text.Json.JsonSerializer.Serialize(bindings);
+                dataArg = _engine.Evaluate($"JSON.parse({System.Text.Json.JsonSerializer.Serialize(json)})");
+            }
+
+            var result = _engine.Invoke("__xript_fire_fragment_handlers", key, dataArg);
+
+            if (result is not ObjectInstance arrObj)
+                return [];
+
+            var lengthVal = arrObj.Get("length");
+            var length = (int)lengthVal.AsNumber();
+
+            var ops = new List<FragmentOp>();
+            for (var i = 0; i < length; i++)
+            {
+                var item = arrObj.Get(i.ToString());
+                if (item is ObjectInstance opObj)
+                {
+                    var op = opObj.Get("op").AsString();
+                    var selector = opObj.Get("selector").AsString();
+                    var value = opObj.HasProperty("value") ? (object?)opObj.Get("value").ToString() : null;
+                    var attr = opObj.HasProperty("attr") && !opObj.Get("attr").IsUndefined()
+                        ? opObj.Get("attr").AsString()
+                        : null;
+                    ops.Add(new FragmentOp(op, selector, value, attr));
+                }
+            }
+
+            return [.. ops];
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
     public void Dispose()
     {
         _engine.Dispose();
+    }
+
+    private void RegisterFragmentHooks()
+    {
+        _engine.Execute("""
+            globalThis.__xript_fragment_handlers = {};
+            globalThis.__xript_register_fragment_handler = function(key, handler) {
+                if (!globalThis.__xript_fragment_handlers[key]) {
+                    globalThis.__xript_fragment_handlers[key] = [];
+                }
+                globalThis.__xript_fragment_handlers[key].push(handler);
+            };
+            globalThis.__xript_fire_fragment_handlers = function(key, data) {
+                var handlers = globalThis.__xript_fragment_handlers[key];
+                if (!handlers || handlers.length === 0) return [];
+                var allOps = [];
+                for (var i = 0; i < handlers.length; i++) {
+                    try {
+                        var ops = [];
+                        var proxy = {
+                            toggle: function(selector, condition) { ops.push({ op: "toggle", selector: selector, value: condition }); },
+                            addClass: function(selector, className) { ops.push({ op: "addClass", selector: selector, value: className }); },
+                            removeClass: function(selector, className) { ops.push({ op: "removeClass", selector: selector, value: className }); },
+                            setText: function(selector, text) { ops.push({ op: "setText", selector: selector, value: text }); },
+                            setAttr: function(selector, attr, value) { ops.push({ op: "setAttr", selector: selector, attr: attr, value: value }); },
+                            replaceChildren: function(selector, html) { ops.push({ op: "replaceChildren", selector: selector, value: html }); }
+                        };
+                        handlers[i](data, proxy);
+                        for (var j = 0; j < ops.length; j++) { allOps.push(ops[j]); }
+                    } catch(e) {}
+                }
+                return allOps;
+            };
+            globalThis.hooks = {};
+            globalThis.hooks.fragment = {
+                mount: function(fragmentId, handler) {
+                    globalThis.__xript_register_fragment_handler('fragment:mount:' + fragmentId, handler);
+                },
+                unmount: function(fragmentId, handler) {
+                    globalThis.__xript_register_fragment_handler('fragment:unmount:' + fragmentId, handler);
+                },
+                update: function(fragmentId, handler) {
+                    globalThis.__xript_register_fragment_handler('fragment:update:' + fragmentId, handler);
+                },
+                suspend: function(fragmentId, handler) {
+                    globalThis.__xript_register_fragment_handler('fragment:suspend:' + fragmentId, handler);
+                },
+                resume: function(fragmentId, handler) {
+                    globalThis.__xript_register_fragment_handler('fragment:resume:' + fragmentId, handler);
+                }
+            };
+            Object.freeze(globalThis.hooks.fragment);
+            """);
     }
 
     private void RemoveDangerousGlobals()
@@ -293,7 +396,7 @@ internal sealed class Sandbox : IDisposable
             };
             """);
 
-        _engine.Execute("globalThis.hooks = {};");
+        _engine.Execute("if (typeof globalThis.hooks === 'undefined') { globalThis.hooks = {}; }");
 
         foreach (var (hookName, hookDef) in _manifest.Hooks)
         {

@@ -1,0 +1,31 @@
+["Block", {"title": " Scaffold Project ", "borders": "ALL", "border_type": "Rounded", "border_style": {"fg": "Cyan"}},
+  ["Layout", {"direction": "Vertical", "constraints": ["Length:1", "Length:1", "Length:1", "Length:1", "Length:1", "Length:1", "Fill:1"]},
+    ["Paragraph", {"style": {"fg": "DarkGray"}},
+      ["Line", {}, ["Span", {}, "Configure your new xript project:"]]
+    ],
+    ["Paragraph", {},
+      ["Line", {},
+        ["Span", {"data-bind": "label_name"}, "  Project name: "],
+        ["Span", {"data-bind": "field_name"}, ""]
+      ]
+    ],
+    ["Paragraph", {},
+      ["Line", {},
+        ["Span", {"data-bind": "label_type"}, "  Type:         "],
+        ["Span", {"data-bind": "field_type"}, ""]
+      ]
+    ],
+    ["Paragraph", {},
+      ["Line", {},
+        ["Span", {"data-bind": "label_lang"}, "  Language:     "],
+        ["Span", {"data-bind": "field_lang"}, ""]
+      ]
+    ],
+    ["Paragraph", {},
+      ["Line", {}, ["Span", {"data-bind": "hint", "style": {"fg": "DarkGray"}}, ""]]
+    ],
+    ["Paragraph", {},
+      ["Line", {}, ["Span", {"data-bind": "result"}, ""]]
+    ]
+  ]
+]

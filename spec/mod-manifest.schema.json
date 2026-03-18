@@ -1,0 +1,152 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://xript.dev/schema/mod-manifest/v0.3.json",
+	"title": "xript Mod Manifest",
+	"description": "Declarative manifest for xript mods. Declares metadata, required capabilities, entry scripts, and UI fragment contributions.",
+	"type": "object",
+	"required": ["xript", "name", "version"],
+	"properties": {
+		"$schema": {
+			"description": "Optional JSON Schema reference for editor autocomplete.",
+			"type": "string",
+			"format": "uri"
+		},
+		"xript": {
+			"description": "The xript specification version this mod targets.",
+			"type": "string",
+			"pattern": "^\\d+\\.\\d+$",
+			"examples": ["0.3"]
+		},
+		"name": {
+			"description": "Machine-readable mod identifier. Used in namespacing and generated package names.",
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9-]*$",
+			"minLength": 1,
+			"maxLength": 64
+		},
+		"version": {
+			"description": "The mod's version. Follows semver.",
+			"type": "string",
+			"pattern": "^\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?$",
+			"examples": ["1.0.0", "0.1.0-beta.1"]
+		},
+		"title": {
+			"description": "Human-readable display name for the mod.",
+			"type": "string",
+			"maxLength": 128
+		},
+		"description": {
+			"description": "A brief description of what this mod does.",
+			"type": "string",
+			"maxLength": 1024
+		},
+		"author": {
+			"description": "The mod author's name or handle.",
+			"type": "string",
+			"maxLength": 128
+		},
+		"capabilities": {
+			"description": "Capabilities this mod requires from the host application.",
+			"type": "array",
+			"items": { "type": "string" },
+			"uniqueItems": true
+		},
+		"entry": {
+			"description": "Script entry point(s) relative to the mod root directory.",
+			"oneOf": [
+				{ "type": "string" },
+				{ "type": "array", "items": { "type": "string" }, "minItems": 1 }
+			]
+		},
+		"fragments": {
+			"description": "UI fragment contributions targeting host-declared slots.",
+			"type": "array",
+			"items": { "$ref": "#/$defs/fragment" }
+		}
+	},
+	"additionalProperties": false,
+	"$defs": {
+		"fragment": {
+			"description": "A UI fragment that targets a host-declared slot.",
+			"type": "object",
+			"required": ["id", "slot", "format", "source"],
+			"properties": {
+				"id": {
+					"description": "Unique fragment identifier within this mod.",
+					"type": "string",
+					"pattern": "^[a-z][a-z0-9-]*$"
+				},
+				"slot": {
+					"description": "Target slot ID from the host application's manifest.",
+					"type": "string"
+				},
+				"format": {
+					"description": "MIME type of the fragment content.",
+					"type": "string",
+					"examples": ["text/html"]
+				},
+				"source": {
+					"description": "Fragment content: a file path relative to the mod root, or inline markup when 'inline' is true.",
+					"type": "string"
+				},
+				"inline": {
+					"description": "When true, 'source' contains inline markup rather than a file path.",
+					"type": "boolean",
+					"default": false
+				},
+				"bindings": {
+					"description": "Data bindings that wire host state to data-bind attributes in the fragment.",
+					"type": "array",
+					"items": { "$ref": "#/$defs/fragmentBinding" }
+				},
+				"events": {
+					"description": "Event handlers that wire DOM events to sandboxed script functions.",
+					"type": "array",
+					"items": { "$ref": "#/$defs/fragmentEvent" }
+				},
+				"priority": {
+					"description": "Ordering priority within the target slot. Higher values render earlier. Ties broken alphabetically by fragment ID.",
+					"type": "integer",
+					"default": 0
+				}
+			},
+			"additionalProperties": false
+		},
+		"fragmentBinding": {
+			"description": "A named data binding that resolves a host data path to a local name for use in data-bind attributes.",
+			"type": "object",
+			"required": ["name", "path"],
+			"properties": {
+				"name": {
+					"description": "Local binding name referenced by data-bind attributes in the fragment markup.",
+					"type": "string"
+				},
+				"path": {
+					"description": "Dot-separated path to resolve against the host's data layer (e.g. 'player.health.val').",
+					"type": "string"
+				}
+			},
+			"additionalProperties": false
+		},
+		"fragmentEvent": {
+			"description": "A declarative event-to-handler mapping. The runtime attaches event listeners matching the selector and delegates to the named handler in the mod's sandboxed script.",
+			"type": "object",
+			"required": ["selector", "on", "handler"],
+			"properties": {
+				"selector": {
+					"description": "CSS selector targeting element(s) within the fragment. For non-HTML formats, the targeting mechanism is format-specific.",
+					"type": "string"
+				},
+				"on": {
+					"description": "DOM event name to listen for (e.g. 'click', 'input', 'change').",
+					"type": "string"
+				},
+				"handler": {
+					"description": "Name of a function in the mod's sandboxed script to call when the event fires.",
+					"type": "string"
+				}
+			},
+			"additionalProperties": false
+		}
+	}
+}

@@ -1,0 +1,11 @@
+{
+	"xript": "0.3",
+	"name": "my-mod",
+	"version": "1.0.0",
+	"fragments": [
+		{
+			"id": "panel",
+			"slot": "sidebar.left"
+		}
+	]
+}

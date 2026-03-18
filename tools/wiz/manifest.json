@@ -1,0 +1,18 @@
+{
+  "xript": "0.3",
+  "name": "xript-wiz",
+  "version": "0.1.0",
+  "title": "xript Wizard",
+  "description": "Interactive TUI wizard for the xript toolchain.",
+  "bindings": {
+    "log": {
+      "description": "Log to the status bar.",
+      "params": [{ "name": "message", "type": "string" }]
+    }
+  },
+  "slots": [
+    { "id": "header", "accepts": ["application/x-ratatui+json"], "style": "inherit" },
+    { "id": "main", "accepts": ["application/x-ratatui+json"], "style": "isolated" },
+    { "id": "status", "accepts": ["application/x-ratatui+json"], "style": "inherit" }
+  ]
+}

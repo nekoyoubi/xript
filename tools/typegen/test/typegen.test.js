@@ -376,4 +376,96 @@ describe("generateTypes", () => {
 		assert.ok(!result.includes("interface"));
 		assert.ok(!result.includes("type "));
 	});
+
+	it("generates slot types when manifest has slots", () => {
+		const manifest = {
+			xript: "0.3",
+			name: "slotted",
+			slots: [
+				{ id: "sidebar.left", accepts: ["text/html"], multiple: true, style: "isolated" },
+				{ id: "header.status", accepts: ["text/html"], multiple: false },
+			],
+		};
+		const result = generateTypes(manifest);
+		assert.ok(result.includes("interface XriptSlots"));
+		assert.ok(result.includes('"sidebar.left"'));
+		assert.ok(result.includes('"header.status"'));
+		assert.ok(result.includes("text/html"));
+	});
+
+	it("generates fragment API types in hooks namespace when slots exist", () => {
+		const manifest = {
+			xript: "0.3",
+			name: "fragmented",
+			slots: [
+				{ id: "sidebar.left", accepts: ["text/html"] },
+			],
+		};
+		const result = generateTypes(manifest);
+		assert.ok(result.includes("namespace hooks"));
+		assert.ok(result.includes("namespace fragment"));
+		assert.ok(result.includes("function mount(fragmentId: string"));
+		assert.ok(result.includes("function update(fragmentId: string"));
+		assert.ok(result.includes("function unmount(fragmentId: string"));
+	});
+
+	it("generates FragmentProxy interface when slots exist", () => {
+		const manifest = {
+			xript: "0.3",
+			name: "proxied",
+			slots: [
+				{ id: "sidebar.left", accepts: ["text/html"] },
+			],
+		};
+		const result = generateTypes(manifest);
+		assert.ok(result.includes("FragmentProxy"));
+		assert.ok(result.includes("toggle(selector: string"));
+		assert.ok(result.includes("replaceChildren(selector: string"));
+	});
+
+	it("includes fragment API alongside regular hooks", () => {
+		const manifest = {
+			xript: "0.3",
+			name: "combo",
+			hooks: {
+				onTick: { description: "Called every frame." },
+			},
+			slots: [
+				{ id: "sidebar.left", accepts: ["text/html"] },
+			],
+		};
+		const result = generateTypes(manifest);
+		assert.ok(result.includes("function onTick(handler:"));
+		assert.ok(result.includes("namespace fragment"));
+	});
+
+	it("generates slot capability and style info in JSDoc", () => {
+		const manifest = {
+			xript: "0.3",
+			name: "detailed-slots",
+			slots: [
+				{ id: "main.overlay", accepts: ["text/html"], capability: "ui-mount", multiple: true, style: "scoped" },
+			],
+		};
+		const result = generateTypes(manifest);
+		assert.ok(result.includes("ui-mount"));
+		assert.ok(result.includes("scoped"));
+	});
+
+	it("does not generate slot types when no slots", () => {
+		const manifest = { xript: "0.1", name: "no-slots" };
+		const result = generateTypes(manifest);
+		assert.ok(!result.includes("XriptSlots"));
+		assert.ok(!result.includes("FragmentProxy"));
+	});
+
+	it("generates update handler with bindings parameter", () => {
+		const manifest = {
+			xript: "0.3",
+			name: "typed-update",
+			slots: [{ id: "sidebar", accepts: ["text/html"] }],
+		};
+		const result = generateTypes(manifest);
+		assert.ok(result.includes("bindings: Record<string, unknown>"));
+	});
 });

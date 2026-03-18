@@ -1,0 +1,26 @@
+{
+	"xript": "0.3",
+	"name": "demo-app",
+	"version": "1.0.0",
+	"title": "xript-ratatui Demo",
+	"bindings": {
+		"log": {
+			"description": "Log a message.",
+			"params": [{"name": "msg", "type": "string"}]
+		}
+	},
+	"capabilities": {
+		"ui-mount": {
+			"description": "Mount UI fragments into slots.",
+			"risk": "low"
+		}
+	},
+	"slots": [
+		{
+			"id": "main",
+			"accepts": ["application/x-ratatui+json"],
+			"multiple": false,
+			"style": "isolated"
+		}
+	]
+}

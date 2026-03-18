@@ -1,0 +1,25 @@
+{
+	"$schema": "https://xript.dev/schema/mod-manifest/v0.3.json",
+	"xript": "0.3",
+	"name": "health-panel",
+	"version": "1.0.0",
+	"title": "Health Panel",
+	"description": "Displays the player's health bar with low-health warnings.",
+	"author": "xript-examples",
+	"capabilities": ["ui-mount"],
+	"entry": "src/mod.js",
+	"fragments": [
+		{
+			"id": "health-display",
+			"slot": "sidebar.left",
+			"format": "text/html",
+			"source": "fragments/panel.html",
+			"bindings": [
+				{ "name": "health", "path": "player.health" },
+				{ "name": "maxHealth", "path": "player.maxHealth" },
+				{ "name": "name", "path": "player.name" }
+			],
+			"priority": 10
+		}
+	]
+}

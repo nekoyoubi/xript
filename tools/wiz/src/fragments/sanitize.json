@@ -1,0 +1,19 @@
+["Block", {"title": " Sanitize Fragment ", "borders": "ALL", "border_type": "Rounded", "border_style": {"fg": "Cyan"}},
+  ["Layout", {"direction": "Vertical", "constraints": ["Length:1", "Length:1", "Length:1", "Length:1", "Fill:1"]},
+    ["Paragraph", {"style": {"fg": "DarkGray"}},
+      ["Line", {}, ["Span", {}, "Enter HTML/fragment to sanitize:"]]
+    ],
+    ["Paragraph", {},
+      ["Line", {},
+        ["Span", {"style": {"fg": "Cyan"}}, "> "],
+        ["Span", {"data-bind": "input_display"}, ""]
+      ]
+    ],
+    ["Paragraph", {},
+      ["Line", {}, ["Span", {"data-bind": "hint", "style": {"fg": "DarkGray"}}, ""]]
+    ],
+    ["Paragraph", {},
+      ["Line", {}, ["Span", {"data-bind": "result"}, ""]]
+    ]
+  ]
+]

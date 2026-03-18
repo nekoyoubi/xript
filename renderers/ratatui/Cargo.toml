@@ -1,0 +1,17 @@
+[package]
+name = "xript-ratatui"
+version = "0.1.0"
+edition = "2021"
+description = "Fragment renderer for Ratatui terminal applications — renders xript UI fragments as terminal widgets."
+license = "MIT"
+repository = "https://github.com/nekoyoubi/xript"
+
+[dependencies]
+ratatui = "0.29"
+ansi-to-tui = "7"
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+xript-runtime = { path = "../../runtimes/rust" }
+crossterm = "0.28"
