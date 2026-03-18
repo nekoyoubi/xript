@@ -84,7 +84,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm install
+      - run: rm package-lock.json && npm install
       - name: build sanitize
         run: npm run build --workspace=tools/sanitize
       - name: build runtime
