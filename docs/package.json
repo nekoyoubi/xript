@@ -14,6 +14,7 @@
 		"@fontsource/jetbrains-mono": "^5.2.8",
 		"@xriptjs/runtime": "^0.2.0",
 		"@xriptjs/sanitize": "^0.1.0",
-		"astro": "5.17.2"
+		"astro": "5.17.2",
+		"zod": "3.24.4"
 	}
 }
