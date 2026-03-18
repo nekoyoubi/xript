@@ -122,7 +122,7 @@ v0.3 shipped — UI Fragment Protocol and Mod Manifests (608 tests across 11 pac
 - **Toolchain**: manifest validator (app + mod, auto-detection, cross-validation, 25 tests), type generator (slot + fragment API types, 31 tests), doc generator (slot docs + fragment API page, 22 tests), init CLI (app + mod scaffolding, 27 tests), sanitizer (71 tests)
 - **Examples**: four examples including `ui-dashboard/` demonstrating the full fragment protocol (slots, mod manifests, `data-bind`, `data-if`, sandbox fragment API)
 - **Developer Experience**: docs site at xript.dev (30 pages), getting started guide, runtime API reference, runtime overview comparison, four example walkthroughs, interactive hero playground with live simulations, four interactive live demos including Fragment Builder
-- **Publishing**: all npm packages live under `@xriptjs` scope (OIDC trusted publishing, provenance attestations), Rust crate on crates.io, C# package on NuGet
+- **Publishing**: all npm packages live under `@xriptjs` scope (OIDC trusted publishing, provenance attestations), Rust crates on crates.io, C# package on NuGet; all publish workflows (`publish.yml`, `publish-nuget.yml`, `publish-crates.yml`) trigger on GitHub Release creation with `workflow_dispatch` as manual fallback
 
 ## Key Design Decisions
 
