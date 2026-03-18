@@ -20,6 +20,11 @@ jobs:
           cache: npm
       - run: npm ci
 
+      - name: build sanitize
+        run: npm run build --workspace=tools/sanitize
+      - name: test sanitize
+        run: npm test --workspace=tools/sanitize
+
       - name: build validate
         run: npm run build --workspace=tools/validate
       - name: test validate
@@ -34,6 +39,11 @@ jobs:
         run: npm run build --workspace=tools/docgen
       - name: test docgen
         run: npm test --workspace=tools/docgen
+
+      - name: build init
+        run: npm run build --workspace=tools/init
+      - name: test init
+        run: npm test --workspace=tools/init
 
       - name: build runtime
         run: npm run build --workspace=runtimes/js
@@ -51,6 +61,8 @@ jobs:
         run: node examples/plugin-system/src/demo.js
       - name: smoke test game-mod-system example
         run: node examples/game-mod-system/src/demo.js
+      - name: smoke test ui-dashboard example
+        run: node examples/ui-dashboard/src/demo.js
 
   test-csharp:
     runs-on: ubuntu-latest
@@ -73,6 +85,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: rm package-lock.json && npm install
+      - name: build sanitize
+        run: npm run build --workspace=tools/sanitize
       - name: build runtime
         run: npm run build --workspace=runtimes/js
       - name: build docs
