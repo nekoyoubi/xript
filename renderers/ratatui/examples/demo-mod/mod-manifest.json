@@ -1,0 +1,23 @@
+{
+	"xript": "0.3",
+	"name": "health-panel",
+	"version": "1.0.0",
+	"title": "Health Panel",
+	"author": "xript-demo",
+	"capabilities": ["ui-mount"],
+	"entry": "src/mod.js",
+	"fragments": [
+		{
+			"id": "health-display",
+			"slot": "main",
+			"format": "application/x-ratatui+json",
+			"source": "fragments/panel.json",
+			"bindings": [
+				{"name": "name", "path": "player.name"},
+				{"name": "health", "path": "player.health"},
+				{"name": "maxHealth", "path": "player.maxHealth"}
+			],
+			"priority": 10
+		}
+	]
+}

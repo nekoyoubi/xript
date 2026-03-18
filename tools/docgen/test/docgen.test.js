@@ -321,4 +321,72 @@ describe("generateDocs", () => {
 		assert.equal(result.pages[0].slug, "index");
 		assert.ok(!result.pages[0].content.includes("## API Surface"));
 	});
+
+	it("generates slot table in index page when slots defined", () => {
+		const result = generateDocs({
+			xript: "0.3",
+			name: "slotted-app",
+			slots: [
+				{ id: "sidebar.left", accepts: ["text/html"], multiple: true, style: "isolated" },
+				{ id: "header.status", accepts: ["text/html"], capability: "ui-mount" },
+			],
+		});
+		const index = result.pages.find((p) => p.slug === "index");
+		assert.ok(index);
+		assert.ok(index.content.includes("## UI Slots"));
+		assert.ok(index.content.includes("`sidebar.left`"));
+		assert.ok(index.content.includes("`header.status`"));
+		assert.ok(index.content.includes("`ui-mount`"));
+		assert.ok(index.content.includes("isolated"));
+	});
+
+	it("generates fragment API page when slots defined", () => {
+		const result = generateDocs({
+			xript: "0.3",
+			name: "fragment-app",
+			slots: [
+				{ id: "sidebar.left", accepts: ["text/html"] },
+			],
+		});
+		const apiPage = result.pages.find((p) => p.slug === "fragment-api");
+		assert.ok(apiPage);
+		assert.equal(apiPage.title, "Fragment API");
+		assert.ok(apiPage.content.includes("## Lifecycle Hooks"));
+		assert.ok(apiPage.content.includes("hooks.fragment.mount"));
+		assert.ok(apiPage.content.includes("hooks.fragment.update"));
+		assert.ok(apiPage.content.includes("## Fragment Proxy Methods"));
+		assert.ok(apiPage.content.includes("toggle"));
+		assert.ok(apiPage.content.includes("replaceChildren"));
+	});
+
+	it("does not generate slot docs when no slots defined", () => {
+		const result = generateDocs({ xript: "0.1", name: "no-slots" });
+		const index = result.pages.find((p) => p.slug === "index");
+		assert.ok(!index.content.includes("## UI Slots"));
+		assert.ok(!result.pages.find((p) => p.slug === "fragment-api"));
+	});
+
+	it("includes fragment API link in index when slots exist", () => {
+		const result = generateDocs({
+			xript: "0.3",
+			name: "linked-app",
+			slots: [{ id: "sidebar", accepts: ["text/html"] }],
+		});
+		const index = result.pages.find((p) => p.slug === "index");
+		assert.ok(index.content.includes("fragment-api.md"));
+	});
+
+	it("shows slot accept formats and multiple flag", () => {
+		const result = generateDocs({
+			xript: "0.3",
+			name: "multi-slot",
+			slots: [
+				{ id: "overlay", accepts: ["text/html"], multiple: true },
+				{ id: "status", accepts: ["text/html"], multiple: false },
+			],
+		});
+		const index = result.pages.find((p) => p.slug === "index");
+		assert.ok(index.content.includes("| Yes |"));
+		assert.ok(index.content.includes("| No |"));
+	});
 });

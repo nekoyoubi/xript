@@ -1,0 +1,90 @@
+[
+	"Block",
+	{
+		"title": "Health Thingy?",
+		"borders": "ALL",
+		"border_type": "Rounded",
+		"border_style": {
+			"fg": "Cyan"
+		}
+	},
+	[
+		"Layout",
+		{
+			"direction": "Vertical",
+			"constraints": [
+				"Length:1",
+				"Length:1",
+				"Length:1"
+			]
+		},
+		[
+			"Paragraph",
+			{
+				"alignment": "Left"
+			},
+			[
+				"Line",
+				{},
+				[
+					"Span",
+					{
+						"style": {
+							"fg": "Gray"
+						}
+					},
+					"Player: "
+				],
+				[
+					"Span",
+					{
+						"data-bind": "name",
+						"style": {
+							"fg": "Yellow",
+							"mod": [
+								"BOLD"
+							]
+						}
+					},
+					"Unknown"
+				]
+			]
+		],
+		[
+			"Gauge",
+			{
+				"data-bind": "health",
+				"ratio_bind": {
+					"numerator": "health",
+					"denominator": "maxHealth"
+				},
+				"gauge_style": {
+					"fg": "Green"
+				}
+			}
+		],
+		[
+			"Paragraph",
+			{
+				"data-if": "health < 50",
+				"alignment": "Center",
+				"style": {
+					"fg": "Red",
+					"mod": [
+						"BOLD",
+						"SLOW_BLINK"
+					]
+				}
+			},
+			[
+				"Line",
+				{},
+				[
+					"Span",
+					{},
+					"LOW HEALTH WARNING"
+				]
+			]
+		]
+	]
+]

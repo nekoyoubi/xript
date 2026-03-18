@@ -29,6 +29,9 @@
 		"access": "public",
 		"provenance": true
 	},
+	"dependencies": {
+		"@xriptjs/sanitize": "^0.1.0"
+	},
 	"devDependencies": {
 		"typescript": "^5.7.0",
 		"@types/node": "^22.0.0"

@@ -1,9 +1,9 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
-import { generateProjectFiles, type TemplateOptions, type ProjectFiles } from "./templates.js";
+import { generateProjectFiles, generateModProjectFiles, type TemplateOptions, type ProjectFiles } from "./templates.js";
 
 export type { TemplateOptions, ProjectFiles };
-export { generateProjectFiles };
+export { generateProjectFiles, generateModProjectFiles };
 
 export interface InitResult {
 	directory: string;

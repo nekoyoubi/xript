@@ -1,6 +1,6 @@
 {
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
-	"$id": "https://xript.dev/schema/manifest/v0.1.json",
+	"$id": "https://xript.dev/schema/manifest/v0.3.json",
 	"title": "xript Manifest",
 	"description": "Declarative manifest for xript-enabled applications. Defines the API surface, capabilities, and documentation for modders.",
 	"type": "object",
@@ -15,7 +15,7 @@
 			"description": "The xript specification version this manifest conforms to.",
 			"type": "string",
 			"pattern": "^\\d+\\.\\d+$",
-			"examples": ["0.1"]
+			"examples": ["0.1", "0.3"]
 		},
 		"name": {
 			"description": "Machine-readable identifier for this application. Used in generated package names and documentation URLs.",
@@ -70,6 +70,11 @@
 		},
 		"limits": {
 			"$ref": "#/$defs/executionLimits"
+		},
+		"slots": {
+			"description": "UI mounting points where mods can contribute fragments. Each slot declares an ID, accepted formats, and optional capability gating.",
+			"type": "array",
+			"items": { "$ref": "#/$defs/slot" }
 		}
 	},
 	"additionalProperties": false,
@@ -334,6 +339,40 @@
 				"deprecated": {
 					"type": "string",
 					"description": "If present, this hook is deprecated. The value describes the migration path."
+				}
+			},
+			"additionalProperties": false
+		},
+		"slot": {
+			"description": "A UI mounting point that mods can target with fragments.",
+			"type": "object",
+			"required": ["id", "accepts"],
+			"properties": {
+				"id": {
+					"type": "string",
+					"pattern": "^[a-z][a-z0-9.-]*$",
+					"description": "Unique slot identifier (e.g. 'sidebar.left', 'statusbar.right')."
+				},
+				"accepts": {
+					"type": "array",
+					"items": { "type": "string" },
+					"minItems": 1,
+					"description": "MIME types this slot accepts from fragment contributions."
+				},
+				"capability": {
+					"type": "string",
+					"description": "Capability required to mount fragments into this slot."
+				},
+				"multiple": {
+					"type": "boolean",
+					"default": false,
+					"description": "Whether multiple mods can contribute fragments to this slot simultaneously."
+				},
+				"style": {
+					"type": "string",
+					"enum": ["inherit", "isolated", "scoped"],
+					"default": "inherit",
+					"description": "Styling mode: 'inherit' applies host styles, 'isolated' prevents style bleed, 'scoped' exposes CSS custom properties."
 				}
 			},
 			"additionalProperties": false

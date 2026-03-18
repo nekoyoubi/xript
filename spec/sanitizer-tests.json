@@ -1,0 +1,227 @@
+[
+	{
+		"input": "<div class=\"panel\"><span data-bind=\"health\">0</span></div>",
+		"expected": "<div class=\"panel\"><span data-bind=\"health\">0</span></div>",
+		"description": "preserves safe structural elements and data-bind"
+	},
+	{
+		"input": "<p>Hello <strong>world</strong></p>",
+		"expected": "<p>Hello <strong>world</strong></p>",
+		"description": "preserves basic text and presentational elements"
+	},
+	{
+		"input": "<div id=\"main\" class=\"container\" data-custom=\"value\">text</div>",
+		"expected": "<div id=\"main\" class=\"container\" data-custom=\"value\">text</div>",
+		"description": "preserves id, class, and data-* attributes"
+	},
+	{
+		"input": "<div data-if=\"health < 50\" class=\"warning\">low!</div>",
+		"expected": "<div data-if=\"health < 50\" class=\"warning\">low!</div>",
+		"description": "preserves data-if attribute with expression"
+	},
+	{
+		"input": "<div aria-label=\"health\" role=\"progressbar\" aria-valuenow=\"50\">bar</div>",
+		"expected": "<div aria-label=\"health\" role=\"progressbar\" aria-valuenow=\"50\">bar</div>",
+		"description": "preserves aria-* and role attributes"
+	},
+	{
+		"input": "<input data-bind=\"playerName\" tabindex=\"1\" hidden />",
+		"expected": "<input data-bind=\"playerName\" tabindex=\"1\" hidden />",
+		"description": "preserves tabindex, hidden, and data-bind on self-closing elements"
+	},
+	{
+		"input": "<img src=\"icon.png\" alt=\"health icon\" width=\"16\" height=\"16\" />",
+		"expected": "<img src=\"icon.png\" alt=\"health icon\" width=\"16\" height=\"16\" />",
+		"description": "preserves img with safe src, alt, width, height"
+	},
+	{
+		"input": "<a href=\"https://example.com\" target=\"_blank\" rel=\"noopener\">link</a>",
+		"expected": "<a href=\"https://example.com\" target=\"_blank\" rel=\"noopener\">link</a>",
+		"description": "preserves anchor with safe href, target, rel"
+	},
+	{
+		"input": "<style>.warning { color: red; }</style><div class=\"warning\">alert</div>",
+		"expected": "<style>.warning { color: red; }</style><div class=\"warning\">alert</div>",
+		"description": "preserves scoped style blocks"
+	},
+	{
+		"input": "<table><thead><tr><th scope=\"col\">Name</th></tr></thead><tbody><tr><td>Item</td></tr></tbody></table>",
+		"expected": "<table><thead><tr><th scope=\"col\">Name</th></tr></thead><tbody><tr><td>Item</td></tr></tbody></table>",
+		"description": "preserves full table structure with scope attribute"
+	},
+	{
+		"input": "<details><summary>More info</summary><p>Details here.</p></details>",
+		"expected": "<details><summary>More info</summary><p>Details here.</p></details>",
+		"description": "preserves details/summary elements"
+	},
+	{
+		"input": "<section lang=\"en\" dir=\"ltr\" title=\"section\"><p>content</p></section>",
+		"expected": "<section lang=\"en\" dir=\"ltr\" title=\"section\"><p>content</p></section>",
+		"description": "preserves lang, dir, title attributes"
+	},
+	{
+		"input": "<script>alert('xss')</script><p>safe</p>",
+		"expected": "<p>safe</p>",
+		"description": "strips script elements entirely including children"
+	},
+	{
+		"input": "<p>before</p><script type=\"text/javascript\">document.write('xss')</script><p>after</p>",
+		"expected": "<p>before</p><p>after</p>",
+		"description": "strips script elements mid-content"
+	},
+	{
+		"input": "<iframe src=\"evil.com\"></iframe><p>ok</p>",
+		"expected": "<p>ok</p>",
+		"description": "strips iframe elements"
+	},
+	{
+		"input": "<object data=\"flash.swf\"><param name=\"movie\" value=\"flash.swf\"></object><p>safe</p>",
+		"expected": "<p>safe</p>",
+		"description": "strips object and param elements"
+	},
+	{
+		"input": "<embed src=\"plugin.swf\" /><p>safe</p>",
+		"expected": "<p>safe</p>",
+		"description": "strips embed elements"
+	},
+	{
+		"input": "<form action=\"/steal\"><input name=\"token\" /></form><p>safe</p>",
+		"expected": "<p>safe</p>",
+		"description": "strips form elements and their children"
+	},
+	{
+		"input": "<base href=\"https://evil.com\" /><p>safe</p>",
+		"expected": "<p>safe</p>",
+		"description": "strips base elements"
+	},
+	{
+		"input": "<link rel=\"stylesheet\" href=\"evil.css\" /><p>safe</p>",
+		"expected": "<p>safe</p>",
+		"description": "strips link elements"
+	},
+	{
+		"input": "<noscript><img src=\"tracker.gif\" /></noscript><p>safe</p>",
+		"expected": "<p>safe</p>",
+		"description": "strips noscript elements"
+	},
+	{
+		"input": "<div onclick=\"alert('xss')\">test</div>",
+		"expected": "<div>test</div>",
+		"description": "strips onclick event attribute"
+	},
+	{
+		"input": "<div onmouseover=\"steal()\" onload=\"steal()\" onfocus=\"steal()\">test</div>",
+		"expected": "<div>test</div>",
+		"description": "strips all on* event attributes"
+	},
+	{
+		"input": "<img src=\"img.png\" onerror=\"alert('xss')\" />",
+		"expected": "<img src=\"img.png\" />",
+		"description": "strips onerror while preserving safe attributes"
+	},
+	{
+		"input": "<a href=\"javascript:alert('xss')\">click</a>",
+		"expected": "<a>click</a>",
+		"description": "strips javascript: URI from href"
+	},
+	{
+		"input": "<a href=\"JAVASCRIPT:alert('xss')\">click</a>",
+		"expected": "<a>click</a>",
+		"description": "strips javascript: URI case-insensitively"
+	},
+	{
+		"input": "<a href=\"  javascript:void(0)\">click</a>",
+		"expected": "<a>click</a>",
+		"description": "strips javascript: URI with leading whitespace"
+	},
+	{
+		"input": "<img src=\"javascript:alert('xss')\" />",
+		"expected": "<img />",
+		"description": "strips javascript: URI from img src"
+	},
+	{
+		"input": "<a href=\"vbscript:MsgBox('xss')\">click</a>",
+		"expected": "<a>click</a>",
+		"description": "strips vbscript: URI from href"
+	},
+	{
+		"input": "<img src=\"data:text/html,<script>alert('xss')</script>\" />",
+		"expected": "<img />",
+		"description": "strips dangerous data: URIs"
+	},
+	{
+		"input": "<img src=\"data:image/png;base64,abc123\" />",
+		"expected": "<img src=\"data:image/png;base64,abc123\" />",
+		"description": "preserves safe image data: URIs"
+	},
+	{
+		"input": "<html><head><title>x</title></head><body><p>content</p></body></html>",
+		"expected": "<p>content</p>",
+		"description": "strips document-level wrapper elements"
+	},
+	{
+		"input": "<meta charset=\"utf-8\" /><p>content</p>",
+		"expected": "<p>content</p>",
+		"description": "strips meta elements"
+	},
+	{
+		"input": "<style>.panel { background: url('https://evil.com/track.gif'); color: red; }</style>",
+		"expected": "<style>.panel { color: red; }</style>",
+		"description": "strips external url() references from style blocks"
+	},
+	{
+		"input": "<style>.panel { behavior: url(script.htc); color: blue; }</style>",
+		"expected": "<style>.panel { color: blue; }</style>",
+		"description": "strips behavior: property from style blocks"
+	},
+	{
+		"input": "<div style=\"color: red; -moz-binding: url('evil.xml')\">test</div>",
+		"expected": "<div style=\"color: red;\">test</div>",
+		"description": "strips -moz-binding from inline styles"
+	},
+	{
+		"input": "<div><script>evil()</script>safe text<script>more evil</script></div>",
+		"expected": "<div>safe text</div>",
+		"description": "strips multiple script elements while preserving text"
+	},
+	{
+		"input": "",
+		"expected": "",
+		"description": "handles empty input"
+	},
+	{
+		"input": "plain text with no tags",
+		"expected": "plain text with no tags",
+		"description": "preserves plain text without tags"
+	},
+	{
+		"input": "<h1>Title</h1><h2>Sub</h2><h3>Sub-sub</h3><h4>H4</h4><h5>H5</h5><h6>H6</h6>",
+		"expected": "<h1>Title</h1><h2>Sub</h2><h3>Sub-sub</h3><h4>H4</h4><h5>H5</h5><h6>H6</h6>",
+		"description": "preserves all heading levels"
+	},
+	{
+		"input": "<ul><li>one</li><li>two</li></ul><ol><li>a</li></ol><dl><dt>term</dt><dd>def</dd></dl>",
+		"expected": "<ul><li>one</li><li>two</li></ul><ol><li>a</li></ol><dl><dt>term</dt><dd>def</dd></dl>",
+		"description": "preserves all list types"
+	},
+	{
+		"input": "<div data-bind=\"health\" data-if=\"health > 0\" data-action=\"heal\" class=\"panel\" id=\"hp\">text</div>",
+		"expected": "<div data-bind=\"health\" data-if=\"health > 0\" data-action=\"heal\" class=\"panel\" id=\"hp\">text</div>",
+		"description": "preserves multiple data-* attributes together"
+	},
+	{
+		"input": "<script><div>inner content</div></script><p>after</p>",
+		"expected": "<p>after</p>",
+		"description": "strips non-stripped elements nested inside stripped elements"
+	},
+	{
+		"input": "<form><script>double strip</script><p>also stripped</p></form><span>safe</span>",
+		"expected": "<span>safe</span>",
+		"description": "strips nested stripped elements inside other stripped elements"
+	},
+	{
+		"input": "<a href=\"data:text/html,<script>alert(1)</script>\">click</a>",
+		"expected": "<a>click</a>",
+		"description": "strips data: URI on href attribute"
+	}
+]

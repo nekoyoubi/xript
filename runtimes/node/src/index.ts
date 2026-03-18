@@ -1,9 +1,24 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { createSandbox, type HostBindings, type HostFunction, type SandboxOptions, type ExecutionResult, type FireHookOptions } from "./sandbox.js";
+import { createSandbox, type HostBindings, type HostFunction, type SandboxOptions, type ExecutionResult, type FireHookOptions, type FragmentOp } from "./sandbox.js";
+import {
+	validateModManifest,
+	validateModAgainstApp,
+	createModInstance,
+	type ModManifest,
+	type ModInstance,
+	type FragmentInstance,
+	type FragmentUpdateResult,
+	type FragmentEvent,
+	type FragmentDeclaration,
+	type SlotDeclaration,
+	ModManifestValidationError,
+} from "./fragment.js";
 
 export { BindingError, CapabilityDeniedError, ExecutionLimitError } from "./errors.js";
-export type { HostBindings, HostFunction, ExecutionResult, FireHookOptions } from "./sandbox.js";
+export { ModManifestValidationError } from "./fragment.js";
+export type { HostBindings, HostFunction, ExecutionResult, FireHookOptions, FragmentOp } from "./sandbox.js";
+export type { ModManifest, ModInstance, FragmentInstance, FragmentUpdateResult, FragmentEvent, FragmentDeclaration, SlotDeclaration } from "./fragment.js";
 
 interface Manifest {
 	xript: string;
@@ -17,6 +32,11 @@ interface Manifest {
 		memory_mb?: number;
 		max_stack_depth?: number;
 	};
+	slots?: SlotDeclaration[];
+}
+
+export interface ModLoadOptions {
+	fragmentSources?: Record<string, string>;
 }
 
 export class ManifestValidationError extends Error {
@@ -45,6 +65,8 @@ export interface XriptRuntime {
 	execute(code: string): ExecutionResult;
 	executeAsync(code: string): Promise<ExecutionResult>;
 	fireHook(hookName: string, options?: FireHookOptions): unknown[];
+	fireFragmentHook(fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>): FragmentOp[];
+	loadMod(modManifest: unknown, options?: ModLoadOptions): ModInstance;
 	dispose(): void;
 }
 
@@ -100,6 +122,7 @@ function checkBasicStructure(manifest: unknown): Manifest {
 
 export function createRuntime(manifest: unknown, options: RuntimeOptions): XriptRuntime {
 	const m = checkBasicStructure(manifest);
+	const grantedCapabilities = new Set(options.capabilities || []);
 
 	const sandbox = createSandbox({
 		manifest: m as SandboxOptions["manifest"],
@@ -113,6 +136,29 @@ export function createRuntime(manifest: unknown, options: RuntimeOptions): Xript
 		execute: sandbox.execute,
 		executeAsync: sandbox.executeAsync,
 		fireHook: sandbox.fireHook,
+		fireFragmentHook: sandbox.fireFragmentHook,
+
+		loadMod(modManifest: unknown, modOptions?: ModLoadOptions): ModInstance {
+			const validated = validateModManifest(modManifest);
+			const slots = m.slots || [];
+			const issues = validateModAgainstApp(validated, slots, grantedCapabilities);
+			if (issues.length > 0) {
+				throw new ModManifestValidationError(issues);
+			}
+			const sources = modOptions?.fragmentSources || {};
+			const mod = createModInstance(validated, sources);
+
+			if (validated.entry) {
+				const entries = Array.isArray(validated.entry) ? validated.entry : [validated.entry];
+				for (const entry of entries) {
+					const code = sources[entry];
+					if (code) sandbox.execute(code);
+				}
+			}
+
+			return mod;
+		},
+
 		dispose() {},
 	};
 }

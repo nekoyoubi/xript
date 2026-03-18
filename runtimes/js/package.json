@@ -30,7 +30,8 @@
 		"provenance": true
 	},
 	"dependencies": {
-		"quickjs-emscripten": "^0.31.0"
+		"quickjs-emscripten": "^0.31.0",
+		"@xriptjs/sanitize": "^0.1.0"
 	},
 	"devDependencies": {
 		"typescript": "^5.7.0",

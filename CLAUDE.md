@@ -16,7 +16,7 @@ xript/
 │   ├── node/       # Node.js-optimized runtime (@xriptjs/runtime-node, vm-based)
 │   ├── rust/       # native Rust runtime (xript-runtime, QuickJS via rquickjs)
 │   └── csharp/     # C# runtime (Xript.Runtime, Jint sandbox)
-├── tools/          # ecosystem tooling (validator, typegen, docgen, init)
+├── tools/          # ecosystem tooling (validator, typegen, docgen, init, sanitize)
 ├── docs/           # documentation site (Astro + Starlight), deployed to xript.dev
 └── examples/       # example manifests and integrations
 ```
@@ -52,6 +52,8 @@ npm run build --workspace=tools/docgen             # build the doc generator
 npm test --workspace=tools/docgen                  # run docgen tests (17 tests)
 npm run build --workspace=tools/init               # build the init CLI
 npm test --workspace=tools/init                    # run init tests (20 tests)
+npm run build --workspace=tools/sanitize           # build the HTML sanitizer
+npm test --workspace=tools/sanitize                # run sanitizer tests (57 tests)
 
 # build and test the Rust runtime
 cd runtimes/rust && cargo build                    # build the Rust runtime
@@ -83,22 +85,31 @@ node examples/game-mod-system/src/demo.js        # tier 3 demo
 - Commit messages follow the project's commit style guide (short header < 50 chars, past tense, markdown bullets for details)
 - PRs merged with merge commits (not squash) to preserve full history
 
+## Changelog
+
+A top-level `CHANGELOG.md` tracks all releases. Follow these rules:
+
+- **When to update**: every PR that ships user-facing changes (features, fixes, breaking changes, new packages). Skip internal refactors, CI tweaks, and doc typo fixes.
+- **Format**: version header with a descriptive theme (`## v0.3.0 — Fragment Protocol`), followed by past-tense bullet points. Sub-bullets for implementation detail. Backtick all code references.
+- **Voice**: run changelog entries through Elle before committing — this is user-facing copy.
+- **Scope**: one top-level changelog for the whole monorepo. Reference specific packages inline with backticked names when a change is package-specific (`@xriptjs/sanitize`, `xript-runtime`, etc.).
+- **No dates in headers**: versions are tagged in git; dates go stale in text.
+- **Test counts table**: include a before/after test count table at the bottom of each version entry.
+
 ## Current State
 
-v0.1 milestones are complete and v0.2 foundations are in place:
+v0.3 in progress — UI Fragment Protocol and Mod Manifests:
 
-- **Spec v0.2**: manifest schema (JSON Schema draft 2020-12), capability model, binding conventions, hook lifecycle, and security guarantees documented in `spec/`
-- **Universal Runtime**: `@xriptjs/runtime` in `runtimes/js/` -- QuickJS WASM sandbox with capability enforcement, hook system, and improved error messages, 69 tests
-- **Node.js Runtime**: `@xriptjs/runtime-node` in `runtimes/node/` -- Node.js vm-based sandbox with `createRuntimeFromFile`, hooks, and improved errors, 71 tests
-- **Rust Runtime**: `xript-runtime` in `runtimes/rust/` -- native QuickJS sandbox via rquickjs with host bindings, capability enforcement, hooks, and resource limits, 17 tests
-- **C# Runtime**: `Xript.Runtime` in `runtimes/csharp/` -- Jint sandbox with host bindings, capability enforcement, hooks, and resource limits, 72 tests
-- **Toolchain**: manifest validator, type generator, doc generator, and init CLI all built and tested in `tools/` (72 tests across 4 packages)
-- **Init CLI**: `@xriptjs/init` in `tools/init/` -- scaffolding CLI with interactive prompts, `--yes` flag, tier 2/3 templates, TS/JS output, 20 tests
-- **Developer Experience**: docs site at xript.dev (23 pages), getting started guide, runtime API reference, runtime overview comparison, three example walkthroughs, interactive hero playground with live simulations, three interactive live demos (browser-only QuickJS WASM), CI with smoke tests
-- **Hardening**: integration tests, manifest validation in runtime, example smoke tests in CI
-- **Publishing**: all 6 npm packages live under `@xriptjs` scope (OIDC trusted publishing, provenance attestations), Rust crate on crates.io, C# package on NuGet
-
-Total test count: 301 across 9 packages. All green.
+- **Spec v0.3**: manifest schema extended with `slots`, new mod manifest schema (`spec/mod-manifest.schema.json`), fragment protocol specification (`spec/fragments.md`), HTML sanitizer conformance suite (`spec/sanitizer-tests.json`, 42 test cases)
+- **HTML Sanitizer**: `@xriptjs/sanitize` in `tools/sanitize/` -- pure string-based HTML sanitizer with no DOM dependency (works in QuickJS WASM), 57 tests
+- **Universal Runtime**: `@xriptjs/runtime` in `runtimes/js/` -- QuickJS WASM sandbox with capability enforcement, hook system, `loadMod()`, fragment processing (`data-bind`, `data-if`), sandbox fragment API (command buffer pattern), 95 tests
+- **Node.js Runtime**: `@xriptjs/runtime-node` in `runtimes/node/` -- Node.js vm-based sandbox with fragment support (in progress)
+- **Rust Runtime**: `xript-runtime` in `runtimes/rust/` -- native QuickJS sandbox via rquickjs with host bindings, capability enforcement, hooks, and resource limits, 17 tests (fragment support pending)
+- **C# Runtime**: `Xript.Runtime` in `runtimes/csharp/` -- Jint sandbox with host bindings, capability enforcement, hooks, and resource limits, 72 tests (fragment support pending)
+- **Toolchain**: manifest validator (mod manifest support in progress), type generator (slot + fragment API types, 31 tests), doc generator (slot docs + fragment API page, 22 tests), init CLI (mod project scaffolding in progress), sanitizer (57 tests)
+- **Examples**: four examples including `ui-dashboard/` demonstrating the full fragment protocol (slots, mod manifests, `data-bind`, `data-if`, sandbox fragment API)
+- **Developer Experience**: docs site at xript.dev, getting started guide, runtime API reference, runtime overview comparison, four example walkthroughs, interactive hero playground with live simulations, three interactive live demos (Fragment Builder showcase pending)
+- **Publishing**: all npm packages live under `@xriptjs` scope (OIDC trusted publishing, provenance attestations), Rust crate on crates.io, C# package on NuGet
 
 ## Key Design Decisions
 
@@ -107,3 +118,7 @@ Total test count: 301 across 9 packages. All green.
 - **JavaScript is the modding language**: not because it's perfect, but because it's known
 - **Incremental adoption**: three tiers (expressions only, simple bindings, full scripting)
 - **Universal portability**: QuickJS WASM sandbox runs anywhere JavaScript runs (browser, Node, Deno, Bun, Cloudflare Workers)
+- **Fragments are inert templates**: all dynamic behavior routes through the sandbox (data-bind for values, data-if for visibility, events for interaction, command buffer for mutations)
+- **Two smart attributes only**: `data-bind` and `data-if` are the hard wall — everything beyond that goes through the sandbox fragment API
+- **Mod manifests ship with fragments**: mods declare themselves and their UI contributions in a single declarative manifest
+- **JSML is core**: `application/jsml+json` (JsonML array format) is a built-in fragment format — native JSON markup with no escaping, processed by all JS/Node runtimes alongside `text/html`

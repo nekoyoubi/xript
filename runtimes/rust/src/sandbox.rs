@@ -116,6 +116,7 @@ impl XriptRuntime {
             register_console(&ctx, options.console)?;
             register_bindings(&ctx, &manifest, options.host_bindings, &granted)?;
             register_hooks(&ctx, &manifest, &granted)?;
+            register_fragment_hooks(&ctx)?;
             Ok(())
         })?;
 
@@ -177,6 +178,67 @@ impl XriptRuntime {
 
     pub fn manifest(&self) -> &Manifest {
         &self.manifest
+    }
+
+    pub fn load_mod(
+        &self,
+        mod_manifest_json: &str,
+        fragment_sources: HashMap<String, String>,
+        granted_capabilities: &HashSet<String>,
+    ) -> Result<crate::fragment::ModInstance> {
+        crate::fragment::load_mod(
+            mod_manifest_json,
+            &self.manifest,
+            granted_capabilities,
+            &fragment_sources,
+        )
+    }
+
+    pub fn fire_fragment_hook(
+        &self,
+        fragment_id: &str,
+        lifecycle: &str,
+        bindings: Option<&serde_json::Value>,
+    ) -> Result<Vec<serde_json::Value>> {
+        let bindings_json = match bindings {
+            Some(b) => serde_json::to_string(b).unwrap_or("{}".into()),
+            None => "{}".into(),
+        };
+
+        let code = format!(
+            r#"(function() {{
+                var handlers = globalThis.__xript_fragment_handlers || {{}};
+                var key = "fragment:{lifecycle}:{fid}";
+                var list = handlers[key] || [];
+                var results = [];
+                var bindingsObj = JSON.parse('{bindings_json}');
+                for (var i = 0; i < list.length; i++) {{
+                    var ops = [];
+                    var proxy = {{
+                        toggle: function(sel, cond) {{ ops.push({{ op: "toggle", selector: sel, value: !!cond }}); }},
+                        addClass: function(sel, cls) {{ ops.push({{ op: "addClass", selector: sel, value: cls }}); }},
+                        removeClass: function(sel, cls) {{ ops.push({{ op: "removeClass", selector: sel, value: cls }}); }},
+                        setText: function(sel, txt) {{ ops.push({{ op: "setText", selector: sel, value: txt }}); }},
+                        setAttr: function(sel, attr, val) {{ ops.push({{ op: "setAttr", selector: sel, attr: attr, value: val }}); }},
+                        replaceChildren: function(sel, html) {{ ops.push({{ op: "replaceChildren", selector: sel, value: html }}); }}
+                    }};
+                    list[i](bindingsObj, proxy);
+                    results.push(ops);
+                }}
+                return JSON.stringify(results);
+            }})()"#,
+            lifecycle = lifecycle,
+            fid = fragment_id,
+            bindings_json = bindings_json.replace('\'', "\\'"),
+        );
+
+        let result = self.execute(&code)?;
+        match serde_json::from_str::<Vec<serde_json::Value>>(
+            result.value.as_str().unwrap_or("[]"),
+        ) {
+            Ok(ops) => Ok(ops),
+            Err(_) => Ok(vec![]),
+        }
     }
 }
 
@@ -433,6 +495,44 @@ fn register_hooks(ctx: &Ctx<'_>, manifest: &Manifest, granted: &HashSet<String>)
     hook_setup.push_str("Object.freeze(globalThis.hooks);\n");
 
     ctx.eval::<(), _>(hook_setup.as_str())
+        .map_err(|e| XriptError::Engine(e.to_string()))?;
+
+    Ok(())
+}
+
+fn register_fragment_hooks(ctx: &Ctx<'_>) -> Result<()> {
+    let script = r#"
+        globalThis.__xript_fragment_handlers = {};
+
+        var existingHooks = {};
+        if (typeof globalThis.hooks === 'object' && globalThis.hooks !== null) {
+            var hookKeys = Object.getOwnPropertyNames(globalThis.hooks);
+            for (var i = 0; i < hookKeys.length; i++) {
+                existingHooks[hookKeys[i]] = globalThis.hooks[hookKeys[i]];
+            }
+        }
+
+        var fragmentNs = {};
+        var lifecycles = ['mount', 'unmount', 'update', 'suspend', 'resume'];
+        for (var j = 0; j < lifecycles.length; j++) {
+            (function(lifecycle) {
+                fragmentNs[lifecycle] = function(fragmentId, handler) {
+                    var key = "fragment:" + lifecycle + ":" + fragmentId;
+                    if (!globalThis.__xript_fragment_handlers[key]) {
+                        globalThis.__xript_fragment_handlers[key] = [];
+                    }
+                    globalThis.__xript_fragment_handlers[key].push(handler);
+                };
+            })(lifecycles[j]);
+        }
+        Object.freeze(fragmentNs);
+        existingHooks.fragment = fragmentNs;
+
+        globalThis.hooks = existingHooks;
+        Object.freeze(globalThis.hooks);
+    "#;
+
+    ctx.eval::<(), _>(script)
         .map_err(|e| XriptError::Engine(e.to_string()))?;
 
     Ok(())

@@ -85,6 +85,13 @@ const result = await generateDocsFromFile("./manifest.json");
 const written = await writeDocsToDirectory(result, "./api-docs/");
 ```
 
+## Slot and Fragment API Docs
+
+When the manifest declares `slots`, the generator produces additional pages:
+
+- **Index page** gains a "UI Slots" table listing each slot's ID, accepted formats, multiplicity, styling mode, and capability requirements
+- **Fragment API page** (`fragment-api.md`) documents the sandbox fragment manipulation API — lifecycle hooks (`mount`, `unmount`, `update`, `suspend`, `resume`) and proxy operations (`toggle`, `addClass`, `setText`, `replaceChildren`, etc.)
+
 ## Integration Tips
 
 The generated markdown pages are designed to work with any static site generator. To use them with Starlight:

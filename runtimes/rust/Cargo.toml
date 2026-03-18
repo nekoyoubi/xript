@@ -10,6 +10,8 @@ keywords = ["xript", "runtime", "sandbox", "scripting", "quickjs"]
 categories = ["game-development", "wasm", "embedded"]
 
 [dependencies]
+ammonia = "4"
+regex = "1"
 rquickjs = { version = "0.10", features = ["parallel"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

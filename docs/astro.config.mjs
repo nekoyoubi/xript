@@ -39,6 +39,9 @@ export default defineConfig({
 					label: "Specification",
 					items: [
 						{ label: "Manifest", slug: "spec/manifest" },
+						{ label: "Mod Manifest", slug: "spec/mod-manifest" },
+						{ label: "Fragments", slug: "spec/fragments" },
+					{ label: "Fragment Formats", slug: "spec/fragment-formats" },
 						{ label: "Capabilities", slug: "spec/capabilities" },
 						{ label: "Bindings", slug: "spec/bindings" },
 						{ label: "Security", slug: "spec/security" },
@@ -61,6 +64,7 @@ export default defineConfig({
 						{ label: "Type Generator", slug: "tools/typegen" },
 						{ label: "Doc Generator", slug: "tools/docgen" },
 						{ label: "Init CLI", slug: "tools/init" },
+					{ label: "Sanitizer", slug: "tools/sanitize" },
 					],
 				},
 				{
@@ -74,6 +78,10 @@ export default defineConfig({
 						{
 							label: "Game Mod System",
 							slug: "examples/game-mod-system",
+						},
+						{
+							label: "UI Dashboard",
+							slug: "examples/ui-dashboard",
 						},
 					],
 				},
@@ -92,6 +100,10 @@ export default defineConfig({
 							label: "Dungeon Modding",
 							slug: "demos/dungeon-modding",
 						},
+						{
+							label: "Fragment Builder",
+							slug: "demos/fragment-builder",
+						},
 					],
 				},
 			],
@@ -108,7 +120,7 @@ export default defineConfig({
 	],
 	vite: {
 		optimizeDeps: {
-			exclude: ["@xriptjs/runtime", "quickjs-emscripten"],
+			exclude: ["@xriptjs/runtime", "@xriptjs/sanitize", "quickjs-emscripten"],
 		},
 	},
 	server: {

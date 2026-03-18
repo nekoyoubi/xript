@@ -31,6 +31,105 @@ public record Manifest
 
     [JsonPropertyName("limits")]
     public ExecutionLimits? Limits { get; init; }
+
+    [JsonPropertyName("slots")]
+    public List<Slot>? Slots { get; init; }
+}
+
+public record Slot
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = "";
+
+    [JsonPropertyName("accepts")]
+    public List<string> Accepts { get; init; } = new();
+
+    [JsonPropertyName("capability")]
+    public string? Capability { get; init; }
+
+    [JsonPropertyName("multiple")]
+    public bool? Multiple { get; init; }
+
+    [JsonPropertyName("style")]
+    public string? Style { get; init; }
+}
+
+public record ModManifest
+{
+    [JsonPropertyName("xript")]
+    public string Xript { get; init; } = "";
+
+    [JsonPropertyName("name")]
+    public string Name { get; init; } = "";
+
+    [JsonPropertyName("version")]
+    public string Version { get; init; } = "";
+
+    [JsonPropertyName("title")]
+    public string? Title { get; init; }
+
+    [JsonPropertyName("description")]
+    public string? Description { get; init; }
+
+    [JsonPropertyName("author")]
+    public string? Author { get; init; }
+
+    [JsonPropertyName("capabilities")]
+    public List<string>? Capabilities { get; init; }
+
+    [JsonPropertyName("entry")]
+    public JsonElement? Entry { get; init; }
+
+    [JsonPropertyName("fragments")]
+    public List<FragmentDeclaration>? Fragments { get; init; }
+}
+
+public record FragmentDeclaration
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = "";
+
+    [JsonPropertyName("slot")]
+    public string Slot { get; init; } = "";
+
+    [JsonPropertyName("format")]
+    public string Format { get; init; } = "";
+
+    [JsonPropertyName("source")]
+    public string Source { get; init; } = "";
+
+    [JsonPropertyName("inline")]
+    public bool? Inline { get; init; }
+
+    [JsonPropertyName("bindings")]
+    public List<FragmentBinding>? Bindings { get; init; }
+
+    [JsonPropertyName("events")]
+    public List<FragmentEventDeclaration>? Events { get; init; }
+
+    [JsonPropertyName("priority")]
+    public int? Priority { get; init; }
+}
+
+public record FragmentBinding
+{
+    [JsonPropertyName("name")]
+    public string Name { get; init; } = "";
+
+    [JsonPropertyName("path")]
+    public string Path { get; init; } = "";
+}
+
+public record FragmentEventDeclaration
+{
+    [JsonPropertyName("selector")]
+    public string Selector { get; init; } = "";
+
+    [JsonPropertyName("on")]
+    public string On { get; init; } = "";
+
+    [JsonPropertyName("handler")]
+    public string Handler { get; init; } = "";
 }
 
 public record HookDef

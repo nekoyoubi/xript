@@ -12,6 +12,7 @@ if (args.includes("--help") || args.includes("-h")) {
 }
 
 const skipPrompts = args.includes("--yes") || args.includes("-y");
+const isMod = args.includes("--mod");
 const tierFlag = args.find((_, i) => args[i - 1] === "--tier");
 const langFlag = args.includes("--typescript") ? "typescript"
 	: args.includes("--javascript") ? "javascript"
@@ -20,14 +21,15 @@ const langFlag = args.includes("--typescript") ? "typescript"
 const positional = args.filter((a, i) => {
 	if (a.startsWith("-")) return false;
 	if (args[i - 1] === "--tier") return false;
+	if (a === "mod" && args[i - 1] === "--mod") return false;
 	return true;
 });
 const targetDir = positional[0] ? resolve(positional[0]) : process.cwd();
 
 try {
 	const options = skipPrompts
-		? resolveDefaults(targetDir, tierFlag, langFlag)
-		: await promptUser(targetDir, tierFlag, langFlag);
+		? resolveDefaults(targetDir, tierFlag, langFlag, isMod)
+		: await promptUser(targetDir, tierFlag, langFlag, isMod);
 
 	const result = await writeProject(targetDir, options);
 
@@ -53,11 +55,13 @@ function resolveDefaults(
 	dir: string,
 	tier?: string,
 	lang?: string,
+	mod?: boolean,
 ): TemplateOptions {
 	return {
 		name: basename(dir),
 		tier: parseTier(tier) ?? 2,
 		language: (lang as "typescript" | "javascript") ?? "typescript",
+		type: mod ? "mod" : "app",
 	};
 }
 
@@ -65,6 +69,7 @@ async function promptUser(
 	dir: string,
 	tierOverride?: string,
 	langOverride?: string,
+	mod?: boolean,
 ): Promise<TemplateOptions> {
 	const rl = createInterface({ input: process.stdin, output: process.stdout });
 
@@ -90,7 +95,7 @@ async function promptUser(
 			language = (normalized === "js" || normalized === "javascript") ? "javascript" : "typescript";
 		}
 
-		return { name, tier, language };
+		return { name, tier, language, type: mod ? "mod" : "app" };
 	} finally {
 		rl.close();
 	}
@@ -111,6 +116,7 @@ function printHelp(): void {
 	console.log("");
 	console.log("Options:");
 	console.log("  --yes, -y       Skip prompts, use opinionated defaults");
+	console.log("  --mod           Generate a mod project instead of an app");
 	console.log("  --tier <2|3>    Adoption tier (default: 2)");
 	console.log("  --typescript    Generate TypeScript files (default)");
 	console.log("  --javascript    Generate JavaScript files");

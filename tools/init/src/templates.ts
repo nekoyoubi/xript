@@ -6,9 +6,14 @@ export interface TemplateOptions {
 	name: string;
 	tier: 2 | 3;
 	language: "typescript" | "javascript";
+	type?: "app" | "mod";
 }
 
 export function generateProjectFiles(options: TemplateOptions): ProjectFiles {
+	if (options.type === "mod") {
+		return generateModProjectFiles(options);
+	}
+
 	const files: ProjectFiles = {};
 
 	files["manifest.json"] = generateManifest(options);
@@ -23,6 +28,22 @@ export function generateProjectFiles(options: TemplateOptions): ProjectFiles {
 		files[`src/host.${ext}`] = generateTier3Host(options);
 		files[`src/demo.${ext}`] = generateTier3Demo(options);
 	}
+
+	if (options.language === "typescript") {
+		files["tsconfig.json"] = generateTsConfig();
+	}
+
+	return files;
+}
+
+export function generateModProjectFiles(options: TemplateOptions): ProjectFiles {
+	const files: ProjectFiles = {};
+	const ext = options.language === "typescript" ? "ts" : "js";
+
+	files["mod-manifest.json"] = generateModManifest(options);
+	files["package.json"] = generateModPackageJson(options);
+	files[`src/mod.${ext}`] = generateModEntryScript(options);
+	files["fragments/panel.html"] = generateModFragmentHtml();
 
 	if (options.language === "typescript") {
 		files["tsconfig.json"] = generateTsConfig();
@@ -287,6 +308,77 @@ function generateTier3Demo(options: TemplateOptions): string {
 	lines.push(`console.log("\\n=== Demo complete ===");`);
 	lines.push(``);
 	lines.push(`runtime.dispose();`);
+	lines.push(``);
+
+	return lines.join("\n");
+}
+
+function generateModManifest(options: TemplateOptions): string {
+	const manifest: Record<string, unknown> = {
+		$schema: "https://xript.dev/schema/mod-manifest/v0.3.json",
+		xript: "0.3",
+		name: options.name,
+		version: "0.1.0",
+		title: titleCase(options.name),
+		description: "A xript mod.",
+		capabilities: ["modify-state"],
+		entry: `src/mod.${options.language === "typescript" ? "ts" : "js"}`,
+		fragments: [
+			{
+				id: "info-panel",
+				slot: "sidebar.left",
+				format: "text/html",
+				source: "fragments/panel.html",
+				bindings: [
+					{ name: "status", path: "app.status" },
+				],
+			},
+		],
+	};
+
+	return JSON.stringify(manifest, null, "\t") + "\n";
+}
+
+function generateModPackageJson(options: TemplateOptions): string {
+	const pkg: Record<string, unknown> = {
+		name: options.name,
+		version: "0.1.0",
+		private: true,
+		type: "module",
+		description: "A xript mod.",
+	};
+
+	if (options.language === "typescript") {
+		pkg.devDependencies = {
+			typescript: "^5.0.0",
+		};
+	}
+
+	return JSON.stringify(pkg, null, "\t") + "\n";
+}
+
+function generateModEntryScript(options: TemplateOptions): string {
+	const ts = options.language === "typescript";
+	const lines: string[] = [];
+
+	lines.push(`hooks.fragment.update(${ts ? "(data: Record<string, unknown>)" : "(data)"} => {`);
+	lines.push(`\tlog("Fragment updated with: " + JSON.stringify(data));`);
+	lines.push(`});`);
+	lines.push(``);
+	lines.push(`log("${titleCase(options.name)} mod loaded!");`);
+	lines.push(``);
+
+	return lines.join("\n");
+}
+
+function generateModFragmentHtml(): string {
+	const lines: string[] = [];
+
+	lines.push(`<div class="xript-panel">`);
+	lines.push(`\t<h3>Mod Panel</h3>`);
+	lines.push(`\t<p data-bind="status">Loading...</p>`);
+	lines.push(`\t<p data-if="status">Status is available</p>`);
+	lines.push(`</div>`);
 	lines.push(``);
 
 	return lines.join("\n");

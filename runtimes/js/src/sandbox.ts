@@ -429,7 +429,7 @@ function injectHooks(
 	injectHookHelpers(context);
 
 	if (!manifest.hooks) {
-		evalAndDispose(context, "globalThis.hooks = Object.freeze({});");
+		evalAndDispose(context, "globalThis.hooks = {};");
 		return;
 	}
 
@@ -475,16 +475,118 @@ function injectHooks(
 	context.setProp(context.global, "hooks", hooksObj);
 	hooksObj.dispose();
 
-	const hookNsNames = Object.entries(manifest.hooks)
-		.filter(([_, h]) => h.phases && h.phases.length > 0)
-		.map(([name]) => name);
+}
 
-	if (hookNsNames.length > 0) {
-		const freezeCode = hookNsNames.map((n) => `Object.freeze(hooks.${n});`).join("\n");
-		evalAndDispose(context, `Object.freeze(hooks);\n${freezeCode}`);
-	} else {
-		evalAndDispose(context, "Object.freeze(hooks);");
+function freezeHooksAndFragments(
+	context: QuickJSContext | QuickJSAsyncContext,
+	manifest: Manifest,
+): void {
+	const hookNsNames = manifest.hooks
+		? Object.entries(manifest.hooks)
+			.filter(([_, h]) => h.phases && h.phases.length > 0)
+			.map(([name]) => name)
+		: [];
+
+	const freezeParts = [
+		...hookNsNames.map((n) => `Object.freeze(hooks.${n});`),
+		"if (hooks.fragment) Object.freeze(hooks.fragment);",
+		"Object.freeze(hooks);",
+	];
+
+	evalAndDispose(context, freezeParts.join("\n"));
+}
+
+function injectFragmentAPI(context: QuickJSContext | QuickJSAsyncContext): void {
+	evalAndDispose(context, `
+		globalThis.__xript_fragment_handlers = {};
+		globalThis.__xript_register_fragment_handler = function(key, handler) {
+			if (!globalThis.__xript_fragment_handlers[key]) {
+				globalThis.__xript_fragment_handlers[key] = [];
+			}
+			globalThis.__xript_fragment_handlers[key].push(handler);
+		};
+		globalThis.__xript_fire_fragment_handlers = function(key, bindings) {
+			var handlers = globalThis.__xript_fragment_handlers[key];
+			if (!handlers || handlers.length === 0) return [];
+			var allOps = [];
+			for (var i = 0; i < handlers.length; i++) {
+				var ops = [];
+				var fragmentProxy = {
+					toggle: function(selector, condition) { ops.push({ op: "toggle", selector: selector, value: !!condition }); },
+					addClass: function(selector, className) { ops.push({ op: "addClass", selector: selector, value: className }); },
+					removeClass: function(selector, className) { ops.push({ op: "removeClass", selector: selector, value: className }); },
+					setText: function(selector, text) { ops.push({ op: "setText", selector: selector, value: text }); },
+					setAttr: function(selector, attr, value) { ops.push({ op: "setAttr", selector: selector, attr: attr, value: value }); },
+					replaceChildren: function(selector, html) {
+						var content = Array.isArray(html) ? html.join("") : html;
+						ops.push({ op: "replaceChildren", selector: selector, value: content });
+					}
+				};
+				try {
+					handlers[i](bindings, fragmentProxy);
+				} catch(e) {}
+				allOps = allOps.concat(ops);
+			}
+			return allOps;
+		};
+	`);
+
+	const hooksGlobal = context.getProp(context.global, "hooks");
+	const fragmentNs = context.newObject();
+
+	const lifecycles = ["mount", "unmount", "update", "suspend", "resume"];
+	for (const lifecycle of lifecycles) {
+		const regFn = context.newFunction(`hooks.fragment.${lifecycle}`, (...handles: QuickJSHandle[]) => {
+			if (handles.length < 2) {
+				return createBindingError(context, `hooks.fragment.${lifecycle}`, "expected (fragmentId, handler)");
+			}
+			const fragmentId = context.dump(handles[0]);
+			const registryKey = `fragment:${lifecycle}:${fragmentId}`;
+
+			const registerFn = context.getProp(context.global, "__xript_register_fragment_handler");
+			const keyStr = context.newString(registryKey);
+			const callResult = context.callFunction(registerFn, context.undefined, keyStr, handles[1]);
+			keyStr.dispose();
+			registerFn.dispose();
+			if (callResult.error) callResult.error.dispose();
+			else callResult.value.dispose();
+		});
+		context.setProp(fragmentNs, lifecycle, regFn);
+		regFn.dispose();
 	}
+
+	context.setProp(hooksGlobal, "fragment", fragmentNs);
+	fragmentNs.dispose();
+	hooksGlobal.dispose();
+}
+
+function fireFragmentHookInContext(
+	context: QuickJSContext | QuickJSAsyncContext,
+	fragmentId: string,
+	lifecycle: string,
+	bindings?: Record<string, unknown>,
+): FragmentOp[] {
+	const registryKey = `fragment:${lifecycle}:${fragmentId}`;
+	const fireFn = context.getProp(context.global, "__xript_fire_fragment_handlers");
+	const keyStr = context.newString(registryKey);
+
+	const bindingsHandle = bindings !== undefined
+		? marshalToQuickJS(context, bindings)
+		: context.undefined;
+
+	const callResult = context.callFunction(fireFn, context.undefined, keyStr, bindingsHandle);
+	keyStr.dispose();
+	if (bindings !== undefined) safeDispose(context, bindingsHandle);
+	fireFn.dispose();
+
+	if (callResult.error) {
+		callResult.error.dispose();
+		return [];
+	}
+
+	const result = context.dump(callResult.value) as FragmentOp[];
+	callResult.value.dispose();
+	return Array.isArray(result) ? result : [];
 }
 
 function fireHookInContext(
@@ -540,10 +642,18 @@ function fireHookInContext(
 	return results;
 }
 
+export interface FragmentOp {
+	op: "toggle" | "addClass" | "removeClass" | "setText" | "setAttr" | "replaceChildren";
+	selector: string;
+	value?: unknown;
+	attr?: string;
+}
+
 export interface SandboxResult {
 	execute: (code: string) => ExecutionResult;
 	executeAsync: (code: string) => Promise<ExecutionResult>;
 	fireHook: (hookName: string, options?: FireHookOptions) => unknown[];
+	fireFragmentHook: (fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>) => FragmentOp[];
 	dispose: () => void;
 }
 
@@ -574,6 +684,8 @@ export function createSandboxSync(
 	injectErrorClasses(context);
 	injectBindings(context, manifest, hostBindings, grantedCapabilities, false);
 	injectHooks(context, manifest, grantedCapabilities);
+	injectFragmentAPI(context);
+	freezeHooksAndFragments(context, manifest);
 
 	function execute(code: string): ExecutionResult {
 		runtime.setInterruptHandler(shouldInterruptAfterDeadline(Date.now() + timeoutMs));
@@ -648,12 +760,16 @@ export function createSandboxSync(
 		return fireHookInContext(context, manifest, hookName, opts);
 	}
 
+	function fireFragmentHook(fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>): FragmentOp[] {
+		return fireFragmentHookInContext(context, fragmentId, lifecycle, bindings);
+	}
+
 	function dispose(): void {
 		context.dispose();
 		runtime.dispose();
 	}
 
-	return { execute, executeAsync, fireHook, dispose };
+	return { execute, executeAsync, fireHook, fireFragmentHook, dispose };
 }
 
 export async function createSandboxAsync(
@@ -683,6 +799,8 @@ export async function createSandboxAsync(
 	injectErrorClasses(context);
 	injectBindings(context, manifest, hostBindings, grantedCapabilities, true);
 	injectHooks(context, manifest, grantedCapabilities);
+	injectFragmentAPI(context);
+	freezeHooksAndFragments(context, manifest);
 
 	function execute(code: string): ExecutionResult {
 		runtime.setInterruptHandler(shouldInterruptAfterDeadline(Date.now() + timeoutMs));
@@ -758,10 +876,14 @@ export async function createSandboxAsync(
 		return fireHookInContext(context, manifest, hookName, opts);
 	}
 
+	function fireFragmentHook(fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>): FragmentOp[] {
+		return fireFragmentHookInContext(context, fragmentId, lifecycle, bindings);
+	}
+
 	function dispose(): void {
 		context.dispose();
 		runtime.dispose();
 	}
 
-	return { execute, executeAsync, fireHook, dispose };
+	return { execute, executeAsync, fireHook, fireFragmentHook, dispose };
 }

@@ -1,0 +1,83 @@
+{
+	"$schema": "https://xript.dev/schema/manifest/v0.3.json",
+	"xript": "0.3",
+	"name": "ui-dashboard",
+	"version": "1.0.0",
+	"title": "UI Dashboard",
+	"description": "A dashboard application demonstrating the xript UI Fragment Protocol. Hosts declare slots; mods contribute UI fragments.",
+
+	"bindings": {
+		"log": {
+			"description": "Writes a message to the console.",
+			"params": [
+				{ "name": "message", "type": "string" }
+			]
+		},
+		"player": {
+			"description": "Functions for reading player state.",
+			"members": {
+				"getName": {
+					"description": "Returns the player's display name.",
+					"returns": "string"
+				},
+				"getHealth": {
+					"description": "Returns current health points.",
+					"returns": "number"
+				},
+				"getMaxHealth": {
+					"description": "Returns maximum health points.",
+					"returns": "number"
+				},
+				"getInventory": {
+					"description": "Returns the player's inventory.",
+					"returns": { "array": "Item" }
+				}
+			}
+		}
+	},
+
+	"capabilities": {
+		"ui-mount": {
+			"description": "Mount UI fragments into application slots.",
+			"risk": "low"
+		}
+	},
+
+	"types": {
+		"Item": {
+			"description": "An item in the player's inventory.",
+			"fields": {
+				"name": { "type": "string", "description": "Display name." },
+				"count": { "type": "number", "description": "Stack count." }
+			}
+		}
+	},
+
+	"slots": [
+		{
+			"id": "sidebar.left",
+			"accepts": ["text/html"],
+			"multiple": true,
+			"style": "isolated"
+		},
+		{
+			"id": "header.status",
+			"accepts": ["text/html"],
+			"multiple": false,
+			"style": "inherit"
+		},
+		{
+			"id": "main.overlay",
+			"accepts": ["text/html"],
+			"capability": "ui-mount",
+			"multiple": true,
+			"style": "scoped"
+		}
+	],
+
+	"limits": {
+		"timeout_ms": 1000,
+		"memory_mb": 16,
+		"max_stack_depth": 128
+	}
+}

@@ -1,0 +1,5 @@
+{
+	"xript": "0.3",
+	"name": "my-mod",
+	"entry": "src/mod.js"
+}

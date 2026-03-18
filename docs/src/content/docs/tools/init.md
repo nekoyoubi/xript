@@ -51,13 +51,36 @@ npx @xriptjs/init my-mod --yes
 
 Defaults: tier 2, TypeScript.
 
+## Mod Project Scaffolding
+
+Use `--mod` to scaffold a mod project instead of a host app:
+
+```sh
+npx @xriptjs/init my-health-panel --mod --yes
+```
+
+This generates a mod project structure with a mod manifest, fragment HTML, and an entry script:
+
+```
+my-health-panel/
+├── mod-manifest.json       # mod manifest targeting a sample slot
+├── src/
+│   └── mod.ts              # entry script with hooks.fragment.update
+├── fragments/
+│   └── panel.html          # sample fragment with data-bind and data-if
+└── package.json
+```
+
+The generated fragment includes `data-bind` for value display and `data-if` for conditional visibility, and the entry script demonstrates the sandbox fragment API.
+
 ## Options
 
 | Option | Description | Default |
 |--------|-------------|---------|
 | `[directory]` | Target directory for the project | Current directory |
 | `--yes`, `-y` | Skip prompts, use defaults | `false` |
-| `--tier <2\|3>` | Adoption tier | `2` |
+| `--mod` | Scaffold a mod project instead of an app | `false` |
+| `--tier <2\|3>` | Adoption tier (app projects only) | `2` |
 | `--typescript` | Generate TypeScript output | (default) |
 | `--javascript` | Generate JavaScript output | |
 | `--help`, `-h` | Show help | |
