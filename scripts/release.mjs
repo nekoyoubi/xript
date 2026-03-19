@@ -16,9 +16,9 @@ if (branch !== "main") {
 	process.exit(1);
 }
 
-const status = execSync("git status --porcelain", { cwd: root, encoding: "utf8" }).trim();
+const status = execSync("git diff --stat HEAD", { cwd: root, encoding: "utf8" }).trim();
 if (status) {
-	console.error("Working tree is dirty. Commit or stash your changes first.");
+	console.error("Tracked files have uncommitted changes. Commit or stash first.");
 	process.exit(1);
 }
 
