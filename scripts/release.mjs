@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { readFileSync, execSync } from "node:fs";
+import { readFileSync } from "node:fs";
+import { execSync, spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
@@ -52,7 +53,7 @@ console.log(`  version: ${version} (from @xriptjs/runtime)`);
 console.log(`  tag:     ${tag}`);
 console.log(`  body:    ${body.split("\n").length} lines from CHANGELOG.md\n`);
 
-execSync(`gh release create ${tag} --title "${title}" --notes-file -`, {
+spawnSync("gh", ["release", "create", tag, "--title", title, "--notes-file", "-"], {
 	cwd: root,
 	input: body,
 	stdio: ["pipe", "inherit", "inherit"],
