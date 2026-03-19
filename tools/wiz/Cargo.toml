@@ -5,6 +5,9 @@ edition = "2021"
 description = "Interactive TUI wizard for the xript toolchain — powered by xript fragments."
 license = "MIT"
 repository = "https://github.com/nekoyoubi/xript"
+readme = "README.md"
+keywords = ["xript", "tui", "wizard", "validate", "scaffold"]
+categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "xript-wiz"

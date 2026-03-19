@@ -15,7 +15,12 @@
     <RepositoryUrl>https://github.com/nekoyoubi/xript</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>xript;modding;scripting;sandbox;jint;javascript</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Jint" Version="4.*" />

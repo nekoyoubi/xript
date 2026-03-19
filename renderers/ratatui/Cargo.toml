@@ -5,6 +5,9 @@ edition = "2021"
 description = "Fragment renderer for Ratatui terminal applications — renders xript UI fragments as terminal widgets."
 license = "MIT"
 repository = "https://github.com/nekoyoubi/xript"
+readme = "README.md"
+keywords = ["xript", "ratatui", "tui", "fragment", "renderer"]
+categories = ["command-line-interface", "rendering"]
 
 [dependencies]
 ratatui = "0.29"
