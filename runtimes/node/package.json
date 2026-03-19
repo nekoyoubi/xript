@@ -1,6 +1,6 @@
 {
 	"name": "@xriptjs/runtime-node",
-	"version": "0.3.0",
+	"version": "0.3.1",
 	"description": "Node.js-optimized xript runtime — sandboxed script execution via Node.js vm module.",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -11,7 +11,9 @@
 			"default": "./dist/index.js"
 		}
 	},
-	"files": ["dist"],
+	"files": [
+		"dist"
+	],
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/nekoyoubi/xript.git",
@@ -23,14 +25,22 @@
 		"test": "node --test test/*.test.js",
 		"prepublishOnly": "npm run build"
 	},
-	"keywords": ["xript", "runtime", "sandbox", "scripting", "modding", "node", "vm"],
+	"keywords": [
+		"xript",
+		"runtime",
+		"sandbox",
+		"scripting",
+		"modding",
+		"node",
+		"vm"
+	],
 	"license": "MIT",
 	"publishConfig": {
 		"access": "public",
 		"provenance": true
 	},
 	"dependencies": {
-		"@xriptjs/sanitize": "^0.3.0"
+		"@xriptjs/sanitize": "^0.3.1"
 	},
 	"devDependencies": {
 		"typescript": "^5.7.0",

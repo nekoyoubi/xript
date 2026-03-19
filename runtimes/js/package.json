@@ -1,6 +1,6 @@
 {
 	"name": "@xriptjs/runtime",
-	"version": "0.3.0",
+	"version": "0.3.1",
 	"description": "Universal JavaScript runtime for xript — QuickJS WASM sandbox for browser, Node, Deno, and more.",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -11,7 +11,9 @@
 			"default": "./dist/index.js"
 		}
 	},
-	"files": ["dist"],
+	"files": [
+		"dist"
+	],
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/nekoyoubi/xript.git",
@@ -23,7 +25,15 @@
 		"test": "node --test test/*.test.js",
 		"prepublishOnly": "npm run build"
 	},
-	"keywords": ["xript", "runtime", "sandbox", "scripting", "modding", "quickjs", "wasm"],
+	"keywords": [
+		"xript",
+		"runtime",
+		"sandbox",
+		"scripting",
+		"modding",
+		"quickjs",
+		"wasm"
+	],
 	"license": "MIT",
 	"publishConfig": {
 		"access": "public",
@@ -31,7 +41,7 @@
 	},
 	"dependencies": {
 		"quickjs-emscripten": "^0.31.0",
-		"@xriptjs/sanitize": "^0.3.0"
+		"@xriptjs/sanitize": "^0.3.1"
 	},
 	"devDependencies": {
 		"typescript": "^5.7.0",
