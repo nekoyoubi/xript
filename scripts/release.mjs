@@ -3,15 +3,11 @@
 import { readFileSync, execSync } from "node:fs";
 import { resolve } from "node:path";
 
-const version = process.argv[2];
-if (!version || !/^\d+\.\d+\.\d+/.test(version)) {
-	console.error("Usage: npm run release <version>");
-	console.error("Example: npm run release 0.3.1");
-	process.exit(1);
-}
-
-const tag = `v${version}`;
 const root = resolve(import.meta.dirname, "..");
+
+const pkg = JSON.parse(readFileSync(resolve(root, "runtimes/js/package.json"), "utf8"));
+const version = pkg.version;
+const tag = `v${version}`;
 
 const branch = execSync("git branch --show-current", { cwd: root, encoding: "utf8" }).trim();
 if (branch !== "main") {
@@ -38,7 +34,8 @@ const match = changelog.match(headerPattern);
 
 if (!match) {
 	console.error(`No changelog entry found for ${tag} in CHANGELOG.md.`);
-	console.error("Add a section like: ## v0.3.1 — Your Theme Here");
+	console.error(`Package version is ${version}, but CHANGELOG.md has no ## ${tag} section.`);
+	console.error("Add one before releasing.");
 	process.exit(1);
 }
 
@@ -50,9 +47,10 @@ const body = (nextHeader === -1 ? afterHeader : afterHeader.slice(0, nextHeader)
 const theme = match[1].replace(/^\s*—\s*/, "").trim();
 const title = theme ? `${tag} — ${theme}` : tag;
 
-console.log(`Creating release: ${title}`);
-console.log(`Tag: ${tag}`);
-console.log(`Body: ${body.split("\n").length} lines from CHANGELOG.md\n`);
+console.log(`Releasing ${title}`);
+console.log(`  version: ${version} (from @xriptjs/runtime)`);
+console.log(`  tag:     ${tag}`);
+console.log(`  body:    ${body.split("\n").length} lines from CHANGELOG.md\n`);
 
 execSync(`gh release create ${tag} --title "${title}" --notes-file -`, {
 	cwd: root,

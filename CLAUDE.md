@@ -96,6 +96,20 @@ node examples/ui-dashboard/src/demo.js           # fragment protocol demo
 - Commit messages follow the project's commit style guide (short header < 50 chars, past tense, markdown bullets for details)
 - PRs merged with merge commits (not squash) to preserve full history
 
+## Release Process
+
+Versions are unified across all 11 published packages. Two scripts handle the mechanics:
+
+1. **`npm run version:bump <version>`** — syncs the version across all 12 package files (npm, Rust, C#) and internal dependency references. Run `npm install` after to refresh the lockfile.
+2. **`npm run release`** — creates a GitHub Release from the current version in the packages and the matching `CHANGELOG.md` section. Triggers all publish workflows automatically.
+
+**When preparing a release PR, always:**
+- Run `npm run version:bump <version>` and `npm install`
+- Add/update the `CHANGELOG.md` entry for the new version (run through Elle — it's user-facing copy)
+- The user runs `npm run release` after merge — no arguments needed, it reads the version from the packages
+
+**The user should never need to run `version:bump` directly.** That's Claude's job during PR prep.
+
 ## Changelog
 
 A top-level `CHANGELOG.md` tracks all releases. Follow these rules:
