@@ -1,6 +1,6 @@
 {
 	"name": "@xriptjs/sanitize",
-	"version": "0.1.0",
+	"version": "0.3.1",
 	"description": "HTML sanitizer for xript UI fragments. Pure string-based — no DOM dependency.",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -11,7 +11,9 @@
 			"default": "./dist/index.js"
 		}
 	},
-	"files": ["dist"],
+	"files": [
+		"dist"
+	],
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/nekoyoubi/xript.git",
@@ -26,7 +28,13 @@
 		"test": "node --test test/*.test.js",
 		"prepublishOnly": "npm run build"
 	},
-	"keywords": ["xript", "sanitize", "html", "fragment", "security"],
+	"keywords": [
+		"xript",
+		"sanitize",
+		"html",
+		"fragment",
+		"security"
+	],
 	"license": "MIT",
 	"publishConfig": {
 		"access": "public",

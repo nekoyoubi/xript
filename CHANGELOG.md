@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.3.1 — Publishing & Release Tooling
+
+- fixed the docs deploy workflow; `@xriptjs/sanitize` wasn't being built before the runtime, so the docs site build was failing
+- switched all publish workflows to fire on GitHub Release creation (`release: published`) with `workflow_dispatch` as a manual fallback
+  - `publish.yml` (npm), `publish-nuget.yml`, and `publish-crates.yml` all use the same trigger pattern now
+  - previously npm and NuGet were manual-only; crates.io had no workflow at all
+- created `publish-crates.yml` for crates.io publishing
+  - publishes `xript-runtime`, `xript-ratatui`, and `xript-wiz` in dependency order
+- unified all 11 published packages (7 npm, 3 Rust crates, 1 NuGet) to version `0.3.1`
+  - internal dependency references updated to match
+- created `scripts/bump-version.mjs` (`npm run version:bump <version>`) to sync versions across all 12 package files
+  - covers `package.json`, `Cargo.toml`, and `.csproj` files plus their internal dependency references
+- created `scripts/release.mjs` (`npm run release`) to cut a GitHub Release from the current package version and matching `CHANGELOG.md` section
+- added `readme`, `keywords`, and `categories` to `xript-ratatui` and `xript-wiz` Cargo.toml files; added `version` fields to path dependencies so `cargo publish` works
+- wrote package READMEs for `@xriptjs/sanitize`, `xript-ratatui`, `xript-wiz`, and `Xript.Runtime` so they're not bare on their respective registries
+- wired `PackageReadmeFile` in the C# `.csproj` so the README shows on nuget.org
+- documented the full release process in `CLAUDE.md`
+
 ## v0.3.0 — Fragment Protocol
 
 - introduced **mod manifests**: mods declare themselves, their capabilities, entry scripts, and UI fragment contributions in a single JSON file (`spec/mod-manifest.schema.json`)

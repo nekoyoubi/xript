@@ -13,16 +13,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: publish xript-runtime
-        run: cargo publish -p xript-runtime
+        run: cargo publish --manifest-path runtimes/rust/Cargo.toml
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
 
       - name: publish xript-ratatui
-        run: cargo publish -p xript-ratatui
+        run: cargo publish --manifest-path renderers/ratatui/Cargo.toml
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
 
+      - name: wait for crates.io indexing
+        run: sleep 60
+
       - name: publish xript-wiz
-        run: cargo publish -p xript-wiz
+        run: cargo publish --manifest-path tools/wiz/Cargo.toml
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}

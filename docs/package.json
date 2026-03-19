@@ -12,8 +12,8 @@
 		"@astrojs/starlight": "0.37.6",
 		"@fontsource-variable/inter": "^5.2.8",
 		"@fontsource/jetbrains-mono": "^5.2.8",
-		"@xriptjs/runtime": "^0.2.0",
-		"@xriptjs/sanitize": "^0.1.0",
+		"@xriptjs/runtime": "^0.3.1",
+		"@xriptjs/sanitize": "^0.3.1",
 		"astro": "5.17.2",
 		"zod": "3.24.4"
 	}

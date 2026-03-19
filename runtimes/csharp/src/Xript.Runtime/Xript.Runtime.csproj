@@ -7,7 +7,7 @@
     <RootNamespace>Xript.Runtime</RootNamespace>
 
     <PackageId>Xript.Runtime</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.3.1</Version>
     <Authors>nekoyoubi</Authors>
     <Description>C# runtime for xript — sandboxed JavaScript execution via Jint with manifest-driven bindings and capability enforcement.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
@@ -15,7 +15,12 @@
     <RepositoryUrl>https://github.com/nekoyoubi/xript</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>xript;modding;scripting;sandbox;jint;javascript</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Jint" Version="4.*" />

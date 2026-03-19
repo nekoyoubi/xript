@@ -8,6 +8,8 @@
 		"tools/*"
 	],
 	"scripts": {
+		"version:bump": "node scripts/bump-version.mjs",
+		"release": "node scripts/release.mjs",
 		"docs:dev": "npm run dev -w @xriptjs/docs",
 		"docs:build": "npm run build -w @xriptjs/docs"
 	}

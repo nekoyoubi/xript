@@ -1,18 +1,21 @@
 [package]
 name = "xript-wiz"
-version = "0.1.0"
+version = "0.3.1"
 edition = "2021"
 description = "Interactive TUI wizard for the xript toolchain — powered by xript fragments."
 license = "MIT"
 repository = "https://github.com/nekoyoubi/xript"
+readme = "README.md"
+keywords = ["xript", "tui", "wizard", "validate", "scaffold"]
+categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "xript-wiz"
 path = "src/main.rs"
 
 [dependencies]
-xript-runtime = { path = "../../runtimes/rust" }
-xript-ratatui = { path = "../../renderers/ratatui" }
+xript-runtime = { version = "0.3.1", path = "../../runtimes/rust" }
+xript-ratatui = { version = "0.3.1", path = "../../renderers/ratatui" }
 ratatui = "0.29"
 ansi-to-tui = "7"
 crossterm = "0.28"
