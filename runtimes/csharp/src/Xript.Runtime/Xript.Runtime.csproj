@@ -7,7 +7,7 @@
     <RootNamespace>Xript.Runtime</RootNamespace>
 
     <PackageId>Xript.Runtime</PackageId>
-    <Version>0.3.1</Version>
+    <Version>0.4.0</Version>
     <Authors>nekoyoubi</Authors>
     <Description>C# runtime for xript — sandboxed JavaScript execution via Jint with manifest-driven bindings and capability enforcement.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

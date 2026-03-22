@@ -1,5 +1,51 @@
 # Changelog
 
+## v0.4.0 — Unified CLI & Annotation Scanning
+
+- consolidated five separate CLI tools into `@xriptjs/cli`, published as the `xript` command
+  - `xript validate`, `xript typegen`, `xript docgen`, `xript init`, `xript sanitize` all route to the existing library packages
+  - individual tool packages (`@xriptjs/validate`, `@xriptjs/typegen`, etc.) dropped their `bin` entries but remain published as libraries
+  - one command to remember instead of five separate `npx xript-*` invocations
+- added `xript scan`, a new subcommand that reads `@xript` and `@xript-cap` JSDoc tags from TypeScript source and generates manifest bindings and capabilities
+  - spec document at `spec/annotations.md` defining the tag convention
+  - scanner parses TypeScript ASTs via `ts-morph` (optional dependency; the CLI prompts if it's missing)
+  - merge mode reads an existing manifest, adds new bindings, warns about removals, and auto-generates capability entries
+  - outputs to stdout, to a file, or directly into an existing manifest with `--write`
+- improved `@xriptjs/docgen` with two new flags
+  - `--link-format no-extension` strips `.md` from generated links for static site generators that don't want them
+  - `--frontmatter` injects YAML frontmatter into all generated files
+- built the **Fragment Workbench** (#85), an interactive tool page on the docs site for building and testing xript UI fragments
+  - first interactive page in the Tools section of the sidebar
+  - manifest-driven: load an app manifest and the workbench configures itself from its slots
+  - slot contract panel shows available bindings, capabilities, and types per slot
+  - JSML toggle with lossless HTML/JSML conversion
+  - validation-as-you-type: unresolved `data-bind`/`data-if` refs flagged inline, sanitizer stripping highlighted
+  - dynamic state simulation with controls generated from manifest type info
+  - export as a downloadable mod manifest JSON
+- added two new screens to `xript-wiz`
+  - audit: capability coverage analysis showing ungated bindings, unused capabilities, capability gaps, and risk distribution
+  - diff: compares the current manifest against the last git tag, surfacing added/removed bindings, capabilities, and slots
+  - home menu expanded from 4 to 6 items
+- updated the publish pipeline for 8 npm packages (added `@xriptjs/cli`); `scripts/bump-version.mjs` now handles 13 files
+
+### Test counts
+
+| package | v0.3.1 | v0.4.0 |
+|---------|--------|--------|
+| `@xriptjs/sanitize` | 71 | 71 |
+| `@xriptjs/validate` | 25 | 25 |
+| `@xriptjs/typegen` | 31 | 31 |
+| `@xriptjs/docgen` | 22 | 28 |
+| `@xriptjs/init` | 27 | 27 |
+| `@xriptjs/cli` | — | 29 |
+| `@xriptjs/runtime` | 97 | 97 |
+| `@xriptjs/runtime-node` | 97 | 97 |
+| `xript-runtime` (Rust) | 31 | 31 |
+| `xript-ratatui` | 58 | 58 |
+| `xript-wiz` | 33 | 35 |
+| `Xript.Runtime` (C#) | 116 | 116 |
+| **total** | **608** | **645** |
+
 ## v0.3.1 — Publishing & Release Tooling
 
 - fixed the docs deploy workflow; `@xriptjs/sanitize` wasn't being built before the runtime, so the docs site build was failing
