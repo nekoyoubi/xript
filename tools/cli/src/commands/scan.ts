@@ -45,6 +45,13 @@ export async function run(args: string[]): Promise<void> {
 		process.exit(1);
 	}
 
+	if (write && !manifestPath) {
+		console.error("Error: --write requires --manifest.");
+		console.error("");
+		printHelp();
+		process.exit(1);
+	}
+
 	try {
 		const result = await scanDirectory(sourceDir);
 

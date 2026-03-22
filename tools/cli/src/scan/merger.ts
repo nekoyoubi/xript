@@ -41,16 +41,11 @@ export function mergeImpl(existing: unknown, scanned: ScanResult): MergeResult {
 	const caps = manifest.capabilities as Record<string, unknown>;
 	for (const [name, scannedCap] of Object.entries(scanned.capabilities)) {
 		if (!caps[name]) {
+			capabilityGaps.push(name);
 			caps[name] = {
 				description: (scannedCap as any).description,
 				risk: (scannedCap as any).risk,
 			};
-		}
-	}
-
-	for (const [name, scannedCap] of Object.entries(scanned.capabilities)) {
-		if (!caps[name]) {
-			capabilityGaps.push(name);
 		}
 	}
 

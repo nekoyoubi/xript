@@ -154,4 +154,28 @@ describe("manifest merger", { skip: skipScan ? "ts-morph not available" : false 
 
 		assert.deepEqual(existing.bindings, {});
 	});
+
+	test("reports capability gaps for capabilities not yet in manifest", async () => {
+		const existing = { xript: "0.4", name: "test-app" };
+		const scanned = await scanModule.scanDirectory(FIXTURES);
+		const result = await scanModule.mergeIntoManifest(existing, scanned);
+
+		assert.ok(result.capabilityGaps.length > 0, "should report gaps for newly discovered capabilities");
+		assert.ok(result.capabilityGaps.includes("read-state") || result.capabilityGaps.includes("modify-state"));
+	});
+
+	test("does not report gaps for capabilities already in manifest", async () => {
+		const existing = {
+			xript: "0.4",
+			name: "test-app",
+			capabilities: {
+				"read-state": { description: "read", risk: "low" },
+				"modify-state": { description: "modify", risk: "medium" },
+			},
+		};
+		const scanned = await scanModule.scanDirectory(FIXTURES);
+		const result = await scanModule.mergeIntoManifest(existing, scanned);
+
+		assert.equal(result.capabilityGaps.length, 0, "no gaps when all caps are pre-defined");
+	});
 });

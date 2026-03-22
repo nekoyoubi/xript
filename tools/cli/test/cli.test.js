@@ -128,4 +128,10 @@ describe("xript scan", () => {
 		assert.equal(exitCode, 1);
 		assert.ok(stderr.includes("source directory is required"));
 	});
+
+	test("--write without --manifest exits 1", async () => {
+		const { stderr, exitCode } = await run("scan", "src/", "--write");
+		assert.equal(exitCode, 1);
+		assert.ok(stderr.includes("--write requires --manifest"));
+	});
 });

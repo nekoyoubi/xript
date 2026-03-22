@@ -1,91 +1,21 @@
 use std::path::Path;
 
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::Frame;
+use ratatui::layout::Rect;
 
 use crate::app::App;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
-    let has_result = app.result_fragment.is_some();
-
-    let mut constraints = vec![
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ];
-
-    if !has_result && !app.completion.suggestions.is_empty() {
-        let visible_count = app.completion.suggestions.len().min(8) as u16;
-        constraints.push(Constraint::Length(visible_count + 2));
-    }
-
-    if !has_result {
-        constraints.push(Constraint::Length(1));
-    }
-
-    constraints.push(Constraint::Min(1));
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(&constraints)
-        .split(area);
-
-    let cwd = crate::completion::current_dir_display();
-    let cwd_line = Paragraph::new(Line::from(vec![
-        Span::styled("cwd: ", Style::default().fg(Color::DarkGray)),
-        Span::styled(&cwd, Style::default().fg(Color::DarkGray)),
-    ]));
-    frame.render_widget(cwd_line, chunks[0]);
-
-    let prompt = Paragraph::new(Line::from(vec![Span::styled(
+    let (chunks, next_chunk) = crate::screens::common::render_file_input(
+        frame,
+        area,
+        app,
         "Enter path to a manifest file:",
-        Style::default().fg(Color::Gray),
-    )]));
-    frame.render_widget(prompt, chunks[1]);
-
-    let cursor_char = if !has_result { "\u{2588}" } else { "" };
-    let input_text = format!("{}{}", app.input, cursor_char);
-
-    let path_exists = !app.input.is_empty() && crate::completion::path_exists(&app.input);
-    let input_color = if has_result {
-        Color::White
-    } else if app.input.is_empty() {
-        Color::Cyan
-    } else if path_exists {
-        Color::Green
-    } else {
-        Color::Yellow
-    };
-
-    let input_line = Paragraph::new(Line::from(vec![
-        Span::styled("> ", Style::default().fg(Color::Cyan)),
-        Span::styled(input_text, Style::default().fg(input_color)),
-    ]));
-    frame.render_widget(input_line, chunks[2]);
-
-    let mut next_chunk = 3;
-
-    if !has_result && !app.completion.suggestions.is_empty() {
-        crate::screens::validate::render_suggestions_public(frame, chunks[next_chunk], &app.completion);
-        next_chunk += 1;
-    }
-
-    if !has_result {
-        let hint = if app.completion.suggestions.is_empty() {
-            "Enter to audit \u{00b7} Esc to go back"
-        } else {
-            "Tab to complete \u{00b7} Enter to audit \u{00b7} Esc to go back"
-        };
-        let hint_para = Paragraph::new(Line::from(Span::styled(
-            hint,
-            Style::default().fg(Color::DarkGray),
-        )));
-        frame.render_widget(hint_para, chunks[next_chunk]);
-        next_chunk += 1;
-    }
+        "audit",
+    );
 
     if let Some(ref result) = app.result_fragment {
         let text = match result.as_str() {
@@ -93,8 +23,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             None => result.to_string(),
         };
 
-        let is_success = text.starts_with('\u{2714}');
-        let result_color = if is_success { Color::Green } else { Color::Yellow };
+        let result_color = if text.starts_with('\u{2718}') {
+            Color::Red
+        } else if text.contains("Ungated") || text.contains("gaps") || text.contains("Unused") {
+            Color::Yellow
+        } else {
+            Color::Green
+        };
 
         let result_block = Block::default()
             .borders(Borders::ALL)

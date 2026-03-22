@@ -1,4 +1,5 @@
 pub mod audit;
+pub mod common;
 pub mod diff;
 pub mod home;
 pub mod sanitize;

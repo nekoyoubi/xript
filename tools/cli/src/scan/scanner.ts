@@ -70,8 +70,7 @@ function extractParams(jsdoc: string): Array<{ name: string; description?: strin
 
 function typeToString(typeNode: any): string {
 	if (!typeNode) return "unknown";
-	const text = typeNode.getText();
-	return text;
+	return typeNode.getText();
 }
 
 function isPromiseType(text: string): boolean {
@@ -158,6 +157,15 @@ export async function scanDirectoryImpl(dir: string): Promise<ScanResult> {
 				: undefined;
 
 			const capability = capabilities.length > 0 ? capabilities[0] : undefined;
+
+			if (capabilities.length > 1) {
+				diagnostics.push({
+					file: filePath,
+					line: func.getStartLineNumber(),
+					message: `binding "${bindingPath}" declares ${capabilities.length} @xript-cap tags but the manifest schema only supports one; only "${capabilities[0]}" will be written`,
+					severity: "warning",
+				});
+			}
 
 			for (const cap of capabilities) {
 				if (!allCapabilities.has(cap)) {

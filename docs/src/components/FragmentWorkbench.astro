@@ -109,7 +109,7 @@
 
 	const exampleManifests = {
 		dashboard: {
-			xript: "0.3",
+			xript: "0.4",
 			name: "dashboard-app",
 			title: "Dashboard Application",
 			version: "1.0.0",
@@ -147,7 +147,7 @@
 			],
 		},
 		game: {
-			xript: "0.3",
+			xript: "0.4",
 			name: "game-hud",
 			title: "Game HUD",
 			version: "2.0.0",
@@ -401,10 +401,10 @@
 		const select = document.getElementById("fwb-sample-select");
 		select.innerHTML = '<option value="">Sample...</option>';
 		const fragments = sampleFragments[currentManifestKey] || [];
-		for (let i = 0; i < fragments.length; i++) {
+		for (const [i, frag] of fragments.entries()) {
 			const opt = document.createElement("option");
 			opt.value = String(i);
-			opt.textContent = fragments[i].name;
+			opt.textContent = frag.name;
 			select.appendChild(opt);
 		}
 	}
@@ -531,7 +531,7 @@
 
 		const format = formatToggle.value === "jsml" ? "application/jsml+json" : "text/html";
 		const modManifest = {
-			xript: "0.3",
+			xript: "0.4",
 			name: "my-mod",
 			version: "1.0.0",
 			capabilities: [],
@@ -569,7 +569,7 @@
 
 		if (key === "custom") {
 			editor.readOnly = false;
-			editor.value = JSON.stringify({ xript: "0.3", name: "my-app", slots: [] }, null, "\t");
+			editor.value = JSON.stringify({ xript: "0.4", name: "my-app", slots: [] }, null, "\t");
 			status.innerHTML = '<span class="status-info">Edit your manifest above</span>';
 			currentManifest = null;
 			return;
@@ -645,24 +645,18 @@
 				debounceTimer = setTimeout(() => parseCustomManifest(manifestEditor.value), 500);
 			});
 
-			sampleSelect.addEventListener("change", () => {
+			function loadSelectedSample(runDiag = false) {
 				const fragments = sampleFragments[currentManifestKey] || [];
 				const idx = parseInt(sampleSelect.value);
 				const sample = fragments[idx];
 				if (!sample) return;
 				const isJsml = formatToggle.value === "jsml";
 				editor.value = isJsml && sample.jsml ? sample.jsml : sample.html;
-				runDiagnostics(sample.html);
-			});
+				if (runDiag) runDiagnostics(sample.html);
+			}
 
-			formatToggle.addEventListener("change", () => {
-				const fragments = sampleFragments[currentManifestKey] || [];
-				const idx = parseInt(sampleSelect.value);
-				const sample = fragments[idx];
-				if (!sample) return;
-				const isJsml = formatToggle.value === "jsml";
-				editor.value = isJsml && sample.jsml ? sample.jsml : sample.html;
-			});
+			sampleSelect.addEventListener("change", () => loadSelectedSample(true));
+			formatToggle.addEventListener("change", () => loadSelectedSample(false));
 
 			let editorDebounce;
 			editor.addEventListener("input", () => {
