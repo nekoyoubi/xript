@@ -65,6 +65,7 @@ export default defineConfig({
 						{ label: "Doc Generator", slug: "tools/docgen" },
 						{ label: "Init CLI", slug: "tools/init" },
 					{ label: "Sanitizer", slug: "tools/sanitize" },
+					{ label: "Fragment Workbench", slug: "tools/fragment-workbench" },
 					],
 				},
 				{

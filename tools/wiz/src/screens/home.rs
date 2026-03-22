@@ -29,6 +29,16 @@ const CARDS: &[CardDef] = &[
         description: "Clean dangerous content from HTML fragments",
     },
     CardDef {
+        icon: "\u{2690}",
+        name: "Audit",
+        description: "Analyze manifest capability coverage",
+    },
+    CardDef {
+        icon: "\u{0394}",
+        name: "Diff",
+        description: "Compare manifest against last git tag",
+    },
+    CardDef {
         icon: "\u{2715}",
         name: "Quit",
         description: "Exit the wizard",

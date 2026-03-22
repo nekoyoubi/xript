@@ -1,3 +1,5 @@
+pub mod audit;
+pub mod diff;
 pub mod home;
 pub mod sanitize;
 pub mod scaffold;
@@ -9,6 +11,8 @@ pub enum Screen {
     Validate,
     Scaffold,
     Sanitize,
+    Audit,
+    Diff,
 }
 
 impl Screen {
@@ -18,6 +22,8 @@ impl Screen {
             Screen::Validate => "Validate Manifest",
             Screen::Scaffold => "Scaffold Project",
             Screen::Sanitize => "Sanitize Fragment",
+            Screen::Audit => "Audit Manifest",
+            Screen::Diff => "Diff Manifest",
         }
     }
 }

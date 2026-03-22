@@ -72,6 +72,8 @@ fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         Screen::Validate => handle_input_screen_key(app, code, run_validate),
         Screen::Scaffold => handle_scaffold_key(app, code, modifiers),
         Screen::Sanitize => handle_input_screen_key(app, code, run_sanitize),
+        Screen::Audit => handle_input_screen_key(app, code, run_audit),
+        Screen::Diff => handle_input_screen_key(app, code, run_diff),
     }
 }
 
@@ -96,7 +98,9 @@ fn handle_home_key(app: &mut App, code: KeyCode) {
             0 => app.navigate_to(Screen::Validate),
             1 => app.navigate_to(Screen::Scaffold),
             2 => app.navigate_to(Screen::Sanitize),
-            3 => app.should_quit = true,
+            3 => app.navigate_to(Screen::Audit),
+            4 => app.navigate_to(Screen::Diff),
+            5 => app.should_quit = true,
             _ => {}
         },
         _ => {}
@@ -240,6 +244,18 @@ fn run_sanitize(app: &mut App) {
     app.status_message = "Sanitization complete".to_string();
 }
 
+fn run_audit(app: &mut App) {
+    let result = screens::audit::run_audit(&app.input);
+    app.result_fragment = Some(result);
+    app.status_message = format!("Audited: {}", app.input);
+}
+
+fn run_diff(app: &mut App) {
+    let result = screens::diff::run_diff(&app.input);
+    app.result_fragment = Some(result);
+    app.status_message = format!("Diffed: {}", app.input);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,9 +321,25 @@ mod tests {
     }
 
     #[test]
-    fn quit_menu_option() {
+    fn enter_audit_screen() {
         let mut app = App::new();
         app.selected = 3;
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::empty());
+        assert_eq!(app.screen, Screen::Audit);
+    }
+
+    #[test]
+    fn enter_diff_screen() {
+        let mut app = App::new();
+        app.selected = 4;
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::empty());
+        assert_eq!(app.screen, Screen::Diff);
+    }
+
+    #[test]
+    fn quit_menu_option() {
+        let mut app = App::new();
+        app.selected = 5;
         handle_key(&mut app, KeyCode::Enter, KeyModifiers::empty());
         assert!(app.should_quit);
     }
