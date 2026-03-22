@@ -1,7 +1,7 @@
 {
-	"name": "@xriptjs/sanitize",
+	"name": "@xriptjs/cli",
 	"version": "0.3.1",
-	"description": "HTML sanitizer for xript UI fragments. Pure string-based — no DOM dependency.",
+	"description": "Unified CLI for the xript ecosystem — validate, generate types, generate docs, scaffold projects, sanitize fragments, and scan annotations.",
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -17,9 +17,12 @@
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/nekoyoubi/xript.git",
-		"directory": "tools/sanitize"
+		"directory": "tools/cli"
 	},
 	"homepage": "https://xript.dev",
+	"bin": {
+		"xript": "./dist/cli.js"
+	},
 	"scripts": {
 		"build": "tsc",
 		"test": "node --test test/*.test.js",
@@ -27,15 +30,25 @@
 	},
 	"keywords": [
 		"xript",
-		"sanitize",
-		"html",
-		"fragment",
-		"security"
+		"cli",
+		"toolchain",
+		"modding",
+		"extensibility"
 	],
 	"license": "MIT",
 	"publishConfig": {
 		"access": "public",
 		"provenance": true
+	},
+	"dependencies": {
+		"@xriptjs/validate": "^0.3.1",
+		"@xriptjs/typegen": "^0.3.1",
+		"@xriptjs/docgen": "^0.3.1",
+		"@xriptjs/init": "^0.3.1",
+		"@xriptjs/sanitize": "^0.3.1"
+	},
+	"optionalDependencies": {
+		"ts-morph": "^25.0.0"
 	},
 	"devDependencies": {
 		"typescript": "^5.7.0",

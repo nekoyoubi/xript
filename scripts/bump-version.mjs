@@ -18,6 +18,7 @@ const npmPackages = [
 	"tools/typegen/package.json",
 	"tools/docgen/package.json",
 	"tools/init/package.json",
+	"tools/cli/package.json",
 	"runtimes/js/package.json",
 	"runtimes/node/package.json",
 ];
@@ -25,6 +26,10 @@ const npmPackages = [
 const internalDeps = {
 	"@xriptjs/sanitize": [`^${version}`],
 	"@xriptjs/runtime": [`^${version}`],
+	"@xriptjs/validate": [`^${version}`],
+	"@xriptjs/typegen": [`^${version}`],
+	"@xriptjs/docgen": [`^${version}`],
+	"@xriptjs/init": [`^${version}`],
 };
 
 const rustCrates = [

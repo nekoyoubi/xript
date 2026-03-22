@@ -20,9 +20,6 @@
 		"directory": "tools/validate"
 	},
 	"homepage": "https://xript.dev",
-	"bin": {
-		"xript-validate": "./dist/cli.js"
-	},
 	"scripts": {
 		"build": "tsc",
 		"test": "node --test test/*.test.js",
