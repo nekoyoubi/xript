@@ -215,6 +215,7 @@
 
 	let manifestJar;
 	let editorJar;
+	let suppressManifestUpdate = false;
 
 	function validateManifest(manifest) {
 		const errors = [];
@@ -636,7 +637,9 @@
 
 		if (key === "custom") {
 			manifestReadOnly = false;
+			suppressManifestUpdate = true;
 			manifestJar.updateCode(JSON.stringify({ xript: "0.4", name: "my-app", slots: [] }, null, "\t"));
+			suppressManifestUpdate = false;
 			status.innerHTML = '<span class="status-info">Edit your manifest above</span>';
 			currentManifest = null;
 			return;
@@ -646,7 +649,9 @@
 		if (!manifest) return;
 
 		manifestReadOnly = true;
+		suppressManifestUpdate = true;
 		manifestJar.updateCode(JSON.stringify(manifest, null, "\t"));
+		suppressManifestUpdate = false;
 		currentManifestKey = key;
 
 		const result = validateManifest(manifest);
@@ -735,10 +740,8 @@
 
 			let debounce;
 			manifestJar.onUpdate(code => {
-				if (manifestReadOnly) {
-					manifestJar.updateCode(manifestJar.toString());
-					return;
-				}
+				if (suppressManifestUpdate) return;
+				if (manifestReadOnly) return;
 				clearTimeout(debounce);
 				debounce = setTimeout(() => parseCustomManifest(code), 500);
 			});
@@ -755,14 +758,25 @@
 			}
 
 			sampleSelect.addEventListener("change", () => loadSelectedSample(true));
+			function rebuildEditorJar() {
+				const code = editorJar.toString();
+				editorJar.destroy();
+				const hl = formatToggle.value === "jsml" ? highlightJSON : highlightMarkup;
+				editorJar = CodeJar(editorEl, hl, { tab: "\t" });
+				editorJar.updateCode(code);
+				wireEditorUpdate();
+			}
+
 			formatToggle.addEventListener("change", () => {
 				loadSelectedSample(false);
-				const isJsml = formatToggle.value === "jsml";
-				editorJar.updateOptions({ highlight: isJsml ? highlightJSON : highlightMarkup });
+				rebuildEditorJar();
 			});
 
 			let editorDebounce;
-			editorJar.onUpdate(code => {
+			function wireEditorUpdate() {
+				editorJar.onUpdate(editorUpdateHandler);
+			}
+			function editorUpdateHandler(code) {
 				clearTimeout(editorDebounce);
 				editorDebounce = setTimeout(() => {
 					let html = code;
@@ -772,7 +786,8 @@
 					runDiagnostics(html);
 					updateExportPreview();
 				}, 300);
-			});
+			}
+			wireEditorUpdate();
 
 			document.getElementById("fwb-mount-btn").addEventListener("click", () => {
 				let html = editorJar.toString().trim();
