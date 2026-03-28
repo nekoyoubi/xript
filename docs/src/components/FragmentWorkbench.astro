@@ -896,7 +896,7 @@
 		padding: 0.5rem 0.75rem; font-family: var(--sl-font-mono);
 		font-size: 0.6875rem; min-height: 80px;
 	}
-	.placeholder {
+	:global(#fwb .placeholder) {
 		color: var(--sl-color-gray-4); font-style: italic;
 		font-family: var(--sl-font); font-size: 0.75rem; padding: 0.5rem 0;
 	}
@@ -909,16 +909,16 @@
 	:global(.binding-tag code) { color: var(--sl-color-white); }
 	:global(.binding-type) { color: var(--sl-color-gray-3); font-size: 0.5625rem; }
 
-	.host-slots {
+	:global(#fwb .host-slots) {
 		display: flex; flex-direction: column; gap: 0.5rem;
 		padding: 0.75rem; min-height: 150px;
 	}
-	.slot-region {
+	:global(#fwb .slot-region) {
 		border: 2px dashed var(--sl-color-gray-4); border-radius: 0.375rem;
 		min-height: 50px; overflow: hidden; cursor: pointer; transition: border-color 0.15s;
 	}
-	.slot-region:hover { border-color: var(--sl-color-accent); }
-	.slot-label {
+	:global(#fwb .slot-region:hover) { border-color: var(--sl-color-accent); }
+	:global(#fwb .slot-label) {
 		font-family: var(--sl-font-mono); font-size: 0.6875rem; font-weight: 600;
 		color: var(--sl-color-gray-3); padding: 0.25rem 0.5rem;
 		border-bottom: 1px dashed var(--sl-color-gray-5);
@@ -958,24 +958,24 @@
 	}
 	.run-button:hover { opacity: 0.85; }
 
-	.state-panel .state-controls {
+	:global(#fwb .state-controls) {
 		padding: 0.625rem 0.75rem; display: flex; flex-direction: column; gap: 0.5rem;
 	}
-	.control-row {
+	:global(#fwb .control-row) {
 		display: flex; align-items: center; gap: 0.75rem;
 		font-family: var(--sl-font-mono); font-size: 0.6875rem;
 		padding: 0.125rem 0;
 	}
-	.control-row label { min-width: 90px; color: var(--sl-color-gray-3); flex-shrink: 0; }
-	.control-row input[type="range"] { flex: 1; accent-color: var(--sl-color-accent); }
-	.control-row input[type="text"] {
+	:global(#fwb .control-row label) { min-width: 90px; color: var(--sl-color-gray-3); flex-shrink: 0; }
+	:global(#fwb .control-row input[type="range"]) { flex: 1; accent-color: var(--sl-color-accent); }
+	:global(#fwb .control-row input[type="text"]) {
 		flex: 1; font-family: var(--sl-font-mono); font-size: 0.6875rem;
 		padding: 0.125rem 0.375rem; background: var(--sl-color-gray-5);
 		color: var(--sl-color-white); border: 1px solid var(--sl-color-gray-4);
 		border-radius: 0.25rem; outline: none;
 	}
-	.control-row input[type="checkbox"] { accent-color: var(--sl-color-accent); }
-	.control-value { min-width: 30px; text-align: right; color: var(--sl-color-accent); font-weight: 600; }
+	:global(#fwb .control-row input[type="checkbox"]) { accent-color: var(--sl-color-accent); }
+	:global(#fwb .control-value) { min-width: 30px; text-align: right; color: var(--sl-color-accent); font-weight: 600; }
 
 	.clear-button {
 		font-size: 0.625rem; padding: 0.0625rem 0.375rem; background: transparent;
