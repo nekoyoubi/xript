@@ -8,23 +8,39 @@
 	</div>
 	<div class="fb-container" id="fb-container" style="display:none">
 		<div class="fb-left">
-			<div class="panel host-panel">
-				<div class="panel-header">
-					<h3>Host App</h3>
-					<button id="fb-clear-slots-btn" class="clear-button">Clear Slots</button>
+			<div class="game-window">
+				<div class="game-header" data-slot="header.status">
+					<div class="game-title">Realm of Xript</div>
+					<div class="header-slot" id="slot-header-status">
+						<span class="header-default">LVL 12 &middot; Floor 3</span>
+					</div>
 				</div>
-				<div class="host-slots" id="host-slots">
-					<div class="slot-region" data-slot="sidebar.left">
-						<div class="slot-label">sidebar.left <span class="slot-meta">multiple · isolated</span></div>
-						<div class="slot-content" id="slot-sidebar-left"></div>
+				<div class="game-body">
+					<div class="game-sidebar" data-slot="sidebar.left">
+						<div class="sidebar-label">sidebar.left</div>
+						<div class="sidebar-slot" id="slot-sidebar-left"></div>
 					</div>
-					<div class="slot-region" data-slot="header.status">
-						<div class="slot-label">header.status <span class="slot-meta">single · inherit</span></div>
-						<div class="slot-content" id="slot-header-status"></div>
+					<div class="game-world">
+						<div class="world-grid">
+							<div class="grid-cell wall"></div><div class="grid-cell wall"></div><div class="grid-cell wall"></div><div class="grid-cell wall"></div><div class="grid-cell wall"></div><div class="grid-cell wall"></div><div class="grid-cell wall"></div><div class="grid-cell wall"></div>
+							<div class="grid-cell wall"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell wall"></div>
+							<div class="grid-cell wall"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor torch"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell wall"></div>
+							<div class="grid-cell wall"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor player"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell wall"></div>
+							<div class="grid-cell wall"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor chest"></div><div class="grid-cell wall"></div>
+							<div class="grid-cell wall"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell wall"></div>
+							<div class="grid-cell wall"></div><div class="grid-cell wall"></div><div class="grid-cell wall"></div><div class="grid-cell door"></div><div class="grid-cell wall"></div><div class="grid-cell wall"></div><div class="grid-cell wall"></div><div class="grid-cell wall"></div>
+						</div>
+						<div class="overlay-region" data-slot="main.overlay">
+							<div class="overlay-slot" id="slot-main-overlay"></div>
+						</div>
 					</div>
-					<div class="slot-region" data-slot="main.overlay">
-						<div class="slot-label">main.overlay <span class="slot-meta">multiple · scoped · <code>ui-mount</code></span></div>
-						<div class="slot-content" id="slot-main-overlay"></div>
+				</div>
+				<div class="game-footer">
+					<button id="fb-clear-slots-btn" class="game-btn">Clear Slots</button>
+					<div class="slot-legend">
+						<span class="legend-item"><span class="legend-dot sidebar-dot"></span> sidebar.left</span>
+						<span class="legend-item"><span class="legend-dot header-dot"></span> header.status</span>
+						<span class="legend-item"><span class="legend-dot overlay-dot"></span> main.overlay</span>
 					</div>
 				</div>
 			</div>
@@ -137,7 +153,7 @@
 	};
 
 	const appManifest = {
-		xript: "0.3",
+		xript: "0.4",
 		name: "fragment-builder",
 		version: "1.0.0",
 		bindings: {
@@ -300,9 +316,9 @@
 			});
 
 			clearSlotsBtn.addEventListener("click", () => {
-				for (const slotEl of document.querySelectorAll(".slot-content")) {
-					slotEl.innerHTML = "";
-				}
+				document.getElementById("slot-sidebar-left").innerHTML = "";
+				document.getElementById("slot-main-overlay").innerHTML = "";
+				document.getElementById("slot-header-status").innerHTML = '<span class="header-default">LVL 12 &middot; Floor 3</span>';
 				mountedFragments = [];
 				addConsole("cleared all slots", "log");
 			});
@@ -400,6 +416,174 @@
 		}
 	}
 
+	/* ── Game Window ── */
+
+	.game-window {
+		background: #0a0a0f;
+		border: 2px solid #2a2a3a;
+		border-radius: 0.5rem;
+		overflow: hidden;
+		display: flex;
+		flex-direction: column;
+		box-shadow: 0 0 20px rgba(0, 0, 0, 0.5), inset 0 0 30px rgba(0, 0, 0, 0.3);
+	}
+
+	.game-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 0.375rem 0.75rem;
+		background: linear-gradient(180deg, #1a1a2e 0%, #12121f 100%);
+		border-bottom: 1px solid #2a2a3a;
+		min-height: 1.75rem;
+	}
+
+	.game-title {
+		font-family: var(--sl-font-mono);
+		font-size: 0.75rem;
+		font-weight: 700;
+		color: #c8a86e;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+	}
+
+	:global(.header-default) {
+		font-family: var(--sl-font-mono);
+		font-size: 0.6875rem;
+		color: #6a6a8a;
+	}
+
+	:global(.header-slot) {
+		font-family: var(--sl-font-mono);
+		font-size: 0.6875rem;
+	}
+
+	.game-body {
+		display: flex;
+		flex: 1;
+		min-height: 300px;
+	}
+
+	.game-sidebar {
+		width: 140px;
+		border-right: 1px solid #2a2a3a;
+		background: linear-gradient(180deg, #111120 0%, #0d0d18 100%);
+		display: flex;
+		flex-direction: column;
+		flex-shrink: 0;
+	}
+
+	.sidebar-label {
+		font-family: var(--sl-font-mono);
+		font-size: 0.5625rem;
+		color: #4a4a6a;
+		padding: 0.25rem 0.5rem;
+		border-bottom: 1px solid #1a1a2a;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	:global(.sidebar-slot) {
+		padding: 0.375rem 0.5rem;
+		flex: 1;
+		font-size: 0.8125rem;
+	}
+
+	.game-world {
+		flex: 1;
+		position: relative;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		overflow: hidden;
+	}
+
+	.world-grid {
+		display: grid;
+		grid-template-columns: repeat(8, 1fr);
+		gap: 1px;
+		width: 80%;
+		max-width: 280px;
+		aspect-ratio: 8/7;
+		opacity: 0.6;
+	}
+
+	.grid-cell {
+		aspect-ratio: 1;
+		border-radius: 1px;
+	}
+
+	.grid-cell.wall { background: #1a1a2e; }
+	.grid-cell.floor { background: #1e1e30; }
+	.grid-cell.door { background: #3a2a1a; }
+	.grid-cell.player { background: #2a6a4a; box-shadow: 0 0 4px #4ade80; }
+	.grid-cell.torch { background: #4a3a1a; box-shadow: 0 0 3px #fbbf24; }
+	.grid-cell.chest { background: #3a3a1a; box-shadow: 0 0 3px #c8a86e; }
+
+	.overlay-region {
+		position: absolute;
+		bottom: 0.5rem;
+		left: 0.5rem;
+		right: 0.5rem;
+		min-height: 2rem;
+	}
+
+	:global(.overlay-slot) {
+		font-size: 0.8125rem;
+	}
+
+	.game-footer {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 0.25rem 0.5rem;
+		border-top: 1px solid #2a2a3a;
+		background: #0d0d18;
+	}
+
+	.game-btn {
+		font-family: var(--sl-font-mono);
+		font-size: 0.5625rem;
+		padding: 0.125rem 0.375rem;
+		background: transparent;
+		color: #6a6a8a;
+		border: 1px solid #2a2a3a;
+		border-radius: 0.25rem;
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.game-btn:hover {
+		color: #c8a86e;
+		border-color: #c8a86e;
+	}
+
+	.slot-legend {
+		display: flex;
+		gap: 0.75rem;
+		font-family: var(--sl-font-mono);
+		font-size: 0.5625rem;
+		color: #4a4a6a;
+	}
+
+	.legend-item {
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
+	}
+
+	.legend-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+	}
+
+	.sidebar-dot { background: #7dd3fc; }
+	.header-dot { background: #c8a86e; }
+	.overlay-dot { background: #c4b5fd; }
+
+	/* ── Right Side Panels ── */
+
 	.panel {
 		background: var(--sl-color-gray-6);
 		border: 1px solid var(--sl-color-gray-5);
@@ -425,83 +609,6 @@
 		color: var(--sl-color-gray-2);
 	}
 
-	.panel-badge {
-		font-size: 0.6875rem;
-		color: var(--sl-color-gray-3);
-		font-family: var(--sl-font-mono);
-	}
-
-	.host-slots {
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-		padding: 0.75rem;
-	}
-
-	.slot-region {
-		border: 2px dashed var(--sl-color-gray-4);
-		border-radius: 0.375rem;
-		min-height: 60px;
-		overflow: hidden;
-	}
-
-	.slot-label {
-		font-family: var(--sl-font-mono);
-		font-size: 0.6875rem;
-		font-weight: 600;
-		color: var(--sl-color-gray-3);
-		padding: 0.25rem 0.5rem;
-		border-bottom: 1px dashed var(--sl-color-gray-5);
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	.slot-meta {
-		font-weight: 400;
-		color: var(--sl-color-gray-4);
-		font-size: 0.625rem;
-	}
-
-	.slot-meta code {
-		color: var(--sl-color-accent);
-		font-size: 0.625rem;
-	}
-
-	:global(.slot-content) {
-		padding: 0.375rem 0.5rem;
-		font-size: 0.8125rem;
-	}
-
-	:global(.fragment-wrapper) {
-		padding: 0.25rem 0;
-		border-bottom: 1px solid var(--sl-color-gray-5);
-	}
-
-	:global(.fragment-wrapper:last-child) {
-		border-bottom: none;
-	}
-
-	.fb-left {
-		display: flex;
-		flex-direction: column;
-	}
-
-	.host-panel {
-		flex: 1;
-	}
-
-	.fb-right {
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-	}
-
-	.editor-panel {
-		display: flex;
-		flex-direction: column;
-	}
-
 	.panel-header select {
 		font-family: var(--sl-font-mono);
 		font-size: 0.6875rem;
@@ -515,6 +622,8 @@
 
 	#fb-editor {
 		flex: 1;
+		width: 100%;
+		box-sizing: border-box;
 		font-family: var(--sl-font-mono);
 		font-size: 0.75rem;
 		padding: 0.5rem;
@@ -568,6 +677,22 @@
 
 	.run-button:hover {
 		opacity: 0.85;
+	}
+
+	.fb-left {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.fb-right {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+
+	.editor-panel {
+		display: flex;
+		flex-direction: column;
 	}
 
 	.state-panel .state-controls {
@@ -675,110 +800,40 @@
 		word-break: break-all;
 	}
 
-	:global(.console-line.log) {
-		color: var(--sl-color-gray-2);
+	:global(.console-line.log) { color: var(--sl-color-gray-2); }
+	:global(.console-line.error) { color: #f87171; }
+	:global(.console-line.result) { color: var(--sl-color-accent); }
+
+	:global(.fragment-wrapper) {
+		padding: 0.25rem 0;
+		border-bottom: 1px solid var(--sl-color-gray-5);
 	}
 
-	:global(.console-line.error) {
-		color: #f87171;
+	:global(.fragment-wrapper:last-child) {
+		border-bottom: none;
 	}
 
-	:global(.console-line.result) {
-		color: var(--sl-color-accent);
-	}
+	/* ── Fragment sample styles ── */
 
-	:global(.health-bar) {
-		font-family: var(--sl-font-mono);
-		font-size: 0.8125rem;
-		color: var(--sl-color-white);
-	}
-
-	:global(.bar-label) {
-		font-size: 0.6875rem;
-		color: var(--sl-color-gray-3);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-	}
-
-	:global(.bar-track) {
-		color: var(--sl-color-accent);
-		font-weight: 600;
-	}
-
-	:global(.warnings) {
-		font-family: var(--sl-font-mono);
-		font-size: 0.75rem;
-	}
-
-	:global(.warning) {
-		color: #fbbf24;
-		font-weight: 600;
-	}
-
-	:global(.critical) {
-		color: #f87171;
-		font-weight: 700;
-	}
-
-	:global(.safe) {
-		color: #4ade80;
-	}
-
-	:global(.player-card) {
-		font-family: var(--sl-font-mono);
-		font-size: 0.8125rem;
-	}
-
-	:global(.card-name) {
-		color: var(--sl-color-accent);
-		font-weight: 700;
-		font-size: 0.875rem;
-	}
-
-	:global(.card-stat) {
-		color: var(--sl-color-gray-2);
-	}
-
-	:global(.card-danger) {
-		color: #f87171;
-		font-weight: 700;
-	}
-
-	:global(.event-panel) {
-		display: flex;
-		flex-direction: column;
-		gap: 0.375rem;
-		font-family: var(--sl-font-mono);
-		font-size: 0.8125rem;
-	}
-
+	:global(.health-bar) { font-family: var(--sl-font-mono); font-size: 0.8125rem; color: var(--sl-color-white); }
+	:global(.bar-label) { font-size: 0.6875rem; color: var(--sl-color-gray-3); text-transform: uppercase; letter-spacing: 0.05em; }
+	:global(.bar-track) { color: var(--sl-color-accent); font-weight: 600; }
+	:global(.warnings) { font-family: var(--sl-font-mono); font-size: 0.75rem; }
+	:global(.warning) { color: #fbbf24; font-weight: 600; }
+	:global(.critical) { color: #f87171; font-weight: 700; }
+	:global(.safe) { color: #4ade80; }
+	:global(.player-card) { font-family: var(--sl-font-mono); font-size: 0.8125rem; }
+	:global(.card-name) { color: var(--sl-color-accent); font-weight: 700; font-size: 0.875rem; }
+	:global(.card-stat) { color: var(--sl-color-gray-2); }
+	:global(.card-danger) { color: #f87171; font-weight: 700; }
+	:global(.event-panel) { display: flex; flex-direction: column; gap: 0.375rem; font-family: var(--sl-font-mono); font-size: 0.8125rem; }
 	:global(.heal-btn), :global(.dmg-btn) {
-		padding: 0.25rem 0.5rem;
-		font-family: var(--sl-font-mono);
-		font-size: 0.6875rem;
-		font-weight: 600;
-		border: 1px solid var(--sl-color-gray-4);
-		border-radius: 0.25rem;
-		cursor: pointer;
-		background: var(--sl-color-gray-5);
-		color: var(--sl-color-white);
+		padding: 0.25rem 0.5rem; font-family: var(--sl-font-mono); font-size: 0.6875rem;
+		font-weight: 600; border: 1px solid var(--sl-color-gray-4); border-radius: 0.25rem;
+		cursor: pointer; background: var(--sl-color-gray-5); color: var(--sl-color-white);
 	}
-
-	:global(.heal-btn:hover) {
-		border-color: #4ade80;
-		color: #4ade80;
-	}
-
-	:global(.dmg-btn:hover) {
-		border-color: #f87171;
-		color: #f87171;
-	}
-
-	:global(.status) {
-		color: var(--sl-color-gray-2);
-	}
-
-	:global(.safe-content) {
-		color: var(--sl-color-white);
-	}
+	:global(.heal-btn:hover) { border-color: #4ade80; color: #4ade80; }
+	:global(.dmg-btn:hover) { border-color: #f87171; color: #f87171; }
+	:global(.status) { color: var(--sl-color-gray-2); }
+	:global(.safe-content) { color: var(--sl-color-white); }
 </style>
