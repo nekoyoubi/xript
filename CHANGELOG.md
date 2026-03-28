@@ -26,7 +26,7 @@
   - audit: capability coverage analysis showing ungated bindings, unused capabilities, capability gaps, and risk distribution
   - diff: compares the current manifest against the last git tag, surfacing added/removed bindings, capabilities, and slots
   - home menu expanded from 4 to 6 items
-- updated the publish pipeline for 8 npm packages (added `@xriptjs/cli`); `scripts/bump-version.mjs` now handles 13 files
+- updated the publish pipeline for 8 npm packages (added `@xriptjs/cli`); `scripts/bump-version.mjs` now handles 14 files
 
 ### Test counts
 

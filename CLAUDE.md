@@ -103,7 +103,7 @@ node examples/ui-dashboard/src/demo.js           # fragment protocol demo
 
 Versions are unified across all 11 published packages. Two scripts handle the mechanics:
 
-1. **`npm run version:bump <version>`** — syncs the version across all 13 package files (npm, Rust, C#) and internal dependency references. Run `npm install` after to refresh the lockfile.
+1. **`npm run version:bump <version>`** — syncs the version across all 14 package files (npm, Rust, C#) and internal dependency references. Run `npm install` after to refresh the lockfile.
 2. **`npm run release`** — creates a GitHub Release from the current version in the packages and the matching `CHANGELOG.md` section. Triggers all publish workflows automatically.
 
 **When preparing a release PR, always:**
