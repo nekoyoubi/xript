@@ -172,7 +172,7 @@ These are defaults that runtimes enforce unless the host application overrides t
 
 ## Adoption Tiers
 
-The manifest supports three adoption tiers through progressive complexity.
+The manifest supports four adoption tiers through progressive complexity.
 
 ### Tier 1: Expressions Only
 
@@ -207,9 +207,13 @@ Safe eval replacement. No bindings, no capabilities.
 
 A few functions, no capabilities needed.
 
-### Tier 3: Full Scripting
+### Tier 3: Advanced Scripting
 
 Namespaces, capabilities, custom types, examples, and execution limits. See the [Game Mod System](/examples/game-mod-system) example walkthrough for a complete tier 3 manifest.
+
+### Tier 4: Full Feature
+
+Slots, mod manifests, and fragments. Mods contribute UI that binds to host state and handles interaction. See the [UI Dashboard](/examples/ui-dashboard) example for a complete tier 4 integration.
 
 ## Schema
 

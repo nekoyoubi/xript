@@ -84,9 +84,10 @@ If it's not in the manifest, it doesn't exist. If it is, it's documented, typed,
 
 No application should need to go all-in. xript is useful at every level of commitment:
 
-- **Expressions only** — Safe eval replacement. Five minutes to integrate.
-- **Simple bindings** — Expose a few functions. An afternoon.
-- **Full scripting with capabilities** — The complete model. A few days.
+- **Expressions only** — Safe eval replacement.
+- **Simple bindings** — Expose a few functions with capability gating.
+- **Advanced scripting** — Namespaces, capabilities, types, async.
+- **Full feature** — Mods contribute UI, bind to state, handle events.
 
 Each level stands on its own. Each level is a reason to adopt.
 

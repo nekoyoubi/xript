@@ -1,23 +1,25 @@
 ---
 title: Adoption Tiers
-description: xript's three-tier incremental adoption model, from safe eval replacement to full modding system.
+description: "xript's four-tier incremental adoption model, from safe eval replacement to full-featured modding with UI."
 ---
 
-xript is designed so that no application needs to go all-in. The three adoption tiers let you start simple and add complexity only when you need it. Each tier stands on its own as a valid integration point.
+xript is designed so that no application needs to go all-in. The four adoption tiers let you start simple and add complexity only when you need it. Each tier stands on its own as a valid integration point.
 
-## The Three Tiers
+## The Four Tiers
 
-| | Tier 1 | Tier 2 | Tier 3 |
-|---|---|---|---|
-| **Name** | Expressions Only | Simple Bindings | Full Scripting |
-| **Time to integrate** | Five minutes | An afternoon | A few days |
-| **Bindings** | None or flat functions | Flat functions + namespaces | Rich namespaces |
-| **Capabilities** | None | Optional | Required |
-| **Custom types** | None | Optional | Yes |
-| **Execution limits** | Optional | Optional | Yes |
-| **Inline examples** | No | No | Yes |
-| **Async bindings** | No | Optional | Yes |
-| **Example** | [Expression Evaluator](/examples/expression-evaluator) | [Plugin System](/examples/plugin-system) | [Game Mod System](/examples/game-mod-system) |
+| | Tier 1 | Tier 2 | Tier 3 | Tier 4 |
+|---|---|---|---|---|
+| **Name** | Expressions Only | Simple Bindings | Advanced Scripting | Full Feature |
+| **Bindings** | None or flat functions | Flat functions + namespaces | Rich namespaces | Rich namespaces |
+| **Capabilities** | None | Optional | Required | Required |
+| **Custom types** | None | Optional | Yes | Yes |
+| **Execution limits** | Optional | Optional | Yes | Yes |
+| **Inline examples** | No | No | Yes | Yes |
+| **Async bindings** | No | Optional | Yes | Yes |
+| **Slots** | No | No | No | Yes |
+| **Mod manifests** | No | No | No | Yes |
+| **Fragments** | No | No | No | Yes |
+| **Example** | [Expression Evaluator](/examples/expression-evaluator) | [Plugin System](/examples/plugin-system) | [Game Mod System](/examples/game-mod-system) | [UI Dashboard](/examples/ui-dashboard) |
 
 ## Tier 1: Expressions Only
 
@@ -85,11 +87,11 @@ Namespaces group related functions (`tasks.list()`, `tasks.add()`). Capabilities
 
 **See it in action:** [Plugin System example](/examples/plugin-system)
 
-## Tier 3: Full Scripting
+## Tier 3: Advanced Scripting
 
-**The complete modding system.** Your application exposes a rich API with multiple namespaces, fine-grained capabilities, complex types, inline code examples, async operations, and execution limits.
+**The complete scripting system.** Your application exposes a rich API with multiple namespaces, fine-grained capabilities, complex types, inline code examples, async operations, and execution limits.
 
-A tier 3 manifest uses everything the spec offers:
+A tier 3 manifest uses the full scripting surface of the spec:
 
 - **Multiple namespaces** organized by domain (`player`, `world`, `data`)
 - **Capability tiers** from low-risk (`storage`) through medium (`modify-player`) to high (`modify-world`)
@@ -98,14 +100,71 @@ A tier 3 manifest uses everything the spec offers:
 - **Inline examples** showing extenders how to use each binding
 - **Execution limits** tuned for the application's performance requirements
 
-The manifest becomes the complete contract between your application and its modding community. From it, the toolchain generates TypeScript definitions, API documentation, and validation rules.
+The manifest becomes the complete contract between your application and its scripting community. From it, the toolchain generates TypeScript definitions, API documentation, and validation rules.
 
 **Choose tier 3 when:**
-- You are building a modding system or extensibility platform
+- You are building a scripting system or extensibility platform
 - Your API surface is large enough to need careful organization
 - You want generated docs and types that are always in sync with the API
 - Extenders will write multi-line scripts, not just expressions
 - You need async operations (database access, network calls, file I/O)
+
+**See it in action:** [Game Mod System example](/examples/game-mod-system)
+
+## Tier 4: Full Feature
+
+**The modding platform.** Mods stop being invisible background logic and start having a visual presence in your application. Authors declare UI slots — mounting points in their interface — and mods contribute fragments that bind to application state, respond to updates, and handle user interaction.
+
+A tier 4 manifest builds on everything in tier 3 and adds `slots`:
+
+```json
+{
+  "slots": [
+    {
+      "id": "sidebar.left",
+      "accepts": ["text/html"],
+      "capability": "ui-mount",
+      "multiple": true,
+      "style": "isolated"
+    },
+    {
+      "id": "header.status",
+      "accepts": ["text/html"],
+      "style": "inherit"
+    }
+  ]
+}
+```
+
+Mods declare themselves in a [mod manifest](/spec/mod-manifest/) and contribute fragments that target these slots:
+
+```json
+{
+  "xript": "0.3",
+  "name": "health-panel",
+  "version": "1.0.0",
+  "fragments": [
+    {
+      "id": "health-panel",
+      "slot": "sidebar.left",
+      "format": "text/html",
+      "source": "fragments/panel.html"
+    }
+  ]
+}
+```
+
+Fragment markup uses `data-bind` for value binding and `data-if` for conditional visibility. The sandbox fragment API gives mods programmatic control through a command buffer: `toggle`, `addClass`, `setText`, `replaceChildren`, and more. All fragment content is sanitized before it reaches the host.
+
+Scaffold a new mod project with `xript init --mod` to get a working template with a mod manifest, fragment HTML, and entry script.
+
+**Choose tier 4 when:**
+- You want mods to contribute visible UI, not just background logic
+- Your application has natural extension points in its interface (sidebars, panels, overlays, status bars)
+- You want mods to react to state changes and render live data
+- You are building a platform where the community shapes the user experience
+
+**See it in action:** [UI Dashboard example](/examples/ui-dashboard)
 
 ## Progressing Between Tiers
 
@@ -115,7 +174,9 @@ The tiers are not walls; they are waypoints. Moving from one tier to the next is
 
 **Tier 2 → Tier 3:** Add `examples` to bindings so extenders can see usage patterns. Add `async: true` to bindings that need it. Add `limits` tuned for your use case. Expand your type definitions to cover the full data model. The structure you already built in tier 2 is the foundation.
 
-Nothing breaks when you add complexity. A tier 1 manifest is a valid tier 3 manifest: it just uses fewer features.
+**Tier 3 → Tier 4:** Add `slots` to your app manifest to define where mods can mount UI. Mods create their own [mod manifests](/spec/mod-manifest/) with `fragments` targeting your slots. The runtime handles sanitization, data binding, and event routing. Your existing scripting API becomes the data layer that fragments bind to.
+
+Nothing breaks when you add complexity. A tier 1 manifest is a valid tier 4 manifest: it just uses fewer features.
 
 ## The Manifest Drives Everything
 
@@ -125,4 +186,4 @@ Regardless of tier, the manifest is the single source of truth. The toolchain re
 - **API documentation** via `xript docgen`: always in sync, always accurate
 - **Validation** via `xript validate`: catch manifest errors before runtime
 
-A tier 1 manifest generates simpler output. A tier 3 manifest generates richer output. But the workflow is the same at every level: declare your API in JSON, and let the tools do the rest.
+A tier 1 manifest generates simpler output. A tier 4 manifest generates richer output. But the workflow is the same at every level: declare your API in JSON, and let the tools do the rest.

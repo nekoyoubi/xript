@@ -148,7 +148,7 @@ v0.4 shipped — Unified CLI, Annotation Scanning, Fragment Workbench (645 tests
 - **The manifest is the product**: everything derives from the manifest schema (types, docs, validation)
 - **Safety is non-negotiable**: no eval, no sandbox escape, default-deny capabilities
 - **JavaScript is the modding language**: not because it's perfect, but because it's known
-- **Incremental adoption**: three tiers (expressions only, simple bindings, full scripting)
+- **Incremental adoption**: four tiers (expressions only, simple bindings, advanced scripting, full feature)
 - **Universal portability**: QuickJS WASM sandbox runs anywhere JavaScript runs (browser, Node, Deno, Bun, Cloudflare Workers)
 - **Fragments are inert templates**: all dynamic behavior routes through the sandbox (data-bind for values, data-if for visibility, events for interaction, command buffer for mutations)
 - **Two smart attributes only**: `data-bind` and `data-if` are the hard wall — everything beyond that goes through the sandbox fragment API
