@@ -21,15 +21,15 @@
 						<div class="sidebar-slot" id="slot-sidebar-left"></div>
 					</div>
 					<div class="game-world">
-						<div class="world-grid">
-							<div class="grid-cell wall"></div><div class="grid-cell wall"></div><div class="grid-cell wall"></div><div class="grid-cell wall"></div><div class="grid-cell wall"></div><div class="grid-cell wall"></div><div class="grid-cell wall"></div><div class="grid-cell wall"></div>
-							<div class="grid-cell wall"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell wall"></div>
-							<div class="grid-cell wall"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor torch"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell wall"></div>
-							<div class="grid-cell wall"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor player"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell wall"></div>
-							<div class="grid-cell wall"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor chest"></div><div class="grid-cell wall"></div>
-							<div class="grid-cell wall"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell floor"></div><div class="grid-cell wall"></div>
-							<div class="grid-cell wall"></div><div class="grid-cell wall"></div><div class="grid-cell wall"></div><div class="grid-cell door"></div><div class="grid-cell wall"></div><div class="grid-cell wall"></div><div class="grid-cell wall"></div><div class="grid-cell wall"></div>
-						</div>
+						<pre class="dungeon-map"><span class="t-wall">################</span>
+<span class="t-wall">#</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-wall">#</span>
+<span class="t-wall">#</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-torch">†</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-wall">#</span>
+<span class="t-wall">#</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-wall">#</span>
+<span class="t-wall">#</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-player">@</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-wall">#</span>
+<span class="t-wall">#</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-chest">$</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-wall">#</span>
+<span class="t-wall">#</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-wall">#</span>
+<span class="t-wall">#</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-torch">†</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-wall">#</span>
+<span class="t-wall">######</span><span class="t-door">+</span><span class="t-wall">#########</span></pre>
 						<div class="overlay-region" data-slot="main.overlay">
 							<div class="overlay-slot" id="slot-main-overlay"></div>
 						</div>
@@ -498,27 +498,23 @@
 		overflow: hidden;
 	}
 
-	.world-grid {
-		display: grid;
-		grid-template-columns: repeat(8, 1fr);
-		gap: 1px;
-		width: 80%;
-		max-width: 280px;
-		aspect-ratio: 8/7;
-		opacity: 0.6;
+	.dungeon-map {
+		font-family: var(--sl-font-mono);
+		font-size: 0.875rem;
+		line-height: 1.3;
+		letter-spacing: 0.15em;
+		margin: 0;
+		padding: 0;
+		color: #3a3a5a;
+		user-select: none;
 	}
 
-	.grid-cell {
-		aspect-ratio: 1;
-		border-radius: 1px;
-	}
-
-	.grid-cell.wall { background: #1a1a2e; }
-	.grid-cell.floor { background: #1e1e30; }
-	.grid-cell.door { background: #3a2a1a; }
-	.grid-cell.player { background: #2a6a4a; box-shadow: 0 0 4px #4ade80; }
-	.grid-cell.torch { background: #4a3a1a; box-shadow: 0 0 3px #fbbf24; }
-	.grid-cell.chest { background: #3a3a1a; box-shadow: 0 0 3px #c8a86e; }
+	:global(.t-wall) { color: #4a4a6a; }
+	:global(.t-floor) { color: #2a2a3e; }
+	:global(.t-player) { color: #4ade80; text-shadow: 0 0 6px #4ade80; font-weight: 700; }
+	:global(.t-torch) { color: #fbbf24; text-shadow: 0 0 5px #b4841a; }
+	:global(.t-chest) { color: #c8a86e; text-shadow: 0 0 4px #c8a86e; }
+	:global(.t-door) { color: #8b6914; }
 
 	.overlay-region {
 		position: absolute;
