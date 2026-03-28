@@ -109,11 +109,11 @@ The sandbox guarantees that user scripts cannot escape the boundaries you define
 
 ## Next Steps
 
-- **Scaffold a new project** with `npx @xriptjs/init`. See [Init CLI](/tools/init).
+- **Scaffold a new project** with `npx xript init`. See [Init CLI](/tools/cli#init).
 - **Add capabilities** to gate sensitive operations. See the [Capabilities](/spec/capabilities) spec.
 - **Add namespaces** to organize related bindings. See the [Manifest](/spec/manifest) spec.
-- **Generate TypeScript definitions** from your manifest with `xript-typegen`. See [Type Generator](/tools/typegen).
-- **Generate documentation** from your manifest with `xript-docgen`. See [Doc Generator](/tools/docgen).
+- **Generate TypeScript definitions** from your manifest with `xript typegen`. See [Type Generator](/tools/cli#typegen).
+- **Generate documentation** from your manifest with `xript docgen`. See [Doc Generator](/tools/cli#docgen).
 - **Use the Node.js runtime** for file-based workflows and native V8 performance. See [Node.js Runtime](/runtimes/node).
 - **Explore the runtime API** in depth. See [JS/WASM Runtime](/runtimes/js-wasm).
 - **Run the full example** in the repository: `examples/expression-evaluator/`.

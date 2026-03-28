@@ -73,7 +73,7 @@ Key observations:
 }
 ```
 
-Types do not enforce runtime validation; they serve as documentation for extenders and feed into tools like `xript-typegen` and `xript-docgen`.
+Types do not enforce runtime validation; they serve as documentation for extenders and feed into tools like `xript typegen` and `xript docgen`.
 
 ## The Host
 

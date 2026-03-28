@@ -121,8 +121,8 @@ Nothing breaks when you add complexity. A tier 1 manifest is a valid tier 3 mani
 
 Regardless of tier, the manifest is the single source of truth. The toolchain reads it and generates:
 
-- **TypeScript definitions** via `xript-typegen`: editor autocomplete and type checking for extenders
-- **API documentation** via `xript-docgen`: always in sync, always accurate
-- **Validation** via `xript-validate`: catch manifest errors before runtime
+- **TypeScript definitions** via `xript typegen`: editor autocomplete and type checking for extenders
+- **API documentation** via `xript docgen`: always in sync, always accurate
+- **Validation** via `xript validate`: catch manifest errors before runtime
 
 A tier 1 manifest generates simpler output. A tier 3 manifest generates richer output. But the workflow is the same at every level: declare your API in JSON, and let the tools do the rest.

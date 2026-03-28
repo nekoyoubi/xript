@@ -111,7 +111,7 @@ UI fragment contributions. See [Fragments](/spec/fragments/) for the full protoc
 Use the validator to check mod manifests:
 
 ```bash
-npx xript-validate mod-manifest.json
+npx xript validate mod-manifest.json
 ```
 
 The validator auto-detects whether a file is an app manifest or a mod manifest based on the presence of `fragments` or `entry` fields.
@@ -119,5 +119,5 @@ The validator auto-detects whether a file is an app manifest or a mod manifest b
 For cross-validation (checking that a mod's fragments target valid slots):
 
 ```bash
-npx xript-validate --cross manifest.json mod-manifest.json
+npx xript validate --cross manifest.json mod-manifest.json
 ```

@@ -37,7 +37,7 @@ const runtime = await createRuntimeFromFile("./manifest.json", {
 });
 ```
 
-`createRuntimeFromFile` reads the manifest from disk, performs structural validation, and creates a runtime. For full JSON Schema validation, use [`@xriptjs/validate`](/tools/validator) before creating the runtime.
+`createRuntimeFromFile` reads the manifest from disk, performs structural validation, and creates a runtime. For full JSON Schema validation, use [`@xriptjs/validate`](/tools/cli#validate) before creating the runtime.
 
 ## Options
 
