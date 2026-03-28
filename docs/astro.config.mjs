@@ -60,12 +60,9 @@ export default defineConfig({
 				{
 					label: "Tools",
 					items: [
-						{ label: "Validator", slug: "tools/validator" },
-						{ label: "Type Generator", slug: "tools/typegen" },
-						{ label: "Doc Generator", slug: "tools/docgen" },
-						{ label: "Init CLI", slug: "tools/init" },
-					{ label: "Sanitizer", slug: "tools/sanitize" },
-					{ label: "Fragment Workbench", slug: "tools/fragment-workbench" },
+						{ label: "CLI", slug: "tools/cli" },
+						{ label: "TUI Wizard", slug: "tools/wiz" },
+						{ label: "Fragment Workbench", slug: "tools/fragment-workbench" },
 					],
 				},
 				{
