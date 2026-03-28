@@ -36,7 +36,7 @@
 							<option value="custom">Custom...</option>
 						</select>
 					</div>
-					<textarea id="fwb-manifest-editor" spellcheck="false" autocomplete="off"></textarea>
+					<div class="code-editor" id="fwb-manifest-editor" spellcheck="false"></div>
 					<div class="manifest-status" id="fwb-manifest-status"></div>
 				</div>
 				<div class="panel slot-panel">
@@ -74,7 +74,7 @@
 							</select>
 						</span>
 					</div>
-					<textarea id="fwb-editor" spellcheck="false" autocomplete="off"></textarea>
+					<div class="code-editor" id="fwb-editor" spellcheck="false"></div>
 					<div class="editor-diagnostics" id="fwb-diagnostics"></div>
 					<div class="editor-footer">
 						<label class="slot-picker">
@@ -190,6 +190,31 @@
 
 <script>
 	import { sanitizeHTMLDetailed, jsmlToHtml } from "@xriptjs/sanitize";
+	import { CodeJar } from "codejar";
+
+	function highlightJSON(el) {
+		const code = el.textContent || "";
+		el.innerHTML = code
+			.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+			.replace(/"((?:[^"\\]|\\.)*)"\s*:/g, '<span class="hl-key">"$1"</span>:')
+			.replace(/"((?:[^"\\]|\\.)*)"/g, '<span class="hl-str">"$1"</span>')
+			.replace(/\b(\d+\.?\d*)\b/g, '<span class="hl-num">$1</span>')
+			.replace(/\b(true|false|null)\b/g, '<span class="hl-bool">$1</span>');
+	}
+
+	function highlightMarkup(el) {
+		const code = el.textContent || "";
+		el.innerHTML = code
+			.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+			.replace(/&lt;(\/?)([\w-]+)((?:\s+[^&]*)?)&gt;/g, (_, slash, tag, attrs) => {
+				const hlAttrs = attrs.replace(/([\w-]+)=&quot;([^&]*?)&quot;/g,
+					'<span class="hl-attr">$1</span>=<span class="hl-str">&quot;$2&quot;</span>');
+				return `&lt;<span class="hl-tag">${slash}${tag}</span>${hlAttrs}&gt;`;
+			});
+	}
+
+	let manifestJar;
+	let editorJar;
 
 	function validateManifest(manifest) {
 		const errors = [];
@@ -558,7 +583,6 @@
 	}
 
 	function buildModManifest() {
-		const editor = document.getElementById("fwb-editor");
 		const slotSelect = document.getElementById("fwb-slot-select");
 		const formatToggle = document.getElementById("fwb-format-toggle");
 		const format = formatToggle.value === "jsml" ? "application/jsml+json" : "text/html";
@@ -573,7 +597,7 @@
 				slot: slotSelect.value || "sidebar.left",
 				format,
 				inline: true,
-				source: editor.value,
+				source: editorJar.toString(),
 			}],
 		};
 
@@ -586,8 +610,7 @@
 
 	function updateExportPreview() {
 		const preview = document.getElementById("fwb-export-preview");
-		const editor = document.getElementById("fwb-editor");
-		if (!editor.value.trim()) {
+		if (!editorJar || !editorJar.toString().trim()) {
 			preview.innerHTML = '<span class="placeholder">Author a fragment to see your mod manifest here.</span>';
 			return;
 		}
@@ -606,13 +629,14 @@
 		addConsole("Exported mod manifest", "result");
 	}
 
+	let manifestReadOnly = false;
+
 	function loadManifest(key) {
-		const editor = document.getElementById("fwb-manifest-editor");
 		const status = document.getElementById("fwb-manifest-status");
 
 		if (key === "custom") {
-			editor.readOnly = false;
-			editor.value = JSON.stringify({ xript: "0.4", name: "my-app", slots: [] }, null, "\t");
+			manifestReadOnly = false;
+			manifestJar.updateCode(JSON.stringify({ xript: "0.4", name: "my-app", slots: [] }, null, "\t"));
 			status.innerHTML = '<span class="status-info">Edit your manifest above</span>';
 			currentManifest = null;
 			return;
@@ -621,8 +645,8 @@
 		const manifest = exampleManifests[key];
 		if (!manifest) return;
 
-		editor.readOnly = true;
-		editor.value = JSON.stringify(manifest, null, "\t");
+		manifestReadOnly = true;
+		manifestJar.updateCode(JSON.stringify(manifest, null, "\t"));
 		currentManifestKey = key;
 
 		const result = validateManifest(manifest);
@@ -701,36 +725,47 @@
 			}
 
 			const manifestSelect = document.getElementById("fwb-manifest-select");
-			const manifestEditor = document.getElementById("fwb-manifest-editor");
+			const manifestEl = document.getElementById("fwb-manifest-editor");
 			const sampleSelect = document.getElementById("fwb-sample-select");
 			const formatToggle = document.getElementById("fwb-format-toggle");
-			const editor = document.getElementById("fwb-editor");
+			const editorEl = document.getElementById("fwb-editor");
 
-			manifestSelect.addEventListener("change", () => loadManifest(manifestSelect.value));
+			manifestJar = CodeJar(manifestEl, highlightJSON, { tab: "\t" });
+			editorJar = CodeJar(editorEl, highlightMarkup, { tab: "\t" });
 
 			let debounce;
-			manifestEditor.addEventListener("input", () => {
-				if (manifestSelect.value !== "custom") return;
+			manifestJar.onUpdate(code => {
+				if (manifestReadOnly) {
+					manifestJar.updateCode(manifestJar.toString());
+					return;
+				}
 				clearTimeout(debounce);
-				debounce = setTimeout(() => parseCustomManifest(manifestEditor.value), 500);
+				debounce = setTimeout(() => parseCustomManifest(code), 500);
 			});
+
+			manifestSelect.addEventListener("change", () => loadManifest(manifestSelect.value));
 
 			function loadSelectedSample(runDiag) {
 				const sample = (sampleFragments[currentManifestKey] || [])[parseInt(sampleSelect.value)];
 				if (!sample) return;
-				editor.value = formatToggle.value === "jsml" && sample.jsml ? sample.jsml : sample.html;
-				if (runDiag) runDiagnostics(sample.html);
+				const code = formatToggle.value === "jsml" && sample.jsml ? sample.jsml : sample.html;
+				editorJar.updateCode(code);
+				if (runDiag) runDiagnostics(sample.html || code);
 				updateExportPreview();
 			}
 
 			sampleSelect.addEventListener("change", () => loadSelectedSample(true));
-			formatToggle.addEventListener("change", () => loadSelectedSample(false));
+			formatToggle.addEventListener("change", () => {
+				loadSelectedSample(false);
+				const isJsml = formatToggle.value === "jsml";
+				editorJar.updateOptions({ highlight: isJsml ? highlightJSON : highlightMarkup });
+			});
 
 			let editorDebounce;
-			editor.addEventListener("input", () => {
+			editorJar.onUpdate(code => {
 				clearTimeout(editorDebounce);
 				editorDebounce = setTimeout(() => {
-					let html = editor.value;
+					let html = code;
 					if (formatToggle.value === "jsml") {
 						try { html = jsmlToHtml(JSON.parse(html)); } catch { return; }
 					}
@@ -740,7 +775,7 @@
 			});
 
 			document.getElementById("fwb-mount-btn").addEventListener("click", () => {
-				let html = editor.value.trim();
+				let html = editorJar.toString().trim();
 				if (!html) return;
 				if (formatToggle.value === "jsml") {
 					try { html = jsmlToHtml(JSON.parse(html)); addConsole("Converted JSML to HTML", "log"); }
@@ -884,14 +919,22 @@
 		border-radius: 0.25rem; cursor: pointer;
 	}
 
-	#fwb-manifest-editor, #fwb-editor {
-		width: 100%; box-sizing: border-box; font-family: var(--sl-font-mono);
-		font-size: 0.6875rem; padding: 0.5rem; background: var(--sl-color-black);
-		color: var(--sl-color-white); border: none; resize: vertical;
-		outline: none; line-height: 1.5; tab-size: 2;
+	.code-editor {
+		font-family: var(--sl-font-mono); font-size: 0.6875rem;
+		padding: 0.5rem; background: var(--sl-color-black);
+		color: var(--sl-color-white); line-height: 1.5; tab-size: 2;
+		overflow: auto; white-space: pre; outline: none;
 	}
 	#fwb-manifest-editor { min-height: 320px; max-height: 500px; }
 	#fwb-editor { min-height: 180px; }
+
+	:global(.hl-key) { color: #7dd3fc; }
+	:global(.hl-str) { color: #86efac; }
+	:global(.hl-num) { color: #fcd34d; }
+	:global(.hl-bool) { color: #c4b5fd; }
+	:global(.hl-tag) { color: #7dd3fc; }
+	:global(.hl-attr) { color: #fcd34d; }
+	:global(.hl-attr + .hl-str) { color: #86efac; }
 
 	.manifest-status {
 		padding: 0.25rem 0.75rem; font-family: var(--sl-font-mono);
