@@ -3,25 +3,25 @@ title: HTML Sanitizer
 description: "Pure string-based HTML sanitizer for xript UI fragments — no DOM dependency."
 ---
 
-`@xriptjs/sanitize` sanitizes HTML fragment content before it reaches the host. Pure string-based, no DOM dependency; runs inside QuickJS WASM, Node, Deno, browsers, wherever.
+The sanitizer cleans HTML fragment content before it reaches the host. Pure string-based, no DOM dependency; runs inside QuickJS WASM, Node, Deno, browsers, wherever.
 
 ## Installation
 
 ```bash
-npm install @xriptjs/sanitize
+npm install @xriptjs/cli
 ```
 
 ## CLI
 
 ```bash
 # Sanitize a fragment file and print the result
-npx xript-sanitize fragment.html
+xript sanitize fragment.html
 
 # Validate and show what was stripped
-npx xript-sanitize fragment.html --validate
+xript sanitize fragment.html --validate
 
 # Output sanitized HTML only (no diagnostics)
-npx xript-sanitize fragment.html --quiet
+xript sanitize fragment.html --quiet
 ```
 
 ## API

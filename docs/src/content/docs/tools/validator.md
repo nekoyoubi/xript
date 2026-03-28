@@ -3,22 +3,22 @@ title: Validator
 description: Validate xript manifests against the specification schema.
 ---
 
-The validator (`@xriptjs/validate`) checks that your manifest conforms to the xript specification schema. It catches structural errors, invalid field names, wrong types, and missing required fields.
+The validator checks that your manifest conforms to the xript specification schema. It catches structural errors, invalid field names, wrong types, and missing required fields.
 
 ## Installation
 
 ```sh
-npm install @xriptjs/validate
+npm install @xriptjs/cli
 ```
 
 ## CLI Usage
 
 ```sh
 # Validate a single manifest
-xript-validate manifest.json
+xript validate manifest.json
 
 # Validate multiple manifests
-xript-validate manifest.json examples/game-mod-system/manifest.json
+xript validate manifest.json examples/game-mod-system/manifest.json
 ```
 
 On success, each file gets a green checkmark. On failure, you get specific error messages pointing to the problem.
@@ -26,10 +26,10 @@ On success, each file gets a green checkmark. On failure, you get specific error
 ### Example Output
 
 ```
-$ xript-validate manifest.json
+$ xript validate manifest.json
   ✓ manifest.json is valid
 
-$ xript-validate broken.json
+$ xript validate broken.json
   ✗ broken.json has errors:
     - /name: must match pattern "^[a-z][a-z0-9-]*$"
     - /bindings/doStuff: must have required property 'description'
@@ -48,7 +48,7 @@ The validator auto-detects whether a file is an app manifest or a [mod manifest]
 
 ```sh
 # Auto-detected as a mod manifest
-xript-validate mod-manifest.json
+xript validate mod-manifest.json
 ```
 
 ## Cross-Validation
@@ -56,7 +56,7 @@ xript-validate mod-manifest.json
 The `--cross` flag validates that a mod's fragments target valid slots in the host app:
 
 ```sh
-xript-validate --cross manifest.json mod-manifest.json
+xript validate --cross manifest.json mod-manifest.json
 ```
 
 Cross-validation checks:

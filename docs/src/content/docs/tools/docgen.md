@@ -3,26 +3,32 @@ title: Doc Generator
 description: Generate structured markdown documentation from xript manifests.
 ---
 
-The doc generator (`@xriptjs/docgen`) reads an xript manifest and produces a structured set of markdown documentation pages. Every binding, type, and capability gets its own page with signatures, parameter tables, and examples.
+The doc generator reads an xript manifest and produces a structured set of markdown documentation pages. Every binding, type, and capability gets its own page with signatures, parameter tables, and examples.
 
 ## Installation
 
 ```sh
-npm install @xriptjs/docgen
+npm install @xriptjs/cli
 ```
 
 ## CLI Usage
 
 ```sh
 # Generate docs to a directory
-xript-docgen manifest.json --output docs/api/
-xript-docgen manifest.json -o docs/api/
+xript docgen manifest.json --output docs/api/
+xript docgen manifest.json -o docs/api/
+
+# Strip .md extensions from links (for static site generators)
+xript docgen manifest.json -o docs/ --link-format no-extension
+
+# Inject frontmatter into generated pages
+xript docgen manifest.json -o docs/ --frontmatter "layout: ../layouts/Doc.astro"
 ```
 
 ### Example
 
 ```sh
-$ xript-docgen examples/game-mod-system/manifest.json -o api-docs/
+$ xript docgen examples/game-mod-system/manifest.json -o api-docs/
 ✓ Generated 10 documentation pages to /path/to/api-docs
   api-docs/index.md
   api-docs/bindings/log.md

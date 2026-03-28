@@ -3,19 +3,12 @@ title: Init CLI
 description: Scaffold new xript projects with interactive prompts or defaults.
 ---
 
-The init CLI (`@xriptjs/init`) scaffolds new xript projects with a manifest, package configuration, and a demo script. It supports interactive prompts or fully non-interactive mode for CI and scripting.
+The init command scaffolds new xript projects with a manifest, package configuration, and a demo script. It supports interactive prompts or fully non-interactive mode for CI and scripting.
 
-## Usage
-
-```sh
-npx @xriptjs/init
-```
-
-Or install globally:
+## Installation
 
 ```sh
-npm install -g @xriptjs/init
-xript-init
+npm install @xriptjs/cli
 ```
 
 ## Interactive Mode
@@ -23,7 +16,7 @@ xript-init
 Running without flags starts an interactive session:
 
 ```
-$ npx @xriptjs/init my-mod
+$ xript init my-mod
 Project name (my-mod):
 Tier: 2 (bindings) or 3 (full scripting)? (2):
 Language: typescript or javascript? (typescript):
@@ -46,7 +39,7 @@ Next steps:
 Skip all prompts with `--yes` (or `-y`):
 
 ```sh
-npx @xriptjs/init my-mod --yes
+xript init my-mod --yes
 ```
 
 Defaults: tier 2, TypeScript.
@@ -56,7 +49,7 @@ Defaults: tier 2, TypeScript.
 Use `--mod` to scaffold a mod project instead of a host app:
 
 ```sh
-npx @xriptjs/init my-health-panel --mod --yes
+xript init my-health-panel --mod --yes
 ```
 
 This generates a mod project structure with a mod manifest, fragment HTML, and an entry script:

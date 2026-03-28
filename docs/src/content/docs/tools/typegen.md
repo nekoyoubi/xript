@@ -3,23 +3,23 @@ title: Type Generator
 description: Generate TypeScript definitions from xript manifests for editor support and type safety.
 ---
 
-The type generator (`@xriptjs/typegen`) reads an xript manifest and produces TypeScript definition files (`.d.ts`). This gives extenders autocomplete, type checking, and inline documentation in their editors.
+The type generator reads an xript manifest and produces TypeScript definition files (`.d.ts`). This gives extenders autocomplete, type checking, and inline documentation in their editors.
 
 ## Installation
 
 ```sh
-npm install @xriptjs/typegen
+npm install @xriptjs/cli
 ```
 
 ## CLI Usage
 
 ```sh
 # Print TypeScript definitions to stdout
-xript-typegen manifest.json
+xript typegen manifest.json
 
 # Write to a file
-xript-typegen manifest.json --output types.d.ts
-xript-typegen manifest.json -o types.d.ts
+xript typegen manifest.json --output types.d.ts
+xript typegen manifest.json -o types.d.ts
 ```
 
 ### Example
@@ -27,7 +27,7 @@ xript-typegen manifest.json -o types.d.ts
 Given a manifest with a `greet` binding and a `Position` type:
 
 ```sh
-$ xript-typegen manifest.json
+$ xript typegen manifest.json
 ```
 
 Produces:
