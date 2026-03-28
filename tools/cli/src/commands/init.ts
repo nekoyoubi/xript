@@ -75,11 +75,11 @@ async function promptUser(
 		const nameInput = await rl.question(`Project name (${defaultName}): `);
 		const name = nameInput.trim() || defaultName;
 
-		let tier: 2 | 3;
+		let tier: 2 | 3 | 4;
 		if (tierOverride) {
 			tier = parseTier(tierOverride) ?? 2;
 		} else {
-			const tierInput = await rl.question("Tier — 2 (bindings) or 3 (full scripting)? (2): ");
+			const tierInput = await rl.question("Tier — 2 (bindings), 3 (advanced scripting), or 4 (full feature)? (2): ");
 			tier = parseTier(tierInput.trim()) ?? 2;
 		}
 
@@ -98,9 +98,10 @@ async function promptUser(
 	}
 }
 
-function parseTier(input?: string): 2 | 3 | undefined {
+function parseTier(input?: string): 2 | 3 | 4 | undefined {
 	if (!input) return undefined;
 	const n = parseInt(input, 10);
+	if (n === 4) return 4;
 	if (n === 3) return 3;
 	if (n === 2) return 2;
 	return undefined;
@@ -112,10 +113,10 @@ function printHelp(): void {
 	console.log("Scaffold a new xript app or mod project.");
 	console.log("");
 	console.log("Options:");
-	console.log("  --yes, -y       Skip prompts, use opinionated defaults");
-	console.log("  --mod           Generate a mod project instead of an app");
-	console.log("  --tier <2|3>    Adoption tier (default: 2)");
-	console.log("  --typescript    Generate TypeScript files (default)");
-	console.log("  --javascript    Generate JavaScript files");
-	console.log("  --help, -h      Show this help message");
+	console.log("  --yes, -y         Skip prompts, use opinionated defaults");
+	console.log("  --mod             Generate a mod project instead of an app");
+	console.log("  --tier <2|3|4>    Adoption tier (default: 2)");
+	console.log("  --typescript      Generate TypeScript files (default)");
+	console.log("  --javascript      Generate JavaScript files");
+	console.log("  --help, -h        Show this help message");
 }

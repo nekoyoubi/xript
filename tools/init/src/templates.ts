@@ -4,7 +4,7 @@ export interface ProjectFiles {
 
 export interface TemplateOptions {
 	name: string;
-	tier: 2 | 3;
+	tier: 2 | 3 | 4;
 	language: "typescript" | "javascript";
 	type?: "app" | "mod";
 }
@@ -24,9 +24,14 @@ export function generateProjectFiles(options: TemplateOptions): ProjectFiles {
 	if (options.tier === 2) {
 		files[`src/host.${ext}`] = generateTier2Host(options);
 		files[`src/demo.${ext}`] = generateTier2Demo(options);
-	} else {
+	} else if (options.tier === 3) {
 		files[`src/host.${ext}`] = generateTier3Host(options);
 		files[`src/demo.${ext}`] = generateTier3Demo(options);
+	} else {
+		files[`src/host.${ext}`] = generateTier3Host(options);
+		files[`src/demo.${ext}`] = generateTier4Demo(options);
+		files["mod-manifest.json"] = generateTier4ModManifest(options);
+		files["fragments/panel.html"] = generateModFragmentHtml();
 	}
 
 	if (options.language === "typescript") {
@@ -74,7 +79,7 @@ function generateManifest(options: TemplateOptions): string {
 		},
 	};
 
-	if (options.tier === 3) {
+	if (options.tier >= 3) {
 		manifest.bindings = {
 			...manifest.bindings as Record<string, unknown>,
 			counter: {
@@ -106,6 +111,23 @@ function generateManifest(options: TemplateOptions): string {
 			"modify-state": {
 				description: "Modify application state.",
 				risk: "medium",
+			},
+		};
+	}
+
+	if (options.tier === 4) {
+		manifest.slots = [
+			{
+				id: "sidebar.left",
+				description: "Left sidebar panel for mod-contributed UI.",
+			},
+		];
+
+		manifest.capabilities = {
+			...manifest.capabilities as Record<string, unknown>,
+			"ui-mount": {
+				description: "Mount a UI fragment into a declared slot.",
+				risk: "low",
 			},
 		};
 	}
@@ -311,6 +333,59 @@ function generateTier3Demo(options: TemplateOptions): string {
 	lines.push(``);
 
 	return lines.join("\n");
+}
+
+function generateTier4Demo(options: TemplateOptions): string {
+	const lines: string[] = [];
+
+	lines.push(`import { createRuntime } from "./host.${options.language === "typescript" ? "ts" : "js"}";`);
+	lines.push(`import { readFile } from "node:fs/promises";`);
+	lines.push(``);
+	lines.push(`console.log("=== ${titleCase(options.name)} Demo ===\\n");`);
+	lines.push(``);
+	lines.push(`const runtime = createRuntime(["modify-state", "ui-mount"]);`);
+	lines.push(``);
+	lines.push(`const modManifestRaw = await readFile(new URL("../mod-manifest.json", import.meta.url), "utf-8");`);
+	lines.push(`const modManifest = JSON.parse(modManifestRaw);`);
+	lines.push(``);
+	lines.push(`const fragmentHtml = await readFile(new URL("../fragments/panel.html", import.meta.url), "utf-8");`);
+	lines.push(``);
+	lines.push(`await runtime.loadMod(modManifest);`);
+	lines.push(``);
+	lines.push(`const fragment = runtime.processFragment(fragmentHtml, { status: "online" });`);
+	lines.push(`console.log("Fragment output:\\n" + fragment);`);
+	lines.push(``);
+	lines.push(`console.log("\\n=== Demo complete ===");`);
+	lines.push(``);
+	lines.push(`runtime.dispose();`);
+	lines.push(``);
+
+	return lines.join("\n");
+}
+
+function generateTier4ModManifest(options: TemplateOptions): string {
+	const manifest: Record<string, unknown> = {
+		$schema: "https://xript.dev/schema/mod-manifest/v0.3.json",
+		xript: "0.3",
+		name: `${options.name}-panel`,
+		version: "0.1.0",
+		title: `${titleCase(options.name)} Panel`,
+		description: `A UI mod for ${titleCase(options.name)}.`,
+		capabilities: ["ui-mount"],
+		fragments: [
+			{
+				id: "info-panel",
+				slot: "sidebar.left",
+				format: "text/html",
+				source: "fragments/panel.html",
+				bindings: [
+					{ name: "status", path: "app.status" },
+				],
+			},
+		],
+	};
+
+	return JSON.stringify(manifest, null, "\t") + "\n";
 }
 
 function generateModManifest(options: TemplateOptions): string {
