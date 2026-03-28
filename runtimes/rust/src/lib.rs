@@ -563,6 +563,7 @@ mod tests {
             mod_json,
             std::collections::HashMap::new(),
             &std::collections::HashSet::new(),
+            None,
         );
         assert!(result.is_err());
     }
@@ -600,6 +601,7 @@ mod tests {
             mod_json,
             std::collections::HashMap::new(),
             &std::collections::HashSet::new(),
+            None,
         );
         assert!(result.is_err());
     }
@@ -634,12 +636,12 @@ mod tests {
         .unwrap();
 
         let no_caps = std::collections::HashSet::new();
-        let result = rt.load_mod(mod_json, std::collections::HashMap::new(), &no_caps);
+        let result = rt.load_mod(mod_json, std::collections::HashMap::new(), &no_caps, None);
         assert!(result.is_err());
 
         let mut with_caps = std::collections::HashSet::new();
         with_caps.insert("ui-mount".to_string());
-        let result = rt.load_mod(mod_json, std::collections::HashMap::new(), &with_caps);
+        let result = rt.load_mod(mod_json, std::collections::HashMap::new(), &with_caps, None);
         assert!(result.is_ok());
     }
 
@@ -685,6 +687,7 @@ mod tests {
             mod_json,
             std::collections::HashMap::new(),
             &std::collections::HashSet::new(),
+            None,
         )
         .unwrap();
 
@@ -724,6 +727,158 @@ mod tests {
 
         let result = rt.execute("typeof hooks.fragment.resume").unwrap();
         assert_eq!(result.value, serde_json::json!("function"));
+    }
+
+    #[test]
+    fn load_mod_executes_entry_script() {
+        use std::sync::{Arc, Mutex};
+
+        let app_manifest = r#"{
+            "xript": "0.3",
+            "name": "test-app",
+            "bindings": {
+                "log": { "description": "log a message" }
+            },
+            "slots": [
+                { "id": "sidebar.left", "accepts": ["text/html"], "multiple": true }
+            ]
+        }"#;
+
+        let mod_json = r#"{
+            "xript": "0.3",
+            "name": "entry-mod",
+            "version": "1.0.0",
+            "fragments": [
+                {
+                    "id": "entry-panel",
+                    "slot": "sidebar.left",
+                    "format": "text/html",
+                    "source": "<p>hi</p>",
+                    "inline": true
+                }
+            ]
+        }"#;
+
+        let captured: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let captured_clone = captured.clone();
+
+        let mut bindings = HostBindings::new();
+        bindings.add_function("log", move |args: &[serde_json::Value]| {
+            let msg = args.first().and_then(|v| v.as_str()).unwrap_or("").to_string();
+            captured_clone.lock().unwrap().push(msg);
+            Ok(serde_json::Value::Null)
+        });
+
+        let rt = create_runtime(
+            app_manifest,
+            RuntimeOptions {
+                host_bindings: bindings,
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let result = rt.load_mod(
+            mod_json,
+            std::collections::HashMap::new(),
+            &std::collections::HashSet::new(),
+            Some("log('entry executed')"),
+        );
+        assert!(result.is_ok());
+
+        let logs = captured.lock().unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0], "entry executed");
+    }
+
+    #[test]
+    fn load_mod_entry_failure_returns_mod_entry_error() {
+        let app_manifest = r#"{
+            "xript": "0.3",
+            "name": "test-app",
+            "slots": [
+                { "id": "sidebar.left", "accepts": ["text/html"], "multiple": true }
+            ]
+        }"#;
+
+        let mod_json = r#"{
+            "xript": "0.3",
+            "name": "failing-mod",
+            "version": "1.0.0",
+            "fragments": [
+                {
+                    "id": "panel",
+                    "slot": "sidebar.left",
+                    "format": "text/html",
+                    "source": "<p>hi</p>",
+                    "inline": true
+                }
+            ]
+        }"#;
+
+        let rt = create_runtime(
+            app_manifest,
+            RuntimeOptions {
+                host_bindings: HostBindings::new(),
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let result = rt.load_mod(
+            mod_json,
+            std::collections::HashMap::new(),
+            &std::collections::HashSet::new(),
+            Some("throw new Error('entry failed')"),
+        );
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), XriptError::ModEntry { .. }));
+    }
+
+    #[test]
+    fn load_mod_without_entry_still_works() {
+        let app_manifest = r#"{
+            "xript": "0.3",
+            "name": "test-app",
+            "slots": [
+                { "id": "sidebar.left", "accepts": ["text/html"], "multiple": true }
+            ]
+        }"#;
+
+        let mod_json = r#"{
+            "xript": "0.3",
+            "name": "no-entry-mod",
+            "version": "1.0.0",
+            "fragments": [
+                {
+                    "id": "panel",
+                    "slot": "sidebar.left",
+                    "format": "text/html",
+                    "source": "<p>hi</p>",
+                    "inline": true
+                }
+            ]
+        }"#;
+
+        let rt = create_runtime(
+            app_manifest,
+            RuntimeOptions {
+                host_bindings: HostBindings::new(),
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let result = rt.load_mod(
+            mod_json,
+            std::collections::HashMap::new(),
+            &std::collections::HashSet::new(),
+            None,
+        );
+        assert!(result.is_ok());
     }
 
     #[test]

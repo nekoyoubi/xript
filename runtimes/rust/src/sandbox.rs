@@ -185,13 +185,33 @@ impl XriptRuntime {
         mod_manifest_json: &str,
         fragment_sources: HashMap<String, String>,
         granted_capabilities: &HashSet<String>,
+        entry_source: Option<&str>,
     ) -> Result<crate::fragment::ModInstance> {
-        crate::fragment::load_mod(
+        let mod_instance = crate::fragment::load_mod(
             mod_manifest_json,
             &self.manifest,
             granted_capabilities,
             &fragment_sources,
-        )
+        )?;
+
+        if let Some(source) = entry_source {
+            let mod_name = mod_instance.name.clone();
+            self.ctx.with(|ctx| {
+                let res: std::result::Result<Value, _> = ctx.eval(source);
+                if let Err(_) = res {
+                    let msg: std::result::Result<String, _> =
+                        ctx.eval("(() => { try { throw undefined; } catch(e) { return String(e); } })()");
+                    let error_msg = msg.unwrap_or_else(|_| "unknown entry script error".into());
+                    return Err(XriptError::ModEntry {
+                        mod_name,
+                        message: error_msg,
+                    });
+                }
+                Ok(())
+            })?;
+        }
+
+        Ok(mod_instance)
     }
 
     pub fn fire_fragment_hook(
