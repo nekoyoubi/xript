@@ -140,7 +140,7 @@ v0.4 shipped — Unified CLI, Annotation Scanning, Fragment Workbench (645 tests
 - **Toolchain**: manifest validator (app + mod, auto-detection, cross-validation, 25 tests), type generator (slot + fragment API types, 31 tests), doc generator (slot docs + fragment API page + `--link-format` + `--frontmatter`, 28 tests), init CLI (app + mod scaffolding, 27 tests), sanitizer (71 tests)
 - **Annotation Scanning**: `spec/annotations.md` defines `@xript` and `@xript-cap` JSDoc tags; `xript scan` reads TypeScript source and generates manifest bindings/capabilities
 - **Examples**: four examples including `ui-dashboard/` demonstrating the full fragment protocol (slots, mod manifests, `data-bind`, `data-if`, sandbox fragment API)
-- **Developer Experience**: docs site at xript.dev (31 pages), getting started guide, runtime API reference, runtime overview comparison, four example walkthroughs, interactive hero playground with live simulations, four interactive live demos including Fragment Builder, Fragment Workbench interactive tool
+- **Developer Experience**: docs site at xript.dev (28 pages), getting started guide, runtime API reference, runtime overview comparison, four example walkthroughs, interactive hero playground with live simulations, four interactive live demos including Fragment Builder, Fragment Workbench interactive tool
 - **Publishing**: all npm packages live under `@xriptjs` scope (OIDC trusted publishing, provenance attestations), Rust crates on crates.io, C# package on NuGet; all publish workflows (`publish.yml`, `publish-nuget.yml`, `publish-crates.yml`) trigger on GitHub Release creation with `workflow_dispatch` as manual fallback
 
 ## Key Design Decisions
