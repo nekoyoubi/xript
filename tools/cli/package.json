@@ -1,6 +1,6 @@
 {
 	"name": "@xriptjs/cli",
-	"version": "0.4.0",
+	"version": "0.4.1",
 	"description": "Unified CLI for the xript ecosystem — validate, generate types, generate docs, scaffold projects, sanitize fragments, and scan annotations.",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -41,11 +41,11 @@
 		"provenance": true
 	},
 	"dependencies": {
-		"@xriptjs/validate": "^0.4.0",
-		"@xriptjs/typegen": "^0.4.0",
-		"@xriptjs/docgen": "^0.4.0",
-		"@xriptjs/init": "^0.4.0",
-		"@xriptjs/sanitize": "^0.4.0"
+		"@xriptjs/validate": "^0.4.1",
+		"@xriptjs/typegen": "^0.4.1",
+		"@xriptjs/docgen": "^0.4.1",
+		"@xriptjs/init": "^0.4.1",
+		"@xriptjs/sanitize": "^0.4.1"
 	},
 	"optionalDependencies": {
 		"ts-morph": "^25.0.0"
