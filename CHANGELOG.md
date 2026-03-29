@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.4.0 — Unified CLI & Annotation Scanning
+## v0.4.0 — Unified CLI, Tier 4 & Rust Runtime
 
 - consolidated five separate CLI tools into `@xriptjs/cli`, published as the `xript` command
   - `xript validate`, `xript typegen`, `xript docgen`, `xript init`, `xript sanitize` all route to the existing library packages
@@ -11,21 +11,35 @@
   - scanner parses TypeScript ASTs via `ts-morph` (optional dependency; the CLI prompts if it's missing)
   - merge mode reads an existing manifest, adds new bindings, warns about removals, and auto-generates capability entries
   - outputs to stdout, to a file, or directly into an existing manifest with `--write`
+- `xript-runtime` (Rust) gained three headline features
+  - `load_mod()` now executes mod entry scripts after fragment validation (#87)
+  - async host bindings with `Promise`/`await` support via `pollster` (#86) — host functions return real Promises, JS callers can `await` them, chained awaits work
+  - `XriptHandle` — a `Send + Sync` wrapper that owns an `XriptRuntime` on a dedicated thread, communicates via `mpsc` channels, mirrors the full runtime API (#88)
+- introduced **tier 4 "Full Feature"** adoption tier covering slots, mod manifests, fragments, and the sandbox fragment API
+  - updated adoption tiers docs, spec, vision, README, and CONTRIBUTING
+  - `xript init` scaffolds tier 4 apps with slots, companion mod manifests, and fragment HTML
+  - UI Dashboard example linked as the tier 4 reference implementation
 - improved `@xriptjs/docgen` with two new flags
   - `--link-format no-extension` strips `.md` from generated links for static site generators that don't want them
   - `--frontmatter` injects YAML frontmatter into all generated files
 - built the **Fragment Workbench** (#85), an interactive tool page on the docs site for building and testing xript UI fragments
-  - first interactive page in the Tools section of the sidebar
-  - manifest-driven: load an app manifest and the workbench configures itself from its slots
-  - slot contract panel shows available bindings, capabilities, and types per slot
-  - JSML toggle with lossless HTML/JSML conversion
-  - validation-as-you-type: unresolved `data-bind`/`data-if` refs flagged inline, sanitizer stripping highlighted
-  - dynamic state simulation with controls generated from manifest type info
-  - export as a downloadable mod manifest JSON
+  - tabbed workflow (Manifest, Author, Preview, Export) with collapsible inline guides
+  - CodeJar syntax highlighting for manifest JSON and fragment HTML editors
+  - slot contract panel, JSML toggle, validation-as-you-type, dynamic state simulation
+  - Export tab with live mod manifest preview and one-click download
+- overhauled the **Fragment Builder** demo
+  - RPG dungeon theme ("Realm of Xript") with ASCII roguelike map
+  - radio-pill slot selection, individual fragment close buttons, CodeJar editor
 - added two new screens to `xript-wiz`
   - audit: capability coverage analysis showing ungated bindings, unused capabilities, capability gaps, and risk distribution
   - diff: compares the current manifest against the last git tag, surfacing added/removed bindings, capabilities, and slots
   - home menu expanded from 4 to 6 items
+- consolidated docs site tool pages from 6 separate pages to 3 (CLI, TUI Wizard, Fragment Workbench)
+  - unified CLI reference page with all subcommands, flags, examples, and programmatic API links
+  - new TUI Wizard page with `Terminal.astro` component mockups for home, audit, and diff screens
+  - added Annotations spec page to the Specification sidebar section
+  - updated all four runtime doc pages with `loadMod`, fragment hooks, async bindings, and `XriptHandle`
+  - fixed stale tool references (`xript-validate` to `xript validate`, etc.) across the entire docs site
 - updated the publish pipeline for 8 npm packages (added `@xriptjs/cli`); `scripts/bump-version.mjs` now handles 14 files
 
 ### Test counts
@@ -36,15 +50,15 @@
 | `@xriptjs/validate` | 25 | 25 |
 | `@xriptjs/typegen` | 31 | 31 |
 | `@xriptjs/docgen` | 22 | 28 |
-| `@xriptjs/init` | 27 | 27 |
+| `@xriptjs/init` | 27 | 34 |
 | `@xriptjs/cli` | — | 29 |
 | `@xriptjs/runtime` | 97 | 97 |
 | `@xriptjs/runtime-node` | 97 | 97 |
-| `xript-runtime` (Rust) | 31 | 31 |
+| `xript-runtime` (Rust) | 31 | 45 |
 | `xript-ratatui` | 58 | 58 |
 | `xript-wiz` | 33 | 35 |
 | `Xript.Runtime` (C#) | 116 | 116 |
-| **total** | **608** | **645** |
+| **total** | **608** | **666** |
 
 ## v0.3.1 — Publishing & Release Tooling
 

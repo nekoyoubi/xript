@@ -101,7 +101,7 @@ node examples/ui-dashboard/src/demo.js           # fragment protocol demo
 
 ## Release Process
 
-Versions are unified across all 11 published packages. Two scripts handle the mechanics:
+Versions are unified across all 12 published packages. Two scripts handle the mechanics:
 
 1. **`npm run version:bump <version>`** — syncs the version across all 14 package files (npm, Rust, C#) and internal dependency references. Run `npm install` after to refresh the lockfile.
 2. **`npm run release`** — creates a GitHub Release from the current version in the packages and the matching `CHANGELOG.md` section. Triggers all publish workflows automatically.
@@ -132,7 +132,7 @@ v0.4 shipped — Unified CLI, Annotation Scanning, Fragment Workbench (666 tests
 - **HTML Sanitizer**: `@xriptjs/sanitize` in `tools/sanitize/` -- pure string-based HTML+JSML sanitizer with no DOM dependency (works in QuickJS WASM), 71 tests
 - **Universal Runtime**: `@xriptjs/runtime` in `runtimes/js/` -- QuickJS WASM sandbox with capability enforcement, hook system, `loadMod()`, fragment processing (`data-bind`, `data-if`), JSML support, sandbox fragment API (command buffer pattern), 97 tests
 - **Node.js Runtime**: `@xriptjs/runtime-node` in `runtimes/node/` -- Node.js vm-based sandbox with full fragment support, 97 tests
-- **Rust Runtime**: `xript-runtime` in `runtimes/rust/` -- native QuickJS sandbox via rquickjs with host bindings (sync and async), capability enforcement, hooks, resource limits, `load_mod()` with entry script execution, fragment processing, `XriptHandle` Send+Sync wrapper, 43 tests
+- **Rust Runtime**: `xript-runtime` in `runtimes/rust/` -- native QuickJS sandbox via rquickjs with host bindings (sync and async), capability enforcement, hooks, resource limits, `load_mod()` with entry script execution, fragment processing, `XriptHandle` Send+Sync wrapper, 45 tests
 - **C# Runtime**: `Xript.Runtime` in `runtimes/csharp/` -- Jint sandbox with host bindings, capability enforcement, hooks, resource limits, `LoadMod()`, fragment processing, 116 tests
 - **Ratatui Renderer**: `xript-ratatui` in `renderers/ratatui/` -- fragment renderer for Ratatui terminal apps, parses `application/x-ratatui+json` into native widgets, 58 tests
 - **TUI Wizard**: `xript-wiz` in `tools/wiz/` -- interactive TUI wizard that dogfoods the xript ecosystem (fragments rendered by `xript-ratatui`), audit and diff screens for manifest analysis, 35 tests
