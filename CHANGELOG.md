@@ -1,5 +1,7 @@
 # Changelog
 
+## v0.4.1 — TBD
+
 ## v0.4.0 — Unified CLI, Tier 4 & Rust Runtime
 
 - consolidated five separate CLI tools into `@xriptjs/cli`, published as the `xript` command
