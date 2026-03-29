@@ -55,31 +55,34 @@ npm test --workspace=tools/validate                 # run validator tests (25 te
 npm run build --workspace=tools/typegen            # build the type generator
 npm test --workspace=tools/typegen                 # run typegen tests (31 tests)
 npm run build --workspace=tools/docgen             # build the doc generator
-npm test --workspace=tools/docgen                  # run docgen tests (22 tests)
+npm test --workspace=tools/docgen                  # run docgen tests (28 tests)
 npm run build --workspace=tools/init               # build the init CLI
-npm test --workspace=tools/init                    # run init tests (27 tests)
+npm test --workspace=tools/init                    # run init tests (34 tests)
+npm run build --workspace=tools/cli                # build the unified CLI
+npm test --workspace=tools/cli                     # run CLI tests (29 tests)
 
 # build and test Rust packages
 cd runtimes/rust && cargo build                    # build the Rust runtime
-cd runtimes/rust && cargo test                     # run Rust runtime tests (31 tests)
+cd runtimes/rust && cargo test                     # run Rust runtime tests (45 tests)
 cd renderers/ratatui && cargo build                # build the Ratatui fragment renderer
 cd renderers/ratatui && cargo test                 # run Ratatui renderer tests (58 tests)
 cd tools/wiz && cargo build                        # build the TUI wizard
-cd tools/wiz && cargo test                         # run TUI wizard tests (33 tests)
+cd tools/wiz && cargo test                         # run TUI wizard tests (35 tests)
 
 # build and test the C# runtime
 dotnet build runtimes/csharp/Xript.Runtime.sln     # build the C# runtime
 dotnet test runtimes/csharp/Xript.Runtime.sln      # run C# runtime tests (116 tests)
 
-# tools (run from repo root after npm install)
-npx xript-validate <manifest.json>     # validate a manifest against the spec schema
-npx xript-typegen <manifest.json>      # generate TypeScript definitions (stdout)
-npx xript-typegen <m.json> -o out.d.ts # generate TypeScript definitions (file)
-npx xript-docgen <m.json> -o docs/     # generate markdown documentation
-npx xript-init                         # scaffold a new xript project (interactive)
-npx xript-init --yes                   # scaffold with defaults (no prompts)
-npx xript-init --mod                   # scaffold a new mod project
-npx xript-sanitize <file.html>         # sanitize an HTML fragment
+# unified CLI (run from repo root after npm install)
+npx xript validate <manifest.json>     # validate a manifest against the spec schema
+npx xript typegen <manifest.json>      # generate TypeScript definitions (stdout)
+npx xript typegen <m.json> -o out.d.ts # generate TypeScript definitions (file)
+npx xript docgen <m.json> -o docs/     # generate markdown documentation
+npx xript init                         # scaffold a new xript project (interactive)
+npx xript init --yes                   # scaffold with defaults (no prompts)
+npx xript init --mod                   # scaffold a new mod project
+npx xript sanitize <file.html>         # sanitize an HTML fragment
+npx xript scan src/ --manifest m.json  # scan @xript annotations into manifest
 
 # run example demos
 node examples/expression-evaluator/src/demo.js  # tier 1 demo
@@ -98,9 +101,9 @@ node examples/ui-dashboard/src/demo.js           # fragment protocol demo
 
 ## Release Process
 
-Versions are unified across all 11 published packages. Two scripts handle the mechanics:
+Versions are unified across all 12 published packages. Two scripts handle the mechanics:
 
-1. **`npm run version:bump <version>`** — syncs the version across all 12 package files (npm, Rust, C#) and internal dependency references. Run `npm install` after to refresh the lockfile.
+1. **`npm run version:bump <version>`** — syncs the version across all 14 package files (npm, Rust, C#) and internal dependency references. Run `npm install` after to refresh the lockfile.
 2. **`npm run release`** — creates a GitHub Release from the current version in the packages and the matching `CHANGELOG.md` section. Triggers all publish workflows automatically.
 
 **When preparing a release PR, always:**
@@ -123,19 +126,21 @@ A top-level `CHANGELOG.md` tracks all releases. Follow these rules:
 
 ## Current State
 
-v0.3 shipped — UI Fragment Protocol and Mod Manifests (608 tests across 11 packages):
+v0.4 shipped — Unified CLI, Annotation Scanning, Fragment Workbench (666 tests across 12 packages):
 
 - **Spec v0.3**: manifest schema extended with `slots`, new mod manifest schema (`spec/mod-manifest.schema.json`), fragment protocol specification (`spec/fragments.md`), fragment format catalog (`spec/fragment-formats.md`), HTML sanitizer conformance suite (`spec/sanitizer-tests.json`, 45 test cases)
 - **HTML Sanitizer**: `@xriptjs/sanitize` in `tools/sanitize/` -- pure string-based HTML+JSML sanitizer with no DOM dependency (works in QuickJS WASM), 71 tests
 - **Universal Runtime**: `@xriptjs/runtime` in `runtimes/js/` -- QuickJS WASM sandbox with capability enforcement, hook system, `loadMod()`, fragment processing (`data-bind`, `data-if`), JSML support, sandbox fragment API (command buffer pattern), 97 tests
 - **Node.js Runtime**: `@xriptjs/runtime-node` in `runtimes/node/` -- Node.js vm-based sandbox with full fragment support, 97 tests
-- **Rust Runtime**: `xript-runtime` in `runtimes/rust/` -- native QuickJS sandbox via rquickjs with host bindings, capability enforcement, hooks, resource limits, `load_mod()`, fragment processing, 31 tests
+- **Rust Runtime**: `xript-runtime` in `runtimes/rust/` -- native QuickJS sandbox via rquickjs with host bindings (sync and async), capability enforcement, hooks, resource limits, `load_mod()` with entry script execution, fragment processing, `XriptHandle` Send+Sync wrapper, 45 tests
 - **C# Runtime**: `Xript.Runtime` in `runtimes/csharp/` -- Jint sandbox with host bindings, capability enforcement, hooks, resource limits, `LoadMod()`, fragment processing, 116 tests
 - **Ratatui Renderer**: `xript-ratatui` in `renderers/ratatui/` -- fragment renderer for Ratatui terminal apps, parses `application/x-ratatui+json` into native widgets, 58 tests
-- **TUI Wizard**: `xript-wiz` in `tools/wiz/` -- interactive TUI wizard that dogfoods the xript ecosystem (fragments rendered by `xript-ratatui`), 33 tests
-- **Toolchain**: manifest validator (app + mod, auto-detection, cross-validation, 25 tests), type generator (slot + fragment API types, 31 tests), doc generator (slot docs + fragment API page, 22 tests), init CLI (app + mod scaffolding, 27 tests), sanitizer (71 tests)
+- **TUI Wizard**: `xript-wiz` in `tools/wiz/` -- interactive TUI wizard that dogfoods the xript ecosystem (fragments rendered by `xript-ratatui`), audit and diff screens for manifest analysis, 35 tests
+- **Unified CLI**: `@xriptjs/cli` in `tools/cli/` -- single `xript` command with subcommands for validate, typegen, docgen, init, sanitize, and scan (annotation scanning), 29 tests
+- **Toolchain**: manifest validator (app + mod, auto-detection, cross-validation, 25 tests), type generator (slot + fragment API types, 31 tests), doc generator (slot docs + fragment API page + `--link-format` + `--frontmatter`, 28 tests), init CLI (app + mod scaffolding + tier 4 full feature, 34 tests), sanitizer (71 tests)
+- **Annotation Scanning**: `spec/annotations.md` defines `@xript` and `@xript-cap` JSDoc tags; `xript scan` reads TypeScript source and generates manifest bindings/capabilities
 - **Examples**: four examples including `ui-dashboard/` demonstrating the full fragment protocol (slots, mod manifests, `data-bind`, `data-if`, sandbox fragment API)
-- **Developer Experience**: docs site at xript.dev (30 pages), getting started guide, runtime API reference, runtime overview comparison, four example walkthroughs, interactive hero playground with live simulations, four interactive live demos including Fragment Builder
+- **Developer Experience**: docs site at xript.dev (29 pages), getting started guide, runtime API reference, runtime overview comparison, four example walkthroughs, interactive hero playground with live simulations, four interactive live demos including Fragment Builder, Fragment Workbench interactive tool
 - **Publishing**: all npm packages live under `@xriptjs` scope (OIDC trusted publishing, provenance attestations), Rust crates on crates.io, C# package on NuGet; all publish workflows (`publish.yml`, `publish-nuget.yml`, `publish-crates.yml`) trigger on GitHub Release creation with `workflow_dispatch` as manual fallback
 
 ## Key Design Decisions
@@ -143,7 +148,7 @@ v0.3 shipped — UI Fragment Protocol and Mod Manifests (608 tests across 11 pac
 - **The manifest is the product**: everything derives from the manifest schema (types, docs, validation)
 - **Safety is non-negotiable**: no eval, no sandbox escape, default-deny capabilities
 - **JavaScript is the modding language**: not because it's perfect, but because it's known
-- **Incremental adoption**: three tiers (expressions only, simple bindings, full scripting)
+- **Incremental adoption**: four tiers (expressions only, simple bindings, advanced scripting, full feature)
 - **Universal portability**: QuickJS WASM sandbox runs anywhere JavaScript runs (browser, Node, Deno, Bun, Cloudflare Workers)
 - **Fragments are inert templates**: all dynamic behavior routes through the sandbox (data-bind for values, data-if for visibility, events for interaction, command buffer for mutations)
 - **Two smart attributes only**: `data-bind` and `data-if` are the hard wall — everything beyond that goes through the sandbox fragment API

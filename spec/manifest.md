@@ -2,7 +2,7 @@
 
 The xript manifest is the single source of truth for an application's scripting API. It declares what functionality is exposed to scripts, how it is organized, what capabilities gate access, and what types are involved. From the manifest, everything else is derived: documentation, TypeScript definitions, and validation. Interactive playgrounds are also supported as a toolchain output.
 
-This document explains the structure of the manifest, the rationale behind key decisions, and how the manifest supports xript's three adoption tiers.
+This document explains the structure of the manifest, the rationale behind key decisions, and how the manifest supports xript's four adoption tiers.
 
 ## Overview
 
@@ -257,7 +257,7 @@ These are defaults that runtimes enforce unless the host application overrides t
 
 ## Adoption Tiers
 
-The manifest supports xript's three adoption tiers through progressive complexity.
+The manifest supports xript's four adoption tiers through progressive complexity.
 
 ### Tier 1: Expressions Only
 
@@ -301,11 +301,17 @@ The application exposes a few functions. No capabilities needed because everythi
 }
 ```
 
-### Tier 3: Full Scripting with Capabilities
+### Tier 3: Advanced Scripting
 
-The complete model. Namespaces organize a rich API. Capabilities gate sensitive operations. Custom types describe complex data. Examples document usage.
+Namespaces organize a rich API. Capabilities gate sensitive operations. Custom types describe complex data. Examples document usage.
 
 See the [game mod system example](../examples/game-mod-system/) for a full tier 3 manifest and walkthrough.
+
+### Tier 4: Full Feature
+
+Slots, mod manifests, and fragments. Mods contribute UI that binds to host state and handles interaction.
+
+See the [UI dashboard example](../examples/ui-dashboard/) for a full tier 4 integration.
 
 ## Schema Evolution
 

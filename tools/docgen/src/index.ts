@@ -88,6 +88,11 @@ interface Example {
 	description?: string;
 }
 
+export interface DocgenOptions {
+	linkFormat?: "default" | "no-extension";
+	frontmatter?: string;
+}
+
 export interface DocgenResult {
 	pages: DocPage[];
 }
@@ -132,7 +137,11 @@ function isOptionalParam(param: Parameter): boolean {
 	return param.default !== undefined || param.required === false;
 }
 
-function generateIndexPage(manifest: Manifest): DocPage {
+function linkExt(options?: DocgenOptions): string {
+	return options?.linkFormat === "no-extension" ? "" : ".md";
+}
+
+function generateIndexPage(manifest: Manifest, options?: DocgenOptions): DocPage {
 	const lines: string[] = [];
 	const displayName = manifest.title || manifest.name;
 
@@ -167,7 +176,8 @@ function generateIndexPage(manifest: Manifest): DocPage {
 			lines.push("");
 			for (const name of topLevel) {
 				const binding = manifest.bindings[name] as FunctionBinding;
-				lines.push(`- [\`${name}()\`](./bindings/${name}.md) — ${binding.description}`);
+				const ext = linkExt(options);
+				lines.push(`- [\`${name}()\`](./bindings/${name}${ext}) — ${binding.description}`);
 			}
 			lines.push("");
 		}
@@ -178,8 +188,9 @@ function generateIndexPage(manifest: Manifest): DocPage {
 			for (const name of namespaces) {
 				const binding = manifest.bindings[name] as NamespaceBinding;
 				const memberCount = Object.keys(binding.members).length;
+				const ext = linkExt(options);
 				lines.push(
-					`- [\`${name}\`](./bindings/${name}.md) — ${binding.description} (${memberCount} ${memberCount === 1 ? "function" : "functions"})`,
+					`- [\`${name}\`](./bindings/${name}${ext}) — ${binding.description} (${memberCount} ${memberCount === 1 ? "function" : "functions"})`,
 				);
 			}
 			lines.push("");
@@ -193,7 +204,8 @@ function generateIndexPage(manifest: Manifest): DocPage {
 		for (const [name, hook] of Object.entries(manifest.hooks)) {
 			const phaseInfo =
 				hook.phases && hook.phases.length > 0 ? ` *(${hook.phases.join(", ")})*` : "";
-			lines.push(`- [\`${name}\`](./hooks/${name}.md) — ${hook.description}${phaseInfo}`);
+			const ext = linkExt(options);
+			lines.push(`- [\`${name}\`](./hooks/${name}${ext}) — ${hook.description}${phaseInfo}`);
 		}
 		lines.push("");
 	}
@@ -203,7 +215,8 @@ function generateIndexPage(manifest: Manifest): DocPage {
 		lines.push("");
 		for (const [name, def] of Object.entries(manifest.types)) {
 			const kind = def.values ? "enum" : "interface";
-			lines.push(`- [\`${name}\`](./types/${name}.md) — ${def.description} *(${kind})*`);
+			const ext = linkExt(options);
+			lines.push(`- [\`${name}\`](./types/${name}${ext}) — ${def.description} *(${kind})*`);
 		}
 		lines.push("");
 	}
@@ -223,7 +236,8 @@ function generateIndexPage(manifest: Manifest): DocPage {
 			lines.push(`| \`${slot.id}\` | ${accepts} | ${multiple} | ${style} | ${cap} |`);
 		}
 		lines.push("");
-		lines.push("See [Fragment API](./fragment-api.md) for the sandbox fragment manipulation API.");
+		const fragExt = linkExt(options);
+		lines.push(`See [Fragment API](./fragment-api${fragExt}) for the sandbox fragment manipulation API.`);
 		lines.push("");
 	}
 
@@ -570,11 +584,11 @@ function generateFragmentAPIPage(): DocPage {
 	return { slug: "fragment-api", title: "Fragment API", content: lines.join("\n") };
 }
 
-export function generateDocs(manifest: unknown): DocgenResult {
+export function generateDocs(manifest: unknown, options?: DocgenOptions): DocgenResult {
 	const m = manifest as Manifest;
 	const pages: DocPage[] = [];
 
-	pages.push(generateIndexPage(m));
+	pages.push(generateIndexPage(m, options));
 
 	if (m.bindings) {
 		for (const [name, binding] of Object.entries(m.bindings)) {
@@ -605,14 +619,14 @@ export function generateDocs(manifest: unknown): DocgenResult {
 	return { pages };
 }
 
-export async function generateDocsFromFile(filePath: string): Promise<DocgenResult> {
+export async function generateDocsFromFile(filePath: string, options?: DocgenOptions): Promise<DocgenResult> {
 	const absolutePath = resolve(filePath);
 	const raw = await readFile(absolutePath, "utf-8");
 	const manifest = JSON.parse(raw) as unknown;
-	return generateDocs(manifest);
+	return generateDocs(manifest, options);
 }
 
-export async function writeDocsToDirectory(result: DocgenResult, outputDir: string): Promise<string[]> {
+export async function writeDocsToDirectory(result: DocgenResult, outputDir: string, options?: DocgenOptions): Promise<string[]> {
 	const absoluteDir = resolve(outputDir);
 	await mkdir(absoluteDir, { recursive: true });
 	const writtenPaths: string[] = [];
@@ -624,7 +638,11 @@ export async function writeDocsToDirectory(result: DocgenResult, outputDir: stri
 			const dir = join(absoluteDir, ...segments.slice(0, -1));
 			await mkdir(dir, { recursive: true });
 		}
-		await writeFile(filePath, page.content, "utf-8");
+		let content = page.content;
+		if (options?.frontmatter) {
+			content = `---\n${options.frontmatter}\n---\n\n${content}`;
+		}
+		await writeFile(filePath, content, "utf-8");
 		writtenPaths.push(filePath);
 	}
 

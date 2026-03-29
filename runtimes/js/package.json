@@ -1,6 +1,6 @@
 {
 	"name": "@xriptjs/runtime",
-	"version": "0.3.1",
+	"version": "0.4.0",
 	"description": "Universal JavaScript runtime for xript — QuickJS WASM sandbox for browser, Node, Deno, and more.",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -41,7 +41,7 @@
 	},
 	"dependencies": {
 		"quickjs-emscripten": "^0.31.0",
-		"@xriptjs/sanitize": "^0.3.1"
+		"@xriptjs/sanitize": "^0.4.0"
 	},
 	"devDependencies": {
 		"typescript": "^5.7.0",

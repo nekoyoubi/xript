@@ -8,24 +8,49 @@
 	</div>
 	<div class="fb-container" id="fb-container" style="display:none">
 		<div class="fb-left">
-			<div class="panel host-panel">
-				<div class="panel-header">
-					<h3>Host App</h3>
-					<button id="fb-clear-slots-btn" class="clear-button">Clear Slots</button>
+			<div class="game-window">
+				<div class="game-header" data-slot="header.status">
+					<div class="game-title">Realm of Xript</div>
+					<div class="header-slot" id="slot-header-status">
+						<span class="header-default">LVL 12 &middot; Floor 3</span>
+					</div>
 				</div>
-				<div class="host-slots" id="host-slots">
-					<div class="slot-region" data-slot="sidebar.left">
-						<div class="slot-label">sidebar.left <span class="slot-meta">multiple · isolated</span></div>
-						<div class="slot-content" id="slot-sidebar-left"></div>
+				<div class="game-body">
+					<div class="game-sidebar" data-slot="sidebar.left">
+						<div class="sidebar-label">sidebar.left</div>
+						<div class="sidebar-slot" id="slot-sidebar-left"></div>
 					</div>
-					<div class="slot-region" data-slot="header.status">
-						<div class="slot-label">header.status <span class="slot-meta">single · inherit</span></div>
-						<div class="slot-content" id="slot-header-status"></div>
+					<div class="game-world">
+						<pre class="dungeon-map"><span class="t-wall">################</span>
+<span class="t-wall">#</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-wall">#</span>
+<span class="t-wall">#</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-torch">†</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-wall">#</span>
+<span class="t-wall">#</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-wall">#</span>
+<span class="t-wall">#</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-player">@</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-wall">#</span>
+<span class="t-wall">#</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-chest">$</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-wall">#</span>
+<span class="t-wall">#</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-wall">#</span>
+<span class="t-wall">#</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-torch">†</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-floor">.</span><span class="t-wall">#</span>
+<span class="t-wall">######</span><span class="t-door">+</span><span class="t-wall">#########</span></pre>
+						<div class="overlay-region" data-slot="main.overlay">
+							<div class="overlay-slot" id="slot-main-overlay"></div>
+						</div>
 					</div>
-					<div class="slot-region" data-slot="main.overlay">
-						<div class="slot-label">main.overlay <span class="slot-meta">multiple · scoped · <code>ui-mount</code></span></div>
-						<div class="slot-content" id="slot-main-overlay"></div>
+				</div>
+				<div class="game-footer">
+					<button id="fb-clear-slots-btn" class="game-btn">Clear Slots</button>
+					<div class="slot-legend">
+						<span class="legend-item"><span class="legend-dot sidebar-dot"></span> sidebar.left</span>
+						<span class="legend-item"><span class="legend-dot header-dot"></span> header.status</span>
+						<span class="legend-item"><span class="legend-dot overlay-dot"></span> main.overlay</span>
 					</div>
+				</div>
+			</div>
+			<div class="panel console-panel">
+				<div class="panel-header">
+					<h3>Console</h3>
+					<button id="fb-clear-btn" class="clear-button">Clear</button>
+				</div>
+				<div class="fb-console" id="fb-console">
+					<div class="output-placeholder">Mount a fragment to see output here.</div>
 				</div>
 			</div>
 		</div>
@@ -42,16 +67,13 @@
 						<option value="dangerous">Dangerous Fragment</option>
 					</select>
 				</div>
-				<textarea id="fb-editor" spellcheck="false" autocomplete="off" rows="8"></textarea>
+				<div class="code-editor" id="fb-editor" spellcheck="false"></div>
 				<div class="editor-footer">
-					<label class="slot-picker">
-						<span>Slot:</span>
-						<select id="fb-slot-select">
-							<option value="sidebar.left">sidebar.left</option>
-							<option value="header.status">header.status</option>
-							<option value="main.overlay">main.overlay</option>
-						</select>
-					</label>
+					<div class="slot-pills" id="fb-slot-pills">
+						<button class="slot-pill active" data-slot="sidebar.left">sidebar.left</button>
+						<button class="slot-pill" data-slot="header.status">header.status</button>
+						<button class="slot-pill" data-slot="main.overlay">main.overlay</button>
+					</div>
 					<button id="fb-mount-btn" class="run-button">Mount</button>
 				</div>
 			</div>
@@ -80,72 +102,53 @@
 					</div>
 				</div>
 			</div>
-			<div class="panel console-panel">
-				<div class="panel-header">
-					<h3>Console</h3>
-					<button id="fb-clear-btn" class="clear-button">Clear</button>
-				</div>
-				<div class="fb-console" id="fb-console">
-					<div class="output-placeholder">Mount a fragment to see output here.</div>
-				</div>
-			</div>
 		</div>
 	</div>
 </div>
 
 <script>
 	import { sanitizeHTMLDetailed } from "@xriptjs/sanitize";
+	import { CodeJar } from "codejar";
+
+	function highlightHTML(el) {
+		const code = el.textContent || "";
+		el.innerHTML = code
+			.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+			.replace(/&lt;(\/?)([\w-]+)((?:\s+[^&]*)?)&gt;/g, (_, slash, tag, attrs) => {
+				const hlAttrs = attrs.replace(/([\w-]+)=&quot;([^&]*?)&quot;/g,
+					'<span class="hl-attr">$1</span>=<span class="hl-str">&quot;$2&quot;</span>');
+				return `&lt;<span class="hl-tag">${slash}${tag}</span>${hlAttrs}&gt;`;
+			});
+	}
 
 	const samples = {
 		"health-bar": {
 			html: '<div class="health-bar">\n\t<div class="bar-label">Health</div>\n\t<div class="bar-track">\n\t\t<span data-bind="health">0</span> / <span data-bind="maxHealth">0</span>\n\t</div>\n</div>',
-			bindings: [
-				{ name: "health", path: "health" },
-				{ name: "maxHealth", path: "maxHealth" },
-			],
+			bindings: [{ name: "health", path: "health" }, { name: "maxHealth", path: "maxHealth" }],
 		},
 		"low-health": {
 			html: '<div class="warnings">\n\t<div data-if="health < 50" class="warning">Low health!</div>\n\t<div data-if="health < 20" class="critical">Critical — find a healer!</div>\n\t<div data-if="health >= 50" class="safe">Health is fine.</div>\n</div>',
-			bindings: [
-				{ name: "health", path: "health" },
-			],
+			bindings: [{ name: "health", path: "health" }],
 		},
 		"player-card": {
 			html: '<div class="player-card">\n\t<div class="card-name" data-bind="playerName">Player</div>\n\t<div class="card-stat">\n\t\tHP: <span data-bind="health">0</span>/<span data-bind="maxHealth">0</span>\n\t</div>\n\t<div data-if="health < 30" class="card-danger">In danger!</div>\n</div>',
-			bindings: [
-				{ name: "playerName", path: "playerName" },
-				{ name: "health", path: "health" },
-				{ name: "maxHealth", path: "maxHealth" },
-			],
+			bindings: [{ name: "playerName", path: "playerName" }, { name: "health", path: "health" }, { name: "maxHealth", path: "maxHealth" }],
 		},
 		"event-demo": {
 			html: '<div class="event-panel">\n\t<button data-action="heal" class="heal-btn">Heal +10</button>\n\t<button data-action="damage" class="dmg-btn">Damage -10</button>\n\t<div class="status">HP: <span data-bind="health">0</span></div>\n</div>',
-			bindings: [
-				{ name: "health", path: "health" },
-			],
-			events: [
-				{ selector: "[data-action='heal']", on: "click", handler: "onHeal" },
-				{ selector: "[data-action='damage']", on: "click", handler: "onDamage" },
-			],
+			bindings: [{ name: "health", path: "health" }],
+			events: [{ selector: "[data-action='heal']", on: "click", handler: "onHeal" }, { selector: "[data-action='damage']", on: "click", handler: "onDamage" }],
 		},
 		"dangerous": {
 			html: '<div class="safe-content">\n\t<p>This is safe.</p>\n</div>\n<script>alert("XSS!")<\/script>\n<div onclick="steal()" class="trap">Click me</div>\n<iframe src="evil.com"></iframe>\n<a href="javascript:void(0)">Bad link</a>\n<p data-bind="playerName">Name goes here</p>',
-			bindings: [
-				{ name: "playerName", path: "playerName" },
-			],
+			bindings: [{ name: "playerName", path: "playerName" }],
 		},
 	};
 
 	const appManifest = {
-		xript: "0.3",
-		name: "fragment-builder",
-		version: "1.0.0",
-		bindings: {
-			log: { description: "Log a message", params: [{ name: "msg", type: "string" }] },
-		},
-		capabilities: {
-			"ui-mount": { description: "Mount UI fragments", risk: "low" },
-		},
+		xript: "0.4", name: "fragment-builder", version: "1.0.0",
+		bindings: { log: { description: "Log a message", params: [{ name: "msg", type: "string" }] } },
+		capabilities: { "ui-mount": { description: "Mount UI fragments", risk: "low" } },
 		slots: [
 			{ id: "sidebar.left", accepts: ["text/html"], multiple: true, style: "isolated" },
 			{ id: "header.status", accepts: ["text/html"], multiple: false, style: "inherit" },
@@ -155,12 +158,13 @@
 
 	let state = { health: 80, maxHealth: 100, playerName: "Adventurer" };
 	let mountedFragments = [];
+	let selectedSlot = "sidebar.left";
+	let editorJar;
 
 	function addConsole(text, level = "log") {
 		const el = document.getElementById("fb-console");
 		const placeholder = el.querySelector(".output-placeholder");
 		if (placeholder) placeholder.remove();
-
 		const line = document.createElement("div");
 		line.className = `console-line ${level}`;
 		const prefix = level === "log" ? "[log] " : level === "error" ? "[err] " : "=> ";
@@ -171,41 +175,28 @@
 
 	function resolveBindings(bindings, data) {
 		const resolved = {};
-		for (const b of bindings) {
-			resolved[b.name] = data[b.path];
-		}
+		for (const b of bindings) resolved[b.name] = data[b.path];
 		return resolved;
 	}
 
 	function applyDataBind(container, bindings) {
-		const elements = container.querySelectorAll("[data-bind]");
-		for (const el of elements) {
+		for (const el of container.querySelectorAll("[data-bind]")) {
 			const name = el.getAttribute("data-bind");
 			if (bindings[name] !== undefined) {
-				if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") {
-					el.value = String(bindings[name]);
-				} else {
-					el.textContent = String(bindings[name]);
-				}
+				el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT"
+					? el.value = String(bindings[name])
+					: el.textContent = String(bindings[name]);
 			}
 		}
 	}
 
 	function applyDataIf(container, bindings) {
 		const safeId = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/;
-		const elements = container.querySelectorAll("[data-if]");
-		for (const el of elements) {
-			const expr = el.getAttribute("data-if");
+		for (const el of container.querySelectorAll("[data-if]")) {
 			try {
-				const vars = Object.entries(bindings)
-					.filter(([k]) => safeId.test(k))
-					.map(([k, v]) => `var ${k} = ${JSON.stringify(v)};`)
-					.join(" ");
-				const result = new Function(`${vars} return !!(${expr})`)();
-				el.style.display = result ? "" : "none";
-			} catch {
-				el.style.display = "none";
-			}
+				const vars = Object.entries(bindings).filter(([k]) => safeId.test(k)).map(([k, v]) => `var ${k} = ${JSON.stringify(v)};`).join(" ");
+				el.style.display = new Function(`${vars} return !!(${el.getAttribute("data-if")})`)() ? "" : "none";
+			} catch { el.style.display = "none"; }
 		}
 	}
 
@@ -217,40 +208,48 @@
 		}
 	}
 
+	function unmountFragment(wrapper) {
+		mountedFragments = mountedFragments.filter(f => f.container !== wrapper);
+		wrapper.remove();
+		addConsole("unmounted fragment", "log");
+	}
+
 	function mountFragment(html, slotId, bindings, events) {
 		const slotEl = document.getElementById(`slot-${slotId.replace(/\./g, "-")}`);
-		if (!slotEl) {
-			addConsole(`Slot '${slotId}' not found`, "error");
-			return;
-		}
+		if (!slotEl) { addConsole(`Slot '${slotId}' not found`, "error"); return; }
 
 		const sanitizeResult = sanitizeHTMLDetailed(html);
-
 		if (sanitizeResult.strippedElements.length > 0 || sanitizeResult.strippedAttributes.length > 0) {
 			addConsole("Sanitizer stripped dangerous content:", "log");
-			for (const tag of sanitizeResult.strippedElements) {
-				addConsole(`  stripped <${tag}>`, "error");
-			}
-			for (const attr of sanitizeResult.strippedAttributes) {
-				addConsole(`  stripped ${attr.attribute} on <${attr.element}>`, "error");
-			}
+			for (const tag of sanitizeResult.strippedElements) addConsole(`  stripped <${tag}>`, "error");
+			for (const attr of sanitizeResult.strippedAttributes) addConsole(`  stripped ${attr.attribute} on <${attr.element}>`, "error");
 		} else {
 			addConsole("Fragment is clean — nothing stripped", "log");
 		}
 
 		const wrapper = document.createElement("div");
 		wrapper.className = "fragment-wrapper";
-		wrapper.innerHTML = sanitizeResult.html;
+
+		const closeBtn = document.createElement("button");
+		closeBtn.className = "fragment-close";
+		closeBtn.textContent = "\u00d7";
+		closeBtn.addEventListener("click", () => unmountFragment(wrapper));
+		wrapper.appendChild(closeBtn);
+
+		const content = document.createElement("div");
+		content.className = "fragment-content";
+		content.innerHTML = sanitizeResult.html;
+		wrapper.appendChild(content);
+
 		slotEl.appendChild(wrapper);
 
 		const resolved = resolveBindings(bindings, state);
-		applyDataBind(wrapper, resolved);
-		applyDataIf(wrapper, resolved);
+		applyDataBind(content, resolved);
+		applyDataIf(content, resolved);
 
 		if (events) {
 			for (const evt of events) {
-				const targets = wrapper.querySelectorAll(evt.selector);
-				for (const target of targets) {
+				for (const target of content.querySelectorAll(evt.selector)) {
 					target.addEventListener(evt.on, () => {
 						addConsole(`Event: ${evt.on} → ${evt.handler}()`, "result");
 						if (evt.handler === "onHeal") {
@@ -273,86 +272,80 @@
 		addConsole(`Mounted into ${slotId}`, "result");
 	}
 
-	async function boot() {
+	function boot() {
 		try {
-			const loadingEl = document.getElementById("fb-loading");
-			const containerEl = document.getElementById("fb-container");
-			loadingEl.style.display = "none";
-			containerEl.style.display = "grid";
+			document.getElementById("fb-loading").style.display = "none";
+			document.getElementById("fb-container").style.display = "grid";
 
-			const editor = document.getElementById("fb-editor");
+			const editorEl = document.getElementById("fb-editor");
+			editorJar = CodeJar(editorEl, highlightHTML, { tab: "\t" });
+
 			const sampleSelect = document.getElementById("fb-sample-select");
-			const slotSelect = document.getElementById("fb-slot-select");
-			const mountBtn = document.getElementById("fb-mount-btn");
-			const clearBtn = document.getElementById("fb-clear-btn");
-			const clearSlotsBtn = document.getElementById("fb-clear-slots-btn");
-			const healthSlider = document.getElementById("fb-health");
-			const maxHealthSlider = document.getElementById("fb-max-health");
-			const playerNameInput = document.getElementById("fb-player-name");
 			const capToggle = document.getElementById("fb-cap-toggle");
 
 			sampleSelect.value = "health-bar";
-			editor.value = samples["health-bar"].html;
+			editorJar.updateCode(samples["health-bar"].html);
 
 			sampleSelect.addEventListener("change", () => {
 				const sample = samples[sampleSelect.value];
-				if (sample) editor.value = sample.html;
+				if (sample) editorJar.updateCode(sample.html);
 			});
 
-			clearSlotsBtn.addEventListener("click", () => {
-				for (const slotEl of document.querySelectorAll(".slot-content")) {
-					slotEl.innerHTML = "";
-				}
+			for (const pill of document.querySelectorAll(".slot-pill")) {
+				pill.addEventListener("click", () => {
+					document.querySelector(".slot-pill.active")?.classList.remove("active");
+					pill.classList.add("active");
+					selectedSlot = pill.dataset.slot;
+				});
+			}
+
+			document.getElementById("fb-clear-slots-btn").addEventListener("click", () => {
+				document.getElementById("slot-sidebar-left").innerHTML = "";
+				document.getElementById("slot-main-overlay").innerHTML = "";
+				document.getElementById("slot-header-status").innerHTML = '<span class="header-default">LVL 12 &middot; Floor 3</span>';
 				mountedFragments = [];
 				addConsole("cleared all slots", "log");
 			});
 
-			mountBtn.addEventListener("click", () => {
-				const html = editor.value.trim();
+			document.getElementById("fb-mount-btn").addEventListener("click", () => {
+				const html = editorJar.toString().trim();
 				if (!html) return;
 
-				const slotId = slotSelect.value;
-				const slotDef = appManifest.slots.find(s => s.id === slotId);
-
+				const slotDef = appManifest.slots.find(s => s.id === selectedSlot);
 				if (slotDef.capability && !capToggle.checked) {
-					addConsole(`CapabilityDeniedError: slot '${slotId}' requires '${slotDef.capability}'`, "error");
+					addConsole(`CapabilityDeniedError: slot '${selectedSlot}' requires '${slotDef.capability}'`, "error");
 					return;
 				}
 
 				const sampleKey = sampleSelect.value;
 				const sample = samples[sampleKey];
-				const bindings = sample?.bindings || [];
-				const events = sample?.events || [];
-
-				mountFragment(html, slotId, bindings, events);
+				mountFragment(html, selectedSlot, sample?.bindings || [], sample?.events || []);
 			});
 
-			clearBtn.addEventListener("click", () => {
-				const consoleEl = document.getElementById("fb-console");
-				consoleEl.innerHTML = '<div class="output-placeholder">Mount a fragment to see output here.</div>';
+			document.getElementById("fb-clear-btn").addEventListener("click", () => {
+				document.getElementById("fb-console").innerHTML = '<div class="output-placeholder">Mount a fragment to see output here.</div>';
 			});
 
-			healthSlider.addEventListener("input", () => {
-				state.health = parseInt(healthSlider.value);
+			document.getElementById("fb-health").addEventListener("input", (e) => {
+				state.health = parseInt(e.target.value);
 				document.getElementById("fb-health-val").textContent = String(state.health);
 				renderFragments();
 			});
 
-			maxHealthSlider.addEventListener("input", () => {
-				state.maxHealth = parseInt(maxHealthSlider.value);
+			document.getElementById("fb-max-health").addEventListener("input", (e) => {
+				state.maxHealth = parseInt(e.target.value);
 				document.getElementById("fb-max-health-val").textContent = String(state.maxHealth);
 				renderFragments();
 			});
 
-			playerNameInput.addEventListener("input", () => {
-				state.playerName = playerNameInput.value;
+			document.getElementById("fb-player-name").addEventListener("input", (e) => {
+				state.playerName = e.target.value;
 				renderFragments();
 			});
 
 			addConsole("ready to mount fragments", "log");
 		} catch (err) {
-			const loadingEl = document.getElementById("fb-loading");
-			loadingEl.innerHTML = `<p style="color: #f87171;">Failed to load: ${err.message}</p>`;
+			document.getElementById("fb-loading").innerHTML = `<p style="color: #f87171;">Failed to load: ${err.message}</p>`;
 		}
 	}
 
@@ -360,425 +353,240 @@
 </script>
 
 <style>
-	#fragment-builder {
-		margin-top: 1rem;
-	}
+	#fragment-builder { margin-top: 1rem; }
 
 	.fb-loading {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		padding: 4rem 2rem;
-		color: var(--sl-color-gray-2);
+		display: flex; flex-direction: column; align-items: center;
+		justify-content: center; padding: 4rem 2rem; color: var(--sl-color-gray-2);
 	}
-
 	.loading-spinner {
-		width: 2rem;
-		height: 2rem;
-		border: 3px solid var(--sl-color-gray-5);
-		border-top-color: var(--sl-color-accent);
-		border-radius: 50%;
-		animation: spin 0.8s linear infinite;
-		margin-bottom: 1rem;
+		width: 2rem; height: 2rem; border: 3px solid var(--sl-color-gray-5);
+		border-top-color: var(--sl-color-accent); border-radius: 50%;
+		animation: spin 0.8s linear infinite; margin-bottom: 1rem;
 	}
-
-	@keyframes spin {
-		to { transform: rotate(360deg); }
-	}
+	@keyframes spin { to { transform: rotate(360deg); } }
 
 	.fb-container {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 1rem;
-		min-height: 500px;
+		display: grid; grid-template-columns: 1fr 1fr;
+		gap: 1rem; min-height: 500px;
 	}
+	@media (max-width: 900px) { .fb-container { grid-template-columns: 1fr; } }
 
-	@media (max-width: 900px) {
-		.fb-container {
-			grid-template-columns: 1fr;
-		}
-	}
+	.fb-left { display: flex; flex-direction: column; gap: 0.5rem; }
+	.fb-right { display: flex; flex-direction: column; gap: 0.5rem; }
 
-	.panel {
-		background: var(--sl-color-gray-6);
-		border: 1px solid var(--sl-color-gray-5);
-		border-radius: 0.5rem;
-		overflow: hidden;
-	}
+	/* ── Game Window ── */
 
-	.panel-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 0.5rem 0.75rem;
-		border-bottom: 1px solid var(--sl-color-gray-5);
-		background: var(--sl-color-black);
+	.game-window {
+		background: #0a0a0f; border: 2px solid #2a2a3a; border-radius: 0.5rem;
+		overflow: hidden; display: flex; flex-direction: column;
+		box-shadow: 0 0 20px rgba(0, 0, 0, 0.5), inset 0 0 30px rgba(0, 0, 0, 0.3);
 	}
+	.game-header {
+		display: flex; align-items: center; justify-content: space-between;
+		padding: 0.375rem 0.75rem; background: linear-gradient(180deg, #1a1a2e 0%, #12121f 100%);
+		border-bottom: 1px solid #2a2a3a; min-height: 1.75rem;
+	}
+	.game-title {
+		font-family: var(--sl-font-mono); font-size: 0.75rem; font-weight: 700;
+		color: #c8a86e; letter-spacing: 0.1em; text-transform: uppercase;
+	}
+	:global(.header-default) { font-family: var(--sl-font-mono); font-size: 0.6875rem; color: #6a6a8a; }
+	:global(.header-slot) { font-family: var(--sl-font-mono); font-size: 0.6875rem; }
 
-	.panel-header h3 {
-		margin: 0;
-		font-size: 0.8125rem;
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		color: var(--sl-color-gray-2);
+	.game-body { display: flex; flex: 1; min-height: 280px; }
+	.game-sidebar {
+		width: 140px; border-right: 1px solid #2a2a3a; flex-shrink: 0;
+		background: linear-gradient(180deg, #111120 0%, #0d0d18 100%);
+		display: flex; flex-direction: column;
 	}
+	.sidebar-label {
+		font-family: var(--sl-font-mono); font-size: 0.5625rem; color: #4a4a6a;
+		padding: 0.25rem 0.5rem; border-bottom: 1px solid #1a1a2a;
+		text-transform: uppercase; letter-spacing: 0.05em;
+	}
+	:global(.sidebar-slot) { padding: 0.375rem 0.5rem; flex: 1; font-size: 0.8125rem; }
 
-	.panel-badge {
-		font-size: 0.6875rem;
-		color: var(--sl-color-gray-3);
-		font-family: var(--sl-font-mono);
+	.game-world {
+		flex: 1; position: relative; display: flex;
+		align-items: center; justify-content: center; overflow: hidden;
 	}
+	.dungeon-map {
+		font-family: var(--sl-font-mono); font-size: 0.875rem; line-height: 1.3;
+		letter-spacing: 0.15em; margin: 0; padding: 0; color: #3a3a5a; user-select: none;
+	}
+	:global(.t-wall) { color: #4a4a6a; }
+	:global(.t-floor) { color: #2a2a3e; }
+	:global(.t-player) { color: #4ade80; text-shadow: 0 0 6px #4ade80; font-weight: 700; }
+	:global(.t-torch) { color: #fbbf24; text-shadow: 0 0 5px #b4841a; }
+	:global(.t-chest) { color: #c8a86e; text-shadow: 0 0 4px #c8a86e; }
+	:global(.t-door) { color: #8b6914; }
 
-	.host-slots {
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-		padding: 0.75rem;
-	}
+	.overlay-region { position: absolute; bottom: 0.5rem; left: 0.5rem; right: 0.5rem; min-height: 2rem; }
+	:global(.overlay-slot) { font-size: 0.8125rem; }
 
-	.slot-region {
-		border: 2px dashed var(--sl-color-gray-4);
-		border-radius: 0.375rem;
-		min-height: 60px;
-		overflow: hidden;
+	.game-footer {
+		display: flex; align-items: center; justify-content: space-between;
+		padding: 0.25rem 0.5rem; border-top: 1px solid #2a2a3a; background: #0d0d18;
 	}
+	.game-btn {
+		font-family: var(--sl-font-mono); font-size: 0.5625rem; padding: 0.125rem 0.375rem;
+		background: transparent; color: #6a6a8a; border: 1px solid #2a2a3a;
+		border-radius: 0.25rem; cursor: pointer; transition: all 0.15s;
+	}
+	.game-btn:hover { color: #c8a86e; border-color: #c8a86e; }
 
-	.slot-label {
-		font-family: var(--sl-font-mono);
-		font-size: 0.6875rem;
-		font-weight: 600;
-		color: var(--sl-color-gray-3);
-		padding: 0.25rem 0.5rem;
-		border-bottom: 1px dashed var(--sl-color-gray-5);
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-	}
+	.slot-legend { display: flex; gap: 0.75rem; font-family: var(--sl-font-mono); font-size: 0.5625rem; color: #4a4a6a; }
+	.legend-item { display: flex; align-items: center; gap: 0.25rem; }
+	.legend-dot { width: 6px; height: 6px; border-radius: 50%; }
+	.sidebar-dot { background: #7dd3fc; }
+	.header-dot { background: #c8a86e; }
+	.overlay-dot { background: #c4b5fd; }
 
-	.slot-meta {
-		font-weight: 400;
-		color: var(--sl-color-gray-4);
-		font-size: 0.625rem;
-	}
-
-	.slot-meta code {
-		color: var(--sl-color-accent);
-		font-size: 0.625rem;
-	}
-
-	:global(.slot-content) {
-		padding: 0.375rem 0.5rem;
-		font-size: 0.8125rem;
-	}
+	/* ── Fragment wrappers with [x] ── */
 
 	:global(.fragment-wrapper) {
-		padding: 0.25rem 0;
+		position: relative; padding: 0.25rem 0; padding-right: 1.25rem;
 		border-bottom: 1px solid var(--sl-color-gray-5);
 	}
-
-	:global(.fragment-wrapper:last-child) {
-		border-bottom: none;
+	:global(.fragment-wrapper:last-child) { border-bottom: none; }
+	:global(.fragment-content) { }
+	:global(.fragment-close) {
+		position: absolute; top: 0.125rem; right: 0; width: 1rem; height: 1rem;
+		background: none; border: none; color: #6a6a8a; font-size: 0.75rem;
+		cursor: pointer; display: flex; align-items: center; justify-content: center;
+		border-radius: 2px; transition: all 0.15s; line-height: 1;
 	}
+	:global(.fragment-close:hover) { color: #f87171; background: rgba(248, 113, 113, 0.1); }
 
-	.fb-left {
-		display: flex;
-		flex-direction: column;
+	/* ── Panels ── */
+
+	.panel {
+		background: var(--sl-color-gray-6); border: 1px solid var(--sl-color-gray-5);
+		border-radius: 0.5rem; overflow: hidden;
 	}
-
-	.host-panel {
-		flex: 1;
-	}
-
-	.fb-right {
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-	}
-
-	.editor-panel {
-		display: flex;
-		flex-direction: column;
-	}
-
-	.panel-header select {
-		font-family: var(--sl-font-mono);
-		font-size: 0.6875rem;
-		padding: 0.125rem 0.375rem;
-		background: var(--sl-color-gray-5);
-		color: var(--sl-color-gray-2);
-		border: 1px solid var(--sl-color-gray-4);
-		border-radius: 0.25rem;
-		cursor: pointer;
-	}
-
-	#fb-editor {
-		flex: 1;
-		font-family: var(--sl-font-mono);
-		font-size: 0.75rem;
-		padding: 0.5rem;
+	.panel-header {
+		display: flex; align-items: center; justify-content: space-between;
+		padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--sl-color-gray-5);
 		background: var(--sl-color-black);
-		color: var(--sl-color-white);
-		border: none;
-		resize: none;
-		outline: none;
-		line-height: 1.5;
-		tab-size: 2;
-		min-height: 120px;
 	}
+	.panel-header h3 {
+		margin: 0; font-size: 0.8125rem; font-weight: 600;
+		text-transform: uppercase; letter-spacing: 0.05em; color: var(--sl-color-gray-2);
+	}
+	.panel-header select {
+		font-family: var(--sl-font-mono); font-size: 0.6875rem; padding: 0.125rem 0.375rem;
+		background: var(--sl-color-gray-5); color: var(--sl-color-gray-2);
+		border: 1px solid var(--sl-color-gray-4); border-radius: 0.25rem; cursor: pointer;
+	}
+
+	.code-editor {
+		font-family: var(--sl-font-mono); font-size: 0.75rem; padding: 0.5rem;
+		background: var(--sl-color-black); color: var(--sl-color-white);
+		line-height: 1.5; tab-size: 2; overflow: auto; white-space: pre; outline: none;
+		min-height: 200px;
+	}
+
+	:global(.hl-tag) { color: #7dd3fc; }
+	:global(.hl-attr) { color: #fcd34d; }
+	:global(.hl-str) { color: #86efac; }
 
 	.editor-footer {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 0.375rem 0.5rem;
-		border-top: 1px solid var(--sl-color-gray-5);
+		display: flex; align-items: center; justify-content: space-between;
+		padding: 0.375rem 0.5rem; border-top: 1px solid var(--sl-color-gray-5);
 	}
 
-	.slot-picker {
-		display: flex;
-		align-items: center;
-		gap: 0.375rem;
-		font-size: 0.6875rem;
-		color: var(--sl-color-gray-3);
+	.slot-pills {
+		display: flex; gap: 0.25rem; align-items: center;
 	}
-
-	.slot-picker select {
-		font-family: var(--sl-font-mono);
-		font-size: 0.6875rem;
-		padding: 0.125rem 0.375rem;
-		background: var(--sl-color-gray-5);
-		color: var(--sl-color-gray-2);
-		border: 1px solid var(--sl-color-gray-4);
-		border-radius: 0.25rem;
+	.slot-pills button:first-child {
+		font-size: 0.6875rem; padding: 0.375rem 0.625rem;
+	}
+	.slot-pill {
+		font-family: var(--sl-font-mono); font-size: 0.6875rem; padding: 0.375rem 0.625rem;
+		background: var(--sl-color-gray-5); color: var(--sl-color-gray-3);
+		border: 1px solid var(--sl-color-gray-4); border-radius: 0.25rem;
+		cursor: pointer; transition: all 0.15s;
+		margin: 0; line-height: 1; display: inline-flex; align-items: center;
+	}
+	.slot-pill:hover { color: var(--sl-color-gray-1); border-color: var(--sl-color-gray-3); }
+	.slot-pill.active {
+		color: var(--sl-color-accent); border-color: var(--sl-color-accent);
+		background: rgba(var(--sl-color-accent-high), 0.1);
 	}
 
 	.run-button {
-		padding: 0.25rem 0.75rem;
-		background: var(--sl-color-accent);
-		color: var(--sl-color-black);
-		border: none;
-		border-radius: 0.25rem;
-		font-weight: 600;
-		font-size: 0.75rem;
-		cursor: pointer;
-		transition: opacity 0.15s;
+		padding: 0.375rem 0.75rem; background: var(--sl-color-accent);
+		color: var(--sl-color-black); border: none; border-radius: 0.25rem;
+		font-weight: 600; font-size: 0.75rem; cursor: pointer; transition: opacity 0.15s;
 	}
-
-	.run-button:hover {
-		opacity: 0.85;
-	}
+	.run-button:hover { opacity: 0.85; }
 
 	.state-panel .state-controls {
-		padding: 0.5rem 0.75rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.375rem;
+		padding: 0.5rem 0.75rem; display: flex; flex-direction: column; gap: 0.375rem;
 	}
-
 	.control-row {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		font-family: var(--sl-font-mono);
-		font-size: 0.6875rem;
+		display: flex; align-items: center; gap: 0.5rem;
+		font-family: var(--sl-font-mono); font-size: 0.6875rem;
 	}
-
-	.control-row label {
-		min-width: 80px;
-		color: var(--sl-color-gray-3);
-	}
-
-	.control-row input[type="range"] {
-		flex: 1;
-		accent-color: var(--sl-color-accent);
-	}
-
+	.control-row label { min-width: 80px; color: var(--sl-color-gray-3); }
+	.control-row input[type="range"] { flex: 1; accent-color: var(--sl-color-accent); }
 	.control-row input[type="text"] {
-		flex: 1;
-		font-family: var(--sl-font-mono);
-		font-size: 0.6875rem;
-		padding: 0.125rem 0.375rem;
-		background: var(--sl-color-gray-5);
-		color: var(--sl-color-white);
-		border: 1px solid var(--sl-color-gray-4);
-		border-radius: 0.25rem;
-		outline: none;
+		flex: 1; font-family: var(--sl-font-mono); font-size: 0.6875rem;
+		padding: 0.125rem 0.375rem; background: var(--sl-color-gray-5);
+		color: var(--sl-color-white); border: 1px solid var(--sl-color-gray-4);
+		border-radius: 0.25rem; outline: none;
 	}
-
-	.control-value {
-		min-width: 30px;
-		text-align: right;
-		color: var(--sl-color-accent);
-		font-weight: 600;
-	}
+	.control-value { min-width: 30px; text-align: right; color: var(--sl-color-accent); font-weight: 600; }
 
 	.cap-checkbox {
-		display: flex;
-		align-items: center;
-		gap: 0.25rem;
-		font-size: 0.6875rem;
-		cursor: pointer;
+		display: flex; align-items: center; gap: 0.25rem; font-size: 0.6875rem; cursor: pointer;
 	}
-
-	.cap-checkbox input {
-		accent-color: var(--sl-color-accent);
-	}
-
-	.cap-checkbox code {
-		font-size: 0.625rem;
-		color: var(--sl-color-accent);
-	}
+	.cap-checkbox input { accent-color: var(--sl-color-accent); }
+	.cap-checkbox code { font-size: 0.625rem; color: var(--sl-color-accent); }
 
 	.clear-button {
-		font-size: 0.625rem;
-		padding: 0.0625rem 0.375rem;
-		background: transparent;
-		color: var(--sl-color-gray-3);
-		border: 1px solid var(--sl-color-gray-4);
-		border-radius: 0.25rem;
-		cursor: pointer;
-		transition: all 0.15s;
+		font-size: 0.625rem; padding: 0.0625rem 0.375rem; background: transparent;
+		color: var(--sl-color-gray-3); border: 1px solid var(--sl-color-gray-4);
+		border-radius: 0.25rem; cursor: pointer; transition: all 0.15s;
 	}
+	.clear-button:hover { color: var(--sl-color-white); border-color: var(--sl-color-gray-3); }
 
-	.clear-button:hover {
-		color: var(--sl-color-white);
-		border-color: var(--sl-color-gray-3);
-	}
-
-	.console-panel {
-		display: flex;
-		flex-direction: column;
-	}
-
+	.console-panel { display: flex; flex-direction: column; }
 	.fb-console {
-		padding: 0.5rem;
-		min-height: 80px;
-		max-height: 150px;
-		overflow-y: auto;
-		font-family: var(--sl-font-mono);
-		font-size: 0.6875rem;
-		line-height: 1.4;
+		padding: 0.5rem; min-height: 60px; max-height: 120px; overflow-y: auto;
+		font-family: var(--sl-font-mono); font-size: 0.6875rem; line-height: 1.4;
 	}
-
 	:global(.output-placeholder) {
-		color: var(--sl-color-gray-3);
-		font-style: italic;
-		font-family: var(--sl-font);
-		font-size: 0.75rem;
+		color: var(--sl-color-gray-3); font-style: italic;
+		font-family: var(--sl-font); font-size: 0.75rem;
 	}
+	:global(.console-line) { padding: 0.0625rem 0; white-space: pre-wrap; word-break: break-all; }
+	:global(.console-line.log) { color: var(--sl-color-gray-2); }
+	:global(.console-line.error) { color: #f87171; }
+	:global(.console-line.result) { color: var(--sl-color-accent); }
 
-	:global(.console-line) {
-		padding: 0.0625rem 0;
-		white-space: pre-wrap;
-		word-break: break-all;
-	}
+	/* ── Fragment sample styles ── */
 
-	:global(.console-line.log) {
-		color: var(--sl-color-gray-2);
-	}
-
-	:global(.console-line.error) {
-		color: #f87171;
-	}
-
-	:global(.console-line.result) {
-		color: var(--sl-color-accent);
-	}
-
-	:global(.health-bar) {
-		font-family: var(--sl-font-mono);
-		font-size: 0.8125rem;
-		color: var(--sl-color-white);
-	}
-
-	:global(.bar-label) {
-		font-size: 0.6875rem;
-		color: var(--sl-color-gray-3);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-	}
-
-	:global(.bar-track) {
-		color: var(--sl-color-accent);
-		font-weight: 600;
-	}
-
-	:global(.warnings) {
-		font-family: var(--sl-font-mono);
-		font-size: 0.75rem;
-	}
-
-	:global(.warning) {
-		color: #fbbf24;
-		font-weight: 600;
-	}
-
-	:global(.critical) {
-		color: #f87171;
-		font-weight: 700;
-	}
-
-	:global(.safe) {
-		color: #4ade80;
-	}
-
-	:global(.player-card) {
-		font-family: var(--sl-font-mono);
-		font-size: 0.8125rem;
-	}
-
-	:global(.card-name) {
-		color: var(--sl-color-accent);
-		font-weight: 700;
-		font-size: 0.875rem;
-	}
-
-	:global(.card-stat) {
-		color: var(--sl-color-gray-2);
-	}
-
-	:global(.card-danger) {
-		color: #f87171;
-		font-weight: 700;
-	}
-
-	:global(.event-panel) {
-		display: flex;
-		flex-direction: column;
-		gap: 0.375rem;
-		font-family: var(--sl-font-mono);
-		font-size: 0.8125rem;
-	}
-
+	:global(.health-bar) { font-family: var(--sl-font-mono); font-size: 0.8125rem; color: var(--sl-color-white); }
+	:global(.bar-label) { font-size: 0.6875rem; color: var(--sl-color-gray-3); text-transform: uppercase; letter-spacing: 0.05em; }
+	:global(.bar-track) { color: var(--sl-color-accent); font-weight: 600; }
+	:global(.warnings) { font-family: var(--sl-font-mono); font-size: 0.75rem; }
+	:global(.warning) { color: #fbbf24; font-weight: 600; }
+	:global(.critical) { color: #f87171; font-weight: 700; }
+	:global(.safe) { color: #4ade80; }
+	:global(.player-card) { font-family: var(--sl-font-mono); font-size: 0.8125rem; }
+	:global(.card-name) { color: var(--sl-color-accent); font-weight: 700; font-size: 0.875rem; }
+	:global(.card-stat) { color: var(--sl-color-gray-2); }
+	:global(.card-danger) { color: #f87171; font-weight: 700; }
+	:global(.event-panel) { display: flex; flex-direction: column; gap: 0.375rem; font-family: var(--sl-font-mono); font-size: 0.8125rem; }
 	:global(.heal-btn), :global(.dmg-btn) {
-		padding: 0.25rem 0.5rem;
-		font-family: var(--sl-font-mono);
-		font-size: 0.6875rem;
-		font-weight: 600;
-		border: 1px solid var(--sl-color-gray-4);
-		border-radius: 0.25rem;
-		cursor: pointer;
-		background: var(--sl-color-gray-5);
-		color: var(--sl-color-white);
+		padding: 0.25rem 0.5rem; font-family: var(--sl-font-mono); font-size: 0.6875rem;
+		font-weight: 600; border: 1px solid var(--sl-color-gray-4); border-radius: 0.25rem;
+		cursor: pointer; background: var(--sl-color-gray-5); color: var(--sl-color-white);
 	}
-
-	:global(.heal-btn:hover) {
-		border-color: #4ade80;
-		color: #4ade80;
-	}
-
-	:global(.dmg-btn:hover) {
-		border-color: #f87171;
-		color: #f87171;
-	}
-
-	:global(.status) {
-		color: var(--sl-color-gray-2);
-	}
-
-	:global(.safe-content) {
-		color: var(--sl-color-white);
-	}
+	:global(.heal-btn:hover) { border-color: #4ade80; color: #4ade80; }
+	:global(.dmg-btn:hover) { border-color: #f87171; color: #f87171; }
+	:global(.status) { color: var(--sl-color-gray-2); }
+	:global(.safe-content) { color: var(--sl-color-white); }
 </style>

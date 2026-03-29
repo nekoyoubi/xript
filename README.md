@@ -57,7 +57,7 @@ runtime.dispose();
 **[xript.dev](https://xript.dev)**: the full documentation site.
 
 - [Vision](https://xript.dev/vision): the guiding principles
-- [Adoption Tiers](https://xript.dev/adoption-tiers): the three-tier incremental adoption model
+- [Adoption Tiers](https://xript.dev/adoption-tiers): the four-tier incremental adoption model
 - [Getting Started](https://xript.dev/getting-started): five-minute integration guide
 - [JS/WASM Runtime](https://xript.dev/runtimes/js-wasm): the universal runtime (QuickJS WASM)
 - [Node.js Runtime](https://xript.dev/runtimes/node): the Node.js-optimized runtime

@@ -45,6 +45,7 @@ export default defineConfig({
 						{ label: "Capabilities", slug: "spec/capabilities" },
 						{ label: "Bindings", slug: "spec/bindings" },
 						{ label: "Security", slug: "spec/security" },
+						{ label: "Annotations", slug: "spec/annotations" },
 					],
 				},
 				{
@@ -60,11 +61,9 @@ export default defineConfig({
 				{
 					label: "Tools",
 					items: [
-						{ label: "Validator", slug: "tools/validator" },
-						{ label: "Type Generator", slug: "tools/typegen" },
-						{ label: "Doc Generator", slug: "tools/docgen" },
-						{ label: "Init CLI", slug: "tools/init" },
-					{ label: "Sanitizer", slug: "tools/sanitize" },
+						{ label: "CLI", slug: "tools/cli" },
+						{ label: "TUI Wizard", slug: "tools/wiz" },
+						{ label: "Fragment Workbench", slug: "tools/fragment-workbench" },
 					],
 				},
 				{

@@ -1,5 +1,6 @@
 mod error;
 pub mod fragment;
+pub mod handle;
 mod manifest;
 mod sandbox;
 
@@ -9,8 +10,10 @@ pub use manifest::{
     Binding, Capability, FragmentBinding, FragmentDeclaration, FragmentEvent, FunctionBinding,
     HookDef, Limits, Manifest, ModManifest, NamespaceBinding, Parameter, Slot,
 };
+pub use handle::XriptHandle;
 pub use sandbox::{
-    ConsoleHandler, ExecutionResult, HostBindings, HostFn, RuntimeOptions, XriptRuntime,
+    AsyncHostFn, ConsoleHandler, ExecutionResult, HostBindings, HostFn, RuntimeOptions,
+    XriptRuntime,
 };
 
 pub fn create_runtime(manifest_json: &str, options: RuntimeOptions) -> Result<XriptRuntime> {
@@ -563,6 +566,7 @@ mod tests {
             mod_json,
             std::collections::HashMap::new(),
             &std::collections::HashSet::new(),
+            None,
         );
         assert!(result.is_err());
     }
@@ -600,6 +604,7 @@ mod tests {
             mod_json,
             std::collections::HashMap::new(),
             &std::collections::HashSet::new(),
+            None,
         );
         assert!(result.is_err());
     }
@@ -634,12 +639,12 @@ mod tests {
         .unwrap();
 
         let no_caps = std::collections::HashSet::new();
-        let result = rt.load_mod(mod_json, std::collections::HashMap::new(), &no_caps);
+        let result = rt.load_mod(mod_json, std::collections::HashMap::new(), &no_caps, None);
         assert!(result.is_err());
 
         let mut with_caps = std::collections::HashSet::new();
         with_caps.insert("ui-mount".to_string());
-        let result = rt.load_mod(mod_json, std::collections::HashMap::new(), &with_caps);
+        let result = rt.load_mod(mod_json, std::collections::HashMap::new(), &with_caps, None);
         assert!(result.is_ok());
     }
 
@@ -685,6 +690,7 @@ mod tests {
             mod_json,
             std::collections::HashMap::new(),
             &std::collections::HashSet::new(),
+            None,
         )
         .unwrap();
 
@@ -727,6 +733,158 @@ mod tests {
     }
 
     #[test]
+    fn load_mod_executes_entry_script() {
+        use std::sync::{Arc, Mutex};
+
+        let app_manifest = r#"{
+            "xript": "0.3",
+            "name": "test-app",
+            "bindings": {
+                "log": { "description": "log a message" }
+            },
+            "slots": [
+                { "id": "sidebar.left", "accepts": ["text/html"], "multiple": true }
+            ]
+        }"#;
+
+        let mod_json = r#"{
+            "xript": "0.3",
+            "name": "entry-mod",
+            "version": "1.0.0",
+            "fragments": [
+                {
+                    "id": "entry-panel",
+                    "slot": "sidebar.left",
+                    "format": "text/html",
+                    "source": "<p>hi</p>",
+                    "inline": true
+                }
+            ]
+        }"#;
+
+        let captured: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let captured_clone = captured.clone();
+
+        let mut bindings = HostBindings::new();
+        bindings.add_function("log", move |args: &[serde_json::Value]| {
+            let msg = args.first().and_then(|v| v.as_str()).unwrap_or("").to_string();
+            captured_clone.lock().unwrap().push(msg);
+            Ok(serde_json::Value::Null)
+        });
+
+        let rt = create_runtime(
+            app_manifest,
+            RuntimeOptions {
+                host_bindings: bindings,
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let result = rt.load_mod(
+            mod_json,
+            std::collections::HashMap::new(),
+            &std::collections::HashSet::new(),
+            Some("log('entry executed')"),
+        );
+        assert!(result.is_ok());
+
+        let logs = captured.lock().unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0], "entry executed");
+    }
+
+    #[test]
+    fn load_mod_entry_failure_returns_mod_entry_error() {
+        let app_manifest = r#"{
+            "xript": "0.3",
+            "name": "test-app",
+            "slots": [
+                { "id": "sidebar.left", "accepts": ["text/html"], "multiple": true }
+            ]
+        }"#;
+
+        let mod_json = r#"{
+            "xript": "0.3",
+            "name": "failing-mod",
+            "version": "1.0.0",
+            "fragments": [
+                {
+                    "id": "panel",
+                    "slot": "sidebar.left",
+                    "format": "text/html",
+                    "source": "<p>hi</p>",
+                    "inline": true
+                }
+            ]
+        }"#;
+
+        let rt = create_runtime(
+            app_manifest,
+            RuntimeOptions {
+                host_bindings: HostBindings::new(),
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let result = rt.load_mod(
+            mod_json,
+            std::collections::HashMap::new(),
+            &std::collections::HashSet::new(),
+            Some("throw new Error('entry failed')"),
+        );
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), XriptError::ModEntry { .. }));
+    }
+
+    #[test]
+    fn load_mod_without_entry_still_works() {
+        let app_manifest = r#"{
+            "xript": "0.3",
+            "name": "test-app",
+            "slots": [
+                { "id": "sidebar.left", "accepts": ["text/html"], "multiple": true }
+            ]
+        }"#;
+
+        let mod_json = r#"{
+            "xript": "0.3",
+            "name": "no-entry-mod",
+            "version": "1.0.0",
+            "fragments": [
+                {
+                    "id": "panel",
+                    "slot": "sidebar.left",
+                    "format": "text/html",
+                    "source": "<p>hi</p>",
+                    "inline": true
+                }
+            ]
+        }"#;
+
+        let rt = create_runtime(
+            app_manifest,
+            RuntimeOptions {
+                host_bindings: HostBindings::new(),
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let result = rt.load_mod(
+            mod_json,
+            std::collections::HashMap::new(),
+            &std::collections::HashSet::new(),
+            None,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
     fn strips_javascript_uris() {
         let input = r#"<a href="javascript:alert('xss')">click</a>"#;
         let output = fragment::sanitize_html(input);
@@ -740,5 +898,320 @@ mod tests {
         let output = fragment::sanitize_html(input);
         assert!(!output.contains("<iframe"));
         assert!(output.contains("<p>ok</p>"));
+    }
+
+    #[test]
+    fn handle_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<handle::XriptHandle>();
+    }
+
+    #[test]
+    fn handle_executes_code() {
+        let handle = handle::XriptHandle::new(
+            minimal_manifest().to_string(),
+            RuntimeOptions {
+                host_bindings: HostBindings::new(),
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let result = handle.execute("2 + 2").unwrap();
+        assert_eq!(result.value, serde_json::json!(4));
+    }
+
+    #[test]
+    fn handle_returns_manifest_name() {
+        let handle = handle::XriptHandle::new(
+            minimal_manifest().to_string(),
+            RuntimeOptions {
+                host_bindings: HostBindings::new(),
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(handle.manifest_name().unwrap(), "test-app");
+    }
+
+    #[test]
+    fn handle_works_across_threads() {
+        let handle = handle::XriptHandle::new(
+            minimal_manifest().to_string(),
+            RuntimeOptions {
+                host_bindings: HostBindings::new(),
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let result = std::thread::spawn(move || handle.execute("1 + 1"))
+            .join()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(result.value, serde_json::json!(2));
+    }
+
+    #[test]
+    fn handle_propagates_errors() {
+        let handle = handle::XriptHandle::new(
+            minimal_manifest().to_string(),
+            RuntimeOptions {
+                host_bindings: HostBindings::new(),
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let result = handle.execute("throw new Error('boom')");
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), XriptError::Script(_)));
+    }
+
+    #[test]
+    fn handle_load_mod_works() {
+        let app_manifest = r#"{
+            "xript": "0.3",
+            "name": "test-app",
+            "slots": [
+                { "id": "sidebar.left", "accepts": ["text/html"] }
+            ]
+        }"#;
+
+        let handle = handle::XriptHandle::new(
+            app_manifest.to_string(),
+            RuntimeOptions {
+                host_bindings: HostBindings::new(),
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let mod_json = r#"{
+            "xript": "0.3",
+            "name": "test-mod",
+            "version": "1.0.0",
+            "fragments": [
+                { "id": "panel", "slot": "sidebar.left", "format": "text/html", "source": "<p>hi</p>", "inline": true }
+            ]
+        }"#;
+
+        let mod_instance = handle
+            .load_mod(
+                mod_json,
+                std::collections::HashMap::new(),
+                &std::collections::HashSet::new(),
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(mod_instance.name, "test-mod");
+    }
+
+    #[test]
+    fn calls_async_host_function() {
+        let manifest = r#"{
+            "xript": "0.1",
+            "name": "test",
+            "bindings": {
+                "fetchData": {
+                    "description": "fetches data asynchronously",
+                    "async": true
+                }
+            }
+        }"#;
+
+        let mut bindings = HostBindings::new();
+        bindings.add_async_function("fetchData", |args: &[serde_json::Value]| {
+            let key = args
+                .first()
+                .and_then(|v| v.as_str())
+                .unwrap_or("default")
+                .to_string();
+            async move { Ok(serde_json::json!(format!("data for {}", key))) }
+        });
+
+        let rt = create_runtime(
+            manifest,
+            RuntimeOptions {
+                host_bindings: bindings,
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let result = rt
+            .execute("(async () => await fetchData('users'))()")
+            .unwrap();
+        assert_eq!(result.value, serde_json::json!("data for users"));
+    }
+
+    #[test]
+    fn async_host_function_errors_become_exceptions() {
+        let manifest = r#"{
+            "xript": "0.1",
+            "name": "test",
+            "bindings": {
+                "failAsync": {
+                    "description": "always fails asynchronously"
+                }
+            }
+        }"#;
+
+        let mut bindings = HostBindings::new();
+        bindings.add_async_function("failAsync", |_: &[serde_json::Value]| {
+            async { Err("async error occurred".into()) }
+        });
+
+        let rt = create_runtime(
+            manifest,
+            RuntimeOptions {
+                host_bindings: bindings,
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let result = rt
+            .execute("(async () => { try { await failAsync(); return 'no error'; } catch(e) { return e.message; } })()")
+            .unwrap();
+        assert_eq!(result.value, serde_json::json!("async error occurred"));
+    }
+
+    #[test]
+    fn sync_and_async_bindings_coexist() {
+        let manifest = r#"{
+            "xript": "0.1",
+            "name": "test",
+            "bindings": {
+                "syncAdd": {
+                    "description": "adds two numbers synchronously",
+                    "params": [
+                        { "name": "a", "type": "number" },
+                        { "name": "b", "type": "number" }
+                    ]
+                },
+                "asyncFetch": {
+                    "description": "fetches data asynchronously",
+                    "async": true
+                }
+            }
+        }"#;
+
+        let mut bindings = HostBindings::new();
+        bindings.add_function("syncAdd", |args: &[serde_json::Value]| {
+            let a = args.first().and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let b = args.get(1).and_then(|v| v.as_f64()).unwrap_or(0.0);
+            Ok(serde_json::json!(a + b))
+        });
+        bindings.add_async_function("asyncFetch", |args: &[serde_json::Value]| {
+            let key = args
+                .first()
+                .and_then(|v| v.as_str())
+                .unwrap_or("none")
+                .to_string();
+            async move { Ok(serde_json::json!(format!("fetched {}", key))) }
+        });
+
+        let rt = create_runtime(
+            manifest,
+            RuntimeOptions {
+                host_bindings: bindings,
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let sync_result = rt.execute("syncAdd(10, 20)").unwrap();
+        assert_eq!(sync_result.value, serde_json::json!(30.0));
+
+        let async_result = rt
+            .execute("(async () => await asyncFetch('items'))()")
+            .unwrap();
+        assert_eq!(async_result.value, serde_json::json!("fetched items"));
+    }
+
+    #[test]
+    fn async_binding_returns_promise() {
+        let manifest = r#"{
+            "xript": "0.1",
+            "name": "test",
+            "bindings": {
+                "asyncOp": {
+                    "description": "async operation",
+                    "async": true
+                }
+            }
+        }"#;
+
+        let mut bindings = HostBindings::new();
+        bindings.add_async_function("asyncOp", |_: &[serde_json::Value]| {
+            async { Ok(serde_json::json!(42)) }
+        });
+
+        let rt = create_runtime(
+            manifest,
+            RuntimeOptions {
+                host_bindings: bindings,
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let result = rt.execute("asyncOp() instanceof Promise").unwrap();
+        assert_eq!(result.value, serde_json::json!(true));
+    }
+
+    #[test]
+    fn async_await_chains_work() {
+        let manifest = r#"{
+            "xript": "0.1",
+            "name": "test",
+            "bindings": {
+                "fetchUser": { "description": "fetch user", "async": true },
+                "fetchRole": { "description": "fetch role", "async": true }
+            }
+        }"#;
+
+        let mut bindings = HostBindings::new();
+        bindings.add_async_function("fetchUser", |args: &[serde_json::Value]| {
+            let id = args.first().and_then(|v| v.as_i64()).unwrap_or(0);
+            async move { Ok(serde_json::json!({"id": id, "name": "Alice"})) }
+        });
+        bindings.add_async_function("fetchRole", |args: &[serde_json::Value]| {
+            let name = args.first().and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+            async move { Ok(serde_json::json!(format!("admin:{}", name))) }
+        });
+
+        let rt = create_runtime(
+            manifest,
+            RuntimeOptions {
+                host_bindings: bindings,
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let result = rt.execute(r#"
+            (async () => {
+                const user = await fetchUser(1);
+                const role = await fetchRole(user.name);
+                return role;
+            })()
+        "#).unwrap();
+
+        assert_eq!(result.value, serde_json::json!("admin:Alice"));
     }
 }

@@ -113,7 +113,7 @@ If a host application wants to support dynamic permission prompting, it should d
 
 Extenders need to know which capabilities exist and what they grant. The manifest provides this information:
 
-- **Tooling**: `xript-validate` can list all capabilities and which functions they gate
+- **Tooling**: `xript validate` can list all capabilities and which functions they gate
 - **Typegen**: Generated TypeScript types include JSDoc annotations indicating which functions require capabilities
 - **Docgen**: Generated documentation groups functions by capability requirement
 

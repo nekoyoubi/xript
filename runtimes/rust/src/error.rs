@@ -17,6 +17,9 @@ pub enum XriptError {
     #[error("script error: {0}")]
     Script(String),
 
+    #[error("mod entry script error in `{mod_name}`: {message}")]
+    ModEntry { mod_name: String, message: String },
+
     #[error("QuickJS error: {0}")]
     Engine(String),
 

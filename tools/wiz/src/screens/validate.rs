@@ -119,6 +119,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     }
 }
 
+pub fn render_suggestions_public(
+    frame: &mut Frame,
+    area: Rect,
+    completion: &crate::completion::CompletionState,
+) {
+    render_suggestions(frame, area, completion);
+}
+
 fn render_suggestions(
     frame: &mut Frame,
     area: Rect,

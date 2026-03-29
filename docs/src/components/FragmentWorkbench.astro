@@ -1,0 +1,1106 @@
+---
+---
+
+<div id="fwb">
+	<div class="fwb-loading" id="fwb-loading">
+		<div class="loading-spinner"></div>
+		<p>Loading Fragment Workbench...</p>
+	</div>
+	<div class="fwb-main" id="fwb-main" style="display:none">
+		<nav class="fwb-tabs" id="fwb-tabs">
+			<button class="tab active" data-tab="manifest"><span class="tab-num">1</span> Manifest</button>
+			<button class="tab" data-tab="author"><span class="tab-num">2</span> Author</button>
+			<button class="tab" data-tab="preview"><span class="tab-num">3</span> Preview</button>
+			<button class="tab" data-tab="export"><span class="tab-num">4</span> Export</button>
+		</nav>
+
+		<!-- TAB 1: MANIFEST -->
+		<div class="tab-content active" id="tab-manifest">
+			<div class="guide" id="guide-manifest">
+				<button class="guide-toggle" data-guide="manifest">
+					<span class="guide-arrow">&#9656;</span>
+					<span class="guide-summary">Load the app manifest your mod will target</span>
+				</button>
+				<div class="guide-body" style="display:none">
+					<p>Every xript mod targets a specific app manifest. The manifest declares what slots are available, what data your fragment can bind to, and what capabilities it needs.</p>
+					<p><strong>Quick start:</strong> Pick an example manifest below. <strong>Your own app:</strong> Select "Custom" and paste your app's <code>manifest.json</code>, or generate one with <code>xript init --yes</code>.</p>
+				</div>
+			</div>
+			<div class="tab-panels">
+				<div class="panel manifest-panel">
+					<div class="panel-header">
+						<h3>App Manifest</h3>
+						<select id="fwb-manifest-select">
+							<option value="dashboard">Dashboard App</option>
+							<option value="game">Game HUD</option>
+							<option value="custom">Custom...</option>
+						</select>
+					</div>
+					<div class="code-editor" id="fwb-manifest-editor" spellcheck="false"></div>
+					<div class="manifest-status" id="fwb-manifest-status"></div>
+				</div>
+				<div class="panel slot-panel">
+					<div class="panel-header"><h3>Slot Contract</h3></div>
+					<div class="slot-contract" id="fwb-slot-contract">
+						<div class="placeholder">Click a slot in the preview to inspect its contract, or load a manifest to get started.</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- TAB 2: AUTHOR -->
+		<div class="tab-content" id="tab-author">
+			<div class="guide" id="guide-author">
+				<button class="guide-toggle" data-guide="author">
+					<span class="guide-arrow">&#9656;</span>
+					<span class="guide-summary">Write your fragment HTML (or JSML) and bind it to slot data</span>
+				</button>
+				<div class="guide-body" style="display:none">
+					<p>Use <code>data-bind="key"</code> to display state values and <code>data-if="expr"</code> to conditionally show elements. The diagnostics bar flags unresolved bindings and anything the sanitizer will strip.</p>
+					<p><strong>Tip:</strong> Check the Slot Contract (Manifest tab) to see which bindings are available. Select a sample to start from a working example.</p>
+				</div>
+			</div>
+			<div class="tab-panels author-layout">
+				<div class="panel editor-panel">
+					<div class="panel-header">
+						<h3>Fragment Source</h3>
+						<span class="header-selects">
+							<select id="fwb-format-toggle">
+								<option value="html">HTML</option>
+								<option value="jsml">JSML</option>
+							</select>
+							<select id="fwb-sample-select">
+								<option value="">Sample...</option>
+							</select>
+						</span>
+					</div>
+					<div class="code-editor" id="fwb-editor" spellcheck="false"></div>
+					<div class="editor-diagnostics" id="fwb-diagnostics"></div>
+					<div class="editor-footer">
+						<label class="slot-picker">
+							<span>Slot:</span>
+							<select id="fwb-slot-select"></select>
+						</label>
+						<button id="fwb-mount-btn" class="run-button">Mount</button>
+					</div>
+				</div>
+				<div class="author-side">
+					<div class="panel state-panel">
+						<div class="panel-header"><h3>State Simulation</h3></div>
+						<div class="state-controls" id="fwb-state-controls">
+							<div class="placeholder">Load a manifest to simulate state.</div>
+						</div>
+					</div>
+					<div class="panel console-panel">
+						<div class="panel-header">
+							<h3>Console</h3>
+							<button id="fwb-clear-btn" class="clear-button">Clear</button>
+						</div>
+						<div class="fwb-console" id="fwb-console">
+							<div class="placeholder">Mount a fragment to see output here.</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- TAB 3: PREVIEW -->
+		<div class="tab-content" id="tab-preview">
+			<div class="guide" id="guide-preview">
+				<button class="guide-toggle" data-guide="preview">
+					<span class="guide-arrow">&#9656;</span>
+					<span class="guide-summary">See your fragments mounted in the host's slot layout</span>
+				</button>
+				<div class="guide-body" style="display:none">
+					<p>This simulates how your fragment will appear inside the host application. Drag the state sliders (Author tab) to test how your fragment responds to changing data. Click a slot to inspect its contract.</p>
+				</div>
+			</div>
+			<div class="tab-panels preview-layout">
+				<div class="panel host-panel">
+					<div class="panel-header">
+						<h3>Host Preview</h3>
+						<button id="fwb-clear-slots-btn" class="clear-button">Clear Slots</button>
+					</div>
+					<div class="host-slots" id="fwb-host-slots">
+						<div class="placeholder">Load a manifest to see the host's slot layout.</div>
+					</div>
+				</div>
+				<div class="panel slot-panel-preview">
+					<div class="panel-header"><h3>Slot Contract</h3></div>
+					<div class="slot-contract" id="fwb-slot-contract-preview">
+						<div class="placeholder">Click a slot to inspect it.</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- TAB 4: EXPORT -->
+		<div class="tab-content" id="tab-export">
+			<div class="guide" id="guide-export">
+				<button class="guide-toggle" data-guide="export">
+					<span class="guide-arrow">&#9656;</span>
+					<span class="guide-summary">Download your mod manifest with fragment included</span>
+				</button>
+				<div class="guide-body" style="display:none">
+					<p>This generates a valid <code>mod-manifest.json</code> containing your fragment, targeting the slot you selected. The manifest includes any capabilities the slot requires.</p>
+					<p><strong>Next steps:</strong> Place the downloaded file alongside your mod's entry script. Run <code>xript validate --cross app-manifest.json mod-manifest.json</code> to verify compatibility.</p>
+				</div>
+			</div>
+			<div class="tab-panels">
+				<div class="panel export-panel">
+					<div class="panel-header">
+						<h3>Mod Manifest Preview</h3>
+						<button id="fwb-export-btn" class="run-button">Download</button>
+					</div>
+					<pre class="export-preview" id="fwb-export-preview"><span class="placeholder">Author a fragment and select a slot to see your mod manifest here.</span></pre>
+				</div>
+				<div class="panel export-info">
+					<div class="panel-header"><h3>What's Next</h3></div>
+					<div class="export-steps">
+						<div class="export-step">
+							<span class="step-num">1</span>
+							<div>
+								<strong>Download</strong> your mod manifest using the button above
+							</div>
+						</div>
+						<div class="export-step">
+							<span class="step-num">2</span>
+							<div>
+								<strong>Create your mod project</strong> with <code>xript init --mod</code> and replace the generated manifest with yours
+							</div>
+						</div>
+						<div class="export-step">
+							<span class="step-num">3</span>
+							<div>
+								<strong>Validate</strong> against the host app: <code>xript validate --cross app.json your-mod.json</code>
+							</div>
+						</div>
+						<div class="export-step">
+							<span class="step-num">4</span>
+							<div>
+								<strong>Add behavior</strong> with a mod entry script using the sandbox fragment API for dynamic updates
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+</div>
+
+<script>
+	import { sanitizeHTMLDetailed, jsmlToHtml } from "@xriptjs/sanitize";
+	import { CodeJar } from "codejar";
+
+	function highlightJSON(el) {
+		const code = el.textContent || "";
+		el.innerHTML = code
+			.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+			.replace(/"((?:[^"\\]|\\.)*)"\s*:/g, '<span class="hl-key">"$1"</span>:')
+			.replace(/"((?:[^"\\]|\\.)*)"/g, '<span class="hl-str">"$1"</span>')
+			.replace(/\b(\d+\.?\d*)\b/g, '<span class="hl-num">$1</span>')
+			.replace(/\b(true|false|null)\b/g, '<span class="hl-bool">$1</span>');
+	}
+
+	function highlightMarkup(el) {
+		const code = el.textContent || "";
+		el.innerHTML = code
+			.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+			.replace(/&lt;(\/?)([\w-]+)((?:\s+[^&]*)?)&gt;/g, (_, slash, tag, attrs) => {
+				const hlAttrs = attrs.replace(/([\w-]+)=&quot;([^&]*?)&quot;/g,
+					'<span class="hl-attr">$1</span>=<span class="hl-str">&quot;$2&quot;</span>');
+				return `&lt;<span class="hl-tag">${slash}${tag}</span>${hlAttrs}&gt;`;
+			});
+	}
+
+	let manifestJar;
+	let editorJar;
+	let suppressManifestUpdate = false;
+
+	function validateManifest(manifest) {
+		const errors = [];
+		if (!manifest || typeof manifest !== "object") {
+			errors.push({ message: "manifest must be an object" });
+			return { valid: false, errors };
+		}
+		if (!manifest.xript) errors.push({ message: 'missing "xript" field' });
+		if (!manifest.name) errors.push({ message: 'missing "name" field' });
+		if (manifest.slots && !Array.isArray(manifest.slots)) {
+			errors.push({ message: '"slots" must be an array' });
+		}
+		return { valid: errors.length === 0, errors };
+	}
+
+	const exampleManifests = {
+		dashboard: {
+			xript: "0.4",
+			name: "dashboard-app",
+			title: "Dashboard Application",
+			version: "1.0.0",
+			bindings: {
+				player: {
+					description: "Player info namespace",
+					members: {
+						getName: { description: "Get player name", returns: "string" },
+						getHealth: { description: "Get player health", returns: "number" },
+						getMaxHealth: { description: "Get max health", returns: "number" },
+						getLevel: { description: "Get player level", returns: "number" },
+					},
+				},
+				log: { description: "Log a message", params: [{ name: "msg", type: "string" }] },
+			},
+			capabilities: {
+				"ui-mount": { description: "Mount UI fragments into host slots", risk: "low" },
+				"read-state": { description: "Read application state", risk: "low" },
+			},
+			types: {
+				Player: {
+					description: "Player data",
+					fields: {
+						name: { type: "string", description: "Display name" },
+						health: { type: "number", description: "Current HP" },
+						maxHealth: { type: "number", description: "Maximum HP" },
+						level: { type: "number", description: "Character level" },
+					},
+				},
+			},
+			slots: [
+				{ id: "sidebar.left", accepts: ["text/html", "application/jsml+json"], multiple: true, style: "isolated" },
+				{ id: "header.status", accepts: ["text/html"], multiple: false, style: "inherit" },
+				{ id: "main.overlay", accepts: ["text/html", "application/jsml+json"], capability: "ui-mount", multiple: true, style: "scoped" },
+			],
+		},
+		game: {
+			xript: "0.4",
+			name: "game-hud",
+			title: "Game HUD",
+			version: "2.0.0",
+			bindings: {
+				world: {
+					description: "World state",
+					members: {
+						getTime: { description: "Get game time", returns: "string" },
+						getWeather: { description: "Get weather condition", returns: "string" },
+						getBiome: { description: "Get current biome", returns: "string" },
+					},
+				},
+				combat: {
+					description: "Combat state",
+					members: {
+						getEnemyCount: { description: "Get nearby enemies", returns: "number" },
+						isInCombat: { description: "Check if in combat", returns: "boolean" },
+					},
+				},
+			},
+			capabilities: {
+				"ui-mount": { description: "Mount UI fragments", risk: "low" },
+				"combat-info": { description: "Access combat state", risk: "medium" },
+			},
+			slots: [
+				{ id: "hud.top", accepts: ["text/html"], multiple: true, style: "inherit" },
+				{ id: "hud.minimap", accepts: ["text/html"], multiple: false, style: "isolated" },
+				{ id: "hud.combat", accepts: ["text/html"], capability: "combat-info", multiple: true, style: "scoped" },
+			],
+		},
+	};
+
+	const sampleFragments = {
+		dashboard: [
+			{
+				name: "Health Bar",
+				html: '<div class="health-bar">\n\t<div class="bar-label">Health</div>\n\t<div class="bar-track">\n\t\t<span data-bind="health">0</span> / <span data-bind="maxHealth">0</span>\n\t</div>\n</div>',
+				jsml: '["div", {"class": "health-bar"},\n\t["div", {"class": "bar-label"}, "Health"],\n\t["div", {"class": "bar-track"},\n\t\t["span", {"data-bind": "health"}, "0"],\n\t\t" / ",\n\t\t["span", {"data-bind": "maxHealth"}, "0"]\n\t]\n]',
+			},
+			{
+				name: "Player Card",
+				html: '<div class="player-card">\n\t<div class="card-name" data-bind="name">Player</div>\n\t<div class="card-stat">HP: <span data-bind="health">0</span>/<span data-bind="maxHealth">0</span></div>\n\t<div class="card-stat">Level: <span data-bind="level">1</span></div>\n\t<div data-if="health < 30" class="card-danger">In danger!</div>\n</div>',
+			},
+			{
+				name: "Low Health Warning",
+				html: '<div class="warnings">\n\t<div data-if="health < 50" class="warning">Low health!</div>\n\t<div data-if="health < 20" class="critical">Critical!</div>\n\t<div data-if="health >= 50" class="safe">Health OK</div>\n</div>',
+			},
+			{
+				name: "XSS Test",
+				html: '<div class="safe-content"><p>This is safe.</p></div>\n<script>alert("XSS!")<\/script>\n<div onclick="steal()">Click me</div>\n<iframe src="evil.com"></iframe>',
+			},
+		],
+		game: [
+			{
+				name: "World Info",
+				html: '<div class="world-info">\n\t<div>Time: <span data-bind="time">--:--</span></div>\n\t<div>Weather: <span data-bind="weather">clear</span></div>\n\t<div>Biome: <span data-bind="biome">plains</span></div>\n</div>',
+			},
+			{
+				name: "Combat HUD",
+				html: '<div class="combat-hud">\n\t<div data-if="inCombat" class="combat-active">IN COMBAT</div>\n\t<div data-if="!inCombat" class="combat-idle">Safe</div>\n\t<div>Enemies: <span data-bind="enemyCount">0</span></div>\n</div>',
+			},
+		],
+	};
+
+	let currentManifest = null;
+	let currentManifestKey = "dashboard";
+	let state = {};
+	let mountedFragments = [];
+	let guideStates = {};
+
+	function addConsole(text, level = "log") {
+		const el = document.getElementById("fwb-console");
+		const placeholder = el.querySelector(".placeholder");
+		if (placeholder) placeholder.remove();
+		const line = document.createElement("div");
+		line.className = `console-line ${level}`;
+		const prefix = level === "log" ? "[log] " : level === "error" ? "[err] " : "=> ";
+		line.textContent = `${prefix}${text}`;
+		el.appendChild(line);
+		el.scrollTop = el.scrollHeight;
+	}
+
+	function buildStateFromManifest(manifest) {
+		const s = {};
+		if (manifest.types) {
+			for (const [, typeDef] of Object.entries(manifest.types)) {
+				if (!typeDef.fields) continue;
+				for (const [fieldName, field] of Object.entries(typeDef.fields)) {
+					if (field.type === "number") s[fieldName] = 50;
+					else if (field.type === "string") s[fieldName] = fieldName;
+					else if (field.type === "boolean") s[fieldName] = false;
+					else s[fieldName] = null;
+				}
+			}
+		}
+		if (manifest.bindings) {
+			for (const [, binding] of Object.entries(manifest.bindings)) {
+				if (!binding.members) continue;
+				for (const [memberName, member] of Object.entries(binding.members)) {
+					const match = memberName.match(/^(?:get|is)(.+)$/);
+					const key = match ? match[1].charAt(0).toLowerCase() + match[1].slice(1) : memberName;
+					if (key in s) continue;
+					if (member.returns === "number") s[key] = 50;
+					else if (member.returns === "string") s[key] = key;
+					else if (member.returns === "boolean") s[key] = false;
+				}
+			}
+		}
+		return s;
+	}
+
+	function renderStateControls() {
+		const container = document.getElementById("fwb-state-controls");
+		container.innerHTML = "";
+		if (Object.keys(state).length === 0) {
+			container.innerHTML = '<div class="placeholder">No state to simulate.</div>';
+			return;
+		}
+		for (const [key, value] of Object.entries(state)) {
+			const row = document.createElement("div");
+			row.className = "control-row";
+			const label = document.createElement("label");
+			label.textContent = key;
+			row.appendChild(label);
+
+			if (typeof value === "number") {
+				const input = document.createElement("input");
+				input.type = "range";
+				input.min = "0";
+				input.max = "100";
+				input.value = String(value);
+				const valSpan = document.createElement("span");
+				valSpan.className = "control-value";
+				valSpan.textContent = String(value);
+				input.addEventListener("input", () => {
+					state[key] = parseInt(input.value);
+					valSpan.textContent = String(state[key]);
+					renderFragments();
+				});
+				row.appendChild(input);
+				row.appendChild(valSpan);
+			} else if (typeof value === "boolean") {
+				const input = document.createElement("input");
+				input.type = "checkbox";
+				input.checked = value;
+				input.addEventListener("change", () => {
+					state[key] = input.checked;
+					renderFragments();
+				});
+				row.appendChild(input);
+			} else {
+				const input = document.createElement("input");
+				input.type = "text";
+				input.value = String(value ?? "");
+				input.addEventListener("input", () => {
+					state[key] = input.value;
+					renderFragments();
+				});
+				row.appendChild(input);
+			}
+			container.appendChild(row);
+		}
+	}
+
+	function renderSlotRegions() {
+		const container = document.getElementById("fwb-host-slots");
+		const slotSelect = document.getElementById("fwb-slot-select");
+		container.innerHTML = "";
+		slotSelect.innerHTML = "";
+		if (!currentManifest?.slots) return;
+
+		for (const slot of currentManifest.slots) {
+			const region = document.createElement("div");
+			region.className = "slot-region";
+
+			const label = document.createElement("div");
+			label.className = "slot-label";
+			const meta = [slot.multiple ? "multiple" : "single", slot.style || "inherit"];
+			if (slot.capability) meta.push(`<code>${slot.capability}</code>`);
+			label.innerHTML = `${slot.id} <span class="slot-meta">${meta.join(" \u00b7 ")}</span>`;
+			region.appendChild(label);
+
+			const content = document.createElement("div");
+			content.className = "slot-content";
+			content.id = `fwb-slot-${slot.id.replace(/\./g, "-")}`;
+			region.appendChild(content);
+			container.appendChild(region);
+
+			const option = document.createElement("option");
+			option.value = slot.id;
+			option.textContent = slot.id;
+			slotSelect.appendChild(option);
+
+			region.addEventListener("click", () => {
+				renderSlotContract(slot, "fwb-slot-contract");
+				renderSlotContract(slot, "fwb-slot-contract-preview");
+			});
+		}
+	}
+
+	function renderSlotContract(slot, targetId) {
+		const panel = document.getElementById(targetId);
+		if (!panel) return;
+		const capHtml = slot.capability
+			? `<div class="contract-row"><span class="contract-label">Capability:</span> <code>${slot.capability}</code></div>`
+			: "";
+
+		const keys = Object.keys(state);
+		const bindingsList = keys.length > 0
+			? `<div class="contract-row"><span class="contract-label">Available bindings:</span></div>
+			   <div class="binding-list">${keys.map(k => `<span class="binding-tag"><code>${k}</code> <span class="binding-type">${typeof state[k]}</span></span>`).join("")}</div>`
+			: "";
+
+		panel.innerHTML = `
+			<div class="contract-header">${slot.id}</div>
+			<div class="contract-row"><span class="contract-label">Accepts:</span> ${slot.accepts.join(", ")}</div>
+			<div class="contract-row"><span class="contract-label">Multiple:</span> ${slot.multiple ? "yes" : "no"}</div>
+			<div class="contract-row"><span class="contract-label">Style:</span> ${slot.style || "inherit"}</div>
+			${capHtml}${bindingsList}`;
+	}
+
+	function renderSamples() {
+		const select = document.getElementById("fwb-sample-select");
+		select.innerHTML = '<option value="">Sample...</option>';
+		for (const [i, frag] of (sampleFragments[currentManifestKey] || []).entries()) {
+			const opt = document.createElement("option");
+			opt.value = String(i);
+			opt.textContent = frag.name;
+			select.appendChild(opt);
+		}
+	}
+
+	function applyDataBind(container, data) {
+		for (const el of container.querySelectorAll("[data-bind]")) {
+			const name = el.getAttribute("data-bind");
+			if (data[name] !== undefined) {
+				el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT"
+					? el.value = String(data[name])
+					: el.textContent = String(data[name]);
+			}
+		}
+	}
+
+	function applyDataIf(container, data) {
+		const safeId = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/;
+		for (const el of container.querySelectorAll("[data-if]")) {
+			try {
+				const vars = Object.entries(data).filter(([k]) => safeId.test(k)).map(([k, v]) => `var ${k} = ${JSON.stringify(v)};`).join(" ");
+				el.style.display = new Function(`${vars} return !!(${el.getAttribute("data-if")})`)() ? "" : "none";
+			} catch { el.style.display = "none"; }
+		}
+	}
+
+	function renderFragments() {
+		for (const frag of mountedFragments) {
+			applyDataBind(frag.container, state);
+			applyDataIf(frag.container, state);
+		}
+	}
+
+	function runDiagnostics(html) {
+		const diagEl = document.getElementById("fwb-diagnostics");
+		const issues = [];
+		const stateKeys = new Set(Object.keys(state));
+
+		for (const [, ref] of html.matchAll(/data-bind="([^"]+)"/g)) {
+			if (!stateKeys.has(ref)) issues.push(`<span class="diag-warn">data-bind="${ref}" — not in state</span>`);
+		}
+		for (const [, expr] of html.matchAll(/data-if="([^"]+)"/g)) {
+			for (const token of (expr.match(/[a-zA-Z_$][a-zA-Z0-9_$]*/g) || [])) {
+				if (!stateKeys.has(token) && !["true", "false", "null", "undefined"].includes(token)) {
+					issues.push(`<span class="diag-warn">data-if references "${token}" — not in state</span>`);
+					break;
+				}
+			}
+		}
+		const sanitized = sanitizeHTMLDetailed(html);
+		for (const tag of sanitized.strippedElements) issues.push(`<span class="diag-strip">&lt;${tag}&gt; will be stripped</span>`);
+		for (const attr of sanitized.strippedAttributes) issues.push(`<span class="diag-strip">${attr.attribute} on &lt;${attr.element}&gt; will be stripped</span>`);
+		diagEl.innerHTML = issues.join(" \u00b7 ");
+	}
+
+	function mountFragment(html, slotId) {
+		const slot = currentManifest?.slots?.find(s => s.id === slotId);
+		if (!slot) { addConsole(`Slot '${slotId}' not found`, "error"); return; }
+		if (slot.capability) addConsole(`Slot requires capability: ${slot.capability}`, "log");
+
+		const sanitized = sanitizeHTMLDetailed(html);
+		if (sanitized.strippedElements.length > 0 || sanitized.strippedAttributes.length > 0) {
+			addConsole("Sanitizer stripped dangerous content:", "log");
+			for (const tag of sanitized.strippedElements) addConsole(`  stripped <${tag}>`, "error");
+			for (const attr of sanitized.strippedAttributes) addConsole(`  stripped ${attr.attribute} on <${attr.element}>`, "error");
+		} else {
+			addConsole("Fragment is clean", "log");
+		}
+
+		const slotEl = document.getElementById(`fwb-slot-${slotId.replace(/\./g, "-")}`);
+		if (!slotEl) return;
+		if (!slot.multiple) slotEl.innerHTML = "";
+
+		const wrapper = document.createElement("div");
+		wrapper.className = "fragment-wrapper";
+		wrapper.innerHTML = sanitized.html;
+		slotEl.appendChild(wrapper);
+		applyDataBind(wrapper, state);
+		applyDataIf(wrapper, state);
+		mountedFragments.push({ container: wrapper, slotId });
+		addConsole(`Mounted into ${slotId}`, "result");
+		updateExportPreview();
+	}
+
+	function buildModManifest() {
+		const slotSelect = document.getElementById("fwb-slot-select");
+		const formatToggle = document.getElementById("fwb-format-toggle");
+		const format = formatToggle.value === "jsml" ? "application/jsml+json" : "text/html";
+
+		const mod = {
+			xript: "0.4",
+			name: "my-mod",
+			version: "1.0.0",
+			capabilities: [],
+			fragments: [{
+				id: "my-fragment",
+				slot: slotSelect.value || "sidebar.left",
+				format,
+				inline: true,
+				source: editorJar.toString(),
+			}],
+		};
+
+		if (currentManifest?.slots) {
+			const slot = currentManifest.slots.find(s => s.id === slotSelect.value);
+			if (slot?.capability) mod.capabilities.push(slot.capability);
+		}
+		return mod;
+	}
+
+	function updateExportPreview() {
+		const preview = document.getElementById("fwb-export-preview");
+		if (!editorJar || !editorJar.toString().trim()) {
+			preview.innerHTML = '<span class="placeholder">Author a fragment to see your mod manifest here.</span>';
+			return;
+		}
+		preview.textContent = JSON.stringify(buildModManifest(), null, "\t");
+	}
+
+	function exportModManifest() {
+		const mod = buildModManifest();
+		const blob = new Blob([JSON.stringify(mod, null, "\t")], { type: "application/json" });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement("a");
+		a.href = url;
+		a.download = "mod-manifest.json";
+		a.click();
+		URL.revokeObjectURL(url);
+		addConsole("Exported mod manifest", "result");
+	}
+
+	let manifestReadOnly = false;
+
+	function loadManifest(key) {
+		const status = document.getElementById("fwb-manifest-status");
+
+		if (key === "custom") {
+			manifestReadOnly = false;
+			suppressManifestUpdate = true;
+			manifestJar.updateCode(JSON.stringify({ xript: "0.4", name: "my-app", slots: [] }, null, "\t"));
+			suppressManifestUpdate = false;
+			status.innerHTML = '<span class="status-info">Edit your manifest above</span>';
+			currentManifest = null;
+			return;
+		}
+
+		const manifest = exampleManifests[key];
+		if (!manifest) return;
+
+		manifestReadOnly = true;
+		suppressManifestUpdate = true;
+		manifestJar.updateCode(JSON.stringify(manifest, null, "\t"));
+		suppressManifestUpdate = false;
+		currentManifestKey = key;
+
+		const result = validateManifest(manifest);
+		if (result.valid) {
+			status.innerHTML = '<span class="status-ok">\u2713 Valid manifest</span>';
+			currentManifest = manifest;
+			state = buildStateFromManifest(manifest);
+			mountedFragments = [];
+			renderSlotRegions();
+			renderStateControls();
+			renderSamples();
+			if (manifest.slots?.[0]) {
+				renderSlotContract(manifest.slots[0], "fwb-slot-contract");
+				renderSlotContract(manifest.slots[0], "fwb-slot-contract-preview");
+			}
+		} else {
+			status.innerHTML = `<span class="status-err">\u2717 ${result.errors.length} error(s)</span>`;
+			currentManifest = null;
+		}
+	}
+
+	function parseCustomManifest(json) {
+		const status = document.getElementById("fwb-manifest-status");
+		try {
+			const manifest = JSON.parse(json);
+			const result = validateManifest(manifest);
+			if (result.valid) {
+				status.innerHTML = '<span class="status-ok">\u2713 Valid manifest</span>';
+				currentManifest = manifest;
+				currentManifestKey = "custom";
+				state = buildStateFromManifest(manifest);
+				mountedFragments = [];
+				renderSlotRegions();
+				renderStateControls();
+				renderSamples();
+				if (manifest.slots?.[0]) {
+					renderSlotContract(manifest.slots[0], "fwb-slot-contract");
+					renderSlotContract(manifest.slots[0], "fwb-slot-contract-preview");
+				}
+			} else {
+				status.innerHTML = `<span class="status-err">\u2717 ${result.errors.map(e => e.message).join("; ")}</span>`;
+			}
+		} catch {
+			status.innerHTML = '<span class="status-err">\u2717 Invalid JSON</span>';
+		}
+	}
+
+	function switchTab(tabId) {
+		for (const btn of document.querySelectorAll("#fwb-tabs .tab")) {
+			btn.classList.toggle("active", btn.dataset.tab === tabId);
+		}
+		for (const content of document.querySelectorAll(".tab-content")) {
+			content.classList.toggle("active", content.id === `tab-${tabId}`);
+		}
+	}
+
+	function boot() {
+		try {
+			document.getElementById("fwb-loading").style.display = "none";
+			document.getElementById("fwb-main").style.display = "block";
+
+			for (const btn of document.querySelectorAll("#fwb-tabs .tab")) {
+				btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+			}
+
+			for (const toggle of document.querySelectorAll(".guide-toggle")) {
+				toggle.addEventListener("click", () => {
+					const body = toggle.nextElementSibling;
+					const arrow = toggle.querySelector(".guide-arrow");
+					const key = toggle.dataset.guide;
+					const open = body.style.display === "none";
+					body.style.display = open ? "block" : "none";
+					arrow.textContent = open ? "\u25be" : "\u25b8";
+					guideStates[key] = open;
+				});
+			}
+
+			const manifestSelect = document.getElementById("fwb-manifest-select");
+			const manifestEl = document.getElementById("fwb-manifest-editor");
+			const sampleSelect = document.getElementById("fwb-sample-select");
+			const formatToggle = document.getElementById("fwb-format-toggle");
+			const editorEl = document.getElementById("fwb-editor");
+
+			manifestJar = CodeJar(manifestEl, highlightJSON, { tab: "\t" });
+			editorJar = CodeJar(editorEl, highlightMarkup, { tab: "\t" });
+
+			let debounce;
+			manifestJar.onUpdate(code => {
+				if (suppressManifestUpdate) return;
+				if (manifestReadOnly) return;
+				clearTimeout(debounce);
+				debounce = setTimeout(() => parseCustomManifest(code), 500);
+			});
+
+			manifestSelect.addEventListener("change", () => loadManifest(manifestSelect.value));
+
+			function loadSelectedSample(runDiag) {
+				const sample = (sampleFragments[currentManifestKey] || [])[parseInt(sampleSelect.value)];
+				if (!sample) return;
+				const code = formatToggle.value === "jsml" && sample.jsml ? sample.jsml : sample.html;
+				editorJar.updateCode(code);
+				if (runDiag) runDiagnostics(sample.html || code);
+				updateExportPreview();
+			}
+
+			sampleSelect.addEventListener("change", () => loadSelectedSample(true));
+			function rebuildEditorJar() {
+				const code = editorJar.toString();
+				editorJar.destroy();
+				const hl = formatToggle.value === "jsml" ? highlightJSON : highlightMarkup;
+				editorJar = CodeJar(editorEl, hl, { tab: "\t" });
+				editorJar.updateCode(code);
+				wireEditorUpdate();
+			}
+
+			formatToggle.addEventListener("change", () => {
+				loadSelectedSample(false);
+				rebuildEditorJar();
+			});
+
+			let editorDebounce;
+			function wireEditorUpdate() {
+				editorJar.onUpdate(editorUpdateHandler);
+			}
+			function editorUpdateHandler(code) {
+				clearTimeout(editorDebounce);
+				editorDebounce = setTimeout(() => {
+					let html = code;
+					if (formatToggle.value === "jsml") {
+						try { html = jsmlToHtml(JSON.parse(html)); } catch { return; }
+					}
+					runDiagnostics(html);
+					updateExportPreview();
+				}, 300);
+			}
+			wireEditorUpdate();
+
+			document.getElementById("fwb-mount-btn").addEventListener("click", () => {
+				let html = editorJar.toString().trim();
+				if (!html) return;
+				if (formatToggle.value === "jsml") {
+					try { html = jsmlToHtml(JSON.parse(html)); addConsole("Converted JSML to HTML", "log"); }
+					catch (e) { addConsole(`Invalid JSML: ${e.message}`, "error"); return; }
+				}
+				mountFragment(html, document.getElementById("fwb-slot-select").value);
+			});
+
+			document.getElementById("fwb-clear-slots-btn").addEventListener("click", () => {
+				for (const el of document.querySelectorAll("#fwb-host-slots .slot-content")) el.innerHTML = "";
+				mountedFragments = [];
+				addConsole("Cleared all slots", "log");
+			});
+
+			document.getElementById("fwb-clear-btn").addEventListener("click", () => {
+				document.getElementById("fwb-console").innerHTML = '<div class="placeholder">Mount a fragment to see output here.</div>';
+			});
+
+			document.getElementById("fwb-export-btn").addEventListener("click", exportModManifest);
+
+			loadManifest("dashboard");
+			addConsole("Fragment Workbench ready", "log");
+		} catch (err) {
+			document.getElementById("fwb-loading").innerHTML = `<p style="color: #f87171;">Failed to load: ${err.message}</p>`;
+		}
+	}
+
+	boot();
+</script>
+
+<style>
+	#fwb { margin-top: 1rem; }
+
+	.fwb-loading {
+		display: flex; flex-direction: column; align-items: center;
+		justify-content: center; padding: 4rem 2rem; color: var(--sl-color-gray-2);
+	}
+	.loading-spinner {
+		width: 2rem; height: 2rem; border: 3px solid var(--sl-color-gray-5);
+		border-top-color: var(--sl-color-accent); border-radius: 50%;
+		animation: fwb-spin 0.8s linear infinite; margin-bottom: 1rem;
+	}
+	@keyframes fwb-spin { to { transform: rotate(360deg); } }
+
+	.fwb-tabs {
+		display: flex; align-items: stretch; gap: 0;
+		border-bottom: 2px solid var(--sl-color-gray-5);
+		margin-bottom: 0.75rem;
+	}
+	.tab {
+		padding: 0.5rem 1rem; margin: 0; background: none; border: none;
+		color: var(--sl-color-gray-3); font-size: 0.8125rem; font-weight: 600;
+		cursor: pointer; border-bottom: 2px solid transparent;
+		margin-bottom: -2px; transition: all 0.15s;
+		display: flex; align-items: center; gap: 0.375rem;
+		line-height: 1;
+	}
+	.tab:hover { color: var(--sl-color-gray-1); }
+	.tab.active {
+		color: var(--sl-color-accent); border-bottom-color: var(--sl-color-accent);
+	}
+	.tab-num {
+		font-size: 0.625rem; font-weight: 700; width: 1.25rem; height: 1.25rem;
+		border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+		background: var(--sl-color-gray-5); color: var(--sl-color-gray-3);
+	}
+	.tab.active .tab-num {
+		background: var(--sl-color-accent); color: var(--sl-color-black);
+	}
+
+	.tab-content { display: none; }
+	.tab-content.active { display: block; }
+
+	.guide {
+		margin-bottom: 0.75rem; border: 1px solid var(--sl-color-gray-5);
+		border-radius: 0.375rem; overflow: hidden;
+		background: var(--sl-color-gray-6);
+	}
+	.guide-toggle {
+		display: flex; align-items: center; gap: 0.5rem; width: 100%;
+		padding: 0.5rem 0.75rem; background: none; border: none;
+		color: var(--sl-color-gray-2); font-size: 0.8125rem; cursor: pointer;
+		text-align: left;
+	}
+	.guide-toggle:hover { color: var(--sl-color-white); }
+	.guide-arrow {
+		font-size: 0.75rem; color: var(--sl-color-accent); width: 0.75rem;
+		display: inline-block;
+	}
+	.guide-summary { font-style: italic; color: var(--sl-color-gray-3); }
+	.guide-body {
+		padding: 0 0.75rem 0.75rem 2rem; font-size: 0.8125rem;
+		line-height: 1.5; color: var(--sl-color-gray-2);
+	}
+	.guide-body p { margin: 0 0 0.5rem; }
+	.guide-body p:last-child { margin-bottom: 0; }
+	.guide-body code {
+		font-size: 0.75rem; color: var(--sl-color-accent);
+		background: var(--sl-color-gray-5); padding: 0.0625rem 0.25rem;
+		border-radius: 0.125rem;
+	}
+
+	.tab-panels {
+		display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;
+	}
+	.author-layout { grid-template-columns: 1.2fr 0.8fr; }
+	.preview-layout { grid-template-columns: 1.2fr 0.8fr; }
+	.author-side { display: flex; flex-direction: column; gap: 0.5rem; }
+
+	@media (max-width: 900px) {
+		.tab-panels, .author-layout, .preview-layout { grid-template-columns: 1fr; }
+	}
+
+	.panel {
+		background: var(--sl-color-gray-6); border: 1px solid var(--sl-color-gray-5);
+		border-radius: 0.5rem; overflow: hidden;
+	}
+	.panel-header {
+		display: flex; align-items: center; justify-content: space-between;
+		flex-wrap: nowrap;
+		padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--sl-color-gray-5);
+		background: var(--sl-color-black);
+	}
+	.panel-header h3 {
+		margin: 0; font-size: 0.8125rem; font-weight: 600;
+		text-transform: uppercase; letter-spacing: 0.05em; color: var(--sl-color-gray-2);
+		white-space: nowrap;
+	}
+	.panel-actions { display: flex; gap: 0.5rem; align-items: center; flex-shrink: 0; flex-wrap: nowrap; }
+
+	.header-selects {
+		display: inline-flex; gap: 0.5rem; align-items: center;
+	}
+	.header-selects select {
+		margin: 0; vertical-align: middle;
+	}
+	.panel-header select, .panel-actions select, .header-selects select {
+		font-family: var(--sl-font-mono); font-size: 0.6875rem;
+		padding: 0.125rem 0.375rem; background: var(--sl-color-gray-5);
+		color: var(--sl-color-gray-2); border: 1px solid var(--sl-color-gray-4);
+		border-radius: 0.25rem; cursor: pointer;
+	}
+
+	.code-editor {
+		font-family: var(--sl-font-mono); font-size: 0.6875rem;
+		padding: 0.5rem; background: var(--sl-color-black);
+		color: var(--sl-color-white); line-height: 1.5; tab-size: 2;
+		overflow: auto; white-space: pre; outline: none;
+	}
+	#fwb-manifest-editor { min-height: 320px; max-height: 500px; }
+	#fwb-editor { min-height: 180px; }
+
+	:global(.hl-key) { color: #7dd3fc; }
+	:global(.hl-str) { color: #86efac; }
+	:global(.hl-num) { color: #fcd34d; }
+	:global(.hl-bool) { color: #c4b5fd; }
+	:global(.hl-tag) { color: #7dd3fc; }
+	:global(.hl-attr) { color: #fcd34d; }
+	:global(.hl-attr + .hl-str) { color: #86efac; }
+
+	.manifest-status {
+		padding: 0.25rem 0.75rem; font-family: var(--sl-font-mono);
+		font-size: 0.6875rem; border-top: 1px solid var(--sl-color-gray-5);
+	}
+	:global(.status-ok) { color: #4ade80; }
+	:global(.status-err) { color: #f87171; }
+	:global(.status-info) { color: var(--sl-color-gray-3); }
+
+	.slot-contract, .export-steps {
+		padding: 0.5rem 0.75rem; font-family: var(--sl-font-mono);
+		font-size: 0.6875rem; min-height: 80px;
+	}
+	:global(#fwb .placeholder) {
+		color: var(--sl-color-gray-4); font-style: italic;
+		font-family: var(--sl-font); font-size: 0.75rem; padding: 0.5rem 0;
+	}
+	:global(.contract-header) { font-weight: 700; font-size: 0.8125rem; color: var(--sl-color-accent); margin-bottom: 0.375rem; }
+	:global(.contract-row) { color: var(--sl-color-gray-2); margin-bottom: 0.25rem; }
+	:global(.contract-label) { color: var(--sl-color-gray-3); }
+	:global(.contract-row code) { color: var(--sl-color-accent); font-size: 0.6875rem; }
+	:global(.binding-list) { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.25rem; }
+	:global(.binding-tag) { background: var(--sl-color-gray-5); padding: 0.0625rem 0.375rem; border-radius: 0.25rem; font-size: 0.625rem; }
+	:global(.binding-tag code) { color: var(--sl-color-white); }
+	:global(.binding-type) { color: var(--sl-color-gray-3); font-size: 0.5625rem; }
+
+	:global(#fwb .host-slots) {
+		display: flex; flex-direction: column; gap: 0.5rem;
+		padding: 0.75rem; min-height: 150px;
+	}
+	:global(#fwb .slot-region) {
+		border: 2px dashed var(--sl-color-gray-4); border-radius: 0.375rem;
+		min-height: 50px; overflow: hidden; cursor: pointer; transition: border-color 0.15s;
+	}
+	:global(#fwb .slot-region:hover) { border-color: var(--sl-color-accent); }
+	:global(#fwb .slot-label) {
+		font-family: var(--sl-font-mono); font-size: 0.6875rem; font-weight: 600;
+		color: var(--sl-color-gray-3); padding: 0.25rem 0.5rem;
+		border-bottom: 1px dashed var(--sl-color-gray-5);
+		display: flex; align-items: center; gap: 0.5rem;
+	}
+	:global(.slot-meta) { font-weight: 400; color: var(--sl-color-gray-4); font-size: 0.625rem; }
+	:global(.slot-meta code) { color: var(--sl-color-accent); font-size: 0.625rem; }
+	:global(.slot-content) { padding: 0.375rem 0.5rem; font-size: 0.8125rem; }
+	:global(.fragment-wrapper) { padding: 0.25rem 0; border-bottom: 1px solid var(--sl-color-gray-5); }
+	:global(.fragment-wrapper:last-child) { border-bottom: none; }
+
+	.editor-diagnostics {
+		font-family: var(--sl-font-mono); font-size: 0.625rem;
+		padding: 0 0.5rem; min-height: 0; line-height: 1.6; background: var(--sl-color-black);
+	}
+	:global(.diag-warn) { color: #fbbf24; }
+	:global(.diag-strip) { color: #f87171; }
+
+	.editor-footer {
+		display: flex; align-items: center; justify-content: space-between;
+		padding: 0.375rem 0.5rem; border-top: 1px solid var(--sl-color-gray-5);
+	}
+	.slot-picker {
+		display: flex; align-items: center; gap: 0.375rem;
+		font-size: 0.6875rem; color: var(--sl-color-gray-3);
+	}
+	.slot-picker select {
+		font-family: var(--sl-font-mono); font-size: 0.6875rem;
+		padding: 0.125rem 0.375rem; background: var(--sl-color-gray-5);
+		color: var(--sl-color-gray-2); border: 1px solid var(--sl-color-gray-4);
+		border-radius: 0.25rem;
+	}
+	.run-button {
+		padding: 0.25rem 0.75rem; background: var(--sl-color-accent);
+		color: var(--sl-color-black); border: none; border-radius: 0.25rem;
+		font-weight: 600; font-size: 0.75rem; cursor: pointer; transition: opacity 0.15s;
+	}
+	.run-button:hover { opacity: 0.85; }
+
+	:global(#fwb .state-controls) {
+		padding: 0.625rem 0.75rem; display: flex; flex-direction: column; gap: 0.5rem;
+	}
+	:global(#fwb .control-row) {
+		display: flex; align-items: center; gap: 0.75rem;
+		font-family: var(--sl-font-mono); font-size: 0.6875rem;
+		padding: 0.125rem 0;
+	}
+	:global(#fwb .control-row label) { min-width: 90px; color: var(--sl-color-gray-3); flex-shrink: 0; }
+	:global(#fwb .control-row input[type="range"]) { flex: 1; accent-color: var(--sl-color-accent); }
+	:global(#fwb .control-row input[type="text"]) {
+		flex: 1; font-family: var(--sl-font-mono); font-size: 0.6875rem;
+		padding: 0.125rem 0.375rem; background: var(--sl-color-gray-5);
+		color: var(--sl-color-white); border: 1px solid var(--sl-color-gray-4);
+		border-radius: 0.25rem; outline: none;
+	}
+	:global(#fwb .control-row input[type="checkbox"]) { accent-color: var(--sl-color-accent); }
+	:global(#fwb .control-value) { min-width: 30px; text-align: right; color: var(--sl-color-accent); font-weight: 600; }
+
+	.clear-button {
+		font-size: 0.625rem; padding: 0.0625rem 0.375rem; background: transparent;
+		color: var(--sl-color-gray-3); border: 1px solid var(--sl-color-gray-4);
+		border-radius: 0.25rem; cursor: pointer; transition: all 0.15s;
+	}
+	.clear-button:hover { color: var(--sl-color-white); border-color: var(--sl-color-gray-3); }
+
+	.fwb-console {
+		padding: 0.5rem; min-height: 60px; max-height: 120px;
+		overflow-y: auto; font-family: var(--sl-font-mono);
+		font-size: 0.6875rem; line-height: 1.4;
+	}
+	:global(#fwb .console-line) { padding: 0.0625rem 0; white-space: pre-wrap; word-break: break-all; }
+	:global(#fwb .console-line.log) { color: var(--sl-color-gray-2); }
+	:global(#fwb .console-line.error) { color: #f87171; }
+	:global(#fwb .console-line.result) { color: var(--sl-color-accent); }
+
+	.export-panel { display: flex; flex-direction: column; }
+	.export-preview {
+		padding: 0.5rem; margin: 0; font-family: var(--sl-font-mono);
+		font-size: 0.6875rem; background: var(--sl-color-black);
+		color: var(--sl-color-white); line-height: 1.5; overflow: auto;
+		min-height: 200px; max-height: 400px; white-space: pre;
+	}
+	.export-steps { font-family: var(--sl-font); font-size: 0.8125rem; }
+	.export-step {
+		display: flex; gap: 0.75rem; align-items: flex-start;
+		padding: 0.5rem 0; border-bottom: 1px solid var(--sl-color-gray-5);
+		color: var(--sl-color-gray-2); line-height: 1.5;
+	}
+	.export-step:last-child { border-bottom: none; }
+	.export-step code {
+		font-size: 0.6875rem; color: var(--sl-color-accent);
+		background: var(--sl-color-gray-5); padding: 0.0625rem 0.25rem;
+		border-radius: 0.125rem;
+	}
+	.step-num {
+		font-size: 0.6875rem; font-weight: 700; width: 1.5rem; height: 1.5rem;
+		border-radius: 50%; display: flex; align-items: center; justify-content: center;
+		background: var(--sl-color-gray-5); color: var(--sl-color-accent);
+		flex-shrink: 0;
+	}
+
+	:global(.health-bar) { font-family: var(--sl-font-mono); font-size: 0.8125rem; color: var(--sl-color-white); }
+	:global(.bar-label) { font-size: 0.6875rem; color: var(--sl-color-gray-3); text-transform: uppercase; letter-spacing: 0.05em; }
+	:global(.bar-track) { color: var(--sl-color-accent); font-weight: 600; }
+	:global(.warnings) { font-family: var(--sl-font-mono); font-size: 0.75rem; }
+	:global(.warning) { color: #fbbf24; font-weight: 600; }
+	:global(.critical) { color: #f87171; font-weight: 700; }
+	:global(.safe) { color: #4ade80; }
+	:global(.player-card) { font-family: var(--sl-font-mono); font-size: 0.8125rem; }
+	:global(.card-name) { color: var(--sl-color-accent); font-weight: 700; font-size: 0.875rem; }
+	:global(.card-stat) { color: var(--sl-color-gray-2); }
+	:global(.card-danger) { color: #f87171; font-weight: 700; }
+	:global(.world-info) { font-family: var(--sl-font-mono); font-size: 0.8125rem; color: var(--sl-color-gray-2); }
+	:global(.combat-hud) { font-family: var(--sl-font-mono); font-size: 0.8125rem; }
+	:global(.combat-active) { color: #f87171; font-weight: 700; text-transform: uppercase; }
+	:global(.combat-idle) { color: #4ade80; }
+	:global(.safe-content) { color: var(--sl-color-white); }
+</style>

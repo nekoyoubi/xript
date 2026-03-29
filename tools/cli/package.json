@@ -1,0 +1,57 @@
+{
+	"name": "@xriptjs/cli",
+	"version": "0.4.0",
+	"description": "Unified CLI for the xript ecosystem — validate, generate types, generate docs, scaffold projects, sanitize fragments, and scan annotations.",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/nekoyoubi/xript.git",
+		"directory": "tools/cli"
+	},
+	"homepage": "https://xript.dev",
+	"bin": {
+		"xript": "./dist/cli.js"
+	},
+	"scripts": {
+		"build": "tsc",
+		"test": "node --test test/*.test.js",
+		"prepublishOnly": "npm run build"
+	},
+	"keywords": [
+		"xript",
+		"cli",
+		"toolchain",
+		"modding",
+		"extensibility"
+	],
+	"license": "MIT",
+	"publishConfig": {
+		"access": "public",
+		"provenance": true
+	},
+	"dependencies": {
+		"@xriptjs/validate": "^0.4.0",
+		"@xriptjs/typegen": "^0.4.0",
+		"@xriptjs/docgen": "^0.4.0",
+		"@xriptjs/init": "^0.4.0",
+		"@xriptjs/sanitize": "^0.4.0"
+	},
+	"optionalDependencies": {
+		"ts-morph": "^25.0.0"
+	},
+	"devDependencies": {
+		"typescript": "^5.7.0",
+		"@types/node": "^22.0.0"
+	}
+}

@@ -37,7 +37,7 @@ const runtime = await createRuntimeFromFile("./manifest.json", {
 });
 ```
 
-`createRuntimeFromFile` reads the manifest from disk, performs structural validation, and creates a runtime. For full JSON Schema validation, use [`@xriptjs/validate`](/tools/validator) before creating the runtime.
+`createRuntimeFromFile` reads the manifest from disk, performs structural validation, and creates a runtime. For full JSON Schema validation, use [`@xriptjs/validate`](/tools/cli#validate) before creating the runtime.
 
 ## Options
 
@@ -105,3 +105,39 @@ The Node.js runtime creates a `vm.Context` with a restricted global environment:
 - **Blocked:** `process`, `require`, `import`, `fetch`, `setTimeout`, `setInterval`, `Buffer`, `__dirname`, `__filename`
 - **Frozen namespaces:** Namespace objects are frozen with `Object.freeze`
 - **Execution limits:** Timeout enforced via `vm.Script.runInContext` timeout option
+
+## Loading Mods
+
+`runtime.loadMod(modManifest, options?)` validates a mod manifest against the app manifest, sanitizes any fragment HTML, and returns a `ModInstance`. If the mod manifest declares an `entry` script, that script runs during loading.
+
+```javascript
+const mod = runtime.loadMod(modManifest, { sources: fragmentSources });
+console.log(mod.name, mod.version);
+console.log(mod.fragments.length);
+```
+
+`fragmentSources` is an object mapping fragment IDs to their raw HTML strings. The runtime sanitizes each source before attaching it to the mod.
+
+## Fragment Lifecycle Hooks
+
+`runtime.fireFragmentHook(fragmentId, lifecycle, bindings?)` fires a lifecycle hook registered by the active mod script and returns any command buffer operations the script issued. Supported lifecycles: `mount`, `unmount`, `update`, `suspend`, `resume`.
+
+```javascript
+const ops = runtime.fireFragmentHook("health-bar", "update", { health: 75 });
+// ops is an array of command arrays: [["setText", ".hp", "75"], ...]
+```
+
+Each entry in `ops` is a command array whose first element is the command name followed by its arguments. The host applies these operations to the rendered fragment.
+
+## Fragment Processing
+
+`runtime.processFragment(fragmentId, source, bindings)` evaluates `data-bind` and `data-if` attributes in the fragment HTML against the provided binding data and returns the resolved output.
+
+```javascript
+const { html, visibility } = runtime.processFragment("health-bar", source, {
+  health: 75,
+  maxHealth: 100,
+});
+```
+
+`html` is the processed HTML string with `data-bind` values substituted. `visibility` is a map of element selectors to boolean values derived from `data-if` expressions.

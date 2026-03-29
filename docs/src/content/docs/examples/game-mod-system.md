@@ -86,7 +86,7 @@ Three risk levels demonstrate how a game might gate its API: reading persistent 
 }
 ```
 
-Types describe the data structures extenders will work with. They feed into `xript-typegen` (TypeScript definitions) and `xript-docgen` (API documentation) so extenders get editor autocomplete and generated docs.
+Types describe the data structures extenders will work with. They feed into `xript typegen` (TypeScript definitions) and `xript docgen` (API documentation) so extenders get editor autocomplete and generated docs.
 
 ### Execution Limits
 

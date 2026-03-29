@@ -1,6 +1,9 @@
 use rquickjs::function::Rest;
+use rquickjs::promise::{Promise, PromiseState};
 use rquickjs::{Context, Ctx, Function, Object, Runtime, Value};
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -11,13 +14,24 @@ use crate::manifest::{Binding, Manifest, NamespaceBinding};
 pub type HostFn =
     Arc<dyn Fn(&[serde_json::Value]) -> std::result::Result<serde_json::Value, String> + Send + Sync>;
 
+pub type AsyncHostFn = Arc<
+    dyn Fn(
+            &[serde_json::Value],
+        ) -> Pin<
+            Box<dyn Future<Output = std::result::Result<serde_json::Value, String>> + Send>,
+        > + Send
+        + Sync,
+>;
+
 pub struct HostBindings {
     bindings: HashMap<String, HostBinding>,
 }
 
 enum HostBinding {
     Function(HostFn),
+    AsyncFunction(AsyncHostFn),
     Namespace(HashMap<String, HostFn>),
+    AsyncNamespace(HashMap<String, AsyncHostFn>),
 }
 
 impl HostBindings {
@@ -41,6 +55,26 @@ impl HostBindings {
     pub fn add_namespace(&mut self, name: impl Into<String>, members: HashMap<String, HostFn>) {
         self.bindings
             .insert(name.into(), HostBinding::Namespace(members));
+    }
+
+    pub fn add_async_function<F, Fut>(&mut self, name: impl Into<String>, f: F)
+    where
+        F: Fn(&[serde_json::Value]) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = std::result::Result<serde_json::Value, String>> + Send + 'static,
+    {
+        self.bindings.insert(
+            name.into(),
+            HostBinding::AsyncFunction(Arc::new(move |args| Box::pin(f(args)))),
+        );
+    }
+
+    pub fn add_async_namespace(
+        &mut self,
+        name: impl Into<String>,
+        members: HashMap<String, AsyncHostFn>,
+    ) {
+        self.bindings
+            .insert(name.into(), HostBinding::AsyncNamespace(members));
     }
 }
 
@@ -150,7 +184,9 @@ impl XriptRuntime {
             let res: std::result::Result<Value, _> = ctx.eval(code);
             match res {
                 Ok(val) => {
-                    let json = js_value_to_json(&ctx, &val);
+                    while ctx.execute_pending_job() {}
+                    let resolved = resolve_if_promise(&ctx, val);
+                    let json = js_value_to_json(&ctx, &resolved);
                     Ok(json)
                 }
                 Err(_) => {
@@ -185,13 +221,33 @@ impl XriptRuntime {
         mod_manifest_json: &str,
         fragment_sources: HashMap<String, String>,
         granted_capabilities: &HashSet<String>,
+        entry_source: Option<&str>,
     ) -> Result<crate::fragment::ModInstance> {
-        crate::fragment::load_mod(
+        let mod_instance = crate::fragment::load_mod(
             mod_manifest_json,
             &self.manifest,
             granted_capabilities,
             &fragment_sources,
-        )
+        )?;
+
+        if let Some(source) = entry_source {
+            let mod_name = mod_instance.name.clone();
+            self.ctx.with(|ctx| {
+                let res: std::result::Result<Value, _> = ctx.eval(source);
+                if let Err(_) = res {
+                    let msg: std::result::Result<String, _> =
+                        ctx.eval("(() => { try { throw undefined; } catch(e) { return String(e); } })()");
+                    let error_msg = msg.unwrap_or_else(|_| "unknown entry script error".into());
+                    return Err(XriptError::ModEntry {
+                        mod_name,
+                        message: error_msg,
+                    });
+                }
+                Ok(())
+            })?;
+        }
+
+        Ok(mod_instance)
     }
 
     pub fn fire_fragment_hook(
@@ -342,6 +398,12 @@ fn register_bindings(
                             .set(name.as_str(), js_fn)
                             .map_err(|e| XriptError::Engine(e.to_string()))?;
                     }
+                    Some(HostBinding::AsyncFunction(f)) => {
+                        let js_fn = create_async_host_function(ctx, name, f.clone())?;
+                        ctx.globals()
+                            .set(name.as_str(), js_fn)
+                            .map_err(|e| XriptError::Engine(e.to_string()))?;
+                    }
                     _ => {
                         let msg = format!("host binding '{}' is not provided", name);
                         let missing_fn = make_throwing_function(ctx, &msg)?;
@@ -374,6 +436,11 @@ fn register_namespace_binding(
         _ => None,
     };
 
+    let host_async_ns = match host_bindings.bindings.get(name) {
+        Some(HostBinding::AsyncNamespace(members)) => Some(members),
+        _ => None,
+    };
+
     for (member_name, member_binding) in &ns_def.members {
         if let Binding::Function(func_def) = member_binding {
             let full_name = format!("{}.{}", name, member_name);
@@ -395,6 +462,16 @@ fn register_namespace_binding(
             if let Some(host_members) = host_ns {
                 if let Some(f) = host_members.get(member_name) {
                     let js_fn = create_host_function(ctx, &full_name, f.clone())?;
+                    ns_obj
+                        .set(member_name.as_str(), js_fn)
+                        .map_err(|e| XriptError::Engine(e.to_string()))?;
+                    continue;
+                }
+            }
+
+            if let Some(host_members) = host_async_ns {
+                if let Some(f) = host_members.get(member_name) {
+                    let js_fn = create_async_host_function(ctx, &full_name, f.clone())?;
                     ns_obj
                         .set(member_name.as_str(), js_fn)
                         .map_err(|e| XriptError::Engine(e.to_string()))?;
@@ -579,6 +656,74 @@ fn create_host_function<'js>(
         .map_err(|e| XriptError::Engine(e.to_string()))?;
 
     Ok(wrapper)
+}
+
+fn create_async_host_function<'js>(
+    ctx: &Ctx<'js>,
+    name: &str,
+    f: AsyncHostFn,
+) -> Result<Function<'js>> {
+    let bridge_fn = Function::new(ctx.clone(), move |args_json: String| -> String {
+        let args: Vec<serde_json::Value> = match serde_json::from_str(&args_json) {
+            Ok(a) => a,
+            Err(e) => {
+                let err = serde_json::json!({"__xript_err": format!("invalid args: {}", e)});
+                return serde_json::to_string(&err).unwrap();
+            }
+        };
+        match pollster::block_on(f(&args)) {
+            Ok(result) => {
+                let wrapped = serde_json::json!({"__xript_ok": result});
+                serde_json::to_string(&wrapped).unwrap_or("{\"__xript_ok\":null}".into())
+            }
+            Err(msg) => {
+                let err = serde_json::json!({"__xript_err": msg});
+                serde_json::to_string(&err).unwrap()
+            }
+        }
+    })
+    .map_err(|e| {
+        XriptError::Engine(format!(
+            "failed to create async host function '{}': {}",
+            name, e
+        ))
+    })?;
+
+    ctx.globals()
+        .set("__xript_tmp_bridge", bridge_fn)
+        .map_err(|e| XriptError::Engine(e.to_string()))?;
+
+    let wrapper: Function = ctx.eval(
+        "(function(bridge) { return function() { var args = Array.prototype.slice.call(arguments); var raw = bridge(JSON.stringify(args)); var envelope = JSON.parse(raw); if (envelope.__xript_err !== undefined) { return Promise.reject(new Error(envelope.__xript_err)); } return Promise.resolve(envelope.__xript_ok); }; })(__xript_tmp_bridge)",
+    )
+    .map_err(|e| XriptError::Engine(e.to_string()))?;
+
+    ctx.eval::<(), _>("delete globalThis.__xript_tmp_bridge")
+        .map_err(|e| XriptError::Engine(e.to_string()))?;
+
+    Ok(wrapper)
+}
+
+fn resolve_if_promise<'js>(ctx: &Ctx<'js>, val: Value<'js>) -> Value<'js> {
+    if let Ok(promise) = Promise::from_value(val.clone()) {
+        loop {
+            match promise.state() {
+                PromiseState::Pending => {
+                    if !ctx.execute_pending_job() {
+                        break val;
+                    }
+                }
+                PromiseState::Resolved => {
+                    break promise.result::<Value>().unwrap_or(Ok(val)).unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
+                }
+                PromiseState::Rejected => {
+                    break promise.result::<Value>().unwrap_or(Ok(val)).unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
+                }
+            }
+        }
+    } else {
+        val
+    }
 }
 
 fn js_value_to_json(ctx: &Ctx<'_>, val: &Value<'_>) -> serde_json::Value {

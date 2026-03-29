@@ -18,6 +18,7 @@ const npmPackages = [
 	"tools/typegen/package.json",
 	"tools/docgen/package.json",
 	"tools/init/package.json",
+	"tools/cli/package.json",
 	"runtimes/js/package.json",
 	"runtimes/node/package.json",
 ];
@@ -25,6 +26,10 @@ const npmPackages = [
 const internalDeps = {
 	"@xriptjs/sanitize": [`^${version}`],
 	"@xriptjs/runtime": [`^${version}`],
+	"@xriptjs/validate": [`^${version}`],
+	"@xriptjs/typegen": [`^${version}`],
+	"@xriptjs/docgen": [`^${version}`],
+	"@xriptjs/init": [`^${version}`],
 };
 
 const rustCrates = [
@@ -35,7 +40,13 @@ const rustCrates = [
 
 const csproj = "runtimes/csharp/src/Xript.Runtime/Xript.Runtime.csproj";
 
-let updated = 0;
+const rootPkg = resolve(root, "package.json");
+const rootJson = JSON.parse(readFileSync(rootPkg, "utf8"));
+rootJson.version = version;
+writeFileSync(rootPkg, JSON.stringify(rootJson, null, "\t") + "\n");
+console.log(`  package.json -> ${version}`);
+
+let updated = 1;
 
 for (const rel of npmPackages) {
 	const abs = resolve(root, rel);

@@ -53,7 +53,7 @@ impl App {
         self.scaffold_type_idx = 0;
         self.scaffold_lang_idx = 0;
         self.completion = CompletionState::new();
-        if matches!(screen, Screen::Validate | Screen::Sanitize) {
+        if matches!(screen, Screen::Validate | Screen::Sanitize | Screen::Audit | Screen::Diff) {
             self.completion.update("");
         }
     }
@@ -131,6 +131,8 @@ impl App {
             Screen::Validate => crate::screens::validate::render(frame, area, self),
             Screen::Scaffold => crate::screens::scaffold::render(frame, area, self),
             Screen::Sanitize => crate::screens::sanitize::render(frame, area, self),
+            Screen::Audit => crate::screens::audit::render(frame, area, self),
+            Screen::Diff => crate::screens::diff::render(frame, area, self),
         }
     }
 
@@ -206,6 +208,8 @@ mod tests {
         assert_eq!(Screen::Validate.title(), "Validate Manifest");
         assert_eq!(Screen::Scaffold.title(), "Scaffold Project");
         assert_eq!(Screen::Sanitize.title(), "Sanitize Fragment");
+        assert_eq!(Screen::Audit.title(), "Audit Manifest");
+        assert_eq!(Screen::Diff.title(), "Diff Manifest");
     }
 
     #[test]

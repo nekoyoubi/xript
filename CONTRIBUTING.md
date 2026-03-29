@@ -93,7 +93,7 @@ These principles guide all contributions:
 - **The manifest is the product.** Everything derives from the manifest schema.
 - **Safety is non-negotiable.** No eval, no sandbox escape, default-deny capabilities.
 - **JavaScript is the modding language.** Not because it is perfect, but because it is known.
-- **Incremental adoption.** Three tiers: expressions only, simple bindings, full scripting.
+- **Incremental adoption.** Four tiers: expressions only, simple bindings, advanced scripting, full feature.
 - **Universal portability.** The universal runtime runs anywhere JavaScript runs.
 
 ## License

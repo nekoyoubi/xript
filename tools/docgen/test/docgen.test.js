@@ -1,6 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { generateDocs, generateDocsFromFile } from "../dist/index.js";
+import { readFile, rm, mkdtemp } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { generateDocs, generateDocsFromFile, writeDocsToDirectory } from "../dist/index.js";
 
 describe("generateDocs", () => {
 	it("generates an index page with manifest metadata", () => {
@@ -376,6 +379,47 @@ describe("generateDocs", () => {
 		assert.ok(index.content.includes("fragment-api.md"));
 	});
 
+	it("strips .md from links with linkFormat no-extension", () => {
+		const result = generateDocs({
+			xript: "0.1",
+			name: "test",
+			bindings: {
+				log: { description: "Logs a message." },
+				player: { description: "Player.", members: { getHealth: { description: "Health.", returns: "number" } } },
+			},
+			hooks: { onTick: { description: "Called each tick." } },
+			types: { Direction: { description: "Cardinal direction.", values: ["north", "south"] } },
+			slots: [{ id: "sidebar", accepts: ["text/html"] }],
+		}, { linkFormat: "no-extension" });
+		const index = result.pages.find((p) => p.slug === "index");
+		assert.ok(!index.content.includes(".md)"), "should not contain .md links");
+		assert.ok(index.content.includes("./bindings/log)"));
+		assert.ok(index.content.includes("./bindings/player)"));
+		assert.ok(index.content.includes("./hooks/onTick)"));
+		assert.ok(index.content.includes("./types/Direction)"));
+		assert.ok(index.content.includes("./fragment-api)"));
+	});
+
+	it("uses .md links by default", () => {
+		const result = generateDocs({
+			xript: "0.1",
+			name: "test",
+			bindings: { log: { description: "Logs." } },
+		});
+		const index = result.pages.find((p) => p.slug === "index");
+		assert.ok(index.content.includes("./bindings/log.md)"));
+	});
+
+	it("uses .md links with linkFormat default", () => {
+		const result = generateDocs({
+			xript: "0.1",
+			name: "test",
+			bindings: { log: { description: "Logs." } },
+		}, { linkFormat: "default" });
+		const index = result.pages.find((p) => p.slug === "index");
+		assert.ok(index.content.includes("./bindings/log.md)"));
+	});
+
 	it("shows slot accept formats and multiple flag", () => {
 		const result = generateDocs({
 			xript: "0.3",
@@ -388,5 +432,52 @@ describe("generateDocs", () => {
 		const index = result.pages.find((p) => p.slug === "index");
 		assert.ok(index.content.includes("| Yes |"));
 		assert.ok(index.content.includes("| No |"));
+	});
+});
+
+describe("writeDocsToDirectory with frontmatter", () => {
+	it("injects frontmatter when option provided", async () => {
+		const result = generateDocs({ xript: "0.1", name: "test", bindings: { log: { description: "Logs." } } });
+		const tmpDir = await mkdtemp(join(tmpdir(), "docgen-test-"));
+		try {
+			await writeDocsToDirectory(result, tmpDir, { frontmatter: "title: API Docs\nlayout: doc" });
+			const content = await readFile(join(tmpDir, "index.md"), "utf-8");
+			assert.ok(content.startsWith("---\n"));
+			assert.ok(content.includes("title: API Docs"));
+			assert.ok(content.includes("layout: doc"));
+			assert.ok(content.includes("---\n\n#"));
+		} finally {
+			await rm(tmpDir, { recursive: true });
+		}
+	});
+
+	it("does not inject frontmatter when option absent", async () => {
+		const result = generateDocs({ xript: "0.1", name: "test" });
+		const tmpDir = await mkdtemp(join(tmpdir(), "docgen-test-"));
+		try {
+			await writeDocsToDirectory(result, tmpDir);
+			const content = await readFile(join(tmpDir, "index.md"), "utf-8");
+			assert.ok(!content.startsWith("---"));
+		} finally {
+			await rm(tmpDir, { recursive: true });
+		}
+	});
+
+	it("applies frontmatter to all generated files", async () => {
+		const result = generateDocs({
+			xript: "0.1",
+			name: "test",
+			bindings: { log: { description: "Logs." } },
+		});
+		const tmpDir = await mkdtemp(join(tmpdir(), "docgen-test-"));
+		try {
+			const written = await writeDocsToDirectory(result, tmpDir, { frontmatter: "sidebar:\n  order: 1" });
+			for (const file of written) {
+				const content = await readFile(file, "utf-8");
+				assert.ok(content.startsWith("---\n"), `${file} should have frontmatter`);
+			}
+		} finally {
+			await rm(tmpDir, { recursive: true });
+		}
 	});
 });

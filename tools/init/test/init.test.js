@@ -154,6 +154,70 @@ describe("generateProjectFiles", () => {
 		assert.ok(manifest.limits);
 		assert.equal(manifest.limits.timeout_ms, 1000);
 	});
+
+	it("tier 4 TypeScript project includes mod files", () => {
+		const files = generateProjectFiles({ name: "my-app", tier: 4, language: "typescript" });
+		const paths = Object.keys(files).sort();
+		assert.deepEqual(paths, [
+			"fragments/panel.html",
+			"manifest.json",
+			"mod-manifest.json",
+			"package.json",
+			"src/demo.ts",
+			"src/host.ts",
+			"tsconfig.json",
+		]);
+	});
+
+	it("tier 4 JavaScript project includes mod files", () => {
+		const files = generateProjectFiles({ name: "my-app", tier: 4, language: "javascript" });
+		const paths = Object.keys(files).sort();
+		assert.deepEqual(paths, [
+			"fragments/panel.html",
+			"manifest.json",
+			"mod-manifest.json",
+			"package.json",
+			"src/demo.js",
+			"src/host.js",
+		]);
+	});
+
+	it("tier 4 manifest has slots, bindings, hooks, and capabilities", () => {
+		const files = generateProjectFiles({ name: "test", tier: 4, language: "javascript" });
+		const manifest = JSON.parse(files["manifest.json"]);
+		assert.ok(manifest.bindings);
+		assert.ok(manifest.bindings.counter);
+		assert.ok(manifest.hooks);
+		assert.ok(manifest.hooks.onStart);
+		assert.ok(manifest.capabilities);
+		assert.ok(manifest.capabilities["modify-state"]);
+		assert.ok(manifest.capabilities["ui-mount"]);
+		assert.ok(Array.isArray(manifest.slots));
+		assert.ok(manifest.slots.length > 0);
+	});
+
+	it("tier 4 mod manifest targets sidebar slot", () => {
+		const files = generateProjectFiles({ name: "test", tier: 4, language: "javascript" });
+		const manifest = JSON.parse(files["mod-manifest.json"]);
+		assert.equal(manifest.xript, "0.3");
+		assert.ok(Array.isArray(manifest.fragments));
+		assert.equal(manifest.fragments[0].slot, "sidebar.left");
+	});
+
+	it("tier 4 host uses fireHook", () => {
+		const files = generateProjectFiles({ name: "test", tier: 4, language: "javascript" });
+		assert.ok(files["src/host.js"].includes("fireHook"));
+	});
+
+	it("tier 4 demo loads a mod", () => {
+		const files = generateProjectFiles({ name: "test", tier: 4, language: "javascript" });
+		assert.ok(files["src/demo.js"].includes("loadMod"));
+	});
+
+	it("tier 4 fragment HTML includes data-bind", () => {
+		const files = generateProjectFiles({ name: "test", tier: 4, language: "javascript" });
+		assert.ok(files["fragments/panel.html"].includes("data-bind"));
+	});
 });
 
 describe("writeProject", () => {

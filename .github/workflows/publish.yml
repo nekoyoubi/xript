@@ -31,6 +31,8 @@ jobs:
         run: npm run build --workspace=tools/docgen
       - name: build init
         run: npm run build --workspace=tools/init
+      - name: build cli
+        run: npm run build --workspace=tools/cli
       - name: build runtime
         run: npm run build --workspace=runtimes/js
       - name: build runtime-node
@@ -46,6 +48,8 @@ jobs:
         run: npm test --workspace=tools/docgen
       - name: test init
         run: npm test --workspace=tools/init
+      - name: test cli
+        run: npm test --workspace=tools/cli
       - name: test runtime
         run: npm test --workspace=runtimes/js
       - name: test runtime-node
@@ -61,6 +65,8 @@ jobs:
         run: npm publish --workspace=tools/docgen
       - name: publish init
         run: npm publish --workspace=tools/init
+      - name: publish cli
+        run: npm publish --workspace=tools/cli
       - name: publish runtime
         run: npm publish --workspace=runtimes/js
       - name: publish runtime-node
