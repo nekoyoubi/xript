@@ -40,7 +40,13 @@ const rustCrates = [
 
 const csproj = "runtimes/csharp/src/Xript.Runtime/Xript.Runtime.csproj";
 
-let updated = 0;
+const rootPkg = resolve(root, "package.json");
+const rootJson = JSON.parse(readFileSync(rootPkg, "utf8"));
+rootJson.version = version;
+writeFileSync(rootPkg, JSON.stringify(rootJson, null, "\t") + "\n");
+console.log(`  package.json -> ${version}`);
+
+let updated = 1;
 
 for (const rel of npmPackages) {
 	const abs = resolve(root, rel);
