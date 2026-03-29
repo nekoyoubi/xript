@@ -18,6 +18,10 @@ xript-runtime = "0.1"
 
 ## Creating a Runtime
 
+:::note
+`XriptRuntime` is `!Send` — it must stay on the thread that created it. For multi-threaded hosts (Tauri, Axum, Actix), use [`XriptHandle`](#xripthandle-send--sync), which wraps the runtime on a dedicated thread and exposes the same API over channels.
+:::
+
 ### From a JSON String
 
 ```rust
@@ -193,5 +197,115 @@ pub struct ExecutionResult { pub value: Value, pub duration_ms: f64 }
 pub struct Manifest { pub xript: String, pub name: String, /* ... */ }
 pub enum XriptError { /* ManifestValidation, Binding, CapabilityDenied, ... */ }
 pub type HostFn = Arc<dyn Fn(&[Value]) -> Result<Value, String> + Send + Sync>;
+pub type AsyncHostFn = Arc<dyn Fn(&[Value]) -> Pin<Box<dyn Future<Output = Result<Value, String>> + Send>> + Send + Sync>;
 pub type Result<T> = std::result::Result<T, XriptError>;
+
+pub struct XriptHandle { /* ... */ }  // Send + Sync wrapper; see below
+pub struct ModInstance { pub fragments: Vec<SanitizedFragment> }
+```
+
+## Threading
+
+`XriptRuntime` holds a QuickJS context that is `!Send`. It can only be used from the thread that created it. For multi-threaded hosts (Tauri, Actix, Axum, etc.), use `XriptHandle` instead — it owns the runtime on a dedicated thread and exposes the same API over channels. See [XriptHandle](#xripthandle-send--sync) below.
+
+## Async Host Bindings
+
+`add_async_function()` registers an async host function. From the script's perspective the binding returns a `Promise`, so scripts can `await` it. The bridge uses `pollster::block_on()` internally to drive the future.
+
+```rust
+use xript_runtime::{HostBindings};
+
+let mut bindings = HostBindings::new();
+
+bindings.add_async_function("fetchData", |args: &[serde_json::Value]| {
+    let key = args.get(0).and_then(|v| v.as_str()).unwrap_or("default").to_string();
+    async move { Ok(serde_json::json!(format!("data for {}", key))) }
+});
+```
+
+Script side:
+
+```js
+const data = await fetchData("users");
+```
+
+`Promise` is available in the sandbox — standard QuickJS async/await works without any extra setup.
+
+## Loading Mods
+
+`load_mod()` validates a mod manifest against the app manifest, sanitizes any fragment HTML, and optionally executes the mod's entry script before returning.
+
+```rust
+let mod_instance = rt.load_mod(
+    mod_manifest_json,           // &str — mod manifest JSON
+    fragment_sources,            // &[(&str, &str)] — (fragment_id, raw_html) pairs
+    &granted_capabilities,       // &[String] — capabilities approved for this mod
+    entry_source,                // Option<&str> — entry script, or None
+)?;
+```
+
+`entry_source` is run after validation but before `load_mod` returns. If the script throws, `load_mod` returns `XriptError::ModEntry`. The returned `ModInstance` contains the sanitized fragments.
+
+`XriptError` gains one new variant for this:
+
+| Variant | When |
+|---------|------|
+| `ModEntry(String)` | Mod entry script threw an uncaught error |
+
+## Fragment Hooks
+
+`fire_fragment_hook()` fires a lifecycle event for a mounted fragment and returns the command buffer operations the mod script emitted in response.
+
+```rust
+let commands = rt.fire_fragment_hook(fragment_id, hook_name, &args)?;
+```
+
+`hook_name` is one of `"mount"`, `"unmount"`, `"update"`, `"suspend"`, or `"resume"`. Each command in the returned `Vec` is an enum variant describing a mutation the host should apply:
+
+```rust
+match &commands[0] {
+    FragmentCommand::Toggle { id, visible } => { /* show/hide element */ }
+    FragmentCommand::AddClass { id, class } => { /* add CSS class */ }
+    FragmentCommand::RemoveClass { id, class } => { /* remove CSS class */ }
+    FragmentCommand::SetText { id, text } => { /* update text content */ }
+    FragmentCommand::SetAttr { id, attr, value } => { /* set attribute */ }
+    _ => {}
+}
+```
+
+The host walks the vec and applies each mutation to its own UI layer.
+
+## XriptHandle (Send + Sync)
+
+`XriptRuntime` is `!Send`. For Tauri commands, Actix handlers, Axum routes, or any context where the runtime crosses thread boundaries, use `XriptHandle`:
+
+```rust
+use xript_runtime::XriptHandle;
+
+let handle = XriptHandle::new(manifest_json, options)?;
+// XriptHandle is Send + Sync — safe to put in Arc<Mutex<T>>, tauri::State, etc.
+
+let result = handle.execute("2 + 2")?;
+```
+
+`XriptHandle` starts a dedicated owner thread, moves the `XriptRuntime` onto it, and forwards every call through a channel pair. All methods mirror `XriptRuntime` — `execute`, `load_mod`, `fire_fragment_hook`, etc. The channel overhead is negligible for typical scripting workloads.
+
+Tauri example:
+
+```rust
+use std::sync::Mutex;
+use tauri::State;
+use xript_runtime::XriptHandle;
+
+struct AppState {
+    xript: Mutex<XriptHandle>,
+}
+
+#[tauri::command]
+fn run_script(state: State<AppState>, code: &str) -> Result<serde_json::Value, String> {
+    let handle = state.xript.lock().unwrap();
+    handle.execute(code)
+        .map(|r| r.value)
+        .map_err(|e| e.to_string())
+}
 ```
