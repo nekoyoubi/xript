@@ -63,7 +63,7 @@ npm test --workspace=tools/cli                     # run CLI tests (29 tests)
 
 # build and test Rust packages
 cd runtimes/rust && cargo build                    # build the Rust runtime
-cd runtimes/rust && cargo test                     # run Rust runtime tests (43 tests)
+cd runtimes/rust && cargo test                     # run Rust runtime tests (45 tests)
 cd renderers/ratatui && cargo build                # build the Ratatui fragment renderer
 cd renderers/ratatui && cargo test                 # run Ratatui renderer tests (58 tests)
 cd tools/wiz && cargo build                        # build the TUI wizard
@@ -126,7 +126,7 @@ A top-level `CHANGELOG.md` tracks all releases. Follow these rules:
 
 ## Current State
 
-v0.4 shipped — Unified CLI, Annotation Scanning, Fragment Workbench (664 tests across 12 packages):
+v0.4 shipped — Unified CLI, Annotation Scanning, Fragment Workbench (666 tests across 12 packages):
 
 - **Spec v0.3**: manifest schema extended with `slots`, new mod manifest schema (`spec/mod-manifest.schema.json`), fragment protocol specification (`spec/fragments.md`), fragment format catalog (`spec/fragment-formats.md`), HTML sanitizer conformance suite (`spec/sanitizer-tests.json`, 45 test cases)
 - **HTML Sanitizer**: `@xriptjs/sanitize` in `tools/sanitize/` -- pure string-based HTML+JSML sanitizer with no DOM dependency (works in QuickJS WASM), 71 tests
