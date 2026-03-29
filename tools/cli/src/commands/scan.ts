@@ -4,9 +4,8 @@ export async function run(args: string[]): Promise<void> {
 		process.exit(0);
 	}
 
-	let tsMorph;
 	try {
-		tsMorph = await import("ts-morph");
+		await import("ts-morph");
 	} catch {
 		console.error("The scan command requires ts-morph.");
 		console.error("");
