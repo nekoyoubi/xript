@@ -1,6 +1,10 @@
 # Changelog
 
-## v0.4.1 — TBD
+## v0.4.1 — npm housekeeping
+
+- added a README for `@xriptjs/cli` so the npm package page isn't a blank stare
+- bootstrapped `@xriptjs/cli` on the npm registry; it was built and published in CI but had never been seeded locally, so npm didn't know it existed
+- all eight `@xriptjs/*` packages now have READMEs on npmjs.com
 
 ## v0.4.0 — Unified CLI, Tier 4 & Rust Runtime
 
