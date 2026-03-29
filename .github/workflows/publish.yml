@@ -56,18 +56,26 @@ jobs:
         run: npm test --workspace=runtimes/node
 
       - name: publish sanitize
+        continue-on-error: true
         run: npm publish --workspace=tools/sanitize
       - name: publish validate
+        continue-on-error: true
         run: npm publish --workspace=tools/validate
       - name: publish typegen
+        continue-on-error: true
         run: npm publish --workspace=tools/typegen
       - name: publish docgen
+        continue-on-error: true
         run: npm publish --workspace=tools/docgen
       - name: publish init
+        continue-on-error: true
         run: npm publish --workspace=tools/init
       - name: publish cli
+        continue-on-error: true
         run: npm publish --workspace=tools/cli
       - name: publish runtime
+        continue-on-error: true
         run: npm publish --workspace=runtimes/js
       - name: publish runtime-node
+        continue-on-error: true
         run: npm publish --workspace=runtimes/node
