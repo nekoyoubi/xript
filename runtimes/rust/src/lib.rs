@@ -1,5 +1,6 @@
 mod error;
 pub mod fragment;
+pub mod handle;
 mod manifest;
 mod sandbox;
 
@@ -9,6 +10,7 @@ pub use manifest::{
     Binding, Capability, FragmentBinding, FragmentDeclaration, FragmentEvent, FunctionBinding,
     HookDef, Limits, Manifest, ModManifest, NamespaceBinding, Parameter, Slot,
 };
+pub use handle::XriptHandle;
 pub use sandbox::{
     AsyncHostFn, ConsoleHandler, ExecutionResult, HostBindings, HostFn, RuntimeOptions,
     XriptRuntime,
@@ -896,6 +898,121 @@ mod tests {
         let output = fragment::sanitize_html(input);
         assert!(!output.contains("<iframe"));
         assert!(output.contains("<p>ok</p>"));
+    }
+
+    #[test]
+    fn handle_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<handle::XriptHandle>();
+    }
+
+    #[test]
+    fn handle_executes_code() {
+        let handle = handle::XriptHandle::new(
+            minimal_manifest().to_string(),
+            RuntimeOptions {
+                host_bindings: HostBindings::new(),
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let result = handle.execute("2 + 2").unwrap();
+        assert_eq!(result.value, serde_json::json!(4));
+    }
+
+    #[test]
+    fn handle_returns_manifest_name() {
+        let handle = handle::XriptHandle::new(
+            minimal_manifest().to_string(),
+            RuntimeOptions {
+                host_bindings: HostBindings::new(),
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(handle.manifest_name().unwrap(), "test-app");
+    }
+
+    #[test]
+    fn handle_works_across_threads() {
+        let handle = handle::XriptHandle::new(
+            minimal_manifest().to_string(),
+            RuntimeOptions {
+                host_bindings: HostBindings::new(),
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let result = std::thread::spawn(move || handle.execute("1 + 1"))
+            .join()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(result.value, serde_json::json!(2));
+    }
+
+    #[test]
+    fn handle_propagates_errors() {
+        let handle = handle::XriptHandle::new(
+            minimal_manifest().to_string(),
+            RuntimeOptions {
+                host_bindings: HostBindings::new(),
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let result = handle.execute("throw new Error('boom')");
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), XriptError::Script(_)));
+    }
+
+    #[test]
+    fn handle_load_mod_works() {
+        let app_manifest = r#"{
+            "xript": "0.3",
+            "name": "test-app",
+            "slots": [
+                { "id": "sidebar.left", "accepts": ["text/html"] }
+            ]
+        }"#;
+
+        let handle = handle::XriptHandle::new(
+            app_manifest.to_string(),
+            RuntimeOptions {
+                host_bindings: HostBindings::new(),
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let mod_json = r#"{
+            "xript": "0.3",
+            "name": "test-mod",
+            "version": "1.0.0",
+            "fragments": [
+                { "id": "panel", "slot": "sidebar.left", "format": "text/html", "source": "<p>hi</p>", "inline": true }
+            ]
+        }"#;
+
+        let mod_instance = handle
+            .load_mod(
+                mod_json,
+                std::collections::HashMap::new(),
+                &std::collections::HashSet::new(),
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(mod_instance.name, "test-mod");
     }
 
     #[test]
