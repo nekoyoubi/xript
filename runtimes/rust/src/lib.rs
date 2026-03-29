@@ -10,7 +10,8 @@ pub use manifest::{
     HookDef, Limits, Manifest, ModManifest, NamespaceBinding, Parameter, Slot,
 };
 pub use sandbox::{
-    ConsoleHandler, ExecutionResult, HostBindings, HostFn, RuntimeOptions, XriptRuntime,
+    AsyncHostFn, ConsoleHandler, ExecutionResult, HostBindings, HostFn, RuntimeOptions,
+    XriptRuntime,
 };
 
 pub fn create_runtime(manifest_json: &str, options: RuntimeOptions) -> Result<XriptRuntime> {
@@ -895,5 +896,127 @@ mod tests {
         let output = fragment::sanitize_html(input);
         assert!(!output.contains("<iframe"));
         assert!(output.contains("<p>ok</p>"));
+    }
+
+    #[test]
+    fn calls_async_host_function() {
+        let manifest = r#"{
+            "xript": "0.1",
+            "name": "test",
+            "bindings": {
+                "fetchData": {
+                    "description": "fetches data asynchronously",
+                    "async": true
+                }
+            }
+        }"#;
+
+        let mut bindings = HostBindings::new();
+        bindings.add_async_function("fetchData", |args: &[serde_json::Value]| {
+            let key = args
+                .first()
+                .and_then(|v| v.as_str())
+                .unwrap_or("default")
+                .to_string();
+            async move { Ok(serde_json::json!(format!("data for {}", key))) }
+        });
+
+        let rt = create_runtime(
+            manifest,
+            RuntimeOptions {
+                host_bindings: bindings,
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let result = rt.execute("fetchData('users')").unwrap();
+        assert_eq!(result.value, serde_json::json!("data for users"));
+    }
+
+    #[test]
+    fn async_host_function_errors_become_exceptions() {
+        let manifest = r#"{
+            "xript": "0.1",
+            "name": "test",
+            "bindings": {
+                "failAsync": {
+                    "description": "always fails asynchronously"
+                }
+            }
+        }"#;
+
+        let mut bindings = HostBindings::new();
+        bindings.add_async_function("failAsync", |_: &[serde_json::Value]| {
+            async { Err("async error occurred".into()) }
+        });
+
+        let rt = create_runtime(
+            manifest,
+            RuntimeOptions {
+                host_bindings: bindings,
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let result = rt
+            .execute("try { failAsync(); 'no error' } catch(e) { e.message }")
+            .unwrap();
+        assert_eq!(result.value, serde_json::json!("async error occurred"));
+    }
+
+    #[test]
+    fn sync_and_async_bindings_coexist() {
+        let manifest = r#"{
+            "xript": "0.1",
+            "name": "test",
+            "bindings": {
+                "syncAdd": {
+                    "description": "adds two numbers synchronously",
+                    "params": [
+                        { "name": "a", "type": "number" },
+                        { "name": "b", "type": "number" }
+                    ]
+                },
+                "asyncFetch": {
+                    "description": "fetches data asynchronously",
+                    "async": true
+                }
+            }
+        }"#;
+
+        let mut bindings = HostBindings::new();
+        bindings.add_function("syncAdd", |args: &[serde_json::Value]| {
+            let a = args.first().and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let b = args.get(1).and_then(|v| v.as_f64()).unwrap_or(0.0);
+            Ok(serde_json::json!(a + b))
+        });
+        bindings.add_async_function("asyncFetch", |args: &[serde_json::Value]| {
+            let key = args
+                .first()
+                .and_then(|v| v.as_str())
+                .unwrap_or("none")
+                .to_string();
+            async move { Ok(serde_json::json!(format!("fetched {}", key))) }
+        });
+
+        let rt = create_runtime(
+            manifest,
+            RuntimeOptions {
+                host_bindings: bindings,
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let sync_result = rt.execute("syncAdd(10, 20)").unwrap();
+        assert_eq!(sync_result.value, serde_json::json!(30.0));
+
+        let async_result = rt.execute("asyncFetch('items')").unwrap();
+        assert_eq!(async_result.value, serde_json::json!("fetched items"));
     }
 }
