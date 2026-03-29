@@ -45,6 +45,7 @@ export default defineConfig({
 						{ label: "Capabilities", slug: "spec/capabilities" },
 						{ label: "Bindings", slug: "spec/bindings" },
 						{ label: "Security", slug: "spec/security" },
+						{ label: "Annotations", slug: "spec/annotations" },
 					],
 				},
 				{
