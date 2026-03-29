@@ -27,7 +27,7 @@ import { initXript } from "@xriptjs/runtime";
 const xript = await initXript();
 const runtime = xript.createRuntime(
   {
-    xript: "0.1",
+    xript: "0.3",
     name: "my-app",
     bindings: {
       greet: {
@@ -52,74 +52,124 @@ runtime.execute('eval("1")');       // Error: eval() is not permitted
 runtime.dispose();
 ```
 
-## Documentation
+## Runtimes
 
-**[xript.dev](https://xript.dev)**: the full documentation site.
+Four runtimes, same manifest, same security model.
 
-- [Vision](https://xript.dev/vision): the guiding principles
-- [Adoption Tiers](https://xript.dev/adoption-tiers): the four-tier incremental adoption model
-- [Getting Started](https://xript.dev/getting-started): five-minute integration guide
-- [JS/WASM Runtime](https://xript.dev/runtimes/js-wasm): the universal runtime (QuickJS WASM)
-- [Node.js Runtime](https://xript.dev/runtimes/node): the Node.js-optimized runtime
-- [Rust Runtime](https://xript.dev/runtimes/rust): the native Rust runtime (QuickJS via rquickjs)
-- [C# Runtime](https://xript.dev/runtimes/csharp): the C# runtime (Jint sandbox)
-- [Manifest Spec](https://xript.dev/spec/manifest): the manifest format
-- [Security Guarantees](https://xript.dev/spec/security): what the sandbox promises
-- [Expression Evaluator](https://xript.dev/examples/expression-evaluator): tier 1 walkthrough
-- [Plugin System](https://xript.dev/examples/plugin-system): tier 2 walkthrough
-- [Game Mod System](https://xript.dev/examples/game-mod-system): tier 3 walkthrough
+| Runtime | Package | Sandbox | Where it runs |
+|---------|---------|---------|---------------|
+| JS/WASM | `@xriptjs/runtime` | QuickJS compiled to WASM | browser, Node, Deno, Bun, Cloudflare Workers |
+| Node.js | `@xriptjs/runtime-node` | Node.js `vm` module | Node.js |
+| Rust | `xript-runtime` | QuickJS via rquickjs (native) | any Rust host (Tauri, CLI, servers) |
+| C# | `Xript.Runtime` | Jint (pure C# JS interpreter) | any .NET host (Unity, WPF, Blazor) |
+
+All four support host bindings, capability enforcement, hooks, resource limits, `loadMod()`, and fragment processing. The Rust runtime adds async host bindings (`Promise`/`await`) and `XriptHandle` for `Send + Sync` thread-safe ownership.
+
+## Fragments
+
+v0.3 introduced the fragment protocol: host apps declare UI _slots_, mods contribute HTML (or JSML, or Ratatui JSON) fragments into those slots. Two smart attributes handle dynamic behavior:
+
+- `data-bind` for value binding (O(1) updates at game-loop speed)
+- `data-if` for conditional visibility
+
+Everything beyond that routes through the sandbox fragment API (command buffer pattern). The protocol is rendering-agnostic; the same mod manifest can target a browser, a terminal, or a native desktop app.
+
+`@xriptjs/sanitize` ships a pure string-based HTML sanitizer with no DOM dependency. It works inside QuickJS WASM, which means sanitization runs in the sandbox itself.
+
+## Toolchain
+
+One CLI. Six subcommands.
+
+```sh
+npx xript validate manifest.json           # validate app or mod manifests
+npx xript typegen manifest.json            # generate TypeScript .d.ts from a manifest
+npx xript docgen manifest.json -o docs/    # generate markdown API docs
+npx xript init                             # scaffold a new xript project (interactive)
+npx xript init --mod                       # scaffold a mod project
+npx xript sanitize fragment.html           # sanitize an HTML fragment
+npx xript scan src/ --manifest m.json      # scan @xript JSDoc tags into a manifest
+```
+
+`xript scan` reads `@xript` and `@xript-cap` JSDoc annotations from TypeScript source and generates manifest bindings and capabilities. Point it at your codebase, get a manifest back.
+
+The TUI wizard (`xript-wiz`) provides an interactive terminal interface for the same workflows, plus manifest audit and diff screens. It dogfoods the xript ecosystem: the wizard's own UI is rendered through `xript-ratatui` fragments.
+
+## Adoption Tiers
+
+Incremental by design. Start wherever makes sense; move up when you need to.
+
+| Tier | What it gives you | Example |
+|------|-------------------|---------|
+| 1. Expressions | safe eval replacement for user-authored formulas | [Expression Evaluator](https://xript.dev/examples/expression-evaluator) |
+| 2. Bindings | namespaced host functions with capability gating | [Plugin System](https://xript.dev/examples/plugin-system) |
+| 3. Scripting | hooks, lifecycle events, multi-mod loading | [Game Mod System](https://xript.dev/examples/game-mod-system) |
+| 4. Full Feature | slots, mod manifests, fragments, sandbox fragment API | [UI Dashboard](https://xript.dev/examples/ui-dashboard) |
 
 ## Repository Structure
 
 ```
 xript/
-├── spec/           # the specification (manifest schema, capabilities, bindings, security)
+├── spec/             # the specification (manifest schema, mod manifests, fragments, security)
 ├── runtimes/
-│   ├── js/         # universal runtime (@xriptjs/runtime, QuickJS WASM sandbox)
-│   ├── node/       # Node.js-optimized runtime (@xriptjs/runtime-node, vm-based)
-│   ├── rust/       # native Rust runtime (xript-runtime, QuickJS via rquickjs)
-│   └── csharp/     # C# runtime (Xript.Runtime, Jint sandbox)
+│   ├── js/           # universal runtime (@xriptjs/runtime, QuickJS WASM)
+│   ├── node/         # Node.js runtime (@xriptjs/runtime-node, vm-based)
+│   ├── rust/         # Rust runtime (xript-runtime, rquickjs)
+│   └── csharp/       # C# runtime (Xript.Runtime, Jint)
+├── renderers/
+│   └── ratatui/      # terminal fragment renderer (xript-ratatui)
 ├── tools/
-│   ├── validate/            # @xriptjs/validate
-│   ├── typegen/             # @xriptjs/typegen
-│   ├── docgen/              # @xriptjs/docgen
-│   └── init/                # @xriptjs/init
-├── docs/           # documentation site (Astro + Starlight) → xript.dev
+│   ├── cli/          # unified CLI (@xriptjs/cli)
+│   ├── validate/     # manifest validator (@xriptjs/validate)
+│   ├── typegen/      # type generator (@xriptjs/typegen)
+│   ├── docgen/       # doc generator (@xriptjs/docgen)
+│   ├── init/         # project scaffolder (@xriptjs/init)
+│   ├── sanitize/     # HTML sanitizer (@xriptjs/sanitize)
+│   └── wiz/          # TUI wizard (xript-wiz)
+├── docs/             # documentation site (Astro + Starlight) -> xript.dev
 └── examples/
-    ├── expression-evaluator/  # tier 1 "safe eval replacement" demo
-    ├── plugin-system/         # tier 2 namespace + capability demo
-    └── game-mod-system/         # tier 3 dungeon crawler modding demo
+    ├── expression-evaluator/  # tier 1 demo
+    ├── plugin-system/         # tier 2 demo
+    ├── game-mod-system/       # tier 3 demo
+    └── ui-dashboard/          # tier 4 demo
 ```
 
-## Tools
+## Documentation
 
-| Tool | Package | What it does |
-|------|---------|-------------|
-| Validator | `@xriptjs/validate` | Validates manifests against the spec schema |
-| Type Generator | `@xriptjs/typegen` | Generates TypeScript `.d.ts` from manifests |
-| Doc Generator | `@xriptjs/docgen` | Generates markdown API docs from manifests |
-| Init CLI | `@xriptjs/init` | Scaffolds new xript projects |
+**[xript.dev](https://xript.dev)** -- 29 pages, interactive demos, live playground.
 
-```sh
-npx xript-validate manifest.json         # validate
-npx xript-typegen manifest.json          # generate TypeScript types
-npx xript-docgen manifest.json -o docs/  # generate documentation
-npx @xriptjs/init my-project            # scaffold a new project
-```
+- [Vision](https://xript.dev/vision): the seven guiding principles
+- [Adoption Tiers](https://xript.dev/adoption-tiers): the four-tier incremental adoption model
+- [Getting Started](https://xript.dev/getting-started): five-minute integration guide
+- [JS/WASM Runtime](https://xript.dev/runtimes/js-wasm): QuickJS WASM sandbox
+- [Node.js Runtime](https://xript.dev/runtimes/node): Node.js vm-based sandbox
+- [Rust Runtime](https://xript.dev/runtimes/rust): native QuickJS via rquickjs
+- [C# Runtime](https://xript.dev/runtimes/csharp): Jint sandbox for .NET
+- [Manifest Spec](https://xript.dev/spec/manifest): the app manifest format
+- [Mod Manifest Spec](https://xript.dev/spec/mod-manifest): mod declaration format
+- [Fragment Protocol](https://xript.dev/spec/fragments): slots, fragments, data binding, sandbox API
+- [Fragment Formats](https://xript.dev/spec/fragment-formats): HTML, JSML, Ratatui JSON, WinForms JSON
+- [Annotations](https://xript.dev/spec/annotations): `@xript` JSDoc tag convention
+- [Security Guarantees](https://xript.dev/spec/security): what the sandbox promises
+- [CLI Reference](https://xript.dev/tools/cli): unified CLI with all subcommands
+- [TUI Wizard](https://xript.dev/tools/wiz): interactive terminal wizard
+- [Fragment Workbench](https://xript.dev/tools/fragment-workbench): build and test fragments interactively
+- [Expression Evaluator](https://xript.dev/examples/expression-evaluator): tier 1 walkthrough
+- [Plugin System](https://xript.dev/examples/plugin-system): tier 2 walkthrough
+- [Game Mod System](https://xript.dev/examples/game-mod-system): tier 3 walkthrough
+- [UI Dashboard](https://xript.dev/examples/ui-dashboard): tier 4 walkthrough
 
 ## Project Status
 
-| Milestone | Status |
-|-----------|--------|
-| Spec v0.2 | Complete: manifest schema, capabilities, bindings, hook lifecycle, security |
-| Universal Runtime | Complete: QuickJS WASM sandbox, runs in browser/Node/Deno/Bun |
-| Node.js Runtime | Complete: Node.js vm-based sandbox with `createRuntimeFromFile`, hooks, improved errors |
-| Rust Runtime | Complete: native QuickJS sandbox via rquickjs, host bindings, capability enforcement |
-| C# Runtime | Complete: Jint sandbox, host bindings, capability enforcement, hooks, resource limits |
-| Toolchain | Complete: validator, typegen, docgen, init CLI |
-| Developer Experience | Complete: 23-page docs site, getting started guide, runtime API reference, example walkthroughs, live demos |
-| Hardening | Complete: 301 tests across 9 packages, manifest validation, CI smoke tests |
-| Publishing | Live: all 6 npm packages under `@xriptjs` (OIDC trusted publishing), Rust crate on crates.io, C# package on NuGet |
+v0.4.1 -- 666 tests across 12 packages.
+
+| Area | Status |
+|------|--------|
+| Spec | v0.3: app manifests, mod manifests, slots, fragment protocol, capability model, security, annotations |
+| Runtimes | 4 complete: JS/WASM, Node.js, Rust (async bindings, `XriptHandle`), C# |
+| Renderers | `xript-ratatui`: terminal fragment renderer for Ratatui apps |
+| Toolchain | unified `xript` CLI with validate, typegen, docgen, init, sanitize, scan; TUI wizard with audit and diff |
+| Publishing | 12 packages live: 8 npm (`@xriptjs/*`), 3 Rust crates (`crates.io`), 1 NuGet; OIDC trusted publishing with provenance |
+| Docs | 29-page site at xript.dev; interactive hero playground, Fragment Builder, Fragment Workbench |
 
 ## License
 
