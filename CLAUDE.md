@@ -57,13 +57,13 @@ npm test --workspace=tools/typegen                 # run typegen tests (31 tests
 npm run build --workspace=tools/docgen             # build the doc generator
 npm test --workspace=tools/docgen                  # run docgen tests (28 tests)
 npm run build --workspace=tools/init               # build the init CLI
-npm test --workspace=tools/init                    # run init tests (27 tests)
+npm test --workspace=tools/init                    # run init tests (34 tests)
 npm run build --workspace=tools/cli                # build the unified CLI
 npm test --workspace=tools/cli                     # run CLI tests (29 tests)
 
 # build and test Rust packages
 cd runtimes/rust && cargo build                    # build the Rust runtime
-cd runtimes/rust && cargo test                     # run Rust runtime tests (31 tests)
+cd runtimes/rust && cargo test                     # run Rust runtime tests (43 tests)
 cd renderers/ratatui && cargo build                # build the Ratatui fragment renderer
 cd renderers/ratatui && cargo test                 # run Ratatui renderer tests (58 tests)
 cd tools/wiz && cargo build                        # build the TUI wizard
@@ -126,18 +126,18 @@ A top-level `CHANGELOG.md` tracks all releases. Follow these rules:
 
 ## Current State
 
-v0.4 shipped — Unified CLI, Annotation Scanning, Fragment Workbench (645 tests across 12 packages):
+v0.4 shipped — Unified CLI, Annotation Scanning, Fragment Workbench (664 tests across 12 packages):
 
 - **Spec v0.3**: manifest schema extended with `slots`, new mod manifest schema (`spec/mod-manifest.schema.json`), fragment protocol specification (`spec/fragments.md`), fragment format catalog (`spec/fragment-formats.md`), HTML sanitizer conformance suite (`spec/sanitizer-tests.json`, 45 test cases)
 - **HTML Sanitizer**: `@xriptjs/sanitize` in `tools/sanitize/` -- pure string-based HTML+JSML sanitizer with no DOM dependency (works in QuickJS WASM), 71 tests
 - **Universal Runtime**: `@xriptjs/runtime` in `runtimes/js/` -- QuickJS WASM sandbox with capability enforcement, hook system, `loadMod()`, fragment processing (`data-bind`, `data-if`), JSML support, sandbox fragment API (command buffer pattern), 97 tests
 - **Node.js Runtime**: `@xriptjs/runtime-node` in `runtimes/node/` -- Node.js vm-based sandbox with full fragment support, 97 tests
-- **Rust Runtime**: `xript-runtime` in `runtimes/rust/` -- native QuickJS sandbox via rquickjs with host bindings, capability enforcement, hooks, resource limits, `load_mod()`, fragment processing, 31 tests
+- **Rust Runtime**: `xript-runtime` in `runtimes/rust/` -- native QuickJS sandbox via rquickjs with host bindings (sync and async), capability enforcement, hooks, resource limits, `load_mod()` with entry script execution, fragment processing, `XriptHandle` Send+Sync wrapper, 43 tests
 - **C# Runtime**: `Xript.Runtime` in `runtimes/csharp/` -- Jint sandbox with host bindings, capability enforcement, hooks, resource limits, `LoadMod()`, fragment processing, 116 tests
 - **Ratatui Renderer**: `xript-ratatui` in `renderers/ratatui/` -- fragment renderer for Ratatui terminal apps, parses `application/x-ratatui+json` into native widgets, 58 tests
 - **TUI Wizard**: `xript-wiz` in `tools/wiz/` -- interactive TUI wizard that dogfoods the xript ecosystem (fragments rendered by `xript-ratatui`), audit and diff screens for manifest analysis, 35 tests
 - **Unified CLI**: `@xriptjs/cli` in `tools/cli/` -- single `xript` command with subcommands for validate, typegen, docgen, init, sanitize, and scan (annotation scanning), 29 tests
-- **Toolchain**: manifest validator (app + mod, auto-detection, cross-validation, 25 tests), type generator (slot + fragment API types, 31 tests), doc generator (slot docs + fragment API page + `--link-format` + `--frontmatter`, 28 tests), init CLI (app + mod scaffolding, 27 tests), sanitizer (71 tests)
+- **Toolchain**: manifest validator (app + mod, auto-detection, cross-validation, 25 tests), type generator (slot + fragment API types, 31 tests), doc generator (slot docs + fragment API page + `--link-format` + `--frontmatter`, 28 tests), init CLI (app + mod scaffolding + tier 4 full feature, 34 tests), sanitizer (71 tests)
 - **Annotation Scanning**: `spec/annotations.md` defines `@xript` and `@xript-cap` JSDoc tags; `xript scan` reads TypeScript source and generates manifest bindings/capabilities
 - **Examples**: four examples including `ui-dashboard/` demonstrating the full fragment protocol (slots, mod manifests, `data-bind`, `data-if`, sandbox fragment API)
 - **Developer Experience**: docs site at xript.dev (28 pages), getting started guide, runtime API reference, runtime overview comparison, four example walkthroughs, interactive hero playground with live simulations, four interactive live demos including Fragment Builder, Fragment Workbench interactive tool
