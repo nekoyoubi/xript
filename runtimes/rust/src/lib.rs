@@ -1048,7 +1048,9 @@ mod tests {
         )
         .unwrap();
 
-        let result = rt.execute("fetchData('users')").unwrap();
+        let result = rt
+            .execute("(async () => await fetchData('users'))()")
+            .unwrap();
         assert_eq!(result.value, serde_json::json!("data for users"));
     }
 
@@ -1080,7 +1082,7 @@ mod tests {
         .unwrap();
 
         let result = rt
-            .execute("try { failAsync(); 'no error' } catch(e) { e.message }")
+            .execute("(async () => { try { await failAsync(); return 'no error'; } catch(e) { return e.message; } })()")
             .unwrap();
         assert_eq!(result.value, serde_json::json!("async error occurred"));
     }
@@ -1133,7 +1135,83 @@ mod tests {
         let sync_result = rt.execute("syncAdd(10, 20)").unwrap();
         assert_eq!(sync_result.value, serde_json::json!(30.0));
 
-        let async_result = rt.execute("asyncFetch('items')").unwrap();
+        let async_result = rt
+            .execute("(async () => await asyncFetch('items'))()")
+            .unwrap();
         assert_eq!(async_result.value, serde_json::json!("fetched items"));
+    }
+
+    #[test]
+    fn async_binding_returns_promise() {
+        let manifest = r#"{
+            "xript": "0.1",
+            "name": "test",
+            "bindings": {
+                "asyncOp": {
+                    "description": "async operation",
+                    "async": true
+                }
+            }
+        }"#;
+
+        let mut bindings = HostBindings::new();
+        bindings.add_async_function("asyncOp", |_: &[serde_json::Value]| {
+            async { Ok(serde_json::json!(42)) }
+        });
+
+        let rt = create_runtime(
+            manifest,
+            RuntimeOptions {
+                host_bindings: bindings,
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let result = rt.execute("asyncOp() instanceof Promise").unwrap();
+        assert_eq!(result.value, serde_json::json!(true));
+    }
+
+    #[test]
+    fn async_await_chains_work() {
+        let manifest = r#"{
+            "xript": "0.1",
+            "name": "test",
+            "bindings": {
+                "fetchUser": { "description": "fetch user", "async": true },
+                "fetchRole": { "description": "fetch role", "async": true }
+            }
+        }"#;
+
+        let mut bindings = HostBindings::new();
+        bindings.add_async_function("fetchUser", |args: &[serde_json::Value]| {
+            let id = args.first().and_then(|v| v.as_i64()).unwrap_or(0);
+            async move { Ok(serde_json::json!({"id": id, "name": "Alice"})) }
+        });
+        bindings.add_async_function("fetchRole", |args: &[serde_json::Value]| {
+            let name = args.first().and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+            async move { Ok(serde_json::json!(format!("admin:{}", name))) }
+        });
+
+        let rt = create_runtime(
+            manifest,
+            RuntimeOptions {
+                host_bindings: bindings,
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let result = rt.execute(r#"
+            (async () => {
+                const user = await fetchUser(1);
+                const role = await fetchRole(user.name);
+                return role;
+            })()
+        "#).unwrap();
+
+        assert_eq!(result.value, serde_json::json!("admin:Alice"));
     }
 }

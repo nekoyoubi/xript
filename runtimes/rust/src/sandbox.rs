@@ -1,4 +1,5 @@
 use rquickjs::function::Rest;
+use rquickjs::promise::{Promise, PromiseState};
 use rquickjs::{Context, Ctx, Function, Object, Runtime, Value};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -183,7 +184,9 @@ impl XriptRuntime {
             let res: std::result::Result<Value, _> = ctx.eval(code);
             match res {
                 Ok(val) => {
-                    let json = js_value_to_json(&ctx, &val);
+                    while ctx.execute_pending_job() {}
+                    let resolved = resolve_if_promise(&ctx, val);
+                    let json = js_value_to_json(&ctx, &resolved);
                     Ok(json)
                 }
                 Err(_) => {
@@ -691,7 +694,7 @@ fn create_async_host_function<'js>(
         .map_err(|e| XriptError::Engine(e.to_string()))?;
 
     let wrapper: Function = ctx.eval(
-        "(function(bridge) { return function() { var args = Array.prototype.slice.call(arguments); var raw = bridge(JSON.stringify(args)); var envelope = JSON.parse(raw); if (envelope.__xript_err !== undefined) { throw new Error(envelope.__xript_err); } return envelope.__xript_ok; }; })(__xript_tmp_bridge)",
+        "(function(bridge) { return function() { var args = Array.prototype.slice.call(arguments); var raw = bridge(JSON.stringify(args)); var envelope = JSON.parse(raw); if (envelope.__xript_err !== undefined) { return Promise.reject(new Error(envelope.__xript_err)); } return Promise.resolve(envelope.__xript_ok); }; })(__xript_tmp_bridge)",
     )
     .map_err(|e| XriptError::Engine(e.to_string()))?;
 
@@ -699,6 +702,28 @@ fn create_async_host_function<'js>(
         .map_err(|e| XriptError::Engine(e.to_string()))?;
 
     Ok(wrapper)
+}
+
+fn resolve_if_promise<'js>(ctx: &Ctx<'js>, val: Value<'js>) -> Value<'js> {
+    if let Ok(promise) = Promise::from_value(val.clone()) {
+        loop {
+            match promise.state() {
+                PromiseState::Pending => {
+                    if !ctx.execute_pending_job() {
+                        break val;
+                    }
+                }
+                PromiseState::Resolved => {
+                    break promise.result::<Value>().unwrap_or(Ok(val)).unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
+                }
+                PromiseState::Rejected => {
+                    break promise.result::<Value>().unwrap_or(Ok(val)).unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
+                }
+            }
+        }
+    } else {
+        val
+    }
 }
 
 fn js_value_to_json(ctx: &Ctx<'_>, val: &Value<'_>) -> serde_json::Value {
