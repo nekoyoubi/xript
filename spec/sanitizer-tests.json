@@ -223,5 +223,60 @@
 		"input": "<a href=\"data:text/html,<script>alert(1)</script>\">click</a>",
 		"expected": "<a>click</a>",
 		"description": "strips data: URI on href attribute"
+	},
+	{
+		"input": "<button data-action=\"heal\" class=\"btn\">Heal</button>",
+		"expected": "<button data-action=\"heal\" class=\"btn\">Heal</button>",
+		"description": "preserves button element with data-action"
+	},
+	{
+		"input": "<progress value=\"70\" max=\"100\">70%</progress>",
+		"expected": "<progress value=\"70\" max=\"100\">70%</progress>",
+		"description": "preserves progress element with value and max"
+	},
+	{
+		"input": "<meter value=\"0.6\" low=\"0.3\" high=\"0.8\" optimum=\"0.5\">60%</meter>",
+		"expected": "<meter value=\"0.6\" low=\"0.3\" high=\"0.8\" optimum=\"0.5\">60%</meter>",
+		"description": "preserves meter element with low, high, and optimum"
+	},
+	{
+		"input": "<fieldset><legend>Settings</legend><input type=\"text\" /></fieldset>",
+		"expected": "<fieldset><legend>Settings</legend><input type=\"text\" /></fieldset>",
+		"description": "preserves fieldset and legend elements"
+	},
+	{
+		"input": "<output name=\"result\">42</output>",
+		"expected": "<output name=\"result\">42</output>",
+		"description": "preserves output element"
+	},
+	{
+		"input": "<details open><summary>Info</summary><p>Details here</p></details>",
+		"expected": "<details open><summary>Info</summary><p>Details here</p></details>",
+		"description": "preserves details element with open attribute"
+	},
+	{
+		"input": "<svg viewBox=\"0 0 100 100\"><circle cx=\"50\" cy=\"50\" r=\"40\" fill=\"red\" /></svg>",
+		"expected": "<svg viewBox=\"0 0 100 100\"><circle cx=\"50\" cy=\"50\" r=\"40\" fill=\"red\" /></svg>",
+		"description": "preserves SVG elements and attributes with correct viewBox casing"
+	},
+	{
+		"input": "<svg><path d=\"M10 10 L90 90\" stroke=\"black\" stroke-width=\"2\" /></svg>",
+		"expected": "<svg><path d=\"M10 10 L90 90\" stroke=\"black\" stroke-width=\"2\" /></svg>",
+		"description": "preserves SVG path with d attribute and stroke properties"
+	},
+	{
+		"input": "<svg preserveAspectRatio=\"xMidYMid meet\"><rect x=\"0\" y=\"0\" width=\"100\" height=\"100\" /></svg>",
+		"expected": "<svg preserveAspectRatio=\"xMidYMid meet\"><rect x=\"0\" y=\"0\" width=\"100\" height=\"100\" /></svg>",
+		"description": "preserves preserveAspectRatio with correct casing"
+	},
+	{
+		"input": "<svg><foreignObject><div>escape</div></foreignObject></svg>",
+		"expected": "<svg></svg>",
+		"description": "strips foreignObject and its children from SVG"
+	},
+	{
+		"input": "<svg><animate attributeName=\"x\" from=\"0\" to=\"100\" /></svg>",
+		"expected": "<svg></svg>",
+		"description": "strips animate element from SVG"
 	}
 ]

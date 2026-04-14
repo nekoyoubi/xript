@@ -276,7 +276,7 @@ public sealed class FragmentProcessor
     }
 
     private static readonly string[] StrippedElementNames =
-        ["script", "iframe", "object", "embed", "form", "base", "link", "meta", "title", "noscript", "applet", "frame", "frameset", "param"];
+        ["script", "iframe", "object", "embed", "form", "base", "link", "meta", "title", "noscript", "applet", "frame", "frameset", "param", "foreignobject", "animate", "set"];
 
     private static string StripElements(string html)
     {

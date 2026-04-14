@@ -14,6 +14,10 @@ export const ALLOWED_ELEMENTS = new Set([
 	"a", "abbr", "mark", "time", "wbr",
 	"style",
 	"input", "textarea", "select", "option", "label",
+	"button", "progress", "meter", "output", "fieldset", "legend",
+	"svg", "g", "defs", "symbol", "use",
+	"circle", "ellipse", "path", "rect", "line", "polygon", "polyline",
+	"text", "tspan",
 ]);
 
 export const STRIPPED_ELEMENTS = new Set([
@@ -21,6 +25,7 @@ export const STRIPPED_ELEMENTS = new Set([
 	"base", "link", "meta", "title",
 	"noscript", "applet", "frame", "frameset",
 	"param",
+	"foreignobject", "animate", "set",
 ]);
 
 export const UNWRAPPED_ELEMENTS = new Set([
@@ -43,6 +48,10 @@ export const ALLOWED_ATTRIBUTES = new Set([
 	"checked", "disabled", "readonly", "required",
 	"rows", "cols", "maxlength", "minlength",
 	"min", "max", "step", "pattern",
+	"open", "low", "high", "optimum",
+	"cx", "cy", "r", "x", "y", "x1", "y1", "x2", "y2", "points", "d",
+	"fill", "stroke", "stroke-width", "opacity", "transform",
+	"viewbox", "preserveaspectratio", "xmlns",
 ]);
 
 export const DANGEROUS_URI_SCHEMES = /^\s*(javascript|vbscript)\s*:/i;
@@ -85,6 +94,15 @@ export function sanitizeStyleValue(value: string): string {
 		cleaned = cleaned.replace(pattern, "");
 	}
 	return cleaned.trim();
+}
+
+export const CASE_SENSITIVE_ATTRIBUTES = new Map<string, string>([
+	["viewbox", "viewBox"],
+	["preserveaspectratio", "preserveAspectRatio"],
+]);
+
+export function canonicalAttributeName(lowerName: string): string {
+	return CASE_SENSITIVE_ATTRIBUTES.get(lowerName) ?? lowerName;
 }
 
 export function sanitizeStyleBlock(css: string): string {

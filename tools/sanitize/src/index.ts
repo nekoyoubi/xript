@@ -6,6 +6,7 @@ import {
 	UNWRAPPED_ELEMENTS,
 	VOID_ELEMENTS,
 	isAllowedAttribute,
+	canonicalAttributeName,
 	sanitizeUri,
 	sanitizeStyleValue,
 	sanitizeStyleBlock,
@@ -160,7 +161,7 @@ function sanitizeAttributes(
 			continue;
 		}
 
-		result.push({ name: lowerName, value: attr.value });
+		result.push({ name: canonicalAttributeName(lowerName), value: attr.value });
 	}
 
 	return result;

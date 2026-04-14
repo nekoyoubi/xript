@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.4.2 — Sanitizer + Rust Runtime Fixes
+
+- expanded the sanitizer's allowed element list across all four implementations (TypeScript, Rust/ammonia, C#)
+  - added `button`, `progress`, `meter`, `output`, `fieldset`, and `legend`; `button` was the big miss since it's the primary element for `data-action` event handlers in fragments
+  - added 14 SVG elements: `svg`, `g`, `defs`, `symbol`, `use`, `circle`, `ellipse`, `path`, `rect`, `line`, `polygon`, `polyline`, `text`, `tspan` for icons and data visualization in mod UIs
+  - added `foreignObject`, `animate`, and `set` to the stripped elements list (dangerous SVG elements that shouldn't survive sanitization)
+- added missing attributes: `open` for `<details>`, `low`/`high`/`optimum` for `<meter>`, plus 18 SVG attributes covering geometry and presentation
+- fixed SVG attribute casing; `viewBox` and `preserveAspectRatio` were being lowercased by the tokenizer, which silently breaks SVG rendering in browsers
+- updated the fragment spec documentation in `fragments.md` with the new element and attribute lists
+- added 11 new conformance test cases to `spec/sanitizer-tests.json` and 11 new unit tests across the implementations
+- fixed a serialization bug in `xript-runtime` (Rust) where `js_value_to_json` silently returned `Null` for objects and arrays from `execute()` (#89)
+  - the fallback code evaluated `((v) => JSON.stringify(v))` which returned the function's _string representation_ instead of actually calling it with the value
+  - replaced the broken eval with a proper `Function::call` through rquickjs's API
+  - added 3 new tests for object, array, and nested object serialization
+
+### Test counts
+
+| package | v0.4.1 | v0.4.2 |
+|---------|--------|--------|
+| `@xriptjs/sanitize` | 71 | 93 |
+| `@xriptjs/validate` | 25 | 25 |
+| `@xriptjs/typegen` | 31 | 31 |
+| `@xriptjs/docgen` | 28 | 28 |
+| `@xriptjs/init` | 34 | 34 |
+| `@xriptjs/cli` | 29 | 29 |
+| `@xriptjs/runtime` | 97 | 97 |
+| `@xriptjs/runtime-node` | 97 | 97 |
+| `xript-runtime` (Rust) | 45 | 48 |
+| `xript-ratatui` | 58 | 58 |
+| `xript-wiz` | 35 | 35 |
+| `Xript.Runtime` (C#) | 116 | 116 |
+| **total** | **666** | **691** |
+
 ## v0.4.1 — npm housekeeping
 
 - added a README for `@xriptjs/cli` so the npm package page isn't a blank stare

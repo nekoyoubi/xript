@@ -28,6 +28,10 @@ pub fn sanitize_html(input: &str) -> String {
         "a", "abbr", "mark", "time", "wbr",
         "style",
         "input", "textarea", "select", "option", "label",
+        "button", "progress", "meter", "output", "fieldset", "legend",
+        "svg", "g", "defs", "symbol", "use",
+        "circle", "ellipse", "path", "rect", "line", "polygon", "polyline",
+        "text", "tspan",
     ].into_iter().collect();
 
     let stripped_tags: HashSet<&str> = [
@@ -35,6 +39,7 @@ pub fn sanitize_html(input: &str) -> String {
         "base", "link", "meta", "title",
         "noscript", "applet", "frame", "frameset",
         "param",
+        "foreignobject", "animate", "set",
     ].into_iter().collect();
 
     builder.tags(allowed_tags);
@@ -93,6 +98,54 @@ pub fn sanitize_html(input: &str) -> String {
         s.insert("src");
         s
     });
+
+    let button_attrs: HashSet<&str> = ["type", "disabled", "name", "value"].into_iter().collect();
+    tag_attrs.insert("button", button_attrs);
+
+    let progress_attrs: HashSet<&str> = ["value", "max"].into_iter().collect();
+    tag_attrs.insert("progress", progress_attrs);
+
+    let meter_attrs: HashSet<&str> = ["value", "min", "max", "low", "high", "optimum"].into_iter().collect();
+    tag_attrs.insert("meter", meter_attrs);
+
+    let output_attrs: HashSet<&str> = ["for", "name"].into_iter().collect();
+    tag_attrs.insert("output", output_attrs);
+
+    let fieldset_attrs: HashSet<&str> = ["disabled", "name"].into_iter().collect();
+    tag_attrs.insert("fieldset", fieldset_attrs);
+
+    let details_attrs: HashSet<&str> = ["open"].into_iter().collect();
+    tag_attrs.insert("details", details_attrs);
+
+    let svg_presentation: HashSet<&str> = [
+        "fill", "stroke", "stroke-width", "opacity", "transform",
+    ].into_iter().collect();
+
+    let with_presentation = |extra: &[&'static str]| -> HashSet<&str> {
+        extra.iter().copied().chain(svg_presentation.iter().copied()).collect()
+    };
+
+    let svg_attrs: HashSet<&str> = [
+        "viewBox", "preserveAspectRatio", "xmlns",
+        "fill", "stroke", "stroke-width", "opacity", "transform",
+    ].into_iter().collect();
+    tag_attrs.insert("svg", svg_attrs);
+
+    tag_attrs.insert("circle",   with_presentation(&["cx", "cy", "r"]));
+    tag_attrs.insert("ellipse",  with_presentation(&["cx", "cy", "rx", "ry"]));
+    tag_attrs.insert("rect",     with_presentation(&["x", "y", "width", "height", "rx", "ry"]));
+    tag_attrs.insert("line",     with_presentation(&["x1", "y1", "x2", "y2"]));
+    tag_attrs.insert("path",     with_presentation(&["d"]));
+    tag_attrs.insert("polygon",  with_presentation(&["points"]));
+    tag_attrs.insert("polyline", with_presentation(&["points"]));
+    tag_attrs.insert("text",     with_presentation(&["x", "y"]));
+    tag_attrs.insert("tspan",    with_presentation(&["x", "y"]));
+
+    for tag in ["g", "defs", "symbol"] {
+        tag_attrs.insert(tag, svg_presentation.clone());
+    }
+
+    tag_attrs.insert("use", with_presentation(&["href", "x", "y", "width", "height"]));
 
     builder.tag_attributes(tag_attrs);
 
