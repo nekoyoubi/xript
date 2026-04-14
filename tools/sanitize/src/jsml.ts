@@ -3,6 +3,7 @@ import {
 	STRIPPED_ELEMENTS,
 	VOID_ELEMENTS,
 	isAllowedAttribute,
+	canonicalAttributeName,
 	sanitizeUri,
 	sanitizeStyleValue,
 } from "./rules.js";
@@ -122,7 +123,7 @@ function sanitizeNodes(
 				continue;
 			}
 
-			cleanAttrs[lowerKey] = val;
+			cleanAttrs[canonicalAttributeName(lowerKey)] = val;
 		}
 
 		const children = node.slice(childStart) as JsmlNode[];

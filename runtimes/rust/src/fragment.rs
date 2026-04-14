@@ -28,6 +28,10 @@ pub fn sanitize_html(input: &str) -> String {
         "a", "abbr", "mark", "time", "wbr",
         "style",
         "input", "textarea", "select", "option", "label",
+        "button", "progress", "meter", "output", "fieldset", "legend",
+        "svg", "g", "defs", "symbol", "use",
+        "circle", "ellipse", "path", "rect", "line", "polygon", "polyline",
+        "text", "tspan",
     ].into_iter().collect();
 
     let stripped_tags: HashSet<&str> = [
@@ -35,6 +39,7 @@ pub fn sanitize_html(input: &str) -> String {
         "base", "link", "meta", "title",
         "noscript", "applet", "frame", "frameset",
         "param",
+        "foreignobject", "animate", "set",
     ].into_iter().collect();
 
     builder.tags(allowed_tags);
@@ -91,6 +96,81 @@ pub fn sanitize_html(input: &str) -> String {
     tag_attrs.insert("track", {
         let mut s: HashSet<&str> = HashSet::new();
         s.insert("src");
+        s
+    });
+
+    let button_attrs: HashSet<&str> = ["type", "disabled", "name", "value"].into_iter().collect();
+    tag_attrs.insert("button", button_attrs);
+
+    let progress_attrs: HashSet<&str> = ["value", "max"].into_iter().collect();
+    tag_attrs.insert("progress", progress_attrs);
+
+    let meter_attrs: HashSet<&str> = ["value", "min", "max", "low", "high", "optimum"].into_iter().collect();
+    tag_attrs.insert("meter", meter_attrs);
+
+    let output_attrs: HashSet<&str> = ["for", "name"].into_iter().collect();
+    tag_attrs.insert("output", output_attrs);
+
+    let fieldset_attrs: HashSet<&str> = ["disabled", "name"].into_iter().collect();
+    tag_attrs.insert("fieldset", fieldset_attrs);
+
+    tag_attrs.insert("details", {
+        let mut s = HashSet::new();
+        s.insert("open");
+        s
+    });
+
+    let svg_presentation: HashSet<&str> = [
+        "fill", "stroke", "stroke-width", "opacity", "transform",
+    ].into_iter().collect();
+
+    let svg_attrs: HashSet<&str> = [
+        "viewBox", "preserveAspectRatio", "xmlns",
+        "fill", "stroke", "stroke-width", "opacity", "transform",
+    ].into_iter().collect();
+    tag_attrs.insert("svg", svg_attrs);
+
+    let circle_attrs: HashSet<&str> = ["cx", "cy", "r"].into_iter().collect::<HashSet<_>>()
+        .union(&svg_presentation).copied().collect();
+    tag_attrs.insert("circle", circle_attrs);
+
+    let ellipse_attrs: HashSet<&str> = ["cx", "cy", "rx", "ry"].into_iter().collect::<HashSet<_>>()
+        .union(&svg_presentation).copied().collect();
+    tag_attrs.insert("ellipse", ellipse_attrs);
+
+    let rect_attrs: HashSet<&str> = ["x", "y", "width", "height", "rx", "ry"].into_iter().collect::<HashSet<_>>()
+        .union(&svg_presentation).copied().collect();
+    tag_attrs.insert("rect", rect_attrs);
+
+    let line_attrs: HashSet<&str> = ["x1", "y1", "x2", "y2"].into_iter().collect::<HashSet<_>>()
+        .union(&svg_presentation).copied().collect();
+    tag_attrs.insert("line", line_attrs);
+
+    let path_attrs: HashSet<&str> = ["d"].into_iter().collect::<HashSet<_>>()
+        .union(&svg_presentation).copied().collect();
+    tag_attrs.insert("path", path_attrs);
+
+    let polygon_attrs: HashSet<&str> = ["points"].into_iter().collect::<HashSet<_>>()
+        .union(&svg_presentation).copied().collect();
+    tag_attrs.insert("polygon", polygon_attrs.clone());
+    tag_attrs.insert("polyline", polygon_attrs);
+
+    let text_svg_attrs: HashSet<&str> = ["x", "y"].into_iter().collect::<HashSet<_>>()
+        .union(&svg_presentation).copied().collect();
+    tag_attrs.insert("text", text_svg_attrs.clone());
+    tag_attrs.insert("tspan", text_svg_attrs);
+
+    for tag in ["g", "defs", "symbol", "use"] {
+        tag_attrs.insert(tag, svg_presentation.clone());
+    }
+
+    tag_attrs.insert("use", {
+        let mut s = svg_presentation.clone();
+        s.insert("href");
+        s.insert("x");
+        s.insert("y");
+        s.insert("width");
+        s.insert("height");
         s
     });
 

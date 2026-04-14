@@ -254,13 +254,21 @@ For `text/html` fragments, the runtime sanitizes content before the host ever se
 
 Structural and presentational elements: `div`, `span`, `p`, `h1`-`h6`, `ul`, `ol`, `li`, `dl`, `dt`, `dd`, `table`, `thead`, `tbody`, `tfoot`, `tr`, `td`, `th`, `caption`, `col`, `colgroup`, `figure`, `figcaption`, `blockquote`, `pre`, `code`, `em`, `strong`, `b`, `i`, `u`, `s`, `small`, `sub`, `sup`, `br`, `hr`, `img`, `picture`, `source`, `audio`, `video`, `track`, `details`, `summary`, `section`, `article`, `aside`, `nav`, `header`, `footer`, `main`, `a`, `abbr`, `mark`, `time`, `wbr`, `style` (scoped).
 
+Interactive and form elements: `button`, `input`, `textarea`, `select`, `option`, `label`, `fieldset`, `legend`, `progress`, `meter`, `output`.
+
+SVG elements: `svg`, `g`, `defs`, `symbol`, `use`, `circle`, `ellipse`, `path`, `rect`, `line`, `polygon`, `polyline`, `text`, `tspan`.
+
 ### Stripped Elements
 
-Removed entirely (element and all children): `script`, `iframe`, `object`, `embed`, `form`, `base`, `link`, `meta`, `title`, `html`, `head`, `body`, `noscript`, `applet`, `frame`, `frameset`.
+Removed entirely (element and all children): `script`, `iframe`, `object`, `embed`, `form`, `base`, `link`, `meta`, `title`, `html`, `head`, `body`, `noscript`, `applet`, `frame`, `frameset`, `foreignObject`, `animate`, `set`.
 
 ### Allowed Attributes
 
 `class`, `id`, `data-*`, `aria-*`, `role`, `style`, `src` (safe URIs only), `alt`, `width`, `height`, `href` (safe URIs only), `target`, `rel`, `colspan`, `rowspan`, `scope`, `headers`, `lang`, `dir`, `title`, `tabindex`, `hidden`.
+
+Form attributes: `type`, `value`, `placeholder`, `name`, `for`, `checked`, `disabled`, `readonly`, `required`, `rows`, `cols`, `maxlength`, `minlength`, `min`, `max`, `step`, `pattern`, `open`, `low`, `high`, `optimum`.
+
+SVG attributes: `cx`, `cy`, `r`, `x`, `y`, `x1`, `y1`, `x2`, `y2`, `points`, `d`, `fill`, `stroke`, `stroke-width`, `opacity`, `transform`, `viewBox`, `preserveAspectRatio`, `xmlns`.
 
 ### Stripped Attributes
 

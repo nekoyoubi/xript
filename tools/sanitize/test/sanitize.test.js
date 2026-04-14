@@ -209,3 +209,77 @@ describe("JSML", () => {
 		assert.ok(!result.html.includes("onclick"));
 	});
 });
+
+describe("SVG support", () => {
+	it("preserves viewBox casing", () => {
+		const result = sanitizeHTML('<svg viewBox="0 0 100 100"></svg>');
+		assert.ok(result.includes("viewBox"));
+		assert.ok(!result.includes("viewbox"));
+	});
+
+	it("preserves preserveAspectRatio casing", () => {
+		const result = sanitizeHTML('<svg preserveAspectRatio="xMidYMid meet"></svg>');
+		assert.ok(result.includes("preserveAspectRatio"));
+		assert.ok(!result.includes("preserveaspectratio"));
+	});
+
+	it("preserves viewBox casing in JSML", async () => {
+		const { sanitizeJsml } = await import("../dist/jsml.js");
+		const result = sanitizeJsml([
+			["svg", { viewBox: "0 0 100 100" }, ["circle", { cx: "50", cy: "50", r: "40" }]],
+		]);
+		assert.ok(result.html.includes("viewBox"));
+		assert.ok(!result.html.includes("viewbox"));
+	});
+
+	it("strips foreignObject and its children", () => {
+		const result = sanitizeHTML('<svg><foreignObject><div>escape</div></foreignObject></svg>');
+		assert.ok(!result.includes("foreignObject"));
+		assert.ok(!result.includes("foreignobject"));
+		assert.ok(!result.includes("escape"));
+	});
+
+	it("strips animate from SVG", () => {
+		const result = sanitizeHTML('<svg><animate attributeName="x" /></svg>');
+		assert.ok(!result.includes("animate"));
+	});
+
+	it("strips set from SVG", () => {
+		const result = sanitizeHTML('<svg><set attributeName="fill" to="red" /></svg>');
+		assert.ok(!result.includes("<set"));
+	});
+});
+
+describe("interactive elements", () => {
+	it("preserves button with data-action", () => {
+		const result = sanitizeHTML('<button data-action="heal">Heal</button>');
+		assert.ok(result.includes("<button"));
+		assert.ok(result.includes("data-action"));
+	});
+
+	it("preserves progress with value and max", () => {
+		const result = sanitizeHTML('<progress value="70" max="100">70%</progress>');
+		assert.ok(result.includes("<progress"));
+		assert.ok(result.includes('value="70"'));
+		assert.ok(result.includes('max="100"'));
+	});
+
+	it("preserves meter with range attributes", () => {
+		const result = sanitizeHTML('<meter value="0.6" low="0.3" high="0.8" optimum="0.5">60%</meter>');
+		assert.ok(result.includes("<meter"));
+		assert.ok(result.includes('low="0.3"'));
+		assert.ok(result.includes('high="0.8"'));
+		assert.ok(result.includes('optimum="0.5"'));
+	});
+
+	it("preserves fieldset and legend", () => {
+		const result = sanitizeHTML("<fieldset><legend>Group</legend><input type=\"text\" /></fieldset>");
+		assert.ok(result.includes("<fieldset>"));
+		assert.ok(result.includes("<legend>"));
+	});
+
+	it("preserves details open attribute", () => {
+		const result = sanitizeHTML("<details open><summary>Info</summary></details>");
+		assert.ok(result.includes("<details open>") || result.includes('<details open="'));
+	});
+});
