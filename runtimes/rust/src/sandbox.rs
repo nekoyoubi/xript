@@ -726,7 +726,7 @@ fn resolve_if_promise<'js>(ctx: &Ctx<'js>, val: Value<'js>) -> Value<'js> {
     }
 }
 
-fn js_value_to_json(ctx: &Ctx<'_>, val: &Value<'_>) -> serde_json::Value {
+fn js_value_to_json<'a>(ctx: &Ctx<'a>, val: &Value<'a>) -> serde_json::Value {
     if val.is_undefined() || val.is_null() {
         return serde_json::Value::Null;
     }
@@ -752,12 +752,16 @@ fn js_value_to_json(ctx: &Ctx<'_>, val: &Value<'_>) -> serde_json::Value {
         }
     }
 
-    let stringify_result: std::result::Result<String, _> = ctx.eval(
-        "((v) => JSON.stringify(v))",
-    );
-    if let Ok(stringify_fn_str) = stringify_result {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&stringify_fn_str) {
-            return v;
+    let json_global: std::result::Result<Object, _> = ctx.globals().get("JSON");
+    if let Ok(json_obj) = json_global {
+        let stringify: std::result::Result<Function, _> = json_obj.get("stringify");
+        if let Ok(func) = stringify {
+            let result: std::result::Result<String, _> = func.call((val.clone(),));
+            if let Ok(json_str) = result {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                    return v;
+                }
+            }
         }
     }
 

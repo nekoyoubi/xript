@@ -142,6 +142,54 @@ mod tests {
     }
 
     #[test]
+    fn returns_object_from_execute() {
+        let rt = create_runtime(
+            minimal_manifest(),
+            RuntimeOptions {
+                host_bindings: HostBindings::new(),
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let result = rt.execute("({ a: 1, b: [2, 3] })").unwrap();
+        assert_eq!(result.value, serde_json::json!({"a": 1, "b": [2, 3]}));
+    }
+
+    #[test]
+    fn returns_array_from_execute() {
+        let rt = create_runtime(
+            minimal_manifest(),
+            RuntimeOptions {
+                host_bindings: HostBindings::new(),
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let result = rt.execute("[1, 2, 3]").unwrap();
+        assert_eq!(result.value, serde_json::json!([1, 2, 3]));
+    }
+
+    #[test]
+    fn returns_nested_object_from_execute() {
+        let rt = create_runtime(
+            minimal_manifest(),
+            RuntimeOptions {
+                host_bindings: HostBindings::new(),
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+            },
+        )
+        .unwrap();
+
+        let result = rt.execute("({ x: { y: 1 }, z: [true, null] })").unwrap();
+        assert_eq!(result.value, serde_json::json!({"x": {"y": 1}, "z": [true, null]}));
+    }
+
+    #[test]
     fn blocks_eval() {
         let rt = create_runtime(
             minimal_manifest(),
