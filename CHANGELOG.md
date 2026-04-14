@@ -1,5 +1,7 @@
 # Changelog
 
+## v0.4.2 — TBD
+
 ## v0.4.1 — npm housekeeping
 
 - added a README for `@xriptjs/cli` so the npm package page isn't a blank stare
