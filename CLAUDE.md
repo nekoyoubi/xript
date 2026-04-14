@@ -126,18 +126,18 @@ A top-level `CHANGELOG.md` tracks all releases. Follow these rules:
 
 ## Current State
 
-v0.4 shipped — Unified CLI, Annotation Scanning, Fragment Workbench (666 tests across 12 packages):
+v0.4.2 shipped — Sanitizer + Rust Runtime Fixes (691 tests across 12 packages):
 
-- **Spec v0.3**: manifest schema extended with `slots`, new mod manifest schema (`spec/mod-manifest.schema.json`), fragment protocol specification (`spec/fragments.md`), fragment format catalog (`spec/fragment-formats.md`), HTML sanitizer conformance suite (`spec/sanitizer-tests.json`, 45 test cases)
-- **HTML Sanitizer**: `@xriptjs/sanitize` in `tools/sanitize/` -- pure string-based HTML+JSML sanitizer with no DOM dependency (works in QuickJS WASM), 71 tests
+- **Spec v0.3**: manifest schema extended with `slots`, new mod manifest schema (`spec/mod-manifest.schema.json`), fragment protocol specification (`spec/fragments.md`), fragment format catalog (`spec/fragment-formats.md`), HTML sanitizer conformance suite (`spec/sanitizer-tests.json`, 56 test cases)
+- **HTML Sanitizer**: `@xriptjs/sanitize` in `tools/sanitize/` -- pure string-based HTML+JSML sanitizer with no DOM dependency (works in QuickJS WASM), SVG support (14 elements, dangerous SVG stripping), 93 tests
 - **Universal Runtime**: `@xriptjs/runtime` in `runtimes/js/` -- QuickJS WASM sandbox with capability enforcement, hook system, `loadMod()`, fragment processing (`data-bind`, `data-if`), JSML support, sandbox fragment API (command buffer pattern), 97 tests
 - **Node.js Runtime**: `@xriptjs/runtime-node` in `runtimes/node/` -- Node.js vm-based sandbox with full fragment support, 97 tests
-- **Rust Runtime**: `xript-runtime` in `runtimes/rust/` -- native QuickJS sandbox via rquickjs with host bindings (sync and async), capability enforcement, hooks, resource limits, `load_mod()` with entry script execution, fragment processing, `XriptHandle` Send+Sync wrapper, 45 tests
+- **Rust Runtime**: `xript-runtime` in `runtimes/rust/` -- native QuickJS sandbox via rquickjs with host bindings (sync and async), capability enforcement, hooks, resource limits, `load_mod()` with entry script execution, fragment processing, `XriptHandle` Send+Sync wrapper, 48 tests
 - **C# Runtime**: `Xript.Runtime` in `runtimes/csharp/` -- Jint sandbox with host bindings, capability enforcement, hooks, resource limits, `LoadMod()`, fragment processing, 116 tests
 - **Ratatui Renderer**: `xript-ratatui` in `renderers/ratatui/` -- fragment renderer for Ratatui terminal apps, parses `application/x-ratatui+json` into native widgets, 58 tests
 - **TUI Wizard**: `xript-wiz` in `tools/wiz/` -- interactive TUI wizard that dogfoods the xript ecosystem (fragments rendered by `xript-ratatui`), audit and diff screens for manifest analysis, 35 tests
 - **Unified CLI**: `@xriptjs/cli` in `tools/cli/` -- single `xript` command with subcommands for validate, typegen, docgen, init, sanitize, and scan (annotation scanning), 29 tests
-- **Toolchain**: manifest validator (app + mod, auto-detection, cross-validation, 25 tests), type generator (slot + fragment API types, 31 tests), doc generator (slot docs + fragment API page + `--link-format` + `--frontmatter`, 28 tests), init CLI (app + mod scaffolding + tier 4 full feature, 34 tests), sanitizer (71 tests)
+- **Toolchain**: manifest validator (app + mod, auto-detection, cross-validation, 25 tests), type generator (slot + fragment API types, 31 tests), doc generator (slot docs + fragment API page + `--link-format` + `--frontmatter`, 28 tests), init CLI (app + mod scaffolding + tier 4 full feature, 34 tests), sanitizer (93 tests)
 - **Annotation Scanning**: `spec/annotations.md` defines `@xript` and `@xript-cap` JSDoc tags; `xript scan` reads TypeScript source and generates manifest bindings/capabilities
 - **Examples**: four examples including `ui-dashboard/` demonstrating the full fragment protocol (slots, mod manifests, `data-bind`, `data-if`, sandbox fragment API)
 - **Developer Experience**: docs site at xript.dev (29 pages), getting started guide, runtime API reference, runtime overview comparison, four example walkthroughs, interactive hero playground with live simulations, four interactive live demos including Fragment Builder, Fragment Workbench interactive tool
