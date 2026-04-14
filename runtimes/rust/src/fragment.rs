@@ -114,15 +114,16 @@ pub fn sanitize_html(input: &str) -> String {
     let fieldset_attrs: HashSet<&str> = ["disabled", "name"].into_iter().collect();
     tag_attrs.insert("fieldset", fieldset_attrs);
 
-    tag_attrs.insert("details", {
-        let mut s = HashSet::new();
-        s.insert("open");
-        s
-    });
+    let details_attrs: HashSet<&str> = ["open"].into_iter().collect();
+    tag_attrs.insert("details", details_attrs);
 
     let svg_presentation: HashSet<&str> = [
         "fill", "stroke", "stroke-width", "opacity", "transform",
     ].into_iter().collect();
+
+    let with_presentation = |extra: &[&'static str]| -> HashSet<&str> {
+        extra.iter().copied().chain(svg_presentation.iter().copied()).collect()
+    };
 
     let svg_attrs: HashSet<&str> = [
         "viewBox", "preserveAspectRatio", "xmlns",
@@ -130,49 +131,21 @@ pub fn sanitize_html(input: &str) -> String {
     ].into_iter().collect();
     tag_attrs.insert("svg", svg_attrs);
 
-    let circle_attrs: HashSet<&str> = ["cx", "cy", "r"].into_iter().collect::<HashSet<_>>()
-        .union(&svg_presentation).copied().collect();
-    tag_attrs.insert("circle", circle_attrs);
+    tag_attrs.insert("circle",   with_presentation(&["cx", "cy", "r"]));
+    tag_attrs.insert("ellipse",  with_presentation(&["cx", "cy", "rx", "ry"]));
+    tag_attrs.insert("rect",     with_presentation(&["x", "y", "width", "height", "rx", "ry"]));
+    tag_attrs.insert("line",     with_presentation(&["x1", "y1", "x2", "y2"]));
+    tag_attrs.insert("path",     with_presentation(&["d"]));
+    tag_attrs.insert("polygon",  with_presentation(&["points"]));
+    tag_attrs.insert("polyline", with_presentation(&["points"]));
+    tag_attrs.insert("text",     with_presentation(&["x", "y"]));
+    tag_attrs.insert("tspan",    with_presentation(&["x", "y"]));
 
-    let ellipse_attrs: HashSet<&str> = ["cx", "cy", "rx", "ry"].into_iter().collect::<HashSet<_>>()
-        .union(&svg_presentation).copied().collect();
-    tag_attrs.insert("ellipse", ellipse_attrs);
-
-    let rect_attrs: HashSet<&str> = ["x", "y", "width", "height", "rx", "ry"].into_iter().collect::<HashSet<_>>()
-        .union(&svg_presentation).copied().collect();
-    tag_attrs.insert("rect", rect_attrs);
-
-    let line_attrs: HashSet<&str> = ["x1", "y1", "x2", "y2"].into_iter().collect::<HashSet<_>>()
-        .union(&svg_presentation).copied().collect();
-    tag_attrs.insert("line", line_attrs);
-
-    let path_attrs: HashSet<&str> = ["d"].into_iter().collect::<HashSet<_>>()
-        .union(&svg_presentation).copied().collect();
-    tag_attrs.insert("path", path_attrs);
-
-    let polygon_attrs: HashSet<&str> = ["points"].into_iter().collect::<HashSet<_>>()
-        .union(&svg_presentation).copied().collect();
-    tag_attrs.insert("polygon", polygon_attrs.clone());
-    tag_attrs.insert("polyline", polygon_attrs);
-
-    let text_svg_attrs: HashSet<&str> = ["x", "y"].into_iter().collect::<HashSet<_>>()
-        .union(&svg_presentation).copied().collect();
-    tag_attrs.insert("text", text_svg_attrs.clone());
-    tag_attrs.insert("tspan", text_svg_attrs);
-
-    for tag in ["g", "defs", "symbol", "use"] {
+    for tag in ["g", "defs", "symbol"] {
         tag_attrs.insert(tag, svg_presentation.clone());
     }
 
-    tag_attrs.insert("use", {
-        let mut s = svg_presentation.clone();
-        s.insert("href");
-        s.insert("x");
-        s.insert("y");
-        s.insert("width");
-        s.insert("height");
-        s
-    });
+    tag_attrs.insert("use", with_presentation(&["href", "x", "y", "width", "height"]));
 
     builder.tag_attributes(tag_attrs);
 
