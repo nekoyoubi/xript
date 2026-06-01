@@ -63,7 +63,7 @@ Four runtimes, same manifest, same security model.
 | Rust | `xript-runtime` | QuickJS via rquickjs (native) | any Rust host (Tauri, CLI, servers) |
 | C# | `Xript.Runtime` | Jint (pure C# JS interpreter) | any .NET host (Unity, WPF, Blazor) |
 
-All four support host bindings, capability enforcement, hooks, resource limits, `loadMod()`, and fragment processing. The Rust runtime adds async host bindings (`Promise`/`await`) and `XriptHandle` for `Send + Sync` thread-safe ownership.
+All four support host bindings, capability enforcement, hooks, resource limits, `loadMod()`, and fragment processing. v0.5.0 brought a shared lifecycle pass to every runtime: cooperative cancellation (a host-driven `CancellationToken` distinct from timeouts), an opt-in per-capability audit channel, `ConsoleHandler` severity levels, sandbox hard caps (memory, CPU time, stack depth), ES module mods (`entry.format: "module"`) whose top-level named exports become host-invokable, provider-role resolution (`contributions.provides` + `resolve_role`), a runtime slot resolver (priority ordering, cardinality, capability enforcement), and a DAP-shaped debug protocol. The Rust runtime adds async host bindings (`Promise`/`await`) and `XriptHandle` for `Send + Sync` thread-safe ownership.
 
 ## Fragments
 
@@ -83,9 +83,11 @@ One CLI. Six subcommands.
 ```sh
 npx xript validate manifest.json           # validate app or mod manifests
 npx xript typegen manifest.json            # generate TypeScript .d.ts from a manifest
+npx xript typegen manifest.json --ambient  # emit an ambient .d.ts declaring the xript global
 npx xript docgen manifest.json -o docs/    # generate markdown API docs
 npx xript init                             # scaffold a new xript project (interactive)
 npx xript init --mod                       # scaffold a mod project
+npx xript init --mod --typescript          # scaffold an ESM TypeScript mod project
 npx xript sanitize fragment.html           # sanitize an HTML fragment
 npx xript scan src/ --manifest m.json      # scan @xript JSDoc tags into a manifest
 ```
@@ -160,14 +162,14 @@ xript/
 
 ## Project Status
 
-v0.4.1 -- 666 tests across 12 packages.
+v0.5.0 -- 1077 tests across 12 packages.
 
 | Area | Status |
 |------|--------|
-| Spec | v0.3: app manifests, mod manifests, slots, fragment protocol, capability model, security, annotations |
+| Spec | app manifests, mod manifests, slots, fragment protocol, capability model, security, annotations; v0.5.0 adds ES module mods, provider roles (`contributions.provides` + `resolve_role`), capability-grant data shapes, a DAP-shaped debug protocol, host-invoke exports, slot runtime semantics, manifest `extends`/deep-merge, and a mod-manifest `family` field |
 | Runtimes | 4 complete: JS/WASM, Node.js, Rust (async bindings, `XriptHandle`), C# |
 | Renderers | `xript-ratatui`: terminal fragment renderer for Ratatui apps |
-| Toolchain | unified `xript` CLI with validate, typegen, docgen, init, sanitize, scan; TUI wizard with audit and diff |
+| Toolchain | unified `xript` CLI with validate, typegen (`--ambient`), docgen, init (`--mod --typescript`), sanitize, scan; TUI wizard with audit and diff |
 | Publishing | 12 packages live: 8 npm (`@xriptjs/*`), 3 Rust crates (`crates.io`), 1 NuGet; OIDC trusted publishing with provenance |
 | Docs | 29-page site at xript.dev; interactive hero playground, Fragment Builder, Fragment Workbench |
 

@@ -8,7 +8,7 @@ Fragment renderer for [xript](https://github.com/nekoyoubi/xript): turns `applic
 
 ```toml
 [dependencies]
-xript-ratatui = "0.3"
+xript-ratatui = "0.5"
 ```
 
 ## Usage

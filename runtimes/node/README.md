@@ -54,6 +54,19 @@ const runtime = await createRuntimeFromFile("./manifest.json", {
 - Supports capability-gated bindings, namespace bindings, hooks, and resource limits
 - No `eval`, no `Function`, no dynamic code generation
 
+### v0.5.0
+
+- cooperative cancellation via a `CancellationToken` on the runtime options; it surfaces a distinct cancellation error (not a timeout), and since `vm` has no mid-run interrupt hook the token is checked at execute/invoke entry
+- opt-in capability audit channel: a hook reporting every allowed host-binding invocation as `{ binding, capability, at }`
+- console severity: log/info/warn/error/debug plus a trace channel
+- sandbox hard caps: host ceilings on memory, CPU time, and stack depth
+- manifest `extends` with deep-merge so a manifest can inherit and override host bindings; mod manifests gained an optional `family` field for grouping
+- host-invoke exports: mods declare named exports the host calls by name and whose return value it honors
+- ES module mods via `entry.format: "module"`, which evaluates the entry as a real ES module through `vm.SourceTextModule`; top-level named exports auto-register as host-invokable, and external imports stay denied
+- provider-role resolution: mods declare `contributions.provides` and the host calls `resolveRole(role)` (first-installed-wins, settings-overridable) to bind a logical role to a concrete export
+- slot runtime resolver: ordering by priority, single/multiple cardinality, and capability enforcement on contributions
+- DAP-shaped debug protocol: set/clear breakpoints by source position, pause/resume/step in/over/out, and inspect scopes, locals, and stack frames (AST instrumentation)
+
 ## API
 
 ### `createRuntime(manifest, options): XriptRuntime`

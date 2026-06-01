@@ -27,6 +27,16 @@ Validates one or more manifest files and prints results:
 
 Exit code is `1` if any file fails validation.
 
+## What it validates
+
+- app and mod manifests against the xript JSON Schema (with auto-detection)
+- cross-validation between an app manifest and a mod manifest
+- manifest `extends` with deep-merge (a manifest inheriting and overriding host bindings)
+- the mod-manifest `family` field for addon grouping
+- ES-module `entry.format`, including a static-import lint (external imports are denied at load)
+- a CommonJS guardrail: `require(`, `module.exports`, and top-level `exports.` in a mod entry fail loudly with a fix-it message
+- provider-role contributions (`contributions.provides`), flagging duplicate roles and unbound functions
+
 ## API
 
 ```javascript
