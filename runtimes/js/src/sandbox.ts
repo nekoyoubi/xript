@@ -269,8 +269,6 @@ function injectErrorClasses(context: QuickJSContext | QuickJSAsyncContext): void
 	`);
 }
 
-type AuditEmitter = (binding: string, capability: string | null) => void;
-
 function emitAudit(
 	audit: ((event: AuditEvent) => void) | undefined,
 	binding: string,

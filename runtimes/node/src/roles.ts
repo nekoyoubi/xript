@@ -1,13 +1,9 @@
-import type { ModInstance, ProviderRole } from "./fragment.js";
+import type { ModInstance } from "./fragment.js";
 
 export interface RoleResolution {
 	addon: string;
 	role: string;
 	fns: Record<string, string>;
-}
-
-function providerRolesOf(mod: ModInstance): ProviderRole[] {
-	return mod.provides;
 }
 
 export function resolveRoleAll(
@@ -16,7 +12,7 @@ export function resolveRoleAll(
 ): RoleResolution[] {
 	const out: RoleResolution[] = [];
 	for (const mod of mods) {
-		for (const entry of providerRolesOf(mod)) {
+		for (const entry of mod.provides) {
 			if (entry.role !== role) continue;
 			out.push({ addon: mod.name, role: entry.role, fns: { ...entry.fns } });
 		}
