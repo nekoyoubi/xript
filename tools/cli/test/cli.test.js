@@ -72,11 +72,52 @@ describe("xript validate", () => {
 	});
 });
 
+describe("xript validate --shape (wave 2)", () => {
+	test("validates a well-formed CapabilityPrompt payload", async () => {
+		const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+		const { tmpdir } = await import("node:os");
+		const { join } = await import("node:path");
+		const dir = await mkdtemp(join(tmpdir(), "xript-cli-shape-"));
+		try {
+			const file = join(dir, "prompt.json");
+			await writeFile(
+				file,
+				JSON.stringify({
+					capability: "clipboard-write",
+					description: "Write to the clipboard.",
+					risk: "medium",
+					mod: { name: "clip-mod", version: "1.0.0" },
+					requestedScope: "session",
+					state: "first-time",
+				}),
+			);
+			const { stdout, exitCode } = await run("validate", "--shape", "capability-prompt", file);
+			assert.equal(exitCode, 0);
+			assert.ok(stdout.includes("✓"));
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	test("rejects an unknown shape name", async () => {
+		const { stderr, exitCode } = await run("validate", "--shape", "bogus", EXAMPLE_MANIFEST);
+		assert.equal(exitCode, 1);
+		assert.ok(stderr.includes("capability-prompt"));
+	});
+});
+
 describe("xript typegen", () => {
 	test("generates types to stdout", async () => {
 		const { stdout, exitCode } = await run("typegen", EXAMPLE_MANIFEST);
 		assert.equal(exitCode, 0);
 		assert.ok(stdout.includes("declare"));
+	});
+
+	test("emits grant shape interfaces with --include-grant-shapes", async () => {
+		const { stdout, exitCode } = await run("typegen", EXAMPLE_MANIFEST, "--include-grant-shapes");
+		assert.equal(exitCode, 0);
+		assert.ok(stdout.includes("interface CapabilityPrompt"));
+		assert.ok(stdout.includes("interface DiscoveryResult"));
 	});
 
 	test("shows help", async () => {

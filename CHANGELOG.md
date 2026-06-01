@@ -1,5 +1,83 @@
 # Changelog
 
+## v0.5.0 — Hardening, Roles & a Debugger
+
+The biggest release since the fragment protocol: a security fix that touches every host, a full pass of runtime lifecycle controls, a clutch of new extensibility surfaces, a DAP-shaped debugger across all four runtimes, and first-class TypeScript authoring with real ES module evaluation. Every runtime kept in lockstep against a shared contract.
+
+### Security
+
+- closed a `data:` URI XSS hole in the Rust sanitizer that any host embedding the runtime inherited
+  - `xript_runtime::sanitize_html` registered `data:` as a blanket allowed scheme, so `data:text/html,<script>…</script>` survived on `<img src>` and `<a href>`
+  - added a subtype gate that keeps only `data:image/{png,jpeg,gif,svg+xml}` and strips everything else, matching the TS and C# runtimes that already conformed
+  - brought the Rust serializer the rest of the way onto the canonical 56-case corpus: XHTML self-closing void elements and bare boolean attributes, byte-for-byte
+
+### Runtime lifecycle
+
+- added host-driven cooperative cancellation: a `CancellationToken` on `RuntimeOptions` that interrupts in-flight execution at the next check point and surfaces a distinct cancellation error (not a timeout)
+  - QuickJS, rquickjs, and Jint interrupt mid-run; Node's `vm` has no mid-run hook, so it checks the token at execute/invoke entry
+- added an opt-in per-capability audit channel: a fire-and-forget hook that reports every allowed binding invocation as `{ binding, capability, at }`
+- gave `ConsoleHandler` a severity enum (log/info/warn/error/debug) and a trace channel
+- finished the sandbox hard caps (memory, CPU time, and stack depth) and brought every runtime to parity
+
+### Extensibility
+
+- added the host-invoke export seam: mods declare named exports the host can call and whose return value it honors (the non-streaming core; streaming is reserved)
+- gave slots runtime teeth (ordering by priority, single/multiple cardinality, and capability enforcement on contributions); they were advisory-only before
+- added provider-role resolution as a first-class mechanism, retiring the pattern of core UI hardcoding addon-specific globals
+  - mods declare `contributions.provides: [{ role, fns }]` where `fns` maps logical names to concrete exports
+  - the host calls `resolve_role(role) → { addon, fns }` (first-installed-wins, settings-overridable) or `resolve_role_all` to build its own picker
+  - declaring a role grants nothing; the named fns stay gated by their own capabilities
+- let addons describe owned record types through the existing `types` surface rather than a new persistence concept
+  - `fieldDefinition` gained `default` and inline `enum`; `typegen` emits typed accessors; the runtimes stay persistence-agnostic
+- added manifest `extends` with deep-merge so a manifest can inherit and override host bindings
+- added an optional top-level `family` field to the mod-manifest schema for addon grouping
+- added capability-grant data shapes (schemas only): a prompt payload (capability + description + risk + scope), an install descriptor, and a discovery result; grant policy and prompt UX stay host-side
+
+### Debugging
+
+- added a DAP-shaped debug protocol the host can drive: set/clear breakpoints by source position, pause/resume/step in/over/out, and inspect scopes, locals, and stack frames
+  - implemented across rquickjs (Rust), QuickJS-WASM (the async sandbox), Node's `vm` (AST instrumentation), and Jint (C#) using Debug Adapter Protocol vocabulary
+  - engine fidelity differs and is documented per runtime; rquickjs 0.10 exposes no per-line hook, QuickJS-WASM debugging requires the async sandbox, Jint pauses synchronously on the engine thread
+
+### TypeScript & ES modules
+
+- made `entry.format: "module"` real — the runtimes now evaluate a mod entry as an ES module instead of treating the value as a reserved no-op
+  - implemented across rquickjs (Rust), QuickJS-WASM (async sandbox), Node's `vm` (`SourceTextModule`), and Jint (C#)
+  - top-level named function exports become host-invokable exports automatically — `export function transcribe()` needs no `xript.exports.register` call; the two paths coexist and an explicit `register` wins on a name collision
+  - external imports stay denied (`import x from "fs"` fails at load) — the sandbox's no-external-modules guarantee is unchanged
+- added a CommonJS guardrail: `require(`, `module.exports`, and top-level `exports.` in a mod entry now fail loudly with a fix-it message instead of breaking silently, so a mis-set `tsconfig` can't quietly produce unrunnable output
+- added first-class typed authoring for TypeScript mods
+  - `@xriptjs/typegen --ambient` emits a `.d.ts` declaring the `xript` global — host bindings, `exports.register`, and the mod's own declared exports and types — so authors get real intellisense and typecheck
+  - `xript init --mod --typescript` now scaffolds an ESM `tsconfig`, an `export`-based example, and the ambient types wired in
+  - a new "Authoring Mods in TypeScript" guide documents the canon: compile to ESM, use top-level exports, no external imports, no CommonJS
+
+### Tooling & ergonomics
+
+- added a reference Svelte fragment renderer under `examples/svelte-fragment-renderer/` — copy-adaptable host glue that renders inert fragment output (`html` + visibility + command-buffer dispatch) as Svelte, staying inside the inert-fragment wall (not a published package, not core-runtime code)
+- fixed `@xriptjs/validate` and the CLI failing to locate `manifest.schema.json` from the published package, with a packaging regression test
+- updated `@xriptjs/typegen` and `@xriptjs/docgen` for the new manifest surfaces (provider roles, record accessors, grant payloads)
+- added a `namespace_builder` combinator for async namespaces and `add_mixed_namespace` (property values alongside callable functions) to the Rust runtime
+- made the Rust runtime recurse into nested namespace members instead of silently dropping them
+- fixed the Rust runtime swallowing uncaught throws in async workflows; a rejected top-level promise read as a successful `undefined`, but now surfaces the real rejection
+
+### Test counts
+
+| package | v0.4.2 | v0.5.0 |
+|---------|--------|--------|
+| `@xriptjs/sanitize` | 93 | 93 |
+| `@xriptjs/validate` | 25 | 68 |
+| `@xriptjs/typegen` | 31 | 52 |
+| `@xriptjs/docgen` | 28 | 35 |
+| `@xriptjs/init` | 34 | 41 |
+| `@xriptjs/cli` | 29 | 38 |
+| `@xriptjs/runtime` | 97 | 166 |
+| `@xriptjs/runtime-node` | 97 | 165 |
+| `xript-runtime` (Rust) | 48 | 125 |
+| `xript-ratatui` | 58 | 58 |
+| `xript-wiz` | 35 | 35 |
+| `Xript.Runtime` (C#) | 116 | 201 |
+| **total** | **691** | **1077** |
+
 ## v0.4.2 — Sanitizer + Rust Runtime Fixes
 
 - expanded the sanitizer's allowed element list across all four implementations (TypeScript, Rust/ammonia, C#)

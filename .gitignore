@@ -9,6 +9,9 @@
 dist/
 .astro/
 
+# rust build output
+target/
+
 # dependencies
 node_modules/
 

@@ -1,6 +1,6 @@
 [package]
 name = "xript-runtime"
-version = "0.4.2"
+version = "0.5.0"
 edition = "2024"
 description = "Rust runtime for xript. Sandboxed JavaScript execution via QuickJS."
 license = "MIT"
@@ -13,9 +13,17 @@ categories = ["game-development", "wasm", "embedded"]
 ammonia = "4"
 pollster = "0.4"
 regex = "1"
-rquickjs = { version = "0.10", features = ["parallel"] }
+rquickjs = { version = "0.10", features = ["parallel", "loader"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 
-[dev-dependencies]
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "packed"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.release]
+strip = "debuginfo"

@@ -53,6 +53,7 @@ export async function run(args: string[]): Promise<void> {
 		const opts: DocgenOptions = {};
 		if (linkFormat === "no-extension") opts.linkFormat = "no-extension";
 		if (frontmatter) opts.frontmatter = frontmatter;
+		if (args.includes("--grant-shapes")) opts.grantShapes = true;
 		const result = await generateDocsFromFile(manifestPath, opts);
 		const written = await writeDocsToDirectory(result, outputDir!, opts);
 		console.log(`\u2713 Generated ${written.length} documentation pages to ${resolve(outputDir!)}`);
@@ -75,5 +76,6 @@ function printHelp(): void {
 	console.log("  --output, -o       Output directory (required)");
 	console.log("  --link-format <f>  Link format: 'default' or 'no-extension'");
 	console.log("  --frontmatter <s>  YAML frontmatter to inject into generated files");
+	console.log("  --grant-shapes     Emit a capability grant shapes reference page");
 	console.log("  --help, -h         Show this help message");
 }

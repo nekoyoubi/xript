@@ -1,5 +1,9 @@
 import vm from "node:vm";
-import { BindingError, CapabilityDeniedError, ExecutionLimitError } from "./errors.js";
+import { BindingError, CapabilityDeniedError, ExecutionLimitError, CancellationError, InvokeError, ModEntryError, ImportDeniedError, ModuleUnsupportedError } from "./errors.js";
+import { findImportSpecifier } from "./module-support.js";
+import type { DebugOptions, DebugSession } from "./debug-types.js";
+import { createDebugController } from "./debug-session.js";
+import { instrumentSource } from "./debug-instrument.js";
 
 interface Manifest {
 	xript: string;
@@ -56,17 +60,56 @@ interface ExecutionLimits {
 }
 
 export type HostFunction = (...args: unknown[]) => unknown;
-export type HostBindings = Record<string, HostFunction | Record<string, HostFunction>>;
+export interface HostNamespace {
+	[key: string]: HostFunction | HostNamespace;
+}
+export type HostBindings = Record<string, HostFunction | HostNamespace>;
+
+export type LogSeverity = "trace" | "debug" | "info" | "warn" | "error";
+
+export interface ConsoleHandler {
+	log?: (...args: unknown[]) => void;
+	info?: (...args: unknown[]) => void;
+	warn?: (...args: unknown[]) => void;
+	error?: (...args: unknown[]) => void;
+	debug?: (...args: unknown[]) => void;
+	trace?: (...args: unknown[]) => void;
+	onLog?: (severity: LogSeverity, ...args: unknown[]) => void;
+}
+
+export interface AuditEvent {
+	binding: string;
+	capability: string | null;
+	at: number;
+}
+
+export interface HardLimits {
+	timeout_ms?: number;
+	memory_mb?: number;
+	max_stack_depth?: number;
+}
+
+export class CancellationToken {
+	private flag = { cancelled: false };
+
+	cancel(): void {
+		this.flag.cancelled = true;
+	}
+
+	get cancelled(): boolean {
+		return this.flag.cancelled;
+	}
+}
 
 export interface SandboxOptions {
 	manifest: Manifest;
 	hostBindings: HostBindings;
 	capabilities?: string[];
-	console?: {
-		log: (...args: unknown[]) => void;
-		warn: (...args: unknown[]) => void;
-		error: (...args: unknown[]) => void;
-	};
+	console?: ConsoleHandler;
+	audit?: (event: AuditEvent) => void;
+	hardLimits?: HardLimits;
+	cancellation?: CancellationToken;
+	debug?: DebugOptions;
 }
 
 export interface ExecutionResult {
@@ -78,23 +121,62 @@ function isNamespace(binding: Binding): binding is NamespaceBinding {
 	return "members" in binding;
 }
 
+const CONSOLE_METHOD_SEVERITY: Record<string, LogSeverity> = {
+	log: "info",
+	info: "info",
+	warn: "warn",
+	error: "error",
+	debug: "debug",
+	trace: "trace",
+};
+
+function dispatchConsole(
+	handler: ConsoleHandler,
+	method: string,
+	severity: LogSeverity,
+	args: unknown[],
+): void {
+	if (handler.onLog) {
+		handler.onLog(severity, ...args);
+		return;
+	}
+	const direct = handler[method as keyof ConsoleHandler] as ((...a: unknown[]) => void) | undefined;
+	if (direct) {
+		direct(...args);
+		return;
+	}
+	const fallback = severity === "warn" ? handler.warn : severity === "error" ? handler.error : handler.log;
+	if (fallback) fallback(...args);
+}
+
+function emitAudit(
+	audit: ((event: AuditEvent) => void) | undefined,
+	binding: string,
+	capability: string | null,
+): void {
+	if (!audit) return;
+	try {
+		audit({ binding, capability, at: Date.now() });
+	} catch {
+		// fire-and-forget: emit failures never break script execution
+	}
+}
+
 function buildSandboxGlobal(options: SandboxOptions): Record<string, unknown> {
 	const { manifest, hostBindings, capabilities = [] } = options;
 	const grantedCapabilities = new Set(capabilities);
+	const audit = options.audit;
 
-	const sandboxConsole = options.console || {
-		log: () => {},
-		warn: () => {},
-		error: () => {},
-	};
+	const sandboxConsole = options.console || {};
 
 	const globals: Record<string, unknown> = {};
 
-	globals.console = {
-		log: (...args: unknown[]) => sandboxConsole.log(...args),
-		warn: (...args: unknown[]) => sandboxConsole.warn(...args),
-		error: (...args: unknown[]) => sandboxConsole.error(...args),
-	};
+	const consoleObj: Record<string, unknown> = {};
+	for (const method of Object.keys(CONSOLE_METHOD_SEVERITY)) {
+		const severity = CONSOLE_METHOD_SEVERITY[method];
+		consoleObj[method] = (...args: unknown[]) => dispatchConsole(sandboxConsole, method, severity, args);
+	}
+	globals.console = consoleObj;
 
 	globals.JSON = { parse: JSON.parse, stringify: JSON.stringify };
 	globals.Math = Math;
@@ -165,8 +247,9 @@ function buildSandboxGlobal(options: SandboxOptions): Record<string, unknown> {
 				globals[name] = buildNamespace(
 					name,
 					binding,
-					hostBindings[name] as Record<string, HostFunction> | undefined,
+					hostBindings[name] as HostNamespace | undefined,
 					grantedCapabilities,
+					audit,
 				);
 			} else {
 				globals[name] = buildFunction(
@@ -174,6 +257,7 @@ function buildSandboxGlobal(options: SandboxOptions): Record<string, unknown> {
 					binding,
 					hostBindings[name] as HostFunction | undefined,
 					grantedCapabilities,
+					audit,
 				);
 			}
 		}
@@ -187,6 +271,7 @@ function buildFunction(
 	binding: FunctionBinding,
 	hostFn: HostFunction | undefined,
 	grantedCapabilities: Set<string>,
+	audit?: (event: AuditEvent) => void,
 ): HostFunction {
 	return (...args: unknown[]) => {
 		if (binding.capability && !grantedCapabilities.has(binding.capability)) {
@@ -196,6 +281,8 @@ function buildFunction(
 		if (!hostFn) {
 			throw new BindingError(qualifiedName, "not implemented by the app");
 		}
+
+		emitAudit(audit, qualifiedName, binding.capability ?? null);
 
 		try {
 			return hostFn(...args);
@@ -210,21 +297,20 @@ function buildFunction(
 function buildNamespace(
 	namespaceName: string,
 	binding: NamespaceBinding,
-	hostNs: Record<string, HostFunction> | undefined,
+	hostNs: HostNamespace | undefined,
 	grantedCapabilities: Set<string>,
+	audit?: (event: AuditEvent) => void,
 ): Record<string, unknown> {
 	const ns: Record<string, unknown> = {};
 
 	for (const [memberName, memberBinding] of Object.entries(binding.members)) {
 		const qualifiedName = `${namespaceName}.${memberName}`;
 		if (isNamespace(memberBinding)) {
-			const nestedHostNs = hostNs
-				? (hostNs[memberName] as unknown as Record<string, HostFunction>)
-				: undefined;
-			ns[memberName] = buildNamespace(qualifiedName, memberBinding, nestedHostNs, grantedCapabilities);
+			const nestedHostNs = hostNs ? (hostNs[memberName] as HostNamespace | undefined) : undefined;
+			ns[memberName] = buildNamespace(qualifiedName, memberBinding, nestedHostNs, grantedCapabilities, audit);
 		} else {
-			const hostFn = hostNs ? hostNs[memberName] : undefined;
-			ns[memberName] = buildFunction(qualifiedName, memberBinding, hostFn, grantedCapabilities);
+			const hostFn = hostNs ? (hostNs[memberName] as HostFunction | undefined) : undefined;
+			ns[memberName] = buildFunction(qualifiedName, memberBinding, hostFn, grantedCapabilities, audit);
 		}
 	}
 
@@ -397,21 +483,71 @@ function fireFragmentHookFromRegistry(
 	return allOps;
 }
 
-export function createSandbox(options: SandboxOptions): {
+function clampLimit(requested: number | undefined, hard: number | undefined): number | undefined {
+	if (requested === undefined) return hard;
+	if (hard === undefined) return requested;
+	return Math.min(requested, hard);
+}
+
+export interface SandboxResult {
 	execute: (code: string) => ExecutionResult;
 	executeAsync: (code: string) => Promise<ExecutionResult>;
+	debugExecute: (code: string) => Promise<ExecutionResult>;
+	evaluateModule: (modName: string, code: string) => Promise<string[]>;
+	invokeExport: (name: string, args: unknown[]) => unknown;
+	invokeExportAsync: (name: string, args: unknown[]) => Promise<unknown>;
 	fireHook: (hookName: string, options?: FireHookOptions) => unknown[];
 	fireFragmentHook: (fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>) => FragmentOp[];
-} {
-	const { manifest, capabilities = [] } = options;
+	debugSession: () => DebugSession | null;
+}
+
+interface SourceTextModuleInstance {
+	link(linker: (specifier: string) => never): Promise<void>;
+	evaluate(): Promise<void>;
+	readonly namespace: Record<string, unknown>;
+	readonly status: string;
+}
+
+interface SourceTextModuleCtor {
+	new (code: string, options: { context: vm.Context; identifier?: string }): SourceTextModuleInstance;
+}
+
+function getSourceTextModule(): SourceTextModuleCtor | null {
+	const ctor = (vm as unknown as { SourceTextModule?: SourceTextModuleCtor }).SourceTextModule;
+	return ctor ?? null;
+}
+
+export function createSandbox(options: SandboxOptions): SandboxResult {
+	const { manifest, capabilities = [], cancellation } = options;
 	const grantedCapabilities = new Set(capabilities);
 	const limits = manifest.limits || {};
-	const timeoutMs = limits.timeout_ms ?? 5000;
+	const hard = options.hardLimits || {};
+	const timeoutMs = clampLimit(limits.timeout_ms ?? 5000, hard.timeout_ms) ?? 5000;
 	const hookRegistry = createHandlerRegistry();
 	const fragmentRegistry = createHandlerRegistry();
+	const exportRegistry = new Map<string, HostFunction>();
 
 	const sandboxGlobals = buildSandboxGlobal(options);
 	sandboxGlobals.hooks = buildHooksGlobal(manifest, grantedCapabilities, hookRegistry, fragmentRegistry);
+
+	const debugController = options.debug ? createDebugController(options.debug, "instrumented") : null;
+	if (debugController) {
+		sandboxGlobals[debugController.probeNames.shouldStop] = debugController.makeShouldStop();
+		sandboxGlobals[debugController.probeNames.pause] = debugController.makePause();
+	}
+
+	const exportsApi = Object.freeze({
+		register(name: string, fn: unknown) {
+			if (typeof name !== "string" || name.length === 0) {
+				throw new TypeError("xript.exports.register: name must be a non-empty string");
+			}
+			if (typeof fn !== "function") {
+				throw new TypeError("xript.exports.register: fn must be a function");
+			}
+			exportRegistry.set(name, fn as HostFunction);
+		},
+	});
+	sandboxGlobals.xript = Object.freeze({ exports: exportsApi });
 
 	const context = vm.createContext(sandboxGlobals, {
 		codeGeneration: {
@@ -449,6 +585,7 @@ export function createSandbox(options: SandboxOptions): {
 	}
 
 	function execute(code: string): ExecutionResult {
+		if (cancellation?.cancelled) throw new CancellationError();
 		const start = performance.now();
 		const script = new vm.Script(code, { filename: "xript-script.js" });
 		try {
@@ -461,6 +598,7 @@ export function createSandbox(options: SandboxOptions): {
 	}
 
 	async function executeAsync(code: string): Promise<ExecutionResult> {
+		if (cancellation?.cancelled) throw new CancellationError();
 		const start = performance.now();
 		const wrappedCode = `(async () => { ${code} })()`;
 		const script = new vm.Script(wrappedCode, { filename: "xript-script.js" });
@@ -474,6 +612,91 @@ export function createSandbox(options: SandboxOptions): {
 		}
 	}
 
+	function invokeExport(name: string, args: unknown[]): unknown {
+		if (cancellation?.cancelled) throw new CancellationError();
+		const fn = exportRegistry.get(name);
+		if (!fn) throw new InvokeError(name, `export ${name} not found`);
+		try {
+			return fn(...args);
+		} catch (e) {
+			const message = e instanceof Error ? e.message : String(e);
+			throw new InvokeError(name, message);
+		}
+	}
+
+	async function invokeExportAsync(name: string, args: unknown[]): Promise<unknown> {
+		if (cancellation?.cancelled) throw new CancellationError();
+		const fn = exportRegistry.get(name);
+		if (!fn) throw new InvokeError(name, `export ${name} not found`);
+		try {
+			return await fn(...args);
+		} catch (e) {
+			const message = e instanceof Error ? e.message : String(e);
+			throw new InvokeError(name, message);
+		}
+	}
+
+	async function debugExecute(code: string): Promise<ExecutionResult> {
+		if (cancellation?.cancelled) throw new CancellationError();
+		if (!debugController) {
+			throw new BindingError("debugExecute", "no debug session is attached to this runtime");
+		}
+		const { code: instrumented, breakableLines } = instrumentSource(code, debugController.probeNames);
+		debugController.setBreakableLines("xript-script.js", breakableLines);
+		const start = performance.now();
+		const wrappedCode = `(async () => { ${instrumented} })()`;
+		const script = new vm.Script(wrappedCode, { filename: "xript-script.js" });
+		try {
+			const promise = script.runInContext(context);
+			const value = await promise;
+			const duration_ms = performance.now() - start;
+			debugController.session.resume();
+			return { value, duration_ms };
+		} catch (e) {
+			return wrapTimeoutError(e);
+		}
+	}
+
+	async function evaluateModule(modName: string, code: string): Promise<string[]> {
+		if (cancellation?.cancelled) throw new CancellationError();
+
+		const specifier = findImportSpecifier(code);
+		if (specifier !== null) {
+			throw new ImportDeniedError(specifier);
+		}
+
+		const SourceTextModule = getSourceTextModule();
+		if (!SourceTextModule) {
+			throw new ModuleUnsupportedError(
+				"module-format mods require Node's experimental vm modules; run node with --experimental-vm-modules",
+			);
+		}
+
+		const mod = new SourceTextModule(code, { context, identifier: `xript-mod-${modName}` });
+		try {
+			await mod.link((spec: string) => {
+				throw new ImportDeniedError(spec);
+			});
+			await mod.evaluate();
+		} catch (e) {
+			if (e instanceof ImportDeniedError) throw e;
+			const message = e instanceof Error ? e.message : String(e);
+			throw new ModEntryError(modName, message);
+		}
+
+		const namespace = mod.namespace;
+		const harvested: string[] = [];
+		for (const name of Object.keys(namespace)) {
+			if (name === "default") continue;
+			const value = namespace[name];
+			if (typeof value !== "function") continue;
+			if (exportRegistry.has(name)) continue;
+			exportRegistry.set(name, value as HostFunction);
+			harvested.push(name);
+		}
+		return harvested;
+	}
+
 	function fireHook(hookName: string, opts?: FireHookOptions): unknown[] {
 		return fireHookFromRegistry(hookRegistry, manifest, hookName, opts);
 	}
@@ -482,5 +705,9 @@ export function createSandbox(options: SandboxOptions): {
 		return fireFragmentHookFromRegistry(fragmentRegistry, fragmentId, lifecycle, bindings);
 	}
 
-	return { execute, executeAsync, fireHook, fireFragmentHook };
+	function debugSession(): DebugSession | null {
+		return debugController ? debugController.session : null;
+	}
+
+	return { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, fireHook, fireFragmentHook, debugSession };
 }

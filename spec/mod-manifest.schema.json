@@ -17,11 +17,24 @@
 			"pattern": "^\\d+\\.\\d+$",
 			"examples": ["0.3"]
 		},
+		"extends": {
+			"description": "One or more base mod manifests to inherit from. Resolved and deep-merged before validation: maps key-merge, arrays append, scalars are child-wins, and duplicate ids are an error. Paths are filesystem-relative to this manifest. Resolution is transitive with cycle detection.",
+			"oneOf": [
+				{ "type": "string" },
+				{ "type": "array", "items": { "type": "string" }, "minItems": 1 }
+			]
+		},
 		"name": {
 			"description": "Machine-readable mod identifier. Used in namespacing and generated package names.",
 			"type": "string",
 			"pattern": "^[a-z][a-z0-9-]*$",
 			"minLength": 1,
+			"maxLength": 64
+		},
+		"family": {
+			"description": "Optional grouping family for host-side organization (e.g. grouping addons in a nav rail). When absent, hosts fall back to name-prefix heuristics.",
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9-]*$",
 			"maxLength": 64
 		},
 		"version": {
@@ -52,20 +65,136 @@
 			"uniqueItems": true
 		},
 		"entry": {
-			"description": "Script entry point(s) relative to the mod root directory.",
+			"description": "Script entry point(s) relative to the mod root directory. The bare string/string[] form runs in script mode with no exports. The object form additionally declares named host-invokable exports.",
 			"oneOf": [
 				{ "type": "string" },
-				{ "type": "array", "items": { "type": "string" }, "minItems": 1 }
+				{ "type": "array", "items": { "type": "string" }, "minItems": 1 },
+				{ "$ref": "#/$defs/entryBlock" }
 			]
 		},
 		"fragments": {
 			"description": "UI fragment contributions targeting host-declared slots.",
 			"type": "array",
 			"items": { "$ref": "#/$defs/fragment" }
+		},
+		"contributions": {
+			"description": "Declarative contributions the mod makes to the host beyond UI fragments.",
+			"type": "object",
+			"properties": {
+				"provides": {
+					"description": "Logical roles this mod provides. The host resolves a role to a providing addon and its logical-to-concrete fn map; xript never invokes the named fns.",
+					"type": "array",
+					"items": { "$ref": "#/$defs/providerRole" }
+				}
+			},
+			"additionalProperties": false
 		}
 	},
 	"additionalProperties": false,
 	"$defs": {
+		"providerRole": {
+			"description": "A logical role the mod provides, mapping logical method names to concrete export/global fn names the mod registers.",
+			"type": "object",
+			"required": ["role", "fns"],
+			"properties": {
+				"role": {
+					"description": "Logical role identifier. Lowercase-hyphen; shared vocabulary with discovery results.",
+					"type": "string",
+					"pattern": "^[a-z][a-z0-9-]*$",
+					"maxLength": 64
+				},
+				"fns": {
+					"description": "Logical method name to concrete export/global fn name. The host calls e.g. fns.query, never xript.",
+					"type": "object",
+					"additionalProperties": { "type": "string" },
+					"minProperties": 1
+				}
+			},
+			"additionalProperties": false
+		},
+		"entryBlock": {
+			"description": "The richer entry form: a primary script plus optional named exports the host can invoke.",
+			"type": "object",
+			"required": ["script"],
+			"properties": {
+				"script": {
+					"description": "The primary entry script path relative to the mod root.",
+					"type": "string"
+				},
+				"format": {
+					"description": "Execution format. 'script' (default) evaluates the entry as a classic script; 'module' evaluates it as an ES module whose top-level named exports become the mod's host-invokable exports.",
+					"type": "string",
+					"enum": ["script", "module"],
+					"default": "script"
+				},
+				"exports": {
+					"description": "Named callables the entry script registers via xript.exports.register and the host invokes by name.",
+					"type": "object",
+					"additionalProperties": { "$ref": "#/$defs/exportDef" }
+				}
+			},
+			"additionalProperties": false
+		},
+		"exportDef": {
+			"description": "A host-invokable export declared by the mod. In script mode, the entry registers a matching function via xript.exports.register; in module mode, a matching top-level named export satisfies this automatically.",
+			"type": "object",
+			"required": ["description"],
+			"properties": {
+				"description": {
+					"description": "What this export does. Shown in generated docs and editor tooltips.",
+					"type": "string"
+				},
+				"params": {
+					"description": "The export's parameters, in order.",
+					"type": "array",
+					"items": { "$ref": "#/$defs/parameter" }
+				},
+				"returns": {
+					"description": "The return type. Omit for void exports.",
+					"$ref": "#/$defs/typeRef"
+				},
+				"capability": {
+					"description": "Capability required to invoke this export. If omitted, the export is always invokable. Must be one of the mod's declared capabilities.",
+					"type": "string"
+				}
+			},
+			"additionalProperties": false
+		},
+		"typeRef": {
+			"description": "A reference to a type. Can be a primitive, a custom type name, an array type, or a union.",
+			"oneOf": [
+				{ "type": "string" },
+				{
+					"type": "object",
+					"properties": {
+						"array": { "$ref": "#/$defs/typeRef" },
+						"union": { "type": "array", "items": { "$ref": "#/$defs/typeRef" }, "minItems": 2 },
+						"map": { "$ref": "#/$defs/typeRef" },
+						"optional": { "$ref": "#/$defs/typeRef" }
+					},
+					"oneOf": [
+						{ "required": ["array"] },
+						{ "required": ["union"] },
+						{ "required": ["map"] },
+						{ "required": ["optional"] }
+					],
+					"additionalProperties": false
+				}
+			]
+		},
+		"parameter": {
+			"description": "A parameter with a name, type, and optional description.",
+			"type": "object",
+			"required": ["name", "type"],
+			"properties": {
+				"name": { "type": "string" },
+				"type": { "$ref": "#/$defs/typeRef" },
+				"description": { "type": "string" },
+				"default": {},
+				"required": { "type": "boolean", "default": true }
+			},
+			"additionalProperties": false
+		},
 		"fragment": {
 			"description": "A UI fragment that targets a host-declared slot.",
 			"type": "object",

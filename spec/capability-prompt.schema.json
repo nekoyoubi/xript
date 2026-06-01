@@ -1,0 +1,50 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://xript.dev/schema/capability-prompt/v0.5.json",
+	"title": "xript Capability Prompt",
+	"description": "Host-side wire shape describing a capability grant request for a host-rendered prompt. xript defines the shape; grant policy and prompt UX stay host-side. The runtimes never see this payload.",
+	"type": "object",
+	"required": ["capability", "description", "risk", "mod", "requestedScope", "state"],
+	"properties": {
+		"capability": {
+			"description": "The capability name being requested.",
+			"type": "string"
+		},
+		"description": {
+			"description": "Human-readable description, drawn from the manifest capability definition.",
+			"type": "string"
+		},
+		"risk": {
+			"description": "Risk level, drawn from the manifest capability definition.",
+			"type": "string",
+			"enum": ["low", "medium", "high"],
+			"default": "low"
+		},
+		"mod": {
+			"description": "Identity of the requesting mod.",
+			"type": "object",
+			"required": ["name", "version"],
+			"properties": {
+				"name": { "type": "string" },
+				"version": { "type": "string" },
+				"title": { "type": "string" }
+			},
+			"additionalProperties": false
+		},
+		"requestedScope": {
+			"description": "How long the grant should apply. Closed vocabulary shared by all hosts.",
+			"type": "string",
+			"enum": ["one-run", "session", "persistent"]
+		},
+		"state": {
+			"description": "Why the prompt is being shown. Closed vocabulary shared by all hosts.",
+			"type": "string",
+			"enum": ["first-time", "previously-denied", "requesting-elevation"]
+		},
+		"reason": {
+			"description": "Optional human-readable reason the mod supplies for the request.",
+			"type": "string"
+		}
+	},
+	"additionalProperties": false
+}

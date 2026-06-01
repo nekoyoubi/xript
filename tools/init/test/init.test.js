@@ -251,7 +251,7 @@ describe("generateModProjectFiles", () => {
 		]);
 	});
 
-	it("generates TypeScript mod project with tsconfig", () => {
+	it("generates TypeScript mod project with tsconfig and ambient types", () => {
 		const files = generateModProjectFiles({ name: "my-mod", tier: 2, language: "typescript" });
 		const paths = Object.keys(files).sort();
 		assert.deepEqual(paths, [
@@ -259,8 +259,52 @@ describe("generateModProjectFiles", () => {
 			"mod-manifest.json",
 			"package.json",
 			"src/mod.ts",
+			"src/xript-env.d.ts",
 			"tsconfig.json",
 		]);
+	});
+
+	it("mod tsconfig emits ESM (module ESNext, not Node16)", () => {
+		const files = generateModProjectFiles({ name: "my-mod", tier: 2, language: "typescript" });
+		const tsconfig = JSON.parse(files["tsconfig.json"]);
+		assert.equal(tsconfig.compilerOptions.module, "ESNext");
+		assert.equal(tsconfig.compilerOptions.moduleResolution, "Bundler");
+		assert.notEqual(tsconfig.compilerOptions.module, "Node16");
+	});
+
+	it("mod manifest uses the object entry form with format module", () => {
+		const files = generateModProjectFiles({ name: "my-mod", tier: 2, language: "typescript" });
+		const manifest = JSON.parse(files["mod-manifest.json"]);
+		assert.equal(typeof manifest.entry, "object");
+		assert.equal(manifest.entry.format, "module");
+		assert.equal(manifest.entry.script, "src/mod.ts");
+		assert.ok(manifest.entry.exports && Object.keys(manifest.entry.exports).length > 0);
+	});
+
+	it("mod entry uses a top-level export wired to the example export name", () => {
+		const files = generateModProjectFiles({ name: "my-mod", tier: 2, language: "typescript" });
+		const manifest = JSON.parse(files["mod-manifest.json"]);
+		const exportName = Object.keys(manifest.entry.exports)[0];
+		const entry = files["src/mod.ts"];
+		assert.ok(entry.includes(`export function ${exportName}(`), "entry has the declared top-level export");
+		assert.ok(entry.includes('/// <reference path="./xript-env.d.ts" />'), "entry references ambient types");
+		assert.ok(entry.includes("hooks.fragment.update"), "entry still shows the hook side-effect");
+	});
+
+	it("emits an ambient xript-env.d.ts that declares the xript global", () => {
+		const files = generateModProjectFiles({ name: "my-mod", tier: 2, language: "typescript" });
+		const ambient = files["src/xript-env.d.ts"];
+		assert.ok(ambient.includes("declare global {"));
+		assert.ok(ambient.includes("const xript: {"));
+		assert.ok(ambient.includes("register(name: string, fn:"));
+		assert.ok(ambient.includes("export interface Exports {"));
+	});
+
+	it("scaffolds no CommonJS artifacts in the entry", () => {
+		const files = generateModProjectFiles({ name: "my-mod", tier: 2, language: "typescript" });
+		const entry = files["src/mod.ts"];
+		assert.ok(!/\brequire\s*\(/.test(entry));
+		assert.ok(!/\bmodule\s*\.\s*exports\b/.test(entry));
 	});
 
 	it("mod manifest is valid JSON with required fields", () => {
@@ -296,6 +340,18 @@ describe("generateModProjectFiles", () => {
 		const files = generateModProjectFiles({ name: "my-mod", tier: 2, language: "javascript" });
 		const script = files["src/mod.js"];
 		assert.ok(script.includes("hooks.fragment.update"));
+	});
+
+	it("derives the family from the mod name prefix", () => {
+		const files = generateModProjectFiles({ name: "acme-tools", tier: 2, language: "javascript" });
+		const manifest = JSON.parse(files["mod-manifest.json"]);
+		assert.equal(manifest.family, "acme");
+	});
+
+	it("omits family when the name has no prefix segment", () => {
+		const files = generateModProjectFiles({ name: "standalone", tier: 2, language: "javascript" });
+		const manifest = JSON.parse(files["mod-manifest.json"]);
+		assert.equal(manifest.family, undefined);
 	});
 });
 

@@ -1,0 +1,13 @@
+{
+	"xript": "0.3",
+	"name": "host-base",
+	"version": "1.0.0",
+	"title": "Host Base",
+	"capabilities": {
+		"storage": { "description": "Read/write storage.", "risk": "low" }
+	},
+	"bindings": {
+		"getHealth": { "description": "Returns health.", "returns": "number" }
+	},
+	"slots": [{ "id": "sidebar", "accepts": ["text/html"] }]
+}

@@ -2,9 +2,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::mpsc;
 use std::thread;
 
+use crate::debug::DebugSession;
 use crate::error::{Result, XriptError};
 use crate::fragment::ModInstance;
-use crate::sandbox::{ExecutionResult, RuntimeOptions};
+use crate::sandbox::{ExecutionResult, RoleResolution, RuntimeOptions, SlotContribution};
 
 enum Command {
     Execute {
@@ -17,6 +18,23 @@ enum Command {
         granted_capabilities: HashSet<String>,
         entry_source: Option<String>,
         tx: mpsc::Sender<Result<ModInstance>>,
+    },
+    InvokeExport {
+        name: String,
+        args: Vec<serde_json::Value>,
+        tx: mpsc::Sender<Result<serde_json::Value>>,
+    },
+    ResolveSlot {
+        slot_id: String,
+        tx: mpsc::Sender<Vec<SlotContribution>>,
+    },
+    ResolveRole {
+        role: String,
+        all: bool,
+        tx: mpsc::Sender<Vec<RoleResolution>>,
+    },
+    DebugSession {
+        tx: mpsc::Sender<Option<DebugSession>>,
     },
     ManifestName {
         tx: mpsc::Sender<String>,
@@ -64,6 +82,23 @@ impl XriptHandle {
                             &granted_capabilities,
                             entry_source.as_deref(),
                         ));
+                    }
+                    Command::InvokeExport { name, args, tx } => {
+                        let _ = tx.send(rt.invoke_export(&name, &args));
+                    }
+                    Command::ResolveSlot { slot_id, tx } => {
+                        let _ = tx.send(rt.resolve_slot(&slot_id));
+                    }
+                    Command::ResolveRole { role, all, tx } => {
+                        let result = if all {
+                            rt.resolve_role_all(&role)
+                        } else {
+                            rt.resolve_role(&role).into_iter().collect()
+                        };
+                        let _ = tx.send(result);
+                    }
+                    Command::DebugSession { tx } => {
+                        let _ = tx.send(rt.debug_session().cloned());
                     }
                     Command::ManifestName { tx } => {
                         let _ = tx.send(rt.manifest().name.clone());
@@ -114,6 +149,71 @@ impl XriptHandle {
             .map_err(|_| XriptError::Engine("runtime thread is gone".into()))?;
         rx.recv()
             .map_err(|_| XriptError::Engine("runtime thread dropped response".into()))?
+    }
+
+    pub fn invoke_export(
+        &self,
+        name: &str,
+        args: &[serde_json::Value],
+    ) -> Result<serde_json::Value> {
+        let (tx, rx) = mpsc::channel();
+        self.cmd_tx
+            .send(Command::InvokeExport {
+                name: name.to_string(),
+                args: args.to_vec(),
+                tx,
+            })
+            .map_err(|_| XriptError::Engine("runtime thread is gone".into()))?;
+        rx.recv()
+            .map_err(|_| XriptError::Engine("runtime thread dropped response".into()))?
+    }
+
+    pub fn resolve_slot(&self, slot_id: &str) -> Result<Vec<SlotContribution>> {
+        let (tx, rx) = mpsc::channel();
+        self.cmd_tx
+            .send(Command::ResolveSlot {
+                slot_id: slot_id.to_string(),
+                tx,
+            })
+            .map_err(|_| XriptError::Engine("runtime thread is gone".into()))?;
+        rx.recv()
+            .map_err(|_| XriptError::Engine("runtime thread dropped response".into()))
+    }
+
+    pub fn resolve_role(&self, role: &str) -> Result<Option<RoleResolution>> {
+        let (tx, rx) = mpsc::channel();
+        self.cmd_tx
+            .send(Command::ResolveRole {
+                role: role.to_string(),
+                all: false,
+                tx,
+            })
+            .map_err(|_| XriptError::Engine("runtime thread is gone".into()))?;
+        rx.recv()
+            .map(|v| v.into_iter().next())
+            .map_err(|_| XriptError::Engine("runtime thread dropped response".into()))
+    }
+
+    pub fn resolve_role_all(&self, role: &str) -> Result<Vec<RoleResolution>> {
+        let (tx, rx) = mpsc::channel();
+        self.cmd_tx
+            .send(Command::ResolveRole {
+                role: role.to_string(),
+                all: true,
+                tx,
+            })
+            .map_err(|_| XriptError::Engine("runtime thread is gone".into()))?;
+        rx.recv()
+            .map_err(|_| XriptError::Engine("runtime thread dropped response".into()))
+    }
+
+    pub fn debug_session(&self) -> Result<Option<DebugSession>> {
+        let (tx, rx) = mpsc::channel();
+        self.cmd_tx
+            .send(Command::DebugSession { tx })
+            .map_err(|_| XriptError::Engine("runtime thread is gone".into()))?;
+        rx.recv()
+            .map_err(|_| XriptError::Engine("runtime thread dropped response".into()))
     }
 
     pub fn manifest_name(&self) -> Result<String> {

@@ -1,0 +1,53 @@
+{
+	"$schema": "https://xript.dev/schema/manifest/v0.3.json",
+	"xript": "0.3",
+	"name": "svelte-fragment-renderer",
+	"version": "1.0.0",
+	"title": "Svelte Fragment Renderer Host",
+	"description": "A host that mounts xript UI fragments into a Svelte view layer. Hosts declare slots; mods contribute inert fragments rendered by the reference Svelte renderer.",
+
+	"bindings": {
+		"log": {
+			"description": "Writes a message to the console.",
+			"params": [
+				{ "name": "message", "type": "string" }
+			]
+		},
+		"counter": {
+			"description": "Functions for reading and mutating the shared counter.",
+			"members": {
+				"getValue": {
+					"description": "Returns the current counter value.",
+					"returns": "number"
+				},
+				"increment": {
+					"description": "Increments the counter and returns the new value.",
+					"returns": "number"
+				}
+			}
+		}
+	},
+
+	"capabilities": {
+		"ui-mount": {
+			"description": "Mount UI fragments into application slots.",
+			"risk": "low"
+		}
+	},
+
+	"slots": [
+		{
+			"id": "sidebar.left",
+			"accepts": ["text/html"],
+			"capability": "ui-mount",
+			"multiple": true,
+			"style": "scoped"
+		}
+	],
+
+	"limits": {
+		"timeout_ms": 1000,
+		"memory_mb": 16,
+		"max_stack_depth": 128
+	}
+}

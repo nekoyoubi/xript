@@ -1,0 +1,75 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://xript.dev/schema/debug-messages/v0.5.json",
+	"title": "xript Debug Protocol Messages",
+	"description": "DAP-shaped message structs for the xript runtime debug surface. xript provides the mechanism (pause/resume/inspect); the host wires these shapes to its own UI or transport. threadId is constant 1 (scripts are single-threaded) but present for DAP conformance.",
+	"type": "object",
+	"$defs": {
+		"sourceBreakpoint": {
+			"type": "object",
+			"required": ["line"],
+			"properties": {
+				"line": { "type": "integer", "minimum": 1, "description": "1-based source line." },
+				"column": { "type": "integer", "minimum": 1, "description": "1-based source column." },
+				"condition": { "type": "string", "description": "Optional break condition expression." }
+			},
+			"additionalProperties": false
+		},
+		"breakpoint": {
+			"type": "object",
+			"required": ["id", "verified", "line", "source"],
+			"properties": {
+				"id": { "type": "integer" },
+				"verified": { "type": "boolean", "description": "False when the line could not bind." },
+				"line": { "type": "integer", "minimum": 1 },
+				"column": { "type": "integer", "minimum": 1 },
+				"source": { "type": "string", "description": "Script id or path." }
+			},
+			"additionalProperties": false
+		},
+		"stackFrame": {
+			"type": "object",
+			"required": ["id", "name", "line", "column", "source"],
+			"properties": {
+				"id": { "type": "integer" },
+				"name": { "type": "string" },
+				"line": { "type": "integer", "minimum": 1 },
+				"column": { "type": "integer", "minimum": 1 },
+				"source": { "type": "string" }
+			},
+			"additionalProperties": false
+		},
+		"scope": {
+			"type": "object",
+			"required": ["name", "variablesReference", "expensive"],
+			"properties": {
+				"name": { "type": "string", "enum": ["Local", "Closure", "Global"] },
+				"variablesReference": { "type": "integer", "description": "Handle into the per-pause registry; 0 means no children." },
+				"expensive": { "type": "boolean" }
+			},
+			"additionalProperties": false
+		},
+		"variable": {
+			"type": "object",
+			"required": ["name", "value", "variablesReference"],
+			"properties": {
+				"name": { "type": "string" },
+				"value": { "type": "string", "description": "Display string for the value." },
+				"type": { "type": "string" },
+				"variablesReference": { "type": "integer", "description": "0 = leaf, >0 = expandable handle." }
+			},
+			"additionalProperties": false
+		},
+		"stoppedEvent": {
+			"type": "object",
+			"required": ["reason", "threadId"],
+			"properties": {
+				"reason": { "type": "string", "enum": ["breakpoint", "step", "pause", "entry", "exception"] },
+				"threadId": { "type": "integer", "const": 1 },
+				"hitBreakpointIds": { "type": "array", "items": { "type": "integer" } },
+				"description": { "type": "string" }
+			},
+			"additionalProperties": false
+		}
+	}
+}

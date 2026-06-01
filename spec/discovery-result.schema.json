@@ -1,0 +1,43 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://xript.dev/schema/discovery-result/v0.5.json",
+	"title": "xript Discovery Result",
+	"description": "Host-side wire shape yielded by an addon-discovery pass: one entry per candidate mod found. The provides[] field shares the logical-role vocabulary with mod-manifest contributions.provides.",
+	"type": "object",
+	"required": ["mods"],
+	"properties": {
+		"mods": {
+			"description": "Candidate mods discovered.",
+			"type": "array",
+			"items": {
+				"type": "object",
+				"required": ["name", "version", "location", "enabled"],
+				"properties": {
+					"name": { "type": "string" },
+					"version": { "type": "string" },
+					"title": { "type": "string" },
+					"location": {
+						"description": "Where the candidate was found.",
+						"type": "string"
+					},
+					"enabled": { "type": "boolean" },
+					"capabilities": {
+						"type": "array",
+						"items": { "type": "string" }
+					},
+					"provides": {
+						"description": "Logical roles the candidate provides. Shared vocabulary with mod-manifest contributions.provides.",
+						"type": "array",
+						"items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" }
+					}
+				},
+				"additionalProperties": false
+			}
+		},
+		"scannedAt": {
+			"description": "Epoch milliseconds at which the scan completed.",
+			"type": "number"
+		}
+	},
+	"additionalProperties": false
+}

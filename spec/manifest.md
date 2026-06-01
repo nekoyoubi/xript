@@ -167,6 +167,40 @@ Custom types let the manifest describe complex data structures used in bindings.
 }
 ```
 
+### Field Defaults and Inline Enums
+
+Object-type fields carry optional `default` and inline `enum` metadata:
+
+```json
+{
+  "types": {
+    "BrickFiles": {
+      "description": "File-viewer configuration for a brick.",
+      "fields": {
+        "path": { "type": "string", "optional": true, "description": "Path to display." },
+        "pathStyle": { "type": "string", "enum": ["posix", "hybrid", "native"], "default": "posix" },
+        "viewingEnabled": { "type": "boolean", "default": true }
+      }
+    }
+  }
+}
+```
+
+- `default` declares the value used when the field is absent.
+- `enum` declares the allowed literal values for the field.
+
+Both are **documentation and codegen hints only**. xript does not apply defaults, does not enforce enum membership, and reads neither at runtime. Codegen consumes them: a field with a `default` becomes non-optional in the generated interface (the host can rely on a value being present), and an inline `enum` becomes a literal union type.
+
+An enum field may instead reference a named `values`-based type definition (`{ "type": "PathStyle" }` where `PathStyle` declares `values`). The inline `enum` form and the named-enum form generate identical TypeScript.
+
+### Record Schemas via Types
+
+Addon-owned record shapes are expressed as ordinary object type definitions — there is no separate records block, no key field, and no record vocabulary in the schema. A record type **is** a custom object type whose `fields` carry `type`, `optional`, `default`, and `enum`.
+
+xript stays persistence-agnostic. It owns no store, reads and writes nothing, validates no field at runtime, and has no migration story. The type definition is purely a source of truth for documentation and code generation. Strictness, cross-addon writes, and migration are host concerns: the type def supplies the shape, and the host decides enforcement. Schema evolution over time is narrated through the manifest's own semver.
+
+For codegen, typegen emits a companion `<TypeName>Accessor` interface alongside the plain interface, exposing typed get/set per field so a host that backs records with its own store gets typed access without xript ever seeing that store.
+
 ### Type References
 
 Anywhere a type is expected, you can use:
@@ -312,6 +346,108 @@ See the [game mod system example](../examples/game-mod-system/) for a full tier 
 Slots, mod manifests, and fragments. Mods contribute UI that binds to host state and handles interaction.
 
 See the [UI dashboard example](../examples/ui-dashboard/) for a full tier 4 integration.
+
+## Manifest Inheritance (`extends`)
+
+A manifest may inherit from one or more base manifests via the optional top-level `extends` field (a path string or an array of path strings):
+
+```jsonc
+{
+  "xript": "0.3",
+  "extends": "./host.json",
+  "name": "my-workflow",
+  "bindings": { /* only new bindings; base bindings are merged in */ }
+}
+```
+
+Resolution happens before schema validation, performed identically by loaders and tools:
+
+- **Maps merge**: `bindings`, `capabilities`, `hooks`, and `types` are key-merged; the child augments the base.
+- **Arrays append**: `slots` append, deduped by slot `id`.
+- **Scalars: child wins**: `name`, `version`, `title`, `description`, `xript`.
+- **Duplicate ids error**: a binding, capability, hook, or slot id present in both base and child is an error, not a silent override.
+- **Transitive with cycle detection**: a base may itself `extends` another; cycles error.
+- **Paths are relative** to the extending manifest's location. Remote and URL bases are not supported in this version.
+
+When `extends` is an array, bases merge left-to-right (the child applies last); any cross-base id collision still errors. The resolved manifest is a flat, schema-valid manifest — the runtime never sees `extends` after resolution.
+
+## Mod Manifest `family`
+
+The mod manifest carries an optional top-level `family` string (pattern `^[a-z][a-z0-9-]*$`) for host-side grouping of addons (e.g. a nav rail). When absent, hosts fall back to name-prefix heuristics. The runtime stores and round-trips `family` but does not branch on it — grouping is host policy. `display_name` is intentionally not added; the existing `title` field covers it.
+
+## Host-Invokable Exports
+
+A mod's `entry` block may declare named exports the host can invoke and whose return value it honors:
+
+```jsonc
+{
+  "entry": {
+    "script": "main.js",
+    "format": "script",
+    "exports": {
+      "transcribe": {
+        "description": "Transcribe an audio clip to text.",
+        "params": [{ "name": "audioUrl", "type": "string" }],
+        "returns": "string",
+        "capability": "audio-read"
+      }
+    }
+  }
+}
+```
+
+The bare `entry: "main.js"` / `entry: ["a.js", "b.js"]` forms remain valid (script mode, no exports). The entry script registers each declared export via the runtime-injected `xript.exports.register(name, fn)`; the host invokes by name with JSON-serializable args and receives a JSON-serializable result. Invoking an undeclared or unregistered export, or an export that throws, surfaces a typed invocation error. An export may declare a required `capability`; invoking it without the grant throws a capability-denied error. **Streaming (partial results) is not yet specified** — only request → single-response is defined in this version.
+
+## Contributions
+
+A mod manifest may declare a top-level `contributions` object describing what the mod offers the host beyond UI fragments. The current member is `provides`.
+
+### Provider Roles (`contributions.provides`)
+
+A logical role is a host-defined capability slot that any addon can fill. Instead of core UI hardcoding an addon-specific global function name, the host asks xript to resolve a role and gets back the addon that provides it plus a map from logical method names to the concrete function names that addon registered.
+
+```json
+{
+  "contributions": {
+    "provides": [
+      {
+        "role": "clipboard-history",
+        "fns": {
+          "query": "clipHistory_query",
+          "restore": "clipHistory_restore",
+          "togglePin": "clipHistory_togglePin",
+          "setTags": "clipHistory_setTags",
+          "delete": "clipHistory_delete",
+          "clear": "clipHistory_clear",
+          "getImage": "clipHistory_getImage"
+        }
+      }
+    ]
+  }
+}
+```
+
+- `role` is a lowercase-hyphen identifier (`^[a-z][a-z0-9-]*$`), the same vocabulary discovery results use.
+- `fns` is an **object map** from logical method name to the concrete export or registered-global function name. The host calls `fns.query`; it is never a positional list.
+- Each `role` within a single mod's `provides[]` must be unique.
+
+#### Resolution
+
+The host resolves a role through the runtime's resolver API (`resolve_role` / `resolveRole` / `ResolveRole` and the `*_all` variants). Resolution is pure data lookup over loaded mods:
+
+1. Iterate loaded mods in **load order** (first-installed-wins).
+2. Collect every mod whose `contributions.provides[]` declares the requested `role`; that ordered list is the result of `resolve_role_all`.
+3. For `resolve_role`: if the host supplied a preference (a flat `role → addon-name` map on `RuntimeOptions`) that names a candidate, return that candidate; otherwise return the first candidate; otherwise `null`/`None`.
+
+A resolution returns `{ addon, role, fns }` where `addon` is the providing mod's `name` and `fns` is the winning contribution's declared map verbatim.
+
+#### Mechanism, not policy
+
+- **xript never calls the resolved fns.** It returns the name map; the host invokes the concrete functions through its existing export or binding path.
+- **Declaring `provides` grants no capability.** The functions it points at remain ordinary exports/bindings gated by their own capabilities. Default-deny is preserved.
+- A role with no provider resolves cleanly to `null`/`None` — never an error.
+- xript stores no preference state and persists nothing; the preference map is host-supplied per run, driven from the host's own settings.
+- `resolve_role` returns only the winner; `resolve_role_all` exposes the full ordered candidate set so the host can build its own picker UI.
 
 ## Schema Evolution
 

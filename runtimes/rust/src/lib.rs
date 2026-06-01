@@ -1,19 +1,33 @@
+pub mod capability;
+pub mod debug;
 mod error;
 pub mod fragment;
 pub mod handle;
 mod manifest;
+pub mod module;
 mod sandbox;
 
+pub use capability::{
+    CapabilityPrompt, DiscoveredMod, DiscoveryResult, InstallDescriptor, InstallSource,
+    InstallSourceType, PromptMod, PromptState, RequestedScope,
+};
+pub use debug::{
+    instrument_source, Breakpoint, DebugFidelity, DebugOptions, DebugSession, Scope, SourceBreakpoint,
+    StackFrame, StopReason, StoppedEvent, Variable, DEBUG_THREAD_ID,
+};
 pub use error::{Result, ValidationIssue, XriptError};
 pub use fragment::{FragmentInstance, FragmentResult, ModInstance};
 pub use manifest::{
-    Binding, Capability, FragmentBinding, FragmentDeclaration, FragmentEvent, FunctionBinding,
-    HookDef, Limits, Manifest, ModManifest, NamespaceBinding, Parameter, Slot,
+    is_role_identifier, resolve_extends, Binding, Capability, Contributions, EntryBlock, ExportDecl,
+    Extends, FieldDefinition, FragmentBinding, FragmentDeclaration, FragmentEvent, FunctionBinding,
+    HookDef, Limits, Manifest, ModManifest, NamespaceBinding, Parameter, ProviderRole, Slot,
+    TypeDefinition,
 };
 pub use handle::XriptHandle;
 pub use sandbox::{
-    AsyncHostFn, ConsoleHandler, ExecutionResult, HostBindings, HostFn, RuntimeOptions,
-    XriptRuntime,
+    AsyncHostFn, AuditEvent, AuditSink, CancellationToken, ConsoleHandler, ExecutionResult,
+    HardLimits, HostBindings, HostFn, HostNamespaceMember, LogSeverity, NamespaceBuilder,
+    RoleResolution, RuntimeOptions, SlotContribution, XriptRuntime,
 };
 
 pub fn create_runtime(manifest_json: &str, options: RuntimeOptions) -> Result<XriptRuntime> {
@@ -35,12 +49,17 @@ pub fn create_runtime_from_file(
     options: RuntimeOptions,
 ) -> Result<XriptRuntime> {
     let content = std::fs::read_to_string(path)?;
-    create_runtime(&content, options)
+    let raw: serde_json::Value = serde_json::from_str(&content)?;
+    let base_dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let resolved = resolve_extends(&raw, base_dir)?;
+    create_runtime_from_value(resolved, options)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+    use std::sync::Arc;
 
     fn minimal_manifest() -> &'static str {
         r#"{ "xript": "0.1", "name": "test-app" }"#
@@ -54,6 +73,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         );
         assert!(rt.is_ok());
@@ -67,6 +91,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         );
         assert!(result.is_err());
@@ -84,6 +113,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         );
         assert!(result.is_err());
@@ -97,6 +131,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -114,6 +153,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -130,6 +174,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -149,6 +198,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -165,6 +219,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -181,6 +240,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -197,6 +261,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -213,6 +282,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -240,7 +314,13 @@ mod tests {
                     log: Box::new(move |msg| logs_clone.lock().unwrap().push(msg.to_string())),
                     warn: Box::new(|_| {}),
                     error: Box::new(|_| {}),
+                    on: None,
                 },
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -260,6 +340,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -276,6 +361,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         );
         assert!(result.is_err());
@@ -289,6 +379,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -330,6 +425,11 @@ mod tests {
                 host_bindings: bindings,
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -361,6 +461,11 @@ mod tests {
                 host_bindings: bindings,
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -399,6 +504,11 @@ mod tests {
                 host_bindings: bindings,
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -438,12 +548,73 @@ mod tests {
                 host_bindings: bindings,
                 capabilities: vec!["dangerous".into()],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
 
         let result = rt.execute("dangerousOp()").unwrap();
         assert_eq!(result.value, serde_json::json!("access granted"));
+    }
+
+    #[test]
+    fn execute_uncaught_throw_propagates_error_message() {
+        let rt = create_runtime(
+            minimal_manifest(),
+            RuntimeOptions {
+                host_bindings: HostBindings::new(),
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
+            },
+        )
+        .unwrap();
+
+        let result = rt.execute("throw new Error('actual message here')");
+        let err = result.expect_err("uncaught throw should produce an error");
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("actual message here"),
+            "expected the thrown message in the error, got: {rendered}"
+        );
+        assert!(
+            !rendered.contains("undefined"),
+            "the rescue snippet was returning 'undefined' instead of the real message: {rendered}"
+        );
+    }
+
+    #[test]
+    fn execute_thrown_string_propagates_value() {
+        let rt = create_runtime(
+            minimal_manifest(),
+            RuntimeOptions {
+                host_bindings: HostBindings::new(),
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
+            },
+        )
+        .unwrap();
+
+        let result = rt.execute("throw 'bare string thrown'");
+        let err = result.expect_err("bare-string throw should produce an error");
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("bare string thrown"),
+            "expected the thrown string in the error, got: {rendered}"
+        );
     }
 
     #[test]
@@ -464,6 +635,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -606,6 +782,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -644,6 +825,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -682,6 +868,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -730,6 +921,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -760,6 +956,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -826,6 +1027,11 @@ mod tests {
                 host_bindings: bindings,
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -874,6 +1080,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -919,6 +1130,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -962,6 +1178,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -978,6 +1199,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -993,6 +1219,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -1013,6 +1244,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -1038,6 +1274,11 @@ mod tests {
                 host_bindings: HostBindings::new(),
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -1092,6 +1333,11 @@ mod tests {
                 host_bindings: bindings,
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -1125,6 +1371,11 @@ mod tests {
                 host_bindings: bindings,
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -1176,6 +1427,11 @@ mod tests {
                 host_bindings: bindings,
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -1187,6 +1443,84 @@ mod tests {
             .execute("(async () => await asyncFetch('items'))()")
             .unwrap();
         assert_eq!(async_result.value, serde_json::json!("fetched items"));
+    }
+
+    #[test]
+    fn mixed_namespace_exposes_properties_alongside_functions() {
+        let manifest = r#"{
+            "xript": "0.1",
+            "name": "test",
+            "bindings": {
+                "run": {
+                    "description": "test run namespace",
+                    "members": {
+                        "id": { "description": "the run id" },
+                        "inputs": { "description": "frozen inputs" },
+                        "tag": {
+                            "description": "append a tag",
+                            "params": [{ "name": "name", "type": "string" }]
+                        }
+                    }
+                }
+            }
+        }"#;
+
+        use std::collections::HashMap;
+        use std::sync::Arc;
+
+        let mut bindings = HostBindings::new();
+        let mut props = serde_json::Map::new();
+        props.insert(
+            "id".to_string(),
+            serde_json::Value::String("run-abc".into()),
+        );
+        props.insert(
+            "inputs".to_string(),
+            serde_json::json!({ "force": true, "name": "loop" }),
+        );
+        let mut funcs: HashMap<String, HostFn> = HashMap::new();
+        funcs.insert(
+            "tag".to_string(),
+            Arc::new(|args: &[serde_json::Value]| {
+                let name = args
+                    .first()
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                Ok(serde_json::json!({ "tagged": name }))
+            }),
+        );
+        bindings.add_mixed_namespace("run", props, funcs);
+
+        let rt = create_runtime(
+            manifest,
+            RuntimeOptions {
+                host_bindings: bindings,
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
+            },
+        )
+        .unwrap();
+
+        let id_result = rt.execute("run.id").unwrap();
+        assert_eq!(id_result.value, serde_json::json!("run-abc"));
+
+        let inputs_result = rt.execute("run.inputs.force").unwrap();
+        assert_eq!(inputs_result.value, serde_json::json!(true));
+
+        let inputs_name = rt.execute("run.inputs.name").unwrap();
+        assert_eq!(inputs_name.value, serde_json::json!("loop"));
+
+        let tag_result = rt.execute("run.tag('hello')").unwrap();
+        assert_eq!(
+            tag_result.value,
+            serde_json::json!({ "tagged": "hello" })
+        );
     }
 
     #[test]
@@ -1213,6 +1547,11 @@ mod tests {
                 host_bindings: bindings,
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -1248,6 +1587,11 @@ mod tests {
                 host_bindings: bindings,
                 capabilities: vec![],
                 console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
             },
         )
         .unwrap();
@@ -1261,5 +1605,1053 @@ mod tests {
         "#).unwrap();
 
         assert_eq!(result.value, serde_json::json!("admin:Alice"));
+    }
+
+    fn opts() -> RuntimeOptions {
+        RuntimeOptions::default()
+    }
+
+    #[test]
+    fn cancellation_arms_before_execute() {
+        let token = CancellationToken::new();
+        let mut o = opts();
+        o.cancellation = Some(token.clone());
+        let rt = create_runtime(minimal_manifest(), o).unwrap();
+
+        token.cancel();
+        let result = rt.execute("1 + 1");
+        assert!(matches!(result, Err(XriptError::Cancelled)));
+    }
+
+    #[test]
+    fn cancellation_interrupts_long_loop() {
+        let token = CancellationToken::new();
+        let mut o = opts();
+        o.cancellation = Some(token.clone());
+        let rt = create_runtime(
+            r#"{ "xript": "0.1", "name": "t", "limits": { "timeout_ms": 60000 } }"#,
+            o,
+        )
+        .unwrap();
+
+        let token2 = token.clone();
+        let handle = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            token2.cancel();
+        });
+        let result = rt.execute("while(true) {}");
+        handle.join().unwrap();
+        assert!(matches!(result, Err(XriptError::Cancelled)));
+    }
+
+    #[test]
+    fn cancellation_is_sticky_and_idempotent() {
+        let token = CancellationToken::new();
+        token.cancel();
+        token.cancel();
+        assert!(token.is_cancelled());
+        let mut o = opts();
+        o.cancellation = Some(token.clone());
+        let rt = create_runtime(minimal_manifest(), o).unwrap();
+        assert!(matches!(rt.execute("2"), Err(XriptError::Cancelled)));
+        assert!(matches!(rt.execute("3"), Err(XriptError::Cancelled)));
+    }
+
+    #[test]
+    fn timeout_kind_distinct_from_cancellation() {
+        let rt = create_runtime(
+            r#"{ "xript": "0.1", "name": "t", "limits": { "timeout_ms": 50 } }"#,
+            opts(),
+        )
+        .unwrap();
+        let result = rt.execute("while(true) {}");
+        assert!(matches!(result, Err(XriptError::ExecutionLimit { .. })));
+    }
+
+    #[test]
+    fn audit_fires_for_allowed_invocations() {
+        use std::sync::mpsc;
+        let manifest = r#"{
+            "xript": "0.1", "name": "t",
+            "bindings": {
+                "gated": { "description": "x", "capability": "do-it" },
+                "plain": { "description": "y" }
+            },
+            "capabilities": { "do-it": { "description": "z" } }
+        }"#;
+
+        let mut bindings = HostBindings::new();
+        bindings.add_function("gated", |_| Ok(serde_json::json!("ok")));
+        bindings.add_function("plain", |_| Ok(serde_json::json!("ok")));
+
+        let (tx, rx) = mpsc::channel::<AuditEvent>();
+        let o = RuntimeOptions {
+            host_bindings: bindings,
+            capabilities: vec!["do-it".into()],
+            ..RuntimeOptions::default()
+        }
+        .with_audit_channel(tx);
+
+        let rt = create_runtime(manifest, o).unwrap();
+        rt.execute("gated(); plain()").unwrap();
+
+        let events: Vec<AuditEvent> = rx.try_iter().collect();
+        assert_eq!(events.len(), 2);
+        let gated = events.iter().find(|e| e.binding == "gated").unwrap();
+        assert_eq!(gated.capability.as_deref(), Some("do-it"));
+        let plain = events.iter().find(|e| e.binding == "plain").unwrap();
+        assert_eq!(plain.capability, None);
+        assert!(gated.at_ms > 0.0);
+    }
+
+    #[test]
+    fn audit_does_not_fire_for_denied_invocations() {
+        use std::sync::mpsc;
+        let manifest = r#"{
+            "xript": "0.1", "name": "t",
+            "bindings": { "gated": { "description": "x", "capability": "do-it" } },
+            "capabilities": { "do-it": { "description": "z" } }
+        }"#;
+        let mut bindings = HostBindings::new();
+        bindings.add_function("gated", |_| Ok(serde_json::json!("ok")));
+        let (tx, rx) = mpsc::channel::<AuditEvent>();
+        let o = RuntimeOptions {
+            host_bindings: bindings,
+            capabilities: vec![],
+            ..RuntimeOptions::default()
+        }
+        .with_audit_channel(tx);
+        let rt = create_runtime(manifest, o).unwrap();
+        let _ = rt.execute("try { gated() } catch(e) {}");
+        let events: Vec<AuditEvent> = rx.try_iter().collect();
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn console_severity_routes_all_six_methods() {
+        use std::sync::{Arc, Mutex};
+        let captured: Arc<Mutex<Vec<(LogSeverity, String)>>> = Arc::new(Mutex::new(Vec::new()));
+        let cap2 = captured.clone();
+        let mut o = opts();
+        o.console = ConsoleHandler {
+            on: Some(Box::new(move |sev, msg| {
+                cap2.lock().unwrap().push((sev, msg.to_string()));
+            })),
+            ..ConsoleHandler::default()
+        };
+        let rt = create_runtime(minimal_manifest(), o).unwrap();
+        rt.execute(
+            "console.trace('t'); console.debug('d'); console.log('l'); console.info('i'); console.warn('w'); console.error('e');",
+        )
+        .unwrap();
+        let logs = captured.lock().unwrap();
+        assert_eq!(logs.len(), 6);
+        assert_eq!(logs[0], (LogSeverity::Trace, "t".to_string()));
+        assert_eq!(logs[1], (LogSeverity::Debug, "d".to_string()));
+        assert_eq!(logs[2], (LogSeverity::Info, "l".to_string()));
+        assert_eq!(logs[3], (LogSeverity::Info, "i".to_string()));
+        assert_eq!(logs[4], (LogSeverity::Warn, "w".to_string()));
+        assert_eq!(logs[5], (LogSeverity::Error, "e".to_string()));
+    }
+
+    #[test]
+    fn console_legacy_boxes_still_work() {
+        use std::sync::{Arc, Mutex};
+        let warns: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let w2 = warns.clone();
+        let mut o = opts();
+        o.console = ConsoleHandler {
+            warn: Box::new(move |m| w2.lock().unwrap().push(m.to_string())),
+            ..ConsoleHandler::default()
+        };
+        let rt = create_runtime(minimal_manifest(), o).unwrap();
+        rt.execute("console.warn('careful'); console.debug('quiet')").unwrap();
+        assert_eq!(*warns.lock().unwrap(), vec!["careful".to_string()]);
+    }
+
+    #[test]
+    fn hard_limit_clamps_timeout() {
+        let mut o = opts();
+        o.hard_limits = Some(HardLimits {
+            timeout_ms: Some(50),
+            ..HardLimits::default()
+        });
+        let rt = create_runtime(
+            r#"{ "xript": "0.1", "name": "t", "limits": { "timeout_ms": 60000 } }"#,
+            o,
+        )
+        .unwrap();
+        let result = rt.execute("while(true) {}");
+        assert!(matches!(result, Err(XriptError::ExecutionLimit { .. })));
+    }
+
+    #[test]
+    fn binding_ergonomics_builder_registers_namespace() {
+        let manifest = r#"{
+            "xript": "0.1", "name": "t",
+            "bindings": {
+                "app": {
+                    "description": "ns",
+                    "members": {
+                        "click": { "description": "async click" },
+                        "id": { "description": "sync id" },
+                        "version": { "description": "prop" }
+                    }
+                }
+            }
+        }"#;
+        let mut bindings = HostBindings::new();
+        bindings
+            .namespace("app")
+            .bind("click", |_| async { Ok(serde_json::json!("clicked")) })
+            .bind_sync("id", |_| Ok(serde_json::json!("the-id")))
+            .property("version", serde_json::json!("1.0"))
+            .finish();
+
+        let o = RuntimeOptions {
+            host_bindings: bindings,
+            ..RuntimeOptions::default()
+        };
+        let rt = create_runtime(manifest, o).unwrap();
+        assert_eq!(rt.execute("app.version").unwrap().value, serde_json::json!("1.0"));
+        assert_eq!(rt.execute("app.id()").unwrap().value, serde_json::json!("the-id"));
+        assert_eq!(
+            rt.execute("(async () => await app.click())()").unwrap().value,
+            serde_json::json!("clicked")
+        );
+    }
+
+    #[test]
+    fn nested_namespace_two_levels() {
+        let manifest = r#"{
+            "xript": "0.1", "name": "t",
+            "bindings": {
+                "app": {
+                    "description": "ns",
+                    "members": {
+                        "widget": {
+                            "description": "sub-ns",
+                            "members": {
+                                "list": { "description": "lists widgets" }
+                            }
+                        }
+                    }
+                }
+            }
+        }"#;
+
+        let mut list_members: HashMap<String, HostNamespaceMember> = HashMap::new();
+        list_members.insert(
+            "list".to_string(),
+            HostNamespaceMember::Function(Arc::new(|_| Ok(serde_json::json!(["a", "b"])))),
+        );
+        let mut app_members: HashMap<String, HostNamespaceMember> = HashMap::new();
+        app_members.insert(
+            "widget".to_string(),
+            HostNamespaceMember::Namespace(list_members),
+        );
+
+        let mut bindings = HostBindings::new();
+        bindings.add_nested_namespace("app", app_members);
+
+        let o = RuntimeOptions {
+            host_bindings: bindings,
+            ..RuntimeOptions::default()
+        };
+        let rt = create_runtime(manifest, o).unwrap();
+        assert_eq!(
+            rt.execute("app.widget.list()").unwrap().value,
+            serde_json::json!(["a", "b"])
+        );
+        assert_eq!(
+            rt.execute("Object.isFrozen(app) && Object.isFrozen(app.widget)").unwrap().value,
+            serde_json::json!(true)
+        );
+    }
+
+    #[test]
+    fn nested_namespace_three_levels() {
+        let manifest = r#"{
+            "xript": "0.1", "name": "t",
+            "bindings": {
+                "a": { "description": "ns", "members": {
+                    "b": { "description": "ns", "members": {
+                        "c": { "description": "ns", "members": {
+                            "deep": { "description": "leaf" }
+                        }}
+                    }}
+                }}
+            }
+        }"#;
+        let mut deep: HashMap<String, HostNamespaceMember> = HashMap::new();
+        deep.insert("deep".into(), HostNamespaceMember::Function(Arc::new(|_| Ok(serde_json::json!("found")))));
+        let mut c: HashMap<String, HostNamespaceMember> = HashMap::new();
+        c.insert("c".into(), HostNamespaceMember::Namespace(deep));
+        let mut b: HashMap<String, HostNamespaceMember> = HashMap::new();
+        b.insert("b".into(), HostNamespaceMember::Namespace(c));
+        let mut bindings = HostBindings::new();
+        bindings.add_nested_namespace("a", b);
+        let o = RuntimeOptions { host_bindings: bindings, ..RuntimeOptions::default() };
+        let rt = create_runtime(manifest, o).unwrap();
+        assert_eq!(rt.execute("a.b.c.deep()").unwrap().value, serde_json::json!("found"));
+    }
+
+    #[test]
+    fn nested_namespace_leaf_capability_gating() {
+        let manifest = r#"{
+            "xript": "0.1", "name": "t",
+            "bindings": {
+                "app": { "description": "ns", "members": {
+                    "widget": { "description": "ns", "members": {
+                        "remove": { "description": "leaf", "capability": "destructive" }
+                    }}
+                }}
+            },
+            "capabilities": { "destructive": { "description": "z" } }
+        }"#;
+        let mut inner: HashMap<String, HostNamespaceMember> = HashMap::new();
+        inner.insert("remove".into(), HostNamespaceMember::Function(Arc::new(|_| Ok(serde_json::json!("removed")))));
+        let mut widget: HashMap<String, HostNamespaceMember> = HashMap::new();
+        widget.insert("widget".into(), HostNamespaceMember::Namespace(inner));
+        let mut bindings = HostBindings::new();
+        bindings.add_nested_namespace("app", widget);
+        let o = RuntimeOptions { host_bindings: bindings, capabilities: vec![], ..RuntimeOptions::default() };
+        let rt = create_runtime(manifest, o).unwrap();
+        let msg = rt.execute("try { app.widget.remove(); 'no' } catch(e) { e.message }").unwrap();
+        assert!(msg.value.as_str().unwrap().contains("capability"));
+    }
+
+    #[test]
+    fn host_invoke_export_round_trip() {
+        let app = r#"{ "xript": "0.3", "name": "app", "slots": [{ "id": "s", "accepts": ["text/html"], "multiple": true }] }"#;
+        let mod_json = r#"{
+            "xript": "0.3", "name": "m", "version": "1.0.0",
+            "entry": { "script": "main.js", "format": "script", "exports": {
+                "shout": { "description": "uppercases", "params": [{ "name": "s", "type": "string" }], "returns": "string" }
+            }},
+            "fragments": [{ "id": "f", "slot": "s", "format": "text/html", "source": "<p>x</p>", "inline": true }]
+        }"#;
+        let rt = create_runtime(app, opts()).unwrap();
+        rt.load_mod(
+            mod_json,
+            std::collections::HashMap::new(),
+            &std::collections::HashSet::new(),
+            Some("xript.exports.register('shout', function(s) { return s.toUpperCase(); })"),
+        )
+        .unwrap();
+
+        let result = rt.invoke_export("shout", &[serde_json::json!("hi")]).unwrap();
+        assert_eq!(result, serde_json::json!("HI"));
+    }
+
+    #[test]
+    fn host_invoke_export_unregistered_errors() {
+        let rt = create_runtime(minimal_manifest(), opts()).unwrap();
+        let result = rt.invoke_export("nope", &[]);
+        assert!(matches!(result, Err(XriptError::Invoke { .. })));
+        if let Err(XriptError::Invoke { message, .. }) = result {
+            assert!(message.contains("not found"));
+        }
+    }
+
+    #[test]
+    fn host_invoke_export_throwing_surfaces_invoke_error() {
+        let app = r#"{ "xript": "0.3", "name": "app", "slots": [{ "id": "s", "accepts": ["text/html"], "multiple": true }] }"#;
+        let mod_json = r#"{
+            "xript": "0.3", "name": "m", "version": "1.0.0",
+            "entry": { "script": "main.js", "exports": { "boom": { "description": "throws" } } },
+            "fragments": [{ "id": "f", "slot": "s", "format": "text/html", "source": "<p>x</p>", "inline": true }]
+        }"#;
+        let rt = create_runtime(app, opts()).unwrap();
+        rt.load_mod(
+            mod_json,
+            std::collections::HashMap::new(),
+            &std::collections::HashSet::new(),
+            Some("xript.exports.register('boom', function() { throw new Error('kaboom'); })"),
+        )
+        .unwrap();
+        let result = rt.invoke_export("boom", &[]);
+        assert!(matches!(result, Err(XriptError::Invoke { .. })));
+        if let Err(XriptError::Invoke { message, .. }) = result {
+            assert!(message.contains("kaboom"));
+        }
+    }
+
+    #[test]
+    fn host_invoke_export_capability_denied() {
+        let app = r#"{ "xript": "0.3", "name": "app", "slots": [{ "id": "s", "accepts": ["text/html"], "multiple": true }] }"#;
+        let mod_json = r#"{
+            "xript": "0.3", "name": "m", "version": "1.0.0",
+            "entry": { "script": "main.js", "exports": { "secret": { "description": "gated", "capability": "audio-read" } } },
+            "fragments": [{ "id": "f", "slot": "s", "format": "text/html", "source": "<p>x</p>", "inline": true }]
+        }"#;
+        let rt = create_runtime(app, opts()).unwrap();
+        rt.load_mod(
+            mod_json,
+            std::collections::HashMap::new(),
+            &std::collections::HashSet::new(),
+            Some("xript.exports.register('secret', function() { return 'leaked'; })"),
+        )
+        .unwrap();
+        let result = rt.invoke_export("secret", &[]);
+        assert!(matches!(result, Err(XriptError::CapabilityDenied { .. })));
+    }
+
+    #[test]
+    fn slots_resolver_orders_by_priority_then_id() {
+        let app = r#"{ "xript": "0.3", "name": "app", "slots": [{ "id": "bar", "accepts": ["text/html"], "multiple": true }] }"#;
+        let rt = create_runtime(app, opts()).unwrap();
+
+        let mk = |name: &str, fid: &str, prio: i32| {
+            format!(
+                r#"{{ "xript": "0.3", "name": "{name}", "version": "1.0.0", "fragments": [{{ "id": "{fid}", "slot": "bar", "format": "text/html", "source": "<p>x</p>", "inline": true, "priority": {prio} }}] }}"#
+            )
+        };
+        rt.load_mod(&mk("m1", "alpha", 10), std::collections::HashMap::new(), &std::collections::HashSet::new(), None).unwrap();
+        rt.load_mod(&mk("m2", "zeta", 10), std::collections::HashMap::new(), &std::collections::HashSet::new(), None).unwrap();
+        rt.load_mod(&mk("m3", "omega", 50), std::collections::HashMap::new(), &std::collections::HashSet::new(), None).unwrap();
+
+        let contributions = rt.resolve_slot("bar");
+        assert_eq!(contributions.len(), 3);
+        assert_eq!(contributions[0].fragment_id, "omega");
+        assert_eq!(contributions[1].fragment_id, "alpha");
+        assert_eq!(contributions[2].fragment_id, "zeta");
+    }
+
+    #[test]
+    fn slots_resolver_single_cardinality_returns_winner() {
+        let app = r#"{ "xript": "0.3", "name": "app", "slots": [{ "id": "solo", "accepts": ["text/html"] }] }"#;
+        let rt = create_runtime(app, opts()).unwrap();
+        let mk = |name: &str, fid: &str, prio: i32| {
+            format!(
+                r#"{{ "xript": "0.3", "name": "{name}", "version": "1.0.0", "fragments": [{{ "id": "{fid}", "slot": "solo", "format": "text/html", "source": "<p>x</p>", "inline": true, "priority": {prio} }}] }}"#
+            )
+        };
+        rt.load_mod(&mk("m1", "low", 1), std::collections::HashMap::new(), &std::collections::HashSet::new(), None).unwrap();
+        rt.load_mod(&mk("m2", "high", 99), std::collections::HashMap::new(), &std::collections::HashSet::new(), None).unwrap();
+        let contributions = rt.resolve_slot("solo");
+        assert_eq!(contributions.len(), 1);
+        assert_eq!(contributions[0].fragment_id, "high");
+        assert_eq!(rt.resolve_slot_single("solo").unwrap().fragment_id, "high");
+    }
+
+    #[test]
+    fn slots_resolver_undeclared_returns_empty() {
+        let app = r#"{ "xript": "0.3", "name": "app", "slots": [{ "id": "real", "accepts": ["text/html"] }] }"#;
+        let rt = create_runtime(app, opts()).unwrap();
+        assert!(rt.resolve_slot("ghost").is_empty());
+        assert!(rt.resolve_slot_single("ghost").is_none());
+    }
+
+    #[test]
+    fn manifest_extends_merges_bindings_and_appends_slots() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("xript-extends-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let base_path = dir.join("base.json");
+        let mut f = std::fs::File::create(&base_path).unwrap();
+        write!(
+            f,
+            r#"{{ "xript": "0.3", "name": "base", "bindings": {{ "log": {{ "description": "log" }} }}, "slots": [{{ "id": "main", "accepts": ["text/html"] }}] }}"#
+        )
+        .unwrap();
+
+        let child = serde_json::json!({
+            "xript": "0.3",
+            "name": "child",
+            "extends": "base.json",
+            "bindings": { "alert": { "description": "alert" } },
+            "slots": [{ "id": "side", "accepts": ["text/html"] }]
+        });
+        let resolved = resolve_extends(&child, &dir).unwrap();
+        let bindings = resolved.get("bindings").unwrap().as_object().unwrap();
+        assert!(bindings.contains_key("log"));
+        assert!(bindings.contains_key("alert"));
+        assert_eq!(resolved.get("name").unwrap(), "child");
+        let slots = resolved.get("slots").unwrap().as_array().unwrap();
+        assert_eq!(slots.len(), 2);
+        assert!(resolved.get("extends").is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn manifest_extends_conflicting_ids_error() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("xript-extends-conflict-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let base_path = dir.join("base.json");
+        let mut f = std::fs::File::create(&base_path).unwrap();
+        write!(
+            f,
+            r#"{{ "xript": "0.3", "name": "base", "bindings": {{ "dup": {{ "description": "base" }} }} }}"#
+        )
+        .unwrap();
+        let child = serde_json::json!({
+            "xript": "0.3", "name": "child", "extends": "base.json",
+            "bindings": { "dup": { "description": "child" } }
+        });
+        let result = resolve_extends(&child, &dir);
+        assert!(matches!(result, Err(XriptError::ManifestValidation { .. })));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn manifest_extends_cycle_detection() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("xript-extends-cycle-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = dir.join("a.json");
+        let b = dir.join("b.json");
+        write!(std::fs::File::create(&a).unwrap(), r#"{{ "xript": "0.3", "name": "a", "extends": "b.json" }}"#).unwrap();
+        write!(std::fs::File::create(&b).unwrap(), r#"{{ "xript": "0.3", "name": "b", "extends": "a.json" }}"#).unwrap();
+        let child = serde_json::json!({ "xript": "0.3", "name": "c", "extends": "a.json" });
+        let result = resolve_extends(&child, &dir);
+        assert!(matches!(result, Err(XriptError::ManifestValidation { .. })));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn mod_manifest_family_field_round_trips() {
+        let json = r#"{ "xript": "0.3", "name": "acme-tools", "family": "acme", "version": "1.0.0" }"#;
+        let m: ModManifest = serde_json::from_str(json).unwrap();
+        assert_eq!(m.family.as_deref(), Some("acme"));
+    }
+
+    #[test]
+    fn mod_manifest_family_optional() {
+        let json = r#"{ "xript": "0.3", "name": "loner", "version": "1.0.0" }"#;
+        let m: ModManifest = serde_json::from_str(json).unwrap();
+        assert_eq!(m.family, None);
+    }
+
+    #[test]
+    fn entry_block_parses_bare_string() {
+        let json = r#"{ "xript": "0.3", "name": "m", "version": "1.0.0", "entry": "main.js" }"#;
+        let m: ModManifest = serde_json::from_str(json).unwrap();
+        let entry = m.entry_block().unwrap();
+        assert_eq!(entry.script.as_deref(), Some("main.js"));
+        assert_eq!(entry.format, "script");
+        assert!(entry.exports.is_empty());
+    }
+
+    #[test]
+    fn entry_block_parses_object_with_exports() {
+        let json = r#"{ "xript": "0.3", "name": "m", "version": "1.0.0",
+            "entry": { "script": "main.js", "format": "module", "exports": {
+                "transcribe": { "description": "t", "capability": "audio-read", "streaming": true }
+            }} }"#;
+        let m: ModManifest = serde_json::from_str(json).unwrap();
+        let entry = m.entry_block().unwrap();
+        assert_eq!(entry.format, "module");
+        let exp = entry.exports.get("transcribe").unwrap();
+        assert_eq!(exp.capability.as_deref(), Some("audio-read"));
+        assert_eq!(exp.streaming, Some(true));
+    }
+
+    fn role_app_manifest() -> &'static str {
+        r#"{ "xript": "0.3", "name": "host-app" }"#
+    }
+
+    fn role_runtime(role_preferences: HashMap<String, String>) -> XriptRuntime {
+        create_runtime(
+            role_app_manifest(),
+            RuntimeOptions {
+                host_bindings: HostBindings::new(),
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences,
+                debug: None,
+            },
+        )
+        .unwrap()
+    }
+
+    fn clip_mod(name: &str, query_fn: &str) -> String {
+        format!(
+            r#"{{
+                "xript": "0.3", "name": "{name}", "version": "1.0.0",
+                "contributions": {{ "provides": [
+                    {{ "role": "clipboard-history", "fns": {{
+                        "query": "{query_fn}", "restore": "{name}_restore" }} }}
+                ] }}
+            }}"#
+        )
+    }
+
+    fn load_role_mod(rt: &XriptRuntime, json: &str) {
+        rt.load_mod(
+            json,
+            std::collections::HashMap::new(),
+            &std::collections::HashSet::new(),
+            None,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn parses_contributions_provides_object_fns() {
+        let m: ModManifest = serde_json::from_str(&clip_mod("clip-a", "a_query")).unwrap();
+        let provides = m.contributions.unwrap().provides;
+        assert_eq!(provides.len(), 1);
+        assert_eq!(provides[0].role, "clipboard-history");
+        assert_eq!(provides[0].fns.get("query").map(String::as_str), Some("a_query"));
+        assert_eq!(provides[0].fns.get("restore").map(String::as_str), Some("clip-a_restore"));
+    }
+
+    #[test]
+    fn resolve_role_first_installed_wins() {
+        let rt = role_runtime(HashMap::new());
+        load_role_mod(&rt, &clip_mod("clip-a", "a_query"));
+        load_role_mod(&rt, &clip_mod("clip-b", "b_query"));
+        let winner = rt.resolve_role("clipboard-history").unwrap();
+        assert_eq!(winner.addon, "clip-a");
+        assert_eq!(winner.role, "clipboard-history");
+        assert_eq!(winner.fns.get("query").map(String::as_str), Some("a_query"));
+    }
+
+    #[test]
+    fn resolve_role_preference_overrides_winner() {
+        let mut prefs = HashMap::new();
+        prefs.insert("clipboard-history".to_string(), "clip-b".to_string());
+        let rt = role_runtime(prefs);
+        load_role_mod(&rt, &clip_mod("clip-a", "a_query"));
+        load_role_mod(&rt, &clip_mod("clip-b", "b_query"));
+        let winner = rt.resolve_role("clipboard-history").unwrap();
+        assert_eq!(winner.addon, "clip-b");
+    }
+
+    #[test]
+    fn resolve_role_preference_for_nonprovider_falls_through() {
+        let mut prefs = HashMap::new();
+        prefs.insert("clipboard-history".to_string(), "ghost-addon".to_string());
+        let rt = role_runtime(prefs);
+        load_role_mod(&rt, &clip_mod("clip-a", "a_query"));
+        let winner = rt.resolve_role("clipboard-history").unwrap();
+        assert_eq!(winner.addon, "clip-a");
+    }
+
+    #[test]
+    fn resolve_role_all_returns_load_order() {
+        let rt = role_runtime(HashMap::new());
+        load_role_mod(&rt, &clip_mod("clip-a", "a_query"));
+        load_role_mod(&rt, &clip_mod("clip-b", "b_query"));
+        load_role_mod(&rt, &clip_mod("clip-c", "c_query"));
+        let all = rt.resolve_role_all("clipboard-history");
+        let names: Vec<&str> = all.iter().map(|r| r.addon.as_str()).collect();
+        assert_eq!(names, vec!["clip-a", "clip-b", "clip-c"]);
+    }
+
+    #[test]
+    fn resolve_role_unprovided_is_none() {
+        let rt = role_runtime(HashMap::new());
+        load_role_mod(&rt, &clip_mod("clip-a", "a_query"));
+        assert!(rt.resolve_role("no-such-role").is_none());
+        assert!(rt.resolve_role_all("no-such-role").is_empty());
+    }
+
+    #[test]
+    fn rejects_duplicate_role_within_mod() {
+        let json = r#"{
+            "xript": "0.3", "name": "dup-mod", "version": "1.0.0",
+            "contributions": { "provides": [
+                { "role": "clipboard-history", "fns": { "query": "q1" } },
+                { "role": "clipboard-history", "fns": { "query": "q2" } }
+            ] }
+        }"#;
+        let m: ModManifest = serde_json::from_str(json).unwrap();
+        let err = manifest::validate_mod_manifest(&m).unwrap_err();
+        assert!(matches!(err, XriptError::ManifestValidation { .. }));
+    }
+
+    #[test]
+    fn rejects_invalid_role_identifier() {
+        let json = r#"{
+            "xript": "0.3", "name": "bad-mod", "version": "1.0.0",
+            "contributions": { "provides": [
+                { "role": "Clipboard_History", "fns": { "query": "q1" } }
+            ] }
+        }"#;
+        let m: ModManifest = serde_json::from_str(json).unwrap();
+        assert!(manifest::validate_mod_manifest(&m).is_err());
+    }
+
+    #[test]
+    fn rejects_empty_fns_map() {
+        let json = r#"{
+            "xript": "0.3", "name": "empty-mod", "version": "1.0.0",
+            "contributions": { "provides": [
+                { "role": "clipboard-history", "fns": {} }
+            ] }
+        }"#;
+        let m: ModManifest = serde_json::from_str(json).unwrap();
+        assert!(manifest::validate_mod_manifest(&m).is_err());
+    }
+
+    #[test]
+    fn role_identifier_rules() {
+        assert!(is_role_identifier("clipboard-history"));
+        assert!(is_role_identifier("a"));
+        assert!(is_role_identifier("a1-2-3"));
+        assert!(!is_role_identifier("1abc"));
+        assert!(!is_role_identifier("-abc"));
+        assert!(!is_role_identifier("ABC"));
+        assert!(!is_role_identifier(""));
+        assert!(!is_role_identifier(&"a".repeat(65)));
+    }
+
+    #[test]
+    fn record_field_schema_parses_default_and_enum() {
+        let json = r#"{
+            "xript": "0.3", "name": "rec-app",
+            "types": {
+                "BrickFiles": {
+                    "fields": {
+                        "path": { "type": "string", "optional": true },
+                        "pathStyle": { "type": "string", "enum": ["posix", "hybrid", "native"], "default": "posix" },
+                        "viewingEnabled": { "type": "boolean", "default": true }
+                    }
+                }
+            }
+        }"#;
+        let m: Manifest = serde_json::from_str(json).unwrap();
+        let types = m.types.unwrap();
+        let bf = types.get("BrickFiles").unwrap();
+        let fields = bf.fields.as_ref().unwrap();
+        assert!(fields.get("path").unwrap().optional);
+        let style = fields.get("pathStyle").unwrap();
+        assert_eq!(style.default, Some(serde_json::json!("posix")));
+        assert_eq!(style.r#enum.as_ref().unwrap().len(), 3);
+        assert_eq!(
+            fields.get("viewingEnabled").unwrap().default,
+            Some(serde_json::json!(true))
+        );
+    }
+
+    #[test]
+    fn record_schema_runtime_tolerates_types_block() {
+        let json = r#"{
+            "xript": "0.3", "name": "rec-app",
+            "types": { "Tag": { "values": ["red", "green"] } }
+        }"#;
+        let rt = create_runtime(
+            json,
+            RuntimeOptions {
+                host_bindings: HostBindings::new(),
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
+            },
+        );
+        assert!(rt.is_ok());
+    }
+
+    #[test]
+    fn capability_prompt_round_trips() {
+        let json = r#"{
+            "capability": "clipboard-read",
+            "description": "Read clipboard history",
+            "risk": "medium",
+            "mod": { "name": "clip-a", "version": "1.0.0" },
+            "requestedScope": "session",
+            "state": "first-time"
+        }"#;
+        let prompt: CapabilityPrompt = serde_json::from_str(json).unwrap();
+        assert_eq!(prompt.requested_scope, RequestedScope::Session);
+        assert_eq!(prompt.state, PromptState::FirstTime);
+        prompt.validate().unwrap();
+        let back = serde_json::to_value(&prompt).unwrap();
+        assert_eq!(back.get("requestedScope").unwrap(), "session");
+        assert_eq!(back.get("state").unwrap(), "first-time");
+        assert_eq!(back.get("mod").unwrap().get("name").unwrap(), "clip-a");
+    }
+
+    #[test]
+    fn capability_prompt_rejects_bad_risk() {
+        let prompt = CapabilityPrompt {
+            capability: "x".into(),
+            description: "d".into(),
+            risk: "extreme".into(),
+            requesting_mod: PromptMod { name: "m".into(), version: "1".into(), title: None },
+            requested_scope: RequestedScope::OneRun,
+            state: PromptState::FirstTime,
+            reason: None,
+        };
+        assert!(prompt.validate().is_err());
+    }
+
+    #[test]
+    fn install_descriptor_round_trips_and_validates() {
+        let json = r#"{
+            "name": "clip-a", "version": "1.0.0",
+            "source": { "type": "registry", "location": "xript:clip-a" },
+            "integrity": "sha256-abc",
+            "capabilities": ["clipboard-read"]
+        }"#;
+        let desc: InstallDescriptor = serde_json::from_str(json).unwrap();
+        assert_eq!(desc.source.source_type, InstallSourceType::Registry);
+        desc.validate().unwrap();
+        let back = serde_json::to_value(&desc).unwrap();
+        assert_eq!(back.get("source").unwrap().get("type").unwrap(), "registry");
+        assert!(back.get("signature").is_none());
+    }
+
+    #[test]
+    fn install_descriptor_rejects_bad_name() {
+        let desc = InstallDescriptor {
+            name: "Bad Name".into(),
+            version: "1.0.0".into(),
+            title: None,
+            source: InstallSource { source_type: InstallSourceType::File, location: "x".into() },
+            integrity: None,
+            signature: None,
+            capabilities: vec![],
+            manifest: None,
+        };
+        assert!(desc.validate().is_err());
+    }
+
+    #[test]
+    fn discovery_result_round_trips_with_provides() {
+        let json = r#"{
+            "mods": [
+                { "name": "clip-a", "version": "1.0.0", "location": "/mods/clip-a",
+                  "enabled": true, "capabilities": ["clipboard-read"],
+                  "provides": ["clipboard-history"] }
+            ],
+            "scannedAt": 1717000000000
+        }"#;
+        let result: DiscoveryResult = serde_json::from_str(json).unwrap();
+        assert_eq!(result.mods.len(), 1);
+        assert_eq!(result.mods[0].provides, vec!["clipboard-history"]);
+        result.validate().unwrap();
+        let back = serde_json::to_value(&result).unwrap();
+        assert!(back.get("scannedAt").is_some());
+    }
+
+    #[test]
+    fn discovery_result_rejects_bad_role() {
+        let result = DiscoveryResult {
+            mods: vec![DiscoveredMod {
+                name: "clip-a".into(),
+                version: "1.0.0".into(),
+                title: None,
+                location: "/x".into(),
+                enabled: true,
+                capabilities: vec![],
+                provides: vec!["Bad Role".into()],
+            }],
+            scanned_at: 0.0,
+        };
+        assert!(result.validate().is_err());
+    }
+
+    fn debug_runtime(opts: DebugOptions) -> XriptRuntime {
+        create_runtime(
+            minimal_manifest(),
+            RuntimeOptions {
+                host_bindings: HostBindings::new(),
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: Some(opts),
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn debug_absent_by_default() {
+        let rt = create_runtime(
+            minimal_manifest(),
+            RuntimeOptions {
+                host_bindings: HostBindings::new(),
+                capabilities: vec![],
+                console: ConsoleHandler::default(),
+                cancellation: None,
+                audit: None,
+                hard_limits: None,
+                role_preferences: HashMap::new(),
+                debug: None,
+            },
+        )
+        .unwrap();
+        assert!(rt.debug_session().is_none());
+    }
+
+    #[test]
+    fn debug_session_present_when_enabled() {
+        let rt = debug_runtime(DebugOptions::default());
+        let session = rt.debug_session().unwrap();
+        assert_eq!(session.fidelity(), DebugFidelity::Instrumented);
+    }
+
+    #[test]
+    fn dap_structs_serialize_with_canonical_field_names() {
+        let stopped = StoppedEvent {
+            reason: StopReason::Breakpoint,
+            thread_id: DEBUG_THREAD_ID,
+            hit_breakpoint_ids: Some(vec![1]),
+            description: None,
+        };
+        let v = serde_json::to_value(&stopped).unwrap();
+        assert_eq!(v.get("reason").unwrap(), "breakpoint");
+        assert_eq!(v.get("threadId").unwrap(), 1);
+        assert_eq!(v.get("hitBreakpointIds").unwrap(), &serde_json::json!([1]));
+
+        let scope = Scope { name: "Local".into(), variables_reference: 7, expensive: false };
+        let sv = serde_json::to_value(&scope).unwrap();
+        assert_eq!(sv.get("variablesReference").unwrap(), 7);
+
+        let var = Variable {
+            name: "x".into(),
+            value: "1".into(),
+            r#type: Some("number".into()),
+            variables_reference: 0,
+        };
+        let vv = serde_json::to_value(&var).unwrap();
+        assert_eq!(vv.get("variablesReference").unwrap(), 0);
+        assert_eq!(vv.get("type").unwrap(), "number");
+    }
+
+    #[test]
+    fn set_breakpoints_replaces_and_verifies() {
+        let rt = debug_runtime(DebugOptions::default());
+        let session = rt.debug_session().unwrap();
+        let bps = session.set_breakpoints(
+            "main.js",
+            &[
+                SourceBreakpoint { line: 3, column: None, condition: None },
+                SourceBreakpoint { line: 0, column: None, condition: None },
+            ],
+        );
+        assert_eq!(bps.len(), 2);
+        assert!(bps[0].verified);
+        assert!(!bps[1].verified);
+        assert_eq!(bps[0].source, "main.js");
+
+        let replaced = session.set_breakpoints("main.js", &[SourceBreakpoint {
+            line: 5, column: None, condition: None,
+        }]);
+        assert_eq!(replaced.len(), 1);
+        assert_eq!(replaced[0].line, 5);
+    }
+
+    #[test]
+    fn instrument_source_injects_probes() {
+        let src = "let a = 1;\n// comment\nlet b = 2;\n}";
+        let out = instrument_source(src);
+        assert!(out.contains("__xript_dbg(1, 1); let a = 1;"));
+        assert!(out.contains("__xript_dbg(3, 1); let b = 2;"));
+        assert!(!out.contains("__xript_dbg(2"));
+        assert!(!out.contains("__xript_dbg(4"));
+    }
+
+    #[test]
+    fn debug_breakpoint_pause_and_resume_cycle() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let stop_count = Arc::new(AtomicUsize::new(0));
+        let stop_count_sink = stop_count.clone();
+
+        let rt = std::sync::Arc::new(debug_runtime(DebugOptions {
+            on_stopped: Some(Arc::new(move |event: StoppedEvent| {
+                assert_eq!(event.thread_id, DEBUG_THREAD_ID);
+                stop_count_sink.fetch_add(1, Ordering::SeqCst);
+            })),
+            ..Default::default()
+        }));
+
+        let session = rt.debug_session().unwrap().clone();
+        session.set_breakpoints("inline", &[SourceBreakpoint {
+            line: 2, column: None, condition: None,
+        }]);
+
+        let rt_exec = rt.clone();
+        let exec = std::thread::spawn(move || {
+            let code = instrument_source("var x = 1;\nvar y = x + 1;\ny;");
+            rt_exec.execute(&code)
+        });
+
+        let resume_session = session.clone();
+        let watchdog = std::thread::spawn(move || {
+            for _ in 0..200 {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                if !resume_session.stack_trace().is_empty() {
+                    resume_session.resume();
+                    return;
+                }
+            }
+            resume_session.resume();
+        });
+
+        let result = exec.join().unwrap();
+        watchdog.join().unwrap();
+        assert!(result.is_ok(), "execution failed: {:?}", result.err());
+        assert!(stop_count.load(Ordering::SeqCst) >= 1);
+    }
+
+    #[test]
+    fn debug_stack_trace_and_scopes_while_paused() {
+        let rt = std::sync::Arc::new(debug_runtime(DebugOptions::default()));
+        let session = rt.debug_session().unwrap().clone();
+        session.set_breakpoints("inline", &[SourceBreakpoint {
+            line: 1, column: None, condition: None,
+        }]);
+
+        let rt_exec = rt.clone();
+        let exec = std::thread::spawn(move || {
+            let code = instrument_source("var a = 41;\nvar b = a + 1;\nb;");
+            rt_exec.execute(&code)
+        });
+
+        let probe_session = session.clone();
+        let checker = std::thread::spawn(move || {
+            for _ in 0..200 {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                let frames = probe_session.stack_trace();
+                if !frames.is_empty() {
+                    assert_eq!(frames[0].source, "<entry>");
+                    let scopes = probe_session.scopes(frames[0].id);
+                    assert_eq!(scopes.len(), 2);
+                    assert_eq!(scopes[0].name, "Local");
+                    assert_eq!(scopes[1].name, "Global");
+                    assert!(probe_session.variables(0).is_empty());
+                    assert!(probe_session.variables(scopes[0].variables_reference).is_empty());
+                    probe_session.resume();
+                    return true;
+                }
+            }
+            probe_session.resume();
+            false
+        });
+
+        let result = exec.join().unwrap();
+        let paused = checker.join().unwrap();
+        assert!(result.is_ok());
+        assert!(paused, "never observed a paused frame");
+    }
+
+    #[test]
+    fn debug_evaluate_is_unsupported() {
+        let rt = debug_runtime(DebugOptions::default());
+        let session = rt.debug_session().unwrap();
+        assert!(session.evaluate("1 + 1", None).is_err());
+    }
+
+    #[test]
+    fn debug_no_breakpoint_runs_to_completion() {
+        let rt = debug_runtime(DebugOptions::default());
+        let code = instrument_source("var x = 2;\nvar y = x * 3;\ny;");
+        let result = rt.execute(&code).unwrap();
+        assert_eq!(result.value, serde_json::json!(6));
     }
 }
