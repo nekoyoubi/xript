@@ -53,10 +53,11 @@ Reads a manifest JSON file and generates markdown documentation.
 ## What it generates
 
 - Binding reference with function signatures and parameter tables
-- Namespace binding documentation with member listings
+- Namespace binding documentation with member listings, including nested namespaces
 - Capability reference with risk levels
 - Hook documentation with handler signatures and phase listings
-- Custom type documentation with field tables
+- Custom type documentation with field tables, including record-type fields
+- Provider-role documentation for mod contributions
 - Usage examples (when provided in the manifest)
 
 ## Documentation

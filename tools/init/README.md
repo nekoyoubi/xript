@@ -39,6 +39,15 @@ npx @xriptjs/init my-mod --yes
 
 Uses defaults: tier 2, TypeScript.
 
+### Mods
+
+```sh
+npx @xriptjs/init my-mod --mod                # mod project
+npx @xriptjs/init my-mod --mod --typescript   # ESM TypeScript mod
+```
+
+`--mod --typescript` scaffolds an ESM TypeScript mod: an ESM `tsconfig`, an `export`-based example entry, and ambient types wired in for real intellisense.
+
 ### Options
 
 ```
@@ -46,7 +55,8 @@ npx @xriptjs/init [directory] [options]
 
 Options:
   --yes, -y          Skip prompts, use defaults
-  --tier <2|3>       Adoption tier (2 = bindings, 3 = full scripting)
+  --mod              Generate a mod project instead of an app
+  --tier <2|3|4>     Adoption tier (2 = bindings, 3 = advanced scripting, 4 = full feature)
   --typescript       Generate TypeScript output (default)
   --javascript       Generate JavaScript output
   --help, -h         Show help

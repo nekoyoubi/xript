@@ -63,6 +63,19 @@ var result = runtime.Execute("greet(\"World\")");
 - Mod loading via `LoadMod()` with cross-validation against the host manifest
 - No `eval`, no `Function`, no access to the host environment
 
+### v0.5.0
+
+- cooperative cancellation via a `CancellationToken` on `RuntimeOptions`; it interrupts in-flight execution and surfaces a distinct cancellation error (not a timeout), with Jint interrupting mid-run via its token
+- opt-in capability audit channel: a hook reporting every allowed host-binding invocation as `{ binding, capability, at }`
+- console severity: `ConsoleHandler` gained a severity enum (log/info/warn/error/debug) plus a trace channel
+- sandbox hard caps: host ceilings on memory, CPU time, and stack depth
+- manifest `extends` with deep-merge so a manifest can inherit and override host bindings; mod manifests gained an optional `family` field for grouping
+- host-invoke exports: mods declare named exports the host calls by name and whose return value it honors
+- ES module mods via `entry.format: "module"`, which evaluates the entry as a real ES module through Jint's module API; top-level named exports auto-register as host-invokable, and external imports stay denied
+- provider-role resolution: mods declare `contributions.provides` and the host calls `ResolveRole(role)` (first-installed-wins, settings-overridable) to bind a logical role to a concrete export
+- slot runtime resolver: ordering by priority, single/multiple cardinality, and capability enforcement on contributions
+- DAP-shaped debug protocol: set/clear breakpoints by source position, pause/resume/step in/over/out, and inspect scopes, locals, and stack frames (Jint pauses synchronously on the engine thread)
+
 ## API
 
 ### `XriptRuntime.Create(manifestJson, options?) -> XriptRuntime`
@@ -101,7 +114,7 @@ Releases sandbox resources. `XriptRuntime` implements `IDisposable`, so `using` 
 | Runs in browser | No | No | Yes | No |
 | Sandbox mechanism | Jint (pure C#) | QuickJS (native) | QuickJS WASM | Node.js `vm` module |
 | Best for | .NET apps, Unity, game engines | Rust apps, native tools | Cross-platform, browser, edge | Node.js servers, CLI tools |
-| Async bindings | Not yet | Not yet | Via asyncify WASM | Native `async`/`await` |
+| Async bindings | Not yet | Native (rquickjs) | Via asyncify WASM | Native `async`/`await` |
 
 Use this package when your host application is .NET. Use `xript-runtime` for Rust hosts. Use `@xriptjs/runtime` for JavaScript environments that need universal portability. Use `@xriptjs/runtime-node` for Node.js-only applications.
 

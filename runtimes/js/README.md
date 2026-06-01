@@ -45,6 +45,19 @@ runtime.dispose();
 - Supports capability-gated bindings, namespace bindings, hooks, and resource limits
 - No `eval`, no `Function`, no access to the host environment
 
+### v0.5.0
+
+- cooperative cancellation via a `CancellationToken` on the runtime options; it interrupts in-flight execution at the next check point and surfaces a distinct cancellation error (not a timeout), with QuickJS interrupting mid-run
+- opt-in capability audit channel: a hook reporting every allowed host-binding invocation as `{ binding, capability, at }`
+- console severity: log/info/warn/error/debug plus a trace channel
+- sandbox hard caps: host ceilings on memory, CPU time, and stack depth
+- manifest `extends` with deep-merge so a manifest can inherit and override host bindings; mod manifests gained an optional `family` field for grouping
+- host-invoke exports: mods declare named exports the host calls by name and whose return value it honors
+- ES module mods via `entry.format: "module"`, which evaluates the entry as a real ES module (requires the async sandbox from `initXriptAsync`); top-level named exports auto-register as host-invokable, and external imports stay denied
+- provider-role resolution: mods declare `contributions.provides` and the host calls `resolveRole(role)` (first-installed-wins, settings-overridable) to bind a logical role to a concrete export
+- slot runtime resolver: ordering by priority, single/multiple cardinality, and capability enforcement on contributions
+- DAP-shaped debug protocol: set/clear breakpoints by source position, pause/resume/step in/over/out, and inspect scopes, locals, and stack frames (requires the async sandbox)
+
 ## API
 
 ### `initXript(): Promise<XriptFactory>`
@@ -85,7 +98,7 @@ Frees the WASM sandbox resources.
 | Sandbox mechanism | QuickJS WASM | Node.js `vm` module | QuickJS (native) |
 | Zero dependencies on Node | Yes | Requires Node.js | Rust crate |
 | Performance | Good (WASM overhead) | Native V8 speed | Native QuickJS speed |
-| Async bindings | Via asyncify WASM | Native `async`/`await` | Not yet |
+| Async bindings | Via asyncify WASM | Native `async`/`await` | Native (rquickjs) |
 
 Use this package when you need **universal portability** (browser, edge, serverless). Use `@xriptjs/runtime-node` when you're Node.js-only and want native V8 performance. Use `xript-runtime` when your host application is written in Rust.
 

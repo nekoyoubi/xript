@@ -34,6 +34,7 @@ Generate TypeScript definitions from a manifest.
 ```sh
 xript typegen manifest.json              # stdout
 xript typegen manifest.json -o types.d.ts  # file
+xript typegen mod.json --ambient         # ambient .d.ts for mod authoring
 ```
 
 ### `xript docgen <manifest.json>`
@@ -50,9 +51,10 @@ xript docgen manifest.json -o docs/ --link-format "[{name}]({url})"
 Scaffold a new xript app or mod project.
 
 ```sh
-xript init my-app          # interactive
-xript init my-app --yes    # defaults, no prompts
-xript init my-mod --mod    # mod project
+xript init my-app              # interactive
+xript init my-app --yes        # defaults, no prompts
+xript init my-mod --mod        # mod project
+xript init my-mod --mod --typescript  # ESM TypeScript mod
 ```
 
 ### `xript sanitize <file.html>`
