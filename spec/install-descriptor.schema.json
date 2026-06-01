@@ -1,0 +1,58 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://xript.dev/schema/install-descriptor/v0.5.json",
+	"title": "xript Install Descriptor",
+	"description": "Host-side wire shape identifying an installable mod: source, identity, integrity, and declared capabilities. integrity and signature are host-verified strings; xript defines the fields and never checks them.",
+	"type": "object",
+	"required": ["name", "version", "source"],
+	"properties": {
+		"name": {
+			"description": "Machine-readable mod identifier.",
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9-]*$"
+		},
+		"version": {
+			"description": "The mod version. Follows semver.",
+			"type": "string"
+		},
+		"title": {
+			"description": "Human-readable display name.",
+			"type": "string"
+		},
+		"source": {
+			"description": "Where the mod comes from.",
+			"type": "object",
+			"required": ["type", "location"],
+			"properties": {
+				"type": {
+					"description": "Source kind. Closed vocabulary.",
+					"type": "string",
+					"enum": ["file", "url", "registry"]
+				},
+				"location": {
+					"description": "The path, URL, or registry coordinate for the source.",
+					"type": "string"
+				}
+			},
+			"additionalProperties": false
+		},
+		"integrity": {
+			"description": "Sub-resource-integrity-style hash (e.g. sha256-...). Host-verified; xript never checks it.",
+			"type": "string"
+		},
+		"signature": {
+			"description": "Detached signature. Host-verified; xript never checks it.",
+			"type": "string"
+		},
+		"capabilities": {
+			"description": "Capabilities the mod declares it requires.",
+			"type": "array",
+			"items": { "type": "string" }
+		},
+		"manifest": {
+			"description": "Inline mod manifest, or omitted when fetched lazily.",
+			"type": "object"
+		}
+	},
+	"additionalProperties": false
+}

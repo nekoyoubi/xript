@@ -8,6 +8,9 @@ public record Manifest
     [JsonPropertyName("xript")]
     public string Xript { get; init; } = "";
 
+    [JsonPropertyName("extends")]
+    public JsonElement? Extends { get; init; }
+
     [JsonPropertyName("name")]
     public string Name { get; init; } = "";
 
@@ -77,11 +80,32 @@ public record ModManifest
     [JsonPropertyName("capabilities")]
     public List<string>? Capabilities { get; init; }
 
+    [JsonPropertyName("family")]
+    public string? Family { get; init; }
+
     [JsonPropertyName("entry")]
     public JsonElement? Entry { get; init; }
 
     [JsonPropertyName("fragments")]
     public List<FragmentDeclaration>? Fragments { get; init; }
+
+    [JsonPropertyName("contributions")]
+    public Contributions? Contributions { get; init; }
+}
+
+public record Contributions
+{
+    [JsonPropertyName("provides")]
+    public List<ProviderRole>? Provides { get; init; }
+}
+
+public record ProviderRole
+{
+    [JsonPropertyName("role")]
+    public string Role { get; init; } = "";
+
+    [JsonPropertyName("fns")]
+    public Dictionary<string, string> Fns { get; init; } = new();
 }
 
 public record FragmentDeclaration

@@ -1,8 +1,13 @@
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
+import { resolveExtends } from "./resolve.js";
+
+export { resolveExtends, ManifestResolutionError } from "./resolve.js";
 
 export interface TypegenOptions {
 	header?: string;
+	includeGrantShapes?: boolean;
+	ambient?: boolean;
 }
 
 interface HookDef {
@@ -22,6 +27,28 @@ interface SlotDef {
 	style?: string;
 }
 
+interface ExportDef {
+	description: string;
+	params?: Parameter[];
+	returns?: TypeRef;
+	capability?: string;
+}
+
+interface EntryBlock {
+	script: string;
+	format?: string;
+	exports?: Record<string, ExportDef>;
+}
+
+interface ProviderRole {
+	role: string;
+	fns: Record<string, string>;
+}
+
+interface Contributions {
+	provides?: ProviderRole[];
+}
+
 interface Manifest {
 	xript: string;
 	name: string;
@@ -33,6 +60,8 @@ interface Manifest {
 	capabilities?: Record<string, Capability>;
 	types?: Record<string, TypeDefinition>;
 	slots?: SlotDef[];
+	entry?: string | string[] | EntryBlock;
+	contributions?: Contributions;
 }
 
 type Binding = FunctionBinding | NamespaceBinding;
@@ -83,6 +112,12 @@ interface FieldDefinition {
 	type: TypeRef;
 	description?: string;
 	optional?: boolean;
+	default?: unknown;
+	enum?: unknown[];
+}
+
+interface TypegenManifestContext {
+	types?: Record<string, TypeDefinition>;
 }
 
 function isNamespace(binding: Binding): binding is NamespaceBinding {
@@ -270,7 +305,32 @@ function generateNestedNamespace(name: string, binding: NamespaceBinding): strin
 	return lines.join("\n");
 }
 
-function generateObjectType(name: string, def: TypeDefinition): string {
+function literalForValue(value: unknown): string {
+	if (typeof value === "string") return `"${value}"`;
+	if (typeof value === "number" || typeof value === "boolean") return String(value);
+	if (value === null) return "null";
+	return JSON.stringify(value);
+}
+
+function resolveFieldType(field: FieldDefinition, types?: Record<string, TypeDefinition>): string {
+	if (Array.isArray(field.enum) && field.enum.length > 0) {
+		return field.enum.map(literalForValue).join(" | ");
+	}
+	if (typeof field.type === "string" && types) {
+		const named = types[field.type];
+		if (named && Array.isArray(named.values) && named.values.length > 0) {
+			return named.values.map((v) => `"${v}"`).join(" | ");
+		}
+	}
+	return resolveTypeRef(field.type);
+}
+
+function isFieldOptional(field: FieldDefinition): boolean {
+	if (field.default !== undefined) return false;
+	return field.optional === true;
+}
+
+function generateObjectType(name: string, def: TypeDefinition, types?: Record<string, TypeDefinition>): string {
 	const lines: string[] = [];
 
 	lines.push(generateJSDoc(def.description));
@@ -282,8 +342,34 @@ function generateObjectType(name: string, def: TypeDefinition): string {
 			if (field.description) {
 				lines.push(indent(generateJSDoc(field.description), 1));
 			}
-			const optional = field.optional ? "?" : "";
-			lines.push(indent(`${fieldName}${optional}: ${resolveTypeRef(field.type)};`, 1));
+			const optional = isFieldOptional(field) ? "?" : "";
+			lines.push(indent(`${fieldName}${optional}: ${resolveFieldType(field, types)};`, 1));
+		}
+	}
+
+	lines.push("}");
+	return lines.join("\n");
+}
+
+function generateAccessorInterface(name: string, def: TypeDefinition, types?: Record<string, TypeDefinition>): string {
+	const lines: string[] = [];
+
+	lines.push(generateJSDoc(`Typed get/set accessors for the \`${name}\` record shape.`));
+	lines.push(`interface ${name}Accessor {`);
+
+	if (def.fields) {
+		const fieldEntries = Object.entries(def.fields);
+		for (let i = 0; i < fieldEntries.length; i++) {
+			const [fieldName, field] = fieldEntries[i];
+			const valueType = isFieldOptional(field)
+				? `${resolveFieldType(field, types)} | undefined`
+				: resolveFieldType(field, types);
+			if (field.description) {
+				lines.push(indent(generateJSDoc(field.description), 1));
+			}
+			lines.push(indent(`get ${fieldName}(): ${valueType};`, 1));
+			lines.push(indent(`set ${fieldName}(v: ${valueType});`, 1));
+			if (i < fieldEntries.length - 1) lines.push("");
 		}
 	}
 
@@ -398,7 +484,101 @@ function generateEnumType(name: string, def: TypeDefinition): string {
 	return lines.join("\n");
 }
 
+function stripLeadingDeclare(block: string): string {
+	return block
+		.split("\n")
+		.map((line) => line.replace(/^(\s*)declare /, "$1"))
+		.join("\n");
+}
+
+function generateXriptConst(): string {
+	return [
+		generateJSDoc("The in-sandbox xript global. Exposes the imperative export-registration surface."),
+		"const xript: {",
+		indent("exports: {", 1),
+		indent("/** Registers a named callable the host can invoke by name. */", 2),
+		indent("register(name: string, fn: (...args: any[]) => unknown): void;", 2),
+		indent("};", 1),
+		"};",
+	].join("\n");
+}
+
+export function generateAmbientTypes(manifest: unknown, options?: TypegenOptions): string {
+	const m = manifest as Manifest;
+	const sections: string[] = [];
+
+	if (options?.header) {
+		sections.push(options.header);
+	} else {
+		const headerLines: string[] = [];
+		headerLines.push("// Auto-generated by @xriptjs/typegen (ambient mode)");
+		headerLines.push(`// Source manifest: ${m.name}${m.version ? ` v${m.version}` : ""}`);
+		headerLines.push("// Declares the in-sandbox surface a mod author sees. Do not edit manually.");
+		sections.push(headerLines.join("\n"));
+	}
+
+	const globalBlocks: string[] = [];
+
+	if (m.types) {
+		for (const [typeName, typeDef] of Object.entries(m.types)) {
+			if (typeDef.values) {
+				globalBlocks.push(generateEnumType(typeName, typeDef));
+			} else {
+				globalBlocks.push(generateObjectType(typeName, typeDef, m.types));
+				if (typeDef.fields && Object.keys(typeDef.fields).length > 0) {
+					globalBlocks.push(generateAccessorInterface(typeName, typeDef, m.types));
+				}
+			}
+		}
+	}
+
+	if (m.bindings) {
+		for (const [bindingName, binding] of Object.entries(m.bindings)) {
+			if (isNamespace(binding)) {
+				globalBlocks.push(stripLeadingDeclare(generateNamespace(bindingName, binding)));
+			} else {
+				globalBlocks.push(stripLeadingDeclare(generateFunction(bindingName, binding)));
+			}
+		}
+	}
+
+	if (m.hooks && Object.keys(m.hooks).length > 0) {
+		globalBlocks.push(stripLeadingDeclare(generateHooksNamespace(m.hooks, m.slots)));
+	} else if (m.slots && m.slots.length > 0) {
+		globalBlocks.push(stripLeadingDeclare(generateHooksNamespace({}, m.slots)));
+	}
+
+	if (m.slots && m.slots.length > 0) {
+		globalBlocks.push(generateFragmentAPITypes());
+		globalBlocks.push(generateSlotTypes(m.slots));
+	}
+
+	globalBlocks.push(generateXriptConst());
+
+	const globalBody = globalBlocks.map((b) => indent(b, 1)).join("\n\n");
+	sections.push(`declare global {\n${globalBody}\n}`);
+
+	if (m.entry && typeof m.entry === "object" && !Array.isArray(m.entry) && m.entry.exports) {
+		const exportEntries = Object.entries(m.entry.exports);
+		if (exportEntries.length > 0) {
+			sections.push(generateExportsInterface(m.entry.exports));
+		}
+	}
+
+	if (options?.includeGrantShapes) {
+		sections.push(generateGrantShapeInterfaces());
+	}
+
+	sections.push("export {};");
+
+	return sections.join("\n\n") + "\n";
+}
+
 export function generateTypes(manifest: unknown, options?: TypegenOptions): string {
+	if (options?.ambient) {
+		return generateAmbientTypes(manifest, options);
+	}
+
 	const m = manifest as Manifest;
 	const sections: string[] = [];
 
@@ -417,7 +597,10 @@ export function generateTypes(manifest: unknown, options?: TypegenOptions): stri
 			if (typeDef.values) {
 				sections.push(generateEnumType(typeName, typeDef));
 			} else {
-				sections.push(generateObjectType(typeName, typeDef));
+				sections.push(generateObjectType(typeName, typeDef, m.types));
+				if (typeDef.fields && Object.keys(typeDef.fields).length > 0) {
+					sections.push(generateAccessorInterface(typeName, typeDef, m.types));
+				}
 			}
 		}
 	}
@@ -443,11 +626,117 @@ export function generateTypes(manifest: unknown, options?: TypegenOptions): stri
 		sections.push(generateSlotTypes(m.slots));
 	}
 
+	if (m.entry && typeof m.entry === "object" && !Array.isArray(m.entry) && m.entry.exports) {
+		const exportEntries = Object.entries(m.entry.exports);
+		if (exportEntries.length > 0) {
+			sections.push(generateExportsInterface(m.entry.exports));
+		}
+	}
+
+	if (m.contributions?.provides && m.contributions.provides.length > 0) {
+		sections.push(generateProvidedRolesInterface(m.contributions.provides));
+	}
+
+	if (options?.includeGrantShapes) {
+		sections.push(generateGrantShapeInterfaces());
+	}
+
 	return sections.join("\n\n") + "\n";
+}
+
+function generateProvidedRolesInterface(provides: ProviderRole[]): string {
+	const lines: string[] = [];
+
+	lines.push(generateJSDoc("Logical roles this mod provides, keyed by role. Each maps logical method names to concrete fn names; the host invokes them, not xript."));
+	lines.push("interface ProvidedRoles {");
+
+	for (let i = 0; i < provides.length; i++) {
+		const role = provides[i];
+		lines.push(indent(`"${role.role}": Record<string, string>;`, 1));
+	}
+
+	lines.push("}");
+	return lines.join("\n");
+}
+
+function generateGrantShapeInterfaces(): string {
+	return [
+		generateJSDoc("Host-side payload describing a capability grant request. The runtimes never see this; grant policy and UX are host-side."),
+		"interface CapabilityPrompt {",
+		indent("capability: string;", 1),
+		indent("description: string;", 1),
+		indent('risk: "low" | "medium" | "high";', 1),
+		indent("mod: { name: string; version: string; title?: string };", 1),
+		indent('requestedScope: "one-run" | "session" | "persistent";', 1),
+		indent('state: "first-time" | "previously-denied" | "requesting-elevation";', 1),
+		indent("reason?: string;", 1),
+		"}",
+		"",
+		generateJSDoc("Host-side descriptor identifying an installable mod. integrity/signature are host-verified; xript never checks them."),
+		"interface InstallDescriptor {",
+		indent("name: string;", 1),
+		indent("version: string;", 1),
+		indent("title?: string;", 1),
+		indent('source: { type: "file" | "url" | "registry"; location: string };', 1),
+		indent("integrity?: string;", 1),
+		indent("signature?: string;", 1),
+		indent("capabilities?: string[];", 1),
+		indent("manifest?: Record<string, unknown>;", 1),
+		"}",
+		"",
+		generateJSDoc("Host-side result of an addon-discovery pass. provides[] holds logical roles shared with mod-manifest contributions.provides."),
+		"interface DiscoveryResult {",
+		indent("mods: Array<{", 1),
+		indent("name: string;", 2),
+		indent("version: string;", 2),
+		indent("title?: string;", 2),
+		indent("location: string;", 2),
+		indent("enabled: boolean;", 2),
+		indent("capabilities?: string[];", 2),
+		indent("provides?: string[];", 2),
+		indent("}>;", 1),
+		indent("scannedAt?: number;", 1),
+		"}",
+	].join("\n");
+}
+
+function generateExportsInterface(exports: Record<string, ExportDef>): string {
+	const lines: string[] = [];
+
+	lines.push(generateJSDoc("Host-invokable exports declared by this mod. Invoke by name via the runtime."));
+	lines.push("interface Exports {");
+
+	const entries = Object.entries(exports);
+	for (let i = 0; i < entries.length; i++) {
+		const [name, def] = entries[i];
+		lines.push(
+			indent(
+				generateJSDoc(def.description, { params: def.params, capability: def.capability }),
+				1,
+			),
+		);
+		const params = (def.params || [])
+			.map((p) => {
+				const optional = isOptionalParam(p) ? "?" : "";
+				return `${p.name}${optional}: ${resolveTypeRef(p.type)}`;
+			})
+			.join(", ");
+		const returnType = def.returns ? resolveTypeRef(def.returns) : "void";
+		lines.push(indent(`${name}(${params}): ${returnType};`, 1));
+		if (i < entries.length - 1) lines.push("");
+	}
+
+	lines.push("}");
+	return lines.join("\n");
 }
 
 function generateSlotTypes(slots: SlotDef[]): string {
 	const lines: string[] = [];
+
+	lines.push(generateJSDoc("A slot id declared by the host application."));
+	const union = slots.map((s) => `"${s.id}"`).join(" | ");
+	lines.push(`type Slot = ${union};`);
+	lines.push("");
 
 	lines.push(generateJSDoc("Available UI slots for fragment contributions."));
 	lines.push("interface XriptSlots {");
@@ -487,7 +776,8 @@ export async function generateTypesFromFile(
 ): Promise<{ content: string; filePath: string }> {
 	const absolutePath = resolve(filePath);
 	const raw = await readFile(absolutePath, "utf-8");
-	const manifest = JSON.parse(raw) as unknown;
+	const parsed = JSON.parse(raw) as unknown;
+	const manifest = await resolveExtends(parsed, dirname(absolutePath));
 	const content = generateTypes(manifest, options);
 	return { content, filePath: absolutePath };
 }

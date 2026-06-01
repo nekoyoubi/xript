@@ -64,4 +64,73 @@ public class ConsoleTests
         Assert.Single(logs);
         Assert.Equal("hello world 42", logs[0]);
     }
+
+    [Fact]
+    public void Console_Info_Routes_To_Log_When_Info_Unset()
+    {
+        var logs = new List<string>();
+        using var rt = XriptRuntime.Create(TestManifests.Minimal, new RuntimeOptions
+        {
+            Console = new ConsoleHandler { Log = msg => logs.Add(msg) }
+        });
+
+        rt.Execute("console.info('an info line')");
+
+        Assert.Single(logs);
+        Assert.Equal("an info line", logs[0]);
+    }
+
+    [Fact]
+    public void Console_Debug_And_Trace_Default_NoOp()
+    {
+        var logs = new List<string>();
+        using var rt = XriptRuntime.Create(TestManifests.Minimal, new RuntimeOptions
+        {
+            Console = new ConsoleHandler { Log = msg => logs.Add(msg) }
+        });
+
+        rt.Execute("console.debug('d'); console.trace('t')");
+
+        Assert.Empty(logs);
+    }
+
+    [Fact]
+    public void Console_Debug_And_Trace_Route_When_Set()
+    {
+        var debugs = new List<string>();
+        var traces = new List<string>();
+        using var rt = XriptRuntime.Create(TestManifests.Minimal, new RuntimeOptions
+        {
+            Console = new ConsoleHandler
+            {
+                Debug = msg => debugs.Add(msg),
+                Trace = msg => traces.Add(msg)
+            }
+        });
+
+        rt.Execute("console.debug('d'); console.trace('t')");
+
+        Assert.Equal("d", Assert.Single(debugs));
+        Assert.Equal("t", Assert.Single(traces));
+    }
+
+    [Fact]
+    public void Console_OnLog_Receives_All_Severities()
+    {
+        var events = new List<(LogSeverity, string)>();
+        using var rt = XriptRuntime.Create(TestManifests.Minimal, new RuntimeOptions
+        {
+            Console = new ConsoleHandler { OnLog = (sev, msg) => events.Add((sev, msg)) }
+        });
+
+        rt.Execute("console.trace('a'); console.debug('b'); console.log('c'); console.info('d'); console.warn('e'); console.error('f')");
+
+        Assert.Equal(6, events.Count);
+        Assert.Equal((LogSeverity.Trace, "a"), events[0]);
+        Assert.Equal((LogSeverity.Debug, "b"), events[1]);
+        Assert.Equal((LogSeverity.Info, "c"), events[2]);
+        Assert.Equal((LogSeverity.Info, "d"), events[3]);
+        Assert.Equal((LogSeverity.Warn, "e"), events[4]);
+        Assert.Equal((LogSeverity.Error, "f"), events[5]);
+    }
 }

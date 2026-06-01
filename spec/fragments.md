@@ -304,4 +304,17 @@ When a mod is loaded against a host application, the runtime validates:
 1. Every fragment targets a slot that exists in the app manifest
 2. Every fragment's format is in the target slot's `accepts` list
 3. If the slot requires a capability, the mod must have that capability granted
-4. If the slot has `multiple: false`, only one fragment can be mounted (first-come, first-served)
+4. If the slot has `multiple: false`, only one fragment is resolved — the deterministic winner (highest priority, ties broken alphabetically by fragment id), not insertion order
+
+## Runtime Slot Resolution
+
+Cross-validation runs at load time. v0.5.0 adds a deterministic runtime resolver that answers "what is mounted in this slot, and in what order?"
+
+`resolveSlot(slotId)` returns the loaded fragment contributions targeting `slotId`, ordered by:
+
+1. `priority` descending
+2. fragment `id` ascending (tie-break)
+
+Cardinality: when the slot's `multiple` is `false` (the default), the resolver yields at most one contribution — the highest-priority winner (ties broken by id). This supersedes the looser "first-come-first-served" wording above: resolution is deterministic and reproducible, not insertion-ordered. A `resolveSlotSingle(slotId)` convenience returns the single winner (or none).
+
+Capability-ungranted contributions are excluded from results (they are already filtered at load). Resolving an undeclared slot id returns an empty result, not an error — querying an empty or unknown slot is legitimate.

@@ -1,6 +1,6 @@
 [package]
 name = "xript-wiz"
-version = "0.4.2"
+version = "0.5.0"
 edition = "2021"
 description = "Interactive TUI wizard for the xript toolchain — powered by xript fragments."
 license = "MIT"
@@ -14,10 +14,20 @@ name = "xript-wiz"
 path = "src/main.rs"
 
 [dependencies]
-xript-runtime = { version = "0.4.2", path = "../../runtimes/rust" }
-xript-ratatui = { version = "0.4.2", path = "../../renderers/ratatui" }
+xript-runtime = { version = "0.5.0", path = "../../runtimes/rust" }
+xript-ratatui = { version = "0.5.0", path = "../../renderers/ratatui" }
 ratatui = "0.29"
 ansi-to-tui = "7"
 crossterm = "0.28"
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
+
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "packed"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.release]
+strip = "debuginfo"

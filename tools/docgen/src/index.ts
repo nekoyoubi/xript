@@ -1,5 +1,8 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { resolve, join } from "node:path";
+import { resolve, join, dirname } from "node:path";
+import { resolveExtends } from "./resolve.js";
+
+export { resolveExtends, ManifestResolutionError } from "./resolve.js";
 
 interface HookDef {
 	description: string;
@@ -29,6 +32,7 @@ interface Manifest {
 	capabilities?: Record<string, Capability>;
 	types?: Record<string, TypeDefinition>;
 	slots?: SlotDef[];
+	contributions?: Contributions;
 }
 
 type Binding = FunctionBinding | NamespaceBinding;
@@ -80,6 +84,17 @@ interface FieldDefinition {
 	type: TypeRef;
 	description?: string;
 	optional?: boolean;
+	default?: unknown;
+	enum?: unknown[];
+}
+
+interface ProviderRole {
+	role: string;
+	fns: Record<string, string>;
+}
+
+interface Contributions {
+	provides?: ProviderRole[];
 }
 
 interface Example {
@@ -91,6 +106,7 @@ interface Example {
 export interface DocgenOptions {
 	linkFormat?: "default" | "no-extension";
 	frontmatter?: string;
+	grantShapes?: boolean;
 }
 
 export interface DocgenResult {
@@ -253,6 +269,24 @@ function generateIndexPage(manifest: Manifest, options?: DocgenOptions): DocPage
 		lines.push("");
 	}
 
+	const provides = manifest.contributions?.provides;
+	if (provides && provides.length > 0) {
+		lines.push("## Provides");
+		lines.push("");
+		lines.push("Logical roles this mod provides. The host resolves a role to this mod and calls the concrete fns; xript never invokes them.");
+		lines.push("");
+		for (const role of provides) {
+			lines.push(`### \`${role.role}\``);
+			lines.push("");
+			lines.push("| Logical fn | Concrete fn |");
+			lines.push("|------------|-------------|");
+			for (const [logical, concrete] of Object.entries(role.fns)) {
+				lines.push(`| \`${logical}\` | \`${concrete}\` |`);
+			}
+			lines.push("");
+		}
+	}
+
 	return { slug: "index", title: `${displayName} API Reference`, content: lines.join("\n") };
 }
 
@@ -335,6 +369,91 @@ function generateFunctionPage(name: string, binding: FunctionBinding): DocPage {
 	return { slug: `bindings/${name}`, title: `${name}()`, content: lines.join("\n") };
 }
 
+function appendNamespaceMember(
+	lines: string[],
+	qualifiedPrefix: string,
+	memberName: string,
+	fn: FunctionBinding,
+): void {
+	const params = fn.params || [];
+	const paramStr = params
+		.map((p) => {
+			const opt = isOptionalParam(p) ? "?" : "";
+			return `${p.name}${opt}: ${typeRefToCode(p.type)}`;
+		})
+		.join(", ");
+	let returnType = fn.returns ? typeRefToCode(fn.returns) : "void";
+	if (fn.async) returnType = `Promise<${returnType}>`;
+
+	lines.push(`### ${qualifiedPrefix}.${memberName}()`);
+	lines.push("");
+	if (fn.deprecated) {
+		lines.push(`> **Deprecated:** ${fn.deprecated}`);
+		lines.push("");
+	}
+	lines.push(fn.description);
+	lines.push("");
+	lines.push("```typescript");
+	lines.push(`function ${memberName}(${paramStr}): ${returnType}`);
+	lines.push("```");
+	lines.push("");
+
+	if (params.length > 0) {
+		lines.push("**Parameters:**");
+		lines.push("");
+		lines.push("| Name | Type | Required | Description |");
+		lines.push("|------|------|----------|-------------|");
+		for (const p of params) {
+			const req = isOptionalParam(p) ? "No" : "Yes";
+			const desc = p.description || "";
+			const defaultNote = p.default !== undefined ? ` (default: \`${JSON.stringify(p.default)}\`)` : "";
+			lines.push(`| \`${p.name}\` | ${formatTypeRef(p.type)} | ${req} | ${desc}${defaultNote} |`);
+		}
+		lines.push("");
+	}
+
+	if (fn.returns) {
+		lines.push(`**Returns:** ${formatTypeRef(fn.returns)}${fn.async ? " (async)" : ""}`);
+		lines.push("");
+	}
+
+	if (fn.capability) {
+		lines.push(`**Requires capability:** \`${fn.capability}\``);
+		lines.push("");
+	}
+
+	if (fn.examples && fn.examples.length > 0) {
+		for (const example of fn.examples) {
+			if (example.title) {
+				lines.push(`**Example: ${example.title}**`);
+				lines.push("");
+			}
+			if (example.description) {
+				lines.push(example.description);
+				lines.push("");
+			}
+			lines.push("```javascript");
+			lines.push(example.code);
+			lines.push("```");
+			lines.push("");
+		}
+	}
+}
+
+function appendNamespaceMembers(
+	lines: string[],
+	qualifiedPrefix: string,
+	members: Record<string, Binding>,
+): void {
+	for (const [memberName, memberBinding] of Object.entries(members)) {
+		if (isNamespace(memberBinding)) {
+			appendNamespaceMembers(lines, `${qualifiedPrefix}.${memberName}`, memberBinding.members);
+		} else {
+			appendNamespaceMember(lines, qualifiedPrefix, memberName, memberBinding as FunctionBinding);
+		}
+	}
+}
+
 function generateNamespacePage(name: string, binding: NamespaceBinding, manifest: Manifest): DocPage {
 	const lines: string[] = [];
 
@@ -346,73 +465,7 @@ function generateNamespacePage(name: string, binding: NamespaceBinding, manifest
 	lines.push("## Functions");
 	lines.push("");
 
-	for (const [memberName, memberBinding] of Object.entries(binding.members)) {
-		if (isNamespace(memberBinding)) continue;
-		const fn = memberBinding as FunctionBinding;
-		const params = fn.params || [];
-		const paramStr = params
-			.map((p) => {
-				const opt = isOptionalParam(p) ? "?" : "";
-				return `${p.name}${opt}: ${typeRefToCode(p.type)}`;
-			})
-			.join(", ");
-		let returnType = fn.returns ? typeRefToCode(fn.returns) : "void";
-		if (fn.async) returnType = `Promise<${returnType}>`;
-
-		lines.push(`### ${name}.${memberName}()`);
-		lines.push("");
-		if (fn.deprecated) {
-			lines.push(`> **Deprecated:** ${fn.deprecated}`);
-			lines.push("");
-		}
-		lines.push(fn.description);
-		lines.push("");
-		lines.push("```typescript");
-		lines.push(`function ${memberName}(${paramStr}): ${returnType}`);
-		lines.push("```");
-		lines.push("");
-
-		if (params.length > 0) {
-			lines.push("**Parameters:**");
-			lines.push("");
-			lines.push("| Name | Type | Required | Description |");
-			lines.push("|------|------|----------|-------------|");
-			for (const p of params) {
-				const req = isOptionalParam(p) ? "No" : "Yes";
-				const desc = p.description || "";
-				const defaultNote = p.default !== undefined ? ` (default: \`${JSON.stringify(p.default)}\`)` : "";
-				lines.push(`| \`${p.name}\` | ${formatTypeRef(p.type)} | ${req} | ${desc}${defaultNote} |`);
-			}
-			lines.push("");
-		}
-
-		if (fn.returns) {
-			lines.push(`**Returns:** ${formatTypeRef(fn.returns)}${fn.async ? " (async)" : ""}`);
-			lines.push("");
-		}
-
-		if (fn.capability) {
-			lines.push(`**Requires capability:** \`${fn.capability}\``);
-			lines.push("");
-		}
-
-		if (fn.examples && fn.examples.length > 0) {
-			for (const example of fn.examples) {
-				if (example.title) {
-					lines.push(`**Example: ${example.title}**`);
-					lines.push("");
-				}
-				if (example.description) {
-					lines.push(example.description);
-					lines.push("");
-				}
-				lines.push("```javascript");
-				lines.push(example.code);
-				lines.push("```");
-				lines.push("");
-			}
-		}
-	}
+	appendNamespaceMembers(lines, name, binding.members);
 
 	return { slug: `bindings/${name}`, title: name, content: lines.join("\n") };
 }
@@ -443,12 +496,16 @@ function generateTypePage(name: string, def: TypeDefinition): DocPage {
 	} else if (def.fields) {
 		lines.push("## Fields");
 		lines.push("");
-		lines.push("| Field | Type | Required | Description |");
-		lines.push("|-------|------|----------|-------------|");
+		lines.push("| Field | Type | Required | Default | Allowed Values | Description |");
+		lines.push("|-------|------|----------|---------|----------------|-------------|");
 		for (const [fieldName, field] of Object.entries(def.fields)) {
-			const req = field.optional ? "No" : "Yes";
+			const req = field.default !== undefined ? "Yes" : field.optional ? "No" : "Yes";
 			const desc = field.description || "";
-			lines.push(`| \`${fieldName}\` | ${formatTypeRef(field.type)} | ${req} | ${desc} |`);
+			const def_ = field.default !== undefined ? `\`${JSON.stringify(field.default)}\`` : "—";
+			const allowed = Array.isArray(field.enum) && field.enum.length > 0
+				? field.enum.map((v) => `\`${JSON.stringify(v)}\``).join(", ")
+				: "—";
+			lines.push(`| \`${fieldName}\` | ${formatTypeRef(field.type)} | ${req} | ${def_} | ${allowed} | ${desc} |`);
 		}
 		lines.push("");
 		lines.push("## TypeScript");
@@ -584,6 +641,58 @@ function generateFragmentAPIPage(): DocPage {
 	return { slug: "fragment-api", title: "Fragment API", content: lines.join("\n") };
 }
 
+function generateGrantShapesPage(): DocPage {
+	const lines: string[] = [];
+
+	lines.push("# Capability Grant Shapes");
+	lines.push("");
+	lines.push("Host-side wire shapes for capability grant flows. The runtimes never see these — grant policy and prompt UX stay host-side. Granting still flows through `RuntimeOptions.capabilities`.");
+	lines.push("");
+
+	lines.push("## CapabilityPrompt");
+	lines.push("");
+	lines.push("What a host needs to render a first-time or elevation grant prompt.");
+	lines.push("");
+	lines.push("| Field | Type | Required | Description |");
+	lines.push("|-------|------|----------|-------------|");
+	lines.push("| `capability` | `string` | Yes | The capability name being requested. |");
+	lines.push("| `description` | `string` | Yes | From the manifest capability definition. |");
+	lines.push("| `risk` | `\"low\" \\| \"medium\" \\| \"high\"` | Yes | From the manifest capability definition. |");
+	lines.push("| `mod` | `{ name, version, title? }` | Yes | Identity of the requesting mod. |");
+	lines.push("| `requestedScope` | `\"one-run\" \\| \"session\" \\| \"persistent\"` | Yes | How long the grant should apply. |");
+	lines.push("| `state` | `\"first-time\" \\| \"previously-denied\" \\| \"requesting-elevation\"` | Yes | Why the prompt is shown. |");
+	lines.push("| `reason` | `string` | No | Optional human reason the mod supplies. |");
+	lines.push("");
+
+	lines.push("## InstallDescriptor");
+	lines.push("");
+	lines.push("What identifies an installable mod. `integrity` and `signature` are host-verified; xript defines the fields and never checks them.");
+	lines.push("");
+	lines.push("| Field | Type | Required | Description |");
+	lines.push("|-------|------|----------|-------------|");
+	lines.push("| `name` | `string` | Yes | Machine-readable mod identifier. |");
+	lines.push("| `version` | `string` | Yes | Semver. |");
+	lines.push("| `title` | `string` | No | Display name. |");
+	lines.push("| `source` | `{ type: \"file\" \\| \"url\" \\| \"registry\", location }` | Yes | Where the mod comes from. |");
+	lines.push("| `integrity` | `string` | No | SRI-style hash, host-verified. |");
+	lines.push("| `signature` | `string` | No | Detached signature, host-verified. |");
+	lines.push("| `capabilities` | `string[]` | No | Declared required capabilities. |");
+	lines.push("| `manifest` | `object` | No | Inline mod manifest, or omitted when fetched lazily. |");
+	lines.push("");
+
+	lines.push("## DiscoveryResult");
+	lines.push("");
+	lines.push("What an addon-discovery pass yields per candidate. `provides` holds logical roles, shared with mod-manifest `contributions.provides`.");
+	lines.push("");
+	lines.push("| Field | Type | Required | Description |");
+	lines.push("|-------|------|----------|-------------|");
+	lines.push("| `mods` | `Array<{ name, version, title?, location, enabled, capabilities, provides }>` | Yes | Candidate mods discovered. |");
+	lines.push("| `scannedAt` | `number` | No | Epoch ms at which the scan completed. |");
+	lines.push("");
+
+	return { slug: "capability-grant-shapes", title: "Capability Grant Shapes", content: lines.join("\n") };
+}
+
 export function generateDocs(manifest: unknown, options?: DocgenOptions): DocgenResult {
 	const m = manifest as Manifest;
 	const pages: DocPage[] = [];
@@ -616,13 +725,18 @@ export function generateDocs(manifest: unknown, options?: DocgenOptions): Docgen
 		pages.push(generateFragmentAPIPage());
 	}
 
+	if (options?.grantShapes) {
+		pages.push(generateGrantShapesPage());
+	}
+
 	return { pages };
 }
 
 export async function generateDocsFromFile(filePath: string, options?: DocgenOptions): Promise<DocgenResult> {
 	const absolutePath = resolve(filePath);
 	const raw = await readFile(absolutePath, "utf-8");
-	const manifest = JSON.parse(raw) as unknown;
+	const parsed = JSON.parse(raw) as unknown;
+	const manifest = await resolveExtends(parsed, dirname(absolutePath));
 	return generateDocs(manifest, options);
 }
 

@@ -1,0 +1,8 @@
+{
+	"xript": "0.3",
+	"extends": "./extends-base.json",
+	"name": "host-conflict",
+	"bindings": {
+		"getHealth": { "description": "Conflicting redefinition.", "returns": "number" }
+	}
+}

@@ -41,8 +41,10 @@ The runtime provides these error types to scripts:
 | `BindingError` | A binding function failed during execution |
 | `CapabilityDeniedError` | A gated function was called without the required capability |
 | `TypeError` | Arguments don't match the binding's declared parameter types |
+| `ImportDeniedError` | A module-format mod entry attempted to `import` any specifier (rejected at link time; carries `.specifier`) |
+| `CommonJSDetectedError` | A mod entry contained `require()`, `module.exports`, or `exports.x` artifacts (rejected at load time; carries `.artifact`) |
 
-Runtimes may add additional error types, but these three must be present.
+Runtimes may add additional error types, but these must be present. `ImportDeniedError` and `CommonJSDetectedError` are load-time errors raised by the mod loader; see [Modules](./modules.md).
 
 ### Type Validation
 
@@ -155,6 +157,21 @@ Generates:
 type Direction = "north" | "south" | "east" | "west";
 ```
 
+### Field Defaults and Inline Enums
+
+Object-type fields carry optional `default` and inline `enum` metadata. Both are codegen and documentation hints — no runtime reads them.
+
+| Field shape | TypeScript |
+|-------------|-----------|
+| `{ "type": "string", "optional": true }` | `string \| undefined` (`prop?: string`) |
+| `{ "type": "string", "default": "x" }` | `string` (non-optional — default implies a value is always present) |
+| `{ "type": "string", "enum": ["posix", "hybrid", "native"] }` | `"posix" \| "hybrid" \| "native"` |
+| `{ "type": "PathStyle" }` (named `values` enum) | `"posix" \| "hybrid" \| "native"` (identical to inline enum) |
+
+A `default`-present field is non-optional in the emitted interface; an `optional: true` field with no default is `T | undefined`. Inline `enum` and a referenced named-enum type definition generate identical literal unions.
+
+Alongside each object type interface, typegen emits a companion `<TypeName>Accessor` interface with typed `get`/`set` per field, applying the same default-implies-required and enum-implies-union rules. The accessor is pure typing; xript backs no store.
+
 ### Function Bindings
 
 Function bindings generate typed function declarations with JSDoc:
@@ -199,6 +216,30 @@ declare namespace player {
   function setHealth(value: number): void;
 }
 ```
+
+### Nested Namespaces
+
+Namespaces may nest to arbitrary depth via `members` — a namespace member whose value is itself a namespace:
+
+```jsonc
+{
+  "bindings": {
+    "app": {
+      "description": "Host root namespace.",
+      "members": {
+        "widget": {
+          "description": "Widget operations.",
+          "members": {
+            "list": { "description": "Lists widgets." }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+This exposes `app.widget.list()` to scripts. Capability gating lives on **leaf functions only**; intermediate namespace nodes carry no capability and are plain frozen objects. The runtime deep-freezes the namespace from its root. The nested `members` form is canonical — the dotted-key form (`"app.widget"` as a top-level binding key) is not used.
 
 ### Async Bindings
 

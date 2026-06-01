@@ -116,6 +116,37 @@ Modders need to know which capabilities exist and what they grant. The manifest 
 
 A modder writing a script should be able to look at the generated types or docs and immediately see: "I need `modify-player` to use `player.setHealth()` and `player.addItem()`."
 
+## Observability
+
+Hosts may observe capability-gated activity through an opt-in **audit channel** on the runtime options. When set, the runtime emits one audit event *before* each allowed host-binding invocation, carrying the binding's qualified name, the capability it required (or none if the binding declares no capability), and a wall-clock timestamp in epoch milliseconds:
+
+```jsonc
+{ "binding": "app.setClipboard", "capability": "clipboard-write", "at": 1730000000000 }
+```
+
+The channel reports **allowed** invocations only. A denied (ungranted-capability) call throws before invocation and is already observable as the thrown capability-denied error — it is not double-reported as an audit event. Emission is fire-and-forget: a full or dropped channel never breaks script execution. Omitting the channel disables auditing with zero overhead. This is a host-side observation seam (mechanism only); grant policy and UX stay host-side per the default-deny philosophy.
+
+## Host Runtime Options
+
+These are host-side runtime options, not manifest-declared fields. They are documented here for completeness; the manifest schema does not change for them.
+
+- **Cancellation**: a host-held `CancellationToken` on the runtime options. Flipping it (`cancel()`) interrupts the in-flight execution cooperatively at the next interrupt check, surfacing a cancellation error distinct from a timeout. Cancellation is sticky and idempotent; a fresh execution on a cancelled token errors immediately. It reuses the deadline/interrupt mechanism. Dropping the runtime does not auto-cancel.
+- **Hard limits**: host-imposed ceilings (`timeout_ms`, `memory_mb`, `max_stack_depth`) that a manifest's `limits` cannot exceed. The effective limit is `min(manifest, hard)` per field, clamped silently rather than rejecting the manifest, so an over-greedy mod still loads under the host ceiling.
+- **Console severity**: the console handler routes five severities — `Trace`, `Debug`, `Info`, `Warn`, `Error`. The sandbox `console` exposes six methods: `log`, `info`, `warn`, `error`, `debug`, `trace`. Both `console.log` and `console.info` map to `Info` severity. `console.trace` is the lowest-severity channel, not a stack-dumper.
+- **Debug**: an optional `debug` option attaches a DAP-shaped debug session before execution (see [Debug Protocol](./debug-protocol.md)). It is default-off with zero overhead when absent, mirroring the audit channel. xript imposes no capability for it — it is purely a host-side toggle. A host should not attach a debugger to untrusted production scripts; that gate is host policy, not an xript capability.
+
+## Grant Shapes (host-side)
+
+Granting a capability still flows exactly as before: the host passes capability names into `RuntimeOptions.capabilities`. The runtimes never see a grant prompt, a grant decision, or any of the shapes below — **grant policy and prompt UX are host-side, mechanism-not-policy.**
+
+xript defines three optional wire shapes so adopters share a vocabulary and can reuse reference UIs. They live entirely in host-side glue and never enter the sandbox.
+
+- **`CapabilityPrompt`** (`capability-prompt.schema.json`) — what a host needs to render a first-time or elevation grant prompt: the capability name, its `description` and `risk` (drawn from the manifest capability definition), the requesting `mod`, the `requestedScope`, the prompt `state`, and an optional `reason`. The `requestedScope` enum is `one-run | session | persistent`; the `state` enum is `first-time | previously-denied | requesting-elevation`. Both are closed and identical across hosts — adopt these as the canonical vocabulary.
+- **`InstallDescriptor`** (`install-descriptor.schema.json`) — what identifies an installable mod: `name`, `version`, `source` (`type` is `file | url | registry`), optional `integrity` and `signature` strings, declared `capabilities`, and an optional inline `manifest`. `integrity` and `signature` are host-verified — xript defines the fields and never checks them.
+- **`DiscoveryResult`** (`discovery-result.schema.json`) — what an addon-discovery pass yields: a `mods` array (each with `name`, `version`, `location`, `enabled`, `capabilities`, and `provides`) plus `scannedAt`. The `provides` entries are logical roles, sharing the vocabulary of mod-manifest `contributions.provides`.
+
+A prompt payload merely **describes** a request. Granting still happens host-side through `RuntimeOptions.capabilities`; default-deny is preserved.
+
 ## Design Rationale
 
 ### Why Not Role-Based Access Control?

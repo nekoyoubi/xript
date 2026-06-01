@@ -17,6 +17,13 @@
 			"pattern": "^\\d+\\.\\d+$",
 			"examples": ["0.1", "0.3"]
 		},
+		"extends": {
+			"description": "One or more base manifests to inherit from. Resolved and deep-merged before validation: maps key-merge, arrays append, scalars are child-wins, and duplicate ids are an error. Paths are filesystem-relative to this manifest. Resolution is transitive with cycle detection.",
+			"oneOf": [
+				{ "type": "string" },
+				{ "type": "array", "items": { "type": "string" }, "minItems": 1 }
+			]
+		},
 		"name": {
 			"description": "Machine-readable identifier for this application. Used in generated package names and documentation URLs.",
 			"type": "string",
@@ -270,6 +277,15 @@
 					"type": "boolean",
 					"description": "Whether this field can be absent. Defaults to false.",
 					"default": false
+				},
+				"default": {
+					"description": "Default value if the field is absent. Documentation and codegen hint only; xript does not apply it at runtime."
+				},
+				"enum": {
+					"type": "array",
+					"items": {},
+					"minItems": 1,
+					"description": "Allowed literal values for this field. Codegen emits a literal union; xript does not enforce at runtime."
 				}
 			},
 			"additionalProperties": false

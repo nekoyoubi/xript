@@ -1,10 +1,30 @@
 import type { QuickJSWASMModule } from "quickjs-emscripten";
-import { createSandboxSync, createSandboxAsync, type HostBindings, type HostFunction, type SandboxOptions, type ExecutionResult, type FireHookOptions, type FragmentOp } from "./sandbox.js";
+import {
+	createSandboxSync,
+	createSandboxAsync,
+	CancellationToken,
+	type HostBindings,
+	type HostFunction,
+	type HostNamespace,
+	type SandboxOptions,
+	type ExecutionResult,
+	type FireHookOptions,
+	type FragmentOp,
+	type ConsoleHandler,
+	type LogSeverity,
+	type AuditEvent,
+	type HardLimits,
+} from "./sandbox.js";
 import {
 	validateModManifest,
 	validateModAgainstApp,
 	createModInstance,
+	modEntryScripts,
+	modEntryExports,
+	modEntryFormat,
 	type ModManifest,
+	type ModEntry,
+	type ExportDeclaration,
 	type ModInstance,
 	type FragmentInstance,
 	type FragmentUpdateResult,
@@ -13,11 +33,46 @@ import {
 	type SlotDeclaration,
 	ModManifestValidationError,
 } from "./fragment.js";
+import { resolveExtends, type ManifestLoader } from "./extends.js";
+import { resolveSlotContributions, type SlotContribution } from "./slots.js";
+import { resolveRole as resolveRoleImpl, resolveRoleAll as resolveRoleAllImpl, type RoleResolution } from "./roles.js";
+import type { DebugOptions, DebugSession } from "./debug-types.js";
 
-export { BindingError, CapabilityDeniedError, ExecutionLimitError } from "./errors.js";
+export { BindingError, CapabilityDeniedError, ExecutionLimitError, CancellationError, InvokeError, ModEntryError, ImportDeniedError, CommonJSDetectedError, ModuleUnsupportedError } from "./errors.js";
 export { ModManifestValidationError } from "./fragment.js";
-export type { HostBindings, HostFunction, ExecutionResult, FireHookOptions, FragmentOp } from "./sandbox.js";
-export type { ModManifest, ModInstance, FragmentInstance, FragmentUpdateResult, FragmentEvent, FragmentDeclaration, SlotDeclaration } from "./fragment.js";
+export { CancellationToken } from "./sandbox.js";
+export { resolveExtends } from "./extends.js";
+export type { ManifestLoader } from "./extends.js";
+export type { SlotContribution } from "./slots.js";
+export type { RoleResolution } from "./roles.js";
+export type {
+	DebugOptions,
+	DebugSession,
+	DebugFidelity,
+	SourceBreakpoint,
+	Breakpoint,
+	StackFrame,
+	Scope,
+	Variable,
+	StoppedEvent,
+	StoppedReason,
+	ScopeName,
+} from "./debug-types.js";
+export { DEBUG_THREAD_ID, DebugUnsupportedError } from "./debug-types.js";
+export type {
+	CapabilityPrompt,
+	CapabilityPromptMod,
+	CapabilityRisk,
+	RequestedScope,
+	PromptState,
+	InstallDescriptor,
+	InstallSource,
+	InstallSourceType,
+	DiscoveryResult,
+	DiscoveredMod,
+} from "./shapes.js";
+export type { HostBindings, HostFunction, HostNamespace, ExecutionResult, FireHookOptions, FragmentOp, ConsoleHandler, LogSeverity, AuditEvent, HardLimits } from "./sandbox.js";
+export type { ModManifest, ModEntry, ExportDeclaration, ModInstance, FragmentInstance, FragmentUpdateResult, FragmentEvent, FragmentDeclaration, SlotDeclaration, ModContributions, ProviderRole } from "./fragment.js";
 
 interface Manifest {
 	xript: string;
@@ -38,34 +93,37 @@ export interface ModLoadOptions {
 	fragmentSources?: Record<string, string>;
 }
 
-export class ManifestValidationError extends Error {
-	public readonly issues: Array<{ path: string; message: string }>;
-
-	constructor(issues: Array<{ path: string; message: string }>) {
-		const summary = issues.map((i) => `  ${i.path}: ${i.message}`).join("\n");
-		super(`Invalid xript manifest:\n${summary}`);
-		this.name = "ManifestValidationError";
-		this.issues = issues;
-	}
-}
+export { ManifestValidationError } from "./errors.js";
+import { ManifestValidationError, CapabilityDeniedError, ModuleUnsupportedError } from "./errors.js";
+import { assertNoCommonJS } from "./module-support.js";
 
 export interface RuntimeOptions {
 	hostBindings: HostBindings;
 	capabilities?: string[];
-	console?: {
-		log: (...args: unknown[]) => void;
-		warn: (...args: unknown[]) => void;
-		error: (...args: unknown[]) => void;
-	};
+	console?: ConsoleHandler;
+	audit?: (event: AuditEvent) => void;
+	hardLimits?: HardLimits;
+	cancellation?: CancellationToken;
+	rolePreferences?: Record<string, string>;
+	debug?: DebugOptions;
 }
 
 export interface XriptRuntime {
 	readonly manifest: Manifest;
 	execute(code: string): ExecutionResult;
 	executeAsync(code: string): Promise<ExecutionResult>;
+	debugExecute(code: string): Promise<ExecutionResult>;
+	invokeExport(name: string, args: unknown[]): unknown;
+	invokeExportAsync(name: string, args: unknown[]): Promise<unknown>;
 	fireHook(hookName: string, options?: FireHookOptions): unknown[];
 	fireFragmentHook(fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>): FragmentOp[];
 	loadMod(modManifest: unknown, options?: ModLoadOptions): ModInstance;
+	loadModAsync(modManifest: unknown, options?: ModLoadOptions): Promise<ModInstance>;
+	resolveSlot(slotId: string): SlotContribution[];
+	resolveSlotSingle(slotId: string): SlotContribution | null;
+	resolveRole(role: string): RoleResolution | null;
+	resolveRoleAll(role: string): RoleResolution[];
+	debugSession(): DebugSession | null;
 	dispose(): void;
 }
 
@@ -129,17 +187,44 @@ function buildRuntime(
 	m: Manifest,
 	sandbox: SandboxResult,
 	grantedCapabilities: Set<string>,
+	rolePreferences?: Record<string, string>,
 ): XriptRuntime {
+	const loadedMods: ModInstance[] = [];
+	const slots = m.slots || [];
+	const exportCapabilities = new Map<string, string | undefined>();
+
+	function gateExport(name: string): void {
+		const capability = exportCapabilities.get(name);
+		if (capability && !grantedCapabilities.has(capability)) {
+			throw new CapabilityDeniedError(name, capability);
+		}
+	}
+
+	function registerExportCapabilities(entry: ModManifest["entry"]): void {
+		for (const [exportName, decl] of Object.entries(modEntryExports(entry))) {
+			exportCapabilities.set(exportName, decl.capability);
+		}
+	}
+
 	return {
 		manifest: m,
 		execute: sandbox.execute,
 		executeAsync: sandbox.executeAsync,
+		debugExecute: sandbox.debugExecute,
+		debugSession: sandbox.debugSession,
+		invokeExport(name: string, args: unknown[]): unknown {
+			gateExport(name);
+			return sandbox.invokeExport(name, args);
+		},
+		invokeExportAsync(name: string, args: unknown[]): Promise<unknown> {
+			gateExport(name);
+			return sandbox.invokeExportAsync(name, args);
+		},
 		fireHook: sandbox.fireHook,
 		fireFragmentHook: sandbox.fireFragmentHook,
 
 		loadMod(modManifest: unknown, modOptions?: ModLoadOptions): ModInstance {
 			const validated = validateModManifest(modManifest);
-			const slots = m.slots || [];
 			const issues = validateModAgainstApp(validated, slots, grantedCapabilities);
 			if (issues.length > 0) {
 				throw new ModManifestValidationError(issues);
@@ -147,15 +232,64 @@ function buildRuntime(
 			const sources = modOptions?.fragmentSources || {};
 			const mod = createModInstance(validated, sources);
 
-			if (validated.entry) {
-				const entries = Array.isArray(validated.entry) ? validated.entry : [validated.entry];
-				for (const entry of entries) {
-					const code = sources[entry];
-					if (code) sandbox.execute(code);
+			if (modEntryFormat(validated.entry) === "module") {
+				throw new ModuleUnsupportedError();
+			}
+
+			for (const entryScript of modEntryScripts(validated.entry)) {
+				const code = sources[entryScript];
+				if (code) {
+					assertNoCommonJS(code);
+					sandbox.execute(code);
 				}
 			}
 
+			registerExportCapabilities(validated.entry);
+			loadedMods.push(mod);
 			return mod;
+		},
+
+		async loadModAsync(modManifest: unknown, modOptions?: ModLoadOptions): Promise<ModInstance> {
+			const validated = validateModManifest(modManifest);
+			const issues = validateModAgainstApp(validated, slots, grantedCapabilities);
+			if (issues.length > 0) {
+				throw new ModManifestValidationError(issues);
+			}
+			const sources = modOptions?.fragmentSources || {};
+			const mod = createModInstance(validated, sources);
+			const format = modEntryFormat(validated.entry);
+
+			for (const entryScript of modEntryScripts(validated.entry)) {
+				const code = sources[entryScript];
+				if (!code) continue;
+				assertNoCommonJS(code);
+				if (format === "module") {
+					await sandbox.evaluateModule(validated.name, code);
+				} else {
+					sandbox.execute(code);
+				}
+			}
+
+			registerExportCapabilities(validated.entry);
+			loadedMods.push(mod);
+			return mod;
+		},
+
+		resolveSlot(slotId: string): SlotContribution[] {
+			return resolveSlotContributions(slotId, loadedMods, slots);
+		},
+
+		resolveSlotSingle(slotId: string): SlotContribution | null {
+			const ordered = resolveSlotContributions(slotId, loadedMods, slots);
+			return ordered.length > 0 ? ordered[0] : null;
+		},
+
+		resolveRole(role: string): RoleResolution | null {
+			return resolveRoleImpl(role, loadedMods, rolePreferences);
+		},
+
+		resolveRoleAll(role: string): RoleResolution[] {
+			return resolveRoleAllImpl(role, loadedMods);
 		},
 
 		dispose: sandbox.dispose,
@@ -176,9 +310,13 @@ export async function initXript(): Promise<XriptFactory> {
 				hostBindings: options.hostBindings,
 				capabilities: options.capabilities,
 				console: options.console,
+				audit: options.audit,
+				hardLimits: options.hardLimits,
+				cancellation: options.cancellation,
+				debug: options.debug,
 			});
 
-			return buildRuntime(m, sandbox, grantedCapabilities);
+			return buildRuntime(m, sandbox, grantedCapabilities, options.rolePreferences);
 		},
 	};
 }
@@ -196,9 +334,13 @@ export async function initXriptAsync(): Promise<{
 				hostBindings: options.hostBindings,
 				capabilities: options.capabilities,
 				console: options.console,
+				audit: options.audit,
+				hardLimits: options.hardLimits,
+				cancellation: options.cancellation,
+				debug: options.debug,
 			});
 
-			return buildRuntime(m, sandbox, grantedCapabilities);
+			return buildRuntime(m, sandbox, grantedCapabilities, options.rolePreferences);
 		},
 	};
 }

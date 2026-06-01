@@ -14,6 +14,8 @@ Scripts cannot access anything the host has not explicitly exposed through bindi
 
 - Scripts have no access to the host's file system, network, processes, or environment variables unless a binding explicitly provides it
 - Scripts cannot import or require modules outside the runtime's provided environment
+- Module-format entries may use ES module syntax, but ALL import specifiers (bare, absolute, URL, and relative) are rejected at link time with an `ImportDeniedError`. A module-format mod is a single self-contained entry module with no imports (see [Modules](./modules.md))
+- CommonJS is never supported. A mod entry containing `require()`, `module.exports`, or `exports.x` artifacts is rejected at load time with a `CommonJSDetectedError`, in both script and module mode
 - Scripts cannot access or modify the host application's internal state except through declared bindings
 - Scripts cannot access other scripts' state or memory
 - The global scope available to scripts contains only: the language built-ins (as restricted below), the declared bindings, and nothing else
@@ -86,6 +88,7 @@ Scripts cannot dynamically generate and execute code. The `eval()` function, the
 - `new Function(string)`
 - `setTimeout(string, ms)` and `setInterval(string, ms)` (the string overloads; callback overloads may be allowed if the runtime supports timers)
 - `import()` (dynamic import expressions)
+- Static `import` of any external specifier in a module-format entry (rejected at link time with `ImportDeniedError`)
 - Any runtime-specific mechanism that converts strings to executable code
 
 **Why this matters:**
@@ -180,6 +183,8 @@ Runtime implementors must verify their implementation against each item in this 
 
 - [ ] Scripts cannot access host file system, network, or environment without explicit bindings
 - [ ] Scripts cannot import or require external modules
+- [ ] A module-format entry's `import` of any specifier (bare, absolute, URL, relative) is rejected at link time with `ImportDeniedError`
+- [ ] A mod entry containing `require()`, `module.exports`, or `exports.x` is rejected at load time with `CommonJSDetectedError`, in both script and module mode
 - [ ] Scripts cannot access other scripts' state
 - [ ] Objects returned from bindings do not expose host internals through prototype traversal
 - [ ] The global scope contains only language built-ins, declared bindings, and nothing else
@@ -232,4 +237,5 @@ The security guarantees build on and complement the other xript spec documents:
 
 - **[Manifest](./manifest.md)**: Declares `executionLimits` that this document's resource guarantees enforce. Also declares capabilities that the trust model relies on.
 - **[Capabilities](./capabilities.md)**: Defines the capability model that this document's "no implicit trust" guarantee enforces. The capability spec covers declaration and lifecycle; this document covers the security properties those mechanisms must provide.
-- **[Bindings](./bindings.md)**: Defines how bindings behave at runtime, including the error types (`BindingError`, `CapabilityDeniedError`, `TypeError`) referenced throughout this document.
+- **[Bindings](./bindings.md)**: Defines how bindings behave at runtime, including the error types (`BindingError`, `CapabilityDeniedError`, `TypeError`, `ImportDeniedError`, `CommonJSDetectedError`) referenced throughout this document.
+- **[Modules](./modules.md)**: Defines the `entry.format: "module"` evaluation mode, the no-external-imports rule, and the CommonJS guard this document references.

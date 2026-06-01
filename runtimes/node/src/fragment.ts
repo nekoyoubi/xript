@@ -7,9 +7,40 @@ export interface ModManifest {
 	title?: string;
 	description?: string;
 	author?: string;
+	family?: string;
 	capabilities?: string[];
-	entry?: string | string[];
+	entry?: string | string[] | ModEntry;
 	fragments?: FragmentDeclaration[];
+	contributions?: ModContributions;
+}
+
+export interface ModContributions {
+	provides?: ProviderRole[];
+}
+
+export interface ProviderRole {
+	role: string;
+	fns: Record<string, string>;
+}
+
+export interface ModEntry {
+	script: string;
+	format?: "script" | "module";
+	exports?: Record<string, ExportDeclaration>;
+}
+
+export interface ExportDeclaration {
+	description?: string;
+	params?: Parameter[];
+	returns?: unknown;
+	capability?: string;
+}
+
+export interface Parameter {
+	name: string;
+	type: unknown;
+	default?: unknown;
+	required?: boolean;
 }
 
 export interface FragmentDeclaration {
@@ -72,6 +103,51 @@ export class ModManifestValidationError extends Error {
 	}
 }
 
+function isEntryObject(entry: unknown): entry is ModEntry {
+	return typeof entry === "object" && entry !== null && !Array.isArray(entry);
+}
+
+function validateEntry(entry: unknown, issues: Array<{ path: string; message: string }>): void {
+	if (typeof entry === "string") return;
+	if (Array.isArray(entry)) {
+		if (!entry.every((e) => typeof e === "string")) {
+			issues.push({ path: "/entry", message: "'entry' array must contain only strings" });
+		}
+		return;
+	}
+	if (typeof entry !== "object" || entry === null) {
+		issues.push({ path: "/entry", message: "'entry' must be a string, array of strings, or an entry object" });
+		return;
+	}
+	const e = entry as Record<string, unknown>;
+	if (typeof e.script !== "string" || e.script.length === 0) {
+		issues.push({ path: "/entry/script", message: "entry object 'script' must be a non-empty string" });
+	}
+	if (e.format !== undefined && e.format !== "script" && e.format !== "module") {
+		issues.push({ path: "/entry/format", message: "entry 'format' must be 'script' or 'module'" });
+	}
+	if (e.exports !== undefined && (typeof e.exports !== "object" || e.exports === null || Array.isArray(e.exports))) {
+		issues.push({ path: "/entry/exports", message: "entry 'exports' must be an object map" });
+	}
+}
+
+export function modEntryScripts(entry: string | string[] | ModEntry | undefined): string[] {
+	if (entry === undefined) return [];
+	if (typeof entry === "string") return [entry];
+	if (Array.isArray(entry)) return entry;
+	return [entry.script];
+}
+
+export function modEntryExports(entry: string | string[] | ModEntry | undefined): Record<string, ExportDeclaration> {
+	if (isEntryObject(entry) && entry.exports) return entry.exports;
+	return {};
+}
+
+export function modEntryFormat(entry: string | string[] | ModEntry | undefined): "script" | "module" {
+	if (isEntryObject(entry) && entry.format === "module") return "module";
+	return "script";
+}
+
 export function validateModManifest(manifest: unknown): ModManifest {
 	if (typeof manifest !== "object" || manifest === null) {
 		throw new ModManifestValidationError([{ path: "/", message: "mod manifest must be a non-null object" }]);
@@ -90,6 +166,16 @@ export function validateModManifest(manifest: unknown): ModManifest {
 
 	if (typeof m.version !== "string" || m.version.length === 0) {
 		issues.push({ path: "/version", message: "required field 'version' must be a non-empty string" });
+	}
+
+	if (m.family !== undefined) {
+		if (typeof m.family !== "string" || !/^[a-z][a-z0-9-]*$/.test(m.family)) {
+			issues.push({ path: "/family", message: "'family' must match ^[a-z][a-z0-9-]*$" });
+		}
+	}
+
+	if (m.entry !== undefined) {
+		validateEntry(m.entry, issues);
 	}
 
 	if (m.capabilities !== undefined) {
@@ -122,11 +208,64 @@ export function validateModManifest(manifest: unknown): ModManifest {
 		}
 	}
 
+	if (m.contributions !== undefined) {
+		validateContributions(m.contributions, issues);
+	}
+
 	if (issues.length > 0) {
 		throw new ModManifestValidationError(issues);
 	}
 
 	return manifest as ModManifest;
+}
+
+const ROLE_PATTERN = /^[a-z][a-z0-9-]*$/;
+
+function validateContributions(contributions: unknown, issues: Array<{ path: string; message: string }>): void {
+	if (typeof contributions !== "object" || contributions === null || Array.isArray(contributions)) {
+		issues.push({ path: "/contributions", message: "'contributions' must be an object" });
+		return;
+	}
+	const c = contributions as Record<string, unknown>;
+	if (c.provides === undefined) return;
+	if (!Array.isArray(c.provides)) {
+		issues.push({ path: "/contributions/provides", message: "'provides' must be an array" });
+		return;
+	}
+
+	const seenRoles = new Set<string>();
+	for (let i = 0; i < c.provides.length; i++) {
+		const entry = c.provides[i] as Record<string, unknown>;
+		const prefix = `/contributions/provides/${i}`;
+		if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+			issues.push({ path: prefix, message: "provider role entry must be an object" });
+			continue;
+		}
+		if (typeof entry.role !== "string" || !ROLE_PATTERN.test(entry.role) || entry.role.length > 64) {
+			issues.push({ path: `${prefix}/role`, message: "'role' must match ^[a-z][a-z0-9-]*$ (max 64 chars)" });
+		} else if (seenRoles.has(entry.role)) {
+			issues.push({ path: `${prefix}/role`, message: `duplicate role '${entry.role}' in provides[]` });
+		} else {
+			seenRoles.add(entry.role);
+		}
+		if (typeof entry.fns !== "object" || entry.fns === null || Array.isArray(entry.fns)) {
+			issues.push({ path: `${prefix}/fns`, message: "'fns' must be an object map (logical -> concrete fn name)" });
+		} else {
+			const fnEntries = Object.entries(entry.fns);
+			if (fnEntries.length < 1) {
+				issues.push({ path: `${prefix}/fns`, message: "'fns' must declare at least one mapping" });
+			}
+			for (const [logical, concrete] of fnEntries) {
+				if (typeof concrete !== "string") {
+					issues.push({ path: `${prefix}/fns/${logical}`, message: "fn target must be a string" });
+				}
+			}
+		}
+	}
+}
+
+export function modProviderRoles(modManifest: ModManifest): ProviderRole[] {
+	return modManifest.contributions?.provides ?? [];
 }
 
 export function validateModAgainstApp(
@@ -306,6 +445,7 @@ export interface ModInstance {
 	readonly name: string;
 	readonly version: string;
 	readonly fragments: FragmentInstance[];
+	readonly provides: ProviderRole[];
 	updateBindings(data: Record<string, unknown>): FragmentUpdateResult[];
 	dispose(): void;
 }
@@ -331,6 +471,7 @@ export function createModInstance(
 		name: modManifest.name,
 		version: modManifest.version,
 		fragments,
+		provides: modProviderRoles(modManifest),
 
 		updateBindings(data: Record<string, unknown>): FragmentUpdateResult[] {
 			return fragments.map(f => f.getContent(data));

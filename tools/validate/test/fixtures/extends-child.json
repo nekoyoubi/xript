@@ -1,0 +1,12 @@
+{
+	"xript": "0.3",
+	"extends": "./extends-base.json",
+	"name": "host-child",
+	"bindings": {
+		"setHealth": {
+			"description": "Sets health.",
+			"params": [{ "name": "value", "type": "number" }]
+		}
+	},
+	"slots": [{ "id": "statusbar", "accepts": ["text/html"] }]
+}

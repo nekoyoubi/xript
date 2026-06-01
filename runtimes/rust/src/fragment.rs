@@ -157,7 +157,108 @@ pub fn sanitize_html(input: &str) -> String {
 
     let result = builder.clean(input).to_string();
 
-    sanitize_styles_in_output(&result)
+    let result = sanitize_styles_in_output(&result);
+    let result = gate_data_uris(&result);
+    normalize_void_and_boolean_attrs(&result)
+}
+
+const VOID_ELEMENTS: &[&str] = &[
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
+    "source", "track", "wbr",
+    "circle", "ellipse", "rect", "line", "path", "polygon", "polyline", "use",
+];
+
+const BOOLEAN_ATTRS: &[&str] = &[
+    "hidden", "open", "checked", "disabled", "readonly", "required", "selected", "multiple",
+];
+
+/// Strips `data:` values that are not safe inline images from `src`/`href`
+/// attributes. ammonia cannot express data-URI subtype gating, so this runs as
+/// a post-pass over the cleaned output. The attribute is dropped entirely on a
+/// failed gate (matching the canonical corpus, which expects e.g. `<img />`).
+fn gate_data_uris(html: &str) -> String {
+    let attr_re = Regex::new(r#"\s(src|href)="([^"]*)""#).unwrap();
+    attr_re
+        .replace_all(html, |caps: &regex::Captures| {
+            let attr_name = &caps[1];
+            let value = &caps[2];
+            if is_data_uri(value) && !is_safe_data_image(value, attr_name) {
+                String::new()
+            } else {
+                caps[0].to_string()
+            }
+        })
+        .to_string()
+}
+
+fn is_data_uri(value: &str) -> bool {
+    value.trim_start().to_ascii_lowercase().starts_with("data:")
+}
+
+fn is_safe_data_image(value: &str, attr_name: &str) -> bool {
+    if attr_name != "src" {
+        return false;
+    }
+    let trimmed = value.trim_start().to_ascii_lowercase();
+    for subtype in ["png", "jpeg", "gif", "svg+xml"] {
+        let prefix = format!("data:image/{}", subtype);
+        if let Some(rest) = trimmed.strip_prefix(&prefix) {
+            if rest.starts_with(';') || rest.starts_with(',') {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Rewrites ammonia's HTML5 serialization to match the canonical XHTML-flavored
+/// corpus: void/empty-SVG elements close with ` />`, and bare boolean
+/// attributes (`hidden=""`) collapse to bare form (`hidden`).
+fn normalize_void_and_boolean_attrs(html: &str) -> String {
+    let collapsed = collapse_empty_svg_shapes(html);
+    let tag_re =
+        Regex::new(r#"<([a-zA-Z][a-zA-Z0-9]*)((?:"[^"]*"|'[^']*'|[^<>"'])*?)\s*(/?)>"#).unwrap();
+    tag_re
+        .replace_all(&collapsed, |caps: &regex::Captures| {
+            let tag = &caps[1];
+            let attrs = collapse_boolean_attrs(&caps[2]);
+            let lower = tag.to_ascii_lowercase();
+            let leading_space = if attrs.is_empty() { "" } else { " " };
+            if VOID_ELEMENTS.contains(&lower.as_str()) {
+                format!("<{}{}{} />", tag, leading_space, attrs)
+            } else {
+                format!("<{}{}{}>", tag, leading_space, attrs)
+            }
+        })
+        .to_string()
+}
+
+fn collapse_boolean_attrs(attrs: &str) -> String {
+    let mut result = attrs.to_string();
+    for attr in BOOLEAN_ATTRS {
+        let pattern = format!(r#"\b{}="""#, attr);
+        let re = Regex::new(&pattern).unwrap();
+        result = re.replace_all(&result, *attr).to_string();
+    }
+    result.trim().to_string()
+}
+
+/// Empty SVG shape elements that html5ever expands to `<circle></circle>` are
+/// re-collapsed to `<circle ... />` to match the corpus.
+fn collapse_empty_svg_shapes(html: &str) -> String {
+    let empty_re =
+        Regex::new(r"<(circle|ellipse|rect|line|path|polygon|polyline|use)((?:[^<>]*?))\s*></(?:circle|ellipse|rect|line|path|polygon|polyline|use)>").unwrap();
+    empty_re
+        .replace_all(html, |caps: &regex::Captures| {
+            let tag = &caps[1];
+            let attrs = caps[2].trim_end();
+            if attrs.is_empty() {
+                format!("<{} />", tag)
+            } else {
+                format!("<{}{} />", tag, attrs)
+            }
+        })
+        .to_string()
 }
 
 fn sanitize_styles_in_output(html: &str) -> String {
@@ -485,12 +586,13 @@ pub fn create_fragment_instance(
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ModInstance {
     pub id: String,
     pub name: String,
     pub version: String,
     pub fragments: Vec<FragmentInstance>,
+    pub provides: Vec<crate::manifest::ProviderRole>,
 }
 
 impl ModInstance {
@@ -520,11 +622,18 @@ pub fn create_mod_instance(
         }
     }
 
+    let provides = mod_manifest
+        .contributions
+        .as_ref()
+        .map(|c| c.provides.clone())
+        .unwrap_or_default();
+
     ModInstance {
         id,
         name: mod_manifest.name.clone(),
         version: mod_manifest.version.clone(),
         fragments,
+        provides,
     }
 }
 
@@ -553,4 +662,80 @@ pub fn load_mod(
     }
 
     Ok(create_mod_instance(&mod_manifest, fragment_sources))
+}
+
+#[cfg(test)]
+mod sanitizer_conformance {
+    use super::sanitize_html;
+
+    const CORPUS: &str = include_str!("../../../spec/sanitizer-tests.json");
+
+    #[derive(serde::Deserialize)]
+    struct Case {
+        input: String,
+        expected: String,
+        description: String,
+    }
+
+    #[test]
+    fn matches_canonical_corpus_byte_for_byte() {
+        let cases: Vec<Case> = serde_json::from_str(CORPUS).expect("corpus parses");
+        let mut failures = Vec::new();
+        for case in &cases {
+            let got = sanitize_html(&case.input);
+            if got != case.expected {
+                failures.push(format!(
+                    "case '{}'\n  input:    {:?}\n  expected: {:?}\n  got:      {:?}",
+                    case.description, case.input, case.expected, got
+                ));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "{} of {} sanitizer corpus cases failed:\n{}",
+            failures.len(),
+            cases.len(),
+            failures.join("\n")
+        );
+    }
+
+    #[test]
+    fn strips_dangerous_data_uri_on_img_src() {
+        let out = sanitize_html(r#"<img src="data:text/html,<script>alert('xss')</script>" />"#);
+        assert!(!out.contains("data:text/html"));
+        assert_eq!(out, "<img />");
+    }
+
+    #[test]
+    fn preserves_safe_data_image_on_img_src() {
+        let out = sanitize_html(r#"<img src="data:image/png;base64,abc123" />"#);
+        assert_eq!(out, r#"<img src="data:image/png;base64,abc123" />"#);
+    }
+
+    #[test]
+    fn strips_data_uri_on_href() {
+        let out = sanitize_html(r#"<a href="data:text/html,<script>alert(1)</script>">click</a>"#);
+        assert_eq!(out, "<a>click</a>");
+    }
+
+    #[test]
+    fn collapses_bare_boolean_attributes() {
+        let out = sanitize_html(r#"<details open><summary>Info</summary><p>x</p></details>"#);
+        assert!(out.contains("<details open>"));
+        assert!(!out.contains(r#"open="""#));
+    }
+
+    #[test]
+    fn renders_void_elements_self_closing() {
+        let out = sanitize_html(r#"<img src="icon.png" alt="i" />"#);
+        assert!(out.ends_with(" />"));
+    }
+
+    #[test]
+    fn renders_empty_svg_shapes_self_closing() {
+        let out = sanitize_html(r#"<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="red" /></svg>"#);
+        assert!(out.contains("<circle "));
+        assert!(out.contains("/>"));
+        assert!(!out.contains("</circle>"));
+    }
 }

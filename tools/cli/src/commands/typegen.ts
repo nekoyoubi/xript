@@ -8,20 +8,24 @@ export async function run(args: string[]): Promise<void> {
 		process.exit(args.length === 0 ? 1 : 0);
 	}
 
-	const outputIndex = args.findIndex((a) => a === "--output" || a === "-o");
+	const includeGrantShapes = args.includes("--include-grant-shapes");
+	const ambient = args.includes("--ambient");
+	const rest = args.filter((a) => a !== "--include-grant-shapes" && a !== "--ambient");
+
+	const outputIndex = rest.findIndex((a) => a === "--output" || a === "-o");
 	let outputPath: string | undefined;
 	let manifestPath: string;
 
 	if (outputIndex !== -1) {
-		outputPath = args[outputIndex + 1];
+		outputPath = rest[outputIndex + 1];
 		if (!outputPath) {
 			console.error("Error: --output requires a file path.");
 			process.exit(1);
 		}
-		const remaining = args.filter((_, i) => i !== outputIndex && i !== outputIndex + 1);
+		const remaining = rest.filter((_, i) => i !== outputIndex && i !== outputIndex + 1);
 		manifestPath = remaining[0];
 	} else {
-		manifestPath = args.filter((a) => !a.startsWith("-"))[0];
+		manifestPath = rest.filter((a) => !a.startsWith("-"))[0];
 	}
 
 	if (!manifestPath) {
@@ -30,7 +34,7 @@ export async function run(args: string[]): Promise<void> {
 	}
 
 	try {
-		const { content } = await generateTypesFromFile(manifestPath);
+		const { content } = await generateTypesFromFile(manifestPath, { includeGrantShapes, ambient });
 
 		if (outputPath) {
 			const absoluteOutput = resolve(outputPath);
@@ -53,6 +57,8 @@ function printHelp(): void {
 	console.log("Generate TypeScript definitions from an xript manifest.");
 	console.log("");
 	console.log("Options:");
-	console.log("  --output, -o  Output file path (default: stdout)");
-	console.log("  --help, -h    Show this help message");
+	console.log("  --output, -o            Output file path (default: stdout)");
+	console.log("  --ambient               Emit an ambient .d.ts declaring the in-sandbox xript surface for mod authors");
+	console.log("  --include-grant-shapes  Emit CapabilityPrompt, InstallDescriptor, DiscoveryResult interfaces");
+	console.log("  --help, -h              Show this help message");
 }

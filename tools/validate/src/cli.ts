@@ -2,15 +2,58 @@
 
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { validateManifestFile, crossValidate, validateManifest, validateModManifest } from "./index.js";
+import { validateManifestFile, crossValidate, validateManifest, validateModManifest, validateShape, type GrantShape } from "./index.js";
 
 const args = process.argv.slice(2);
 const crossIndex = args.indexOf("--cross");
 const isCross = crossIndex !== -1;
 
-const files = args.filter((a) => !a.startsWith("-"));
+const shapeIndex = args.indexOf("--shape");
+const shapeName = shapeIndex !== -1 ? args[shapeIndex + 1] : undefined;
 
-if (isCross) {
+const KNOWN_SHAPES = ["capability-prompt", "install-descriptor", "discovery-result", "debug-messages"];
+
+const files = shapeIndex !== -1
+	? args.filter((a, i) => !a.startsWith("-") && i !== shapeIndex + 1)
+	: args.filter((a) => !a.startsWith("-"));
+
+if (shapeIndex !== -1) {
+	if (!shapeName || !KNOWN_SHAPES.includes(shapeName)) {
+		console.error(`Usage: xript-validate --shape <${KNOWN_SHAPES.join("|")}> <payload.json>`);
+		process.exit(1);
+	}
+	if (files.length !== 1) {
+		console.error("Usage: xript-validate --shape <name> <payload.json>");
+		process.exit(1);
+	}
+
+	let raw: string;
+	try {
+		raw = await readFile(resolve(files[0]), "utf-8");
+	} catch {
+		console.error(`\x1b[31m✗\x1b[0m could not read file: ${resolve(files[0])}`);
+		process.exit(1);
+	}
+	let doc: unknown;
+	try {
+		doc = JSON.parse(raw);
+	} catch {
+		console.error(`\x1b[31m✗\x1b[0m invalid JSON in ${resolve(files[0])}`);
+		process.exit(1);
+	}
+
+	const result = await validateShape(shapeName as GrantShape, doc);
+	if (result.valid) {
+		console.log(`\x1b[32m✓\x1b[0m ${resolve(files[0])} (${shapeName})`);
+		process.exit(0);
+	} else {
+		console.error(`\x1b[31m✗\x1b[0m ${resolve(files[0])} (${shapeName})`);
+		for (const error of result.errors) {
+			console.error(`  ${error.path}: ${error.message}`);
+		}
+		process.exit(1);
+	}
+} else if (isCross) {
 	if (files.length !== 2) {
 		console.error("Usage: xript-validate --cross <app-manifest.json> <mod-manifest.json>");
 		process.exit(1);
@@ -96,6 +139,9 @@ if (isCross) {
 			for (const error of result.errors) {
 				console.error(`  ${error.path}: ${error.message}`);
 			}
+		}
+		for (const warning of result.warnings ?? []) {
+			console.error(`\x1b[33m!\x1b[0m ${warning.path}: ${warning.message}`);
 		}
 	}
 

@@ -1,0 +1,5 @@
+{
+	"xript": "0.3",
+	"extends": "./cycle-b.json",
+	"name": "cycle-a"
+}
