@@ -58,13 +58,9 @@ function deepMerge(base: Json, child: Json): Json {
 }
 
 function mergeMaps(base: unknown, child: unknown, mapKey: string): Json {
-	const merged: Json = {};
 	const baseMap = isObject(base) ? base : {};
 	const childMap = isObject(child) ? child : {};
-
-	for (const [key, value] of Object.entries(baseMap)) {
-		merged[key] = value;
-	}
+	const merged: Json = { ...baseMap };
 	for (const [key, value] of Object.entries(childMap)) {
 		if (key in baseMap) {
 			if (mapKey === "types") {

@@ -54,10 +54,12 @@ async function resolveClientPath(server: McpServer, p: string): Promise<{ ok: tr
 	};
 }
 
-// Accepts EITHER the inline manifest JSON or a path to a manifest file (absolute, or
-// relative to the client's workspace root). Passing a path keeps a large manifest out of
-// the tool-call tokens — the server reads it. A value that starts with '{' or '[' is treated
-// as inline JSON; anything else is treated as a path.
+/**
+ * Accepts EITHER the inline manifest JSON or a path to a manifest file (absolute, or
+ * relative to the client's workspace root). Passing a path keeps a large manifest out of
+ * the tool-call tokens — the server reads it. A value that starts with `{` or `[` is treated
+ * as inline JSON; anything else is treated as a path. `extends` is resolved before returning.
+ */
 async function resolveManifestArg(server: McpServer, value: string): Promise<{ ok: true; value: unknown } | { ok: false; error: string }> {
 	const trimmed = value.trimStart();
 	let parsed: { ok: true; value: unknown } | { ok: false; error: string };
@@ -79,10 +81,6 @@ async function resolveManifestArg(server: McpServer, value: string): Promise<{ o
 		baseDir = dirname(resolved.path);
 	}
 	if (!parsed.ok) return parsed;
-	// Resolve `extends` so every analyzer (validate, score, cross-validate) sees the
-	// manifest's effective surface — inherited base included — matching the file-path
-	// validator and the lint tool, which already resolve. Analyzing the unresolved doc
-	// reports inherited slots/capabilities as missing.
 	try {
 		return { ok: true, value: await resolveExtends(parsed.value, baseDir) };
 	} catch (error) {
@@ -91,9 +89,10 @@ async function resolveManifestArg(server: McpServer, value: string): Promise<{ o
 }
 
 /**
- * Resolves a host manifest arg and reports the directory `extends` paths resolve against:
- * the manifest file's own directory when a path was passed, or the client workspace root
- * (falling back to the server cwd) for inline JSON.
+ * Resolves a host manifest arg without pre-resolving `extends`, and reports the `baseDir`
+ * that `extends` paths resolve against: the manifest file's own directory when a path was
+ * passed, or the client workspace root (falling back to the server cwd) for inline JSON.
+ * Callers that need provenance tracking (score, lint) call this instead of `resolveManifestArg`.
  */
 async function resolveHostArg(
 	server: McpServer,

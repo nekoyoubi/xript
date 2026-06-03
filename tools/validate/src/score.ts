@@ -150,17 +150,19 @@ export async function scoreManifests(host: unknown, mods: unknown[], options: Sc
 
 	const ownSlots = slotIds(hostManifest).filter((id) => !inheritedSlots.has(id) && !reservedSlots.has(id));
 	const usedSlots = modSlotReferences(modManifests);
+	const usedSlotIds = ownSlots.filter((id) => usedSlots.has(id));
 	const slotMetric: UtilizationMetric = {
-		score: ownSlots.length ? ownSlots.filter((id) => usedSlots.has(id)).length / ownSlots.length : 1,
-		used: ownSlots.filter((id) => usedSlots.has(id)),
+		score: ownSlots.length ? usedSlotIds.length / ownSlots.length : 1,
+		used: usedSlotIds,
 		unused: ownSlots.filter((id) => !usedSlots.has(id)),
 	};
 
 	const ownCaps = capabilityNames(hostManifest).filter((name) => !inheritedCaps.has(name) && !reservedCaps.has(name));
 	const referencedCaps = new Set([...modCapabilityRequests(modManifests), ...gateCapabilities(host)]);
+	const usedCapNames = ownCaps.filter((name) => referencedCaps.has(name));
 	const capabilityMetric: UtilizationMetric = {
-		score: ownCaps.length ? ownCaps.filter((name) => referencedCaps.has(name)).length / ownCaps.length : 1,
-		used: ownCaps.filter((name) => referencedCaps.has(name)),
+		score: ownCaps.length ? usedCapNames.length / ownCaps.length : 1,
+		used: usedCapNames,
 		unused: ownCaps.filter((name) => !referencedCaps.has(name)),
 	};
 

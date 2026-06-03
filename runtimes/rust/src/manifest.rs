@@ -624,22 +624,16 @@ fn merge_id_maps(
             let mut out = base_map.clone();
             for (k, v) in &child_map {
                 if let Some(base_entry) = base_map.get(k) {
-                    // FILL and REFINE apply to the `types` surface only.
                     if field == "types" {
-                        // FILL: an abstract base type is replaced by the
-                        // concrete child definition; abstractness is the opt-in.
                         if is_abstract_type(base_entry) {
                             out.insert(k.clone(), v.clone());
                             continue;
                         }
-                        // REFINE: a concrete base type with `refines: true` on
-                        // the child deep-merges, child fields winning per key.
                         if is_refining(v) {
                             out.insert(k.clone(), deep_merge(base_entry, v));
                             continue;
                         }
                     }
-                    // Un-opted concrete-name collision: the accident guard.
                     let singular = field.trim_end_matches('s');
                     return Err(XriptError::ManifestValidation {
                         issues: vec![ValidationIssue {
@@ -677,13 +671,8 @@ fn merge_slots(
     for slot in &child_arr {
         if let Some(id) = slot.get("id").and_then(|v| v.as_str()) {
             if seen.contains(id) {
-                // REFINE: a child slot with `refines: true` deep-merges onto the
-                // base slot of the same id (including payload member types).
                 if is_refining(slot) {
-                    if let Some(idx) = out
-                        .iter()
-                        .position(|s| s.get("id").and_then(|v| v.as_str()) == Some(id))
-                    {
+                    if let Some(idx) = out.iter().position(|s| s.get("id").and_then(|v| v.as_str()) == Some(id)) {
                         out[idx] = deep_merge(&out[idx], slot);
                     }
                     continue;
