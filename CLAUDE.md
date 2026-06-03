@@ -47,23 +47,23 @@ npm run docs:build                     # build the docs site for production
 npm run build --workspace=tools/sanitize           # build the HTML sanitizer
 npm test --workspace=tools/sanitize                # run sanitizer tests (93 tests)
 npm run build --workspace=runtimes/js              # build the universal runtime
-npm test --workspace=runtimes/js                   # run universal runtime tests (166 tests)
+npm test --workspace=runtimes/js                   # run universal runtime tests (187 tests)
 npm run build --workspace=runtimes/node            # build the Node.js runtime
-npm test --workspace=runtimes/node                 # run Node.js runtime tests (165 tests)
+npm test --workspace=runtimes/node                 # run Node.js runtime tests (185 tests)
 npm run build --workspace=tools/validate            # build the validator
-npm test --workspace=tools/validate                 # run validator tests (68 tests)
+npm test --workspace=tools/validate                 # run validator tests (155 tests)
 npm run build --workspace=tools/typegen            # build the type generator
-npm test --workspace=tools/typegen                 # run typegen tests (52 tests)
+npm test --workspace=tools/typegen                 # run typegen tests (64 tests)
 npm run build --workspace=tools/docgen             # build the doc generator
-npm test --workspace=tools/docgen                  # run docgen tests (35 tests)
+npm test --workspace=tools/docgen                  # run docgen tests (42 tests)
 npm run build --workspace=tools/init               # build the init CLI
 npm test --workspace=tools/init                    # run init tests (41 tests)
 npm run build --workspace=tools/cli                # build the unified CLI
-npm test --workspace=tools/cli                     # run CLI tests (38 tests)
+npm test --workspace=tools/cli                     # run CLI tests (60 tests)
 
 # build and test Rust packages
 cd runtimes/rust && cargo build                    # build the Rust runtime
-cd runtimes/rust && cargo test                     # run Rust runtime tests (125 tests)
+cd runtimes/rust && cargo test                     # run Rust runtime tests (150 tests)
 cd renderers/ratatui && cargo build                # build the Ratatui fragment renderer
 cd renderers/ratatui && cargo test                 # run Ratatui renderer tests (58 tests)
 cd tools/wiz && cargo build                        # build the TUI wizard
@@ -71,10 +71,10 @@ cd tools/wiz && cargo test                         # run TUI wizard tests (35 te
 
 # build and test the C# runtime
 dotnet build runtimes/csharp/Xript.Runtime.sln     # build the C# runtime
-dotnet test runtimes/csharp/Xript.Runtime.sln      # run C# runtime tests (201 tests)
+dotnet test runtimes/csharp/Xript.Runtime.sln      # run C# runtime tests (229 tests)
 
 # unified CLI (run from repo root after npm install)
-npx xript validate <manifest.json>     # validate a manifest against the spec schema
+npx xript validate <manifest.json>     # validate a manifest (resolves `extends` first)
 npx xript typegen <manifest.json>      # generate TypeScript definitions (stdout)
 npx xript typegen <m.json> -o out.d.ts # generate TypeScript definitions (file)
 npx xript typegen <m.json> --ambient   # emit ambient .d.ts declaring the `xript` global (mod authoring)
@@ -85,6 +85,13 @@ npx xript init --mod                   # scaffold a new mod project
 npx xript init --mod --typescript      # scaffold an ESM TypeScript mod project
 npx xript sanitize <file.html>         # sanitize an HTML fragment
 npx xript scan src/ --manifest m.json  # scan @xript annotations into manifest
+npx xript describe <m.json>            # summarize a host's bindings/hooks/slots/capabilities
+npx xript score <m.json> --min N       # rate moddability capacity, with a CI gate
+npx xript score-diff <m.json> --baseline b.json  # capacity regression gate (--min-delta N)
+npx xript lint <m.json> --strict       # findings-based reviewer (errors/warnings/info)
+npx xript run <mod> --invoke export    # load a mod into the QuickJS-WASM sandbox
+npx xript guide <topic>                # print xript authoring doctrine by topic
+npx xript mcp                          # run @xriptjs/cli as a Model Context Protocol server (stdio)
 
 # run example demos
 node examples/expression-evaluator/src/demo.js  # tier 1 demo
@@ -128,18 +135,18 @@ A top-level `CHANGELOG.md` tracks all releases. Follow these rules:
 
 ## Current State
 
-v0.5.0 shipped — Hardening, Roles & a Debugger (1077 tests across 12 packages). All four runtimes are kept at parity against a shared contract.
+v0.6.0 shipped — Manifest Inheritance & the Agent CLI (1299 tests across 12 packages). All four runtimes are kept at parity against a shared contract.
 
-- **Spec**: manifest schema (`spec/manifest.schema.json`, `spec/manifest.md`) with `slots`, `extends` deep-merge, and record `fieldDefinition` (`default` + inline `enum`); mod manifest (`spec/mod-manifest.schema.json`, `spec/manifest.md`) with `contributions.provides` provider roles, host-invoke exports, and a top-level `family` field; fragment protocol (`spec/fragments.md`) and fragment format catalog (`spec/fragment-formats.md`); ES module authoring (`spec/modules.md`); DAP-shaped debug protocol (`spec/debug-protocol.md`, `spec/debug-messages.schema.json`); capability-grant data shapes (`spec/capability-prompt.schema.json`, `spec/install-descriptor.schema.json`, `spec/discovery-result.schema.json`); HTML sanitizer conformance suite (`spec/sanitizer-tests.json`, 56 cases); annotation tags (`spec/annotations.md`)
+- **Spec**: manifest schema (`spec/manifest.schema.json`, `spec/manifest.md`, `$id` at v0.6 with a legacy-id alias) with `slots` whose `accepts` type governs fills and whose `payload` carries a full JSON Schema, `extends` inheritance (add-new / fill / refine collision semantics, cycle detection, `abstract` types), `reserved` flag on slots/capabilities, top-level `events` broadcast catalog, open enums (`open: true`), and `$schema` overlay extensibility; `extends` spec (`spec/extends.md`, conformance corpus `spec/extends-tests.json`); mod manifest (`spec/mod-manifest.schema.json`, `spec/mod-manifest.md`) built around a single `fills` object keyed by host slot id (fragments, provider roles, and hook handlers are all slot fills), with legacy `fragments[]` / `contributions` / standalone `hooks` accepted as deprecated, plus host-invoke exports, a top-level `family` field, and an optional `license` field; fragment protocol (`spec/fragments.md`, fill `handlers` array, `events` kept as deprecated alias) and fragment format catalog (`spec/fragment-formats.md`); hooks as event-typed slots (`spec/hooks.md`); ES module authoring (`spec/modules.md`); DAP-shaped debug protocol (`spec/debug-protocol.md`, `spec/debug-messages.schema.json`); capability-grant data shapes (`spec/capability-prompt.schema.json`, `spec/install-descriptor.schema.json`, `spec/discovery-result.schema.json`); HTML sanitizer conformance suite (`spec/sanitizer-tests.json`, 56 cases); annotation tags (`spec/annotations.md`)
 - **HTML Sanitizer**: `@xriptjs/sanitize` in `tools/sanitize/` -- pure string-based HTML+JSML sanitizer with no DOM dependency (works in QuickJS WASM), SVG support, `data:` scheme subtype-gated to `image/{png,jpeg,gif,svg+xml}`, 93 tests
-- **Universal Runtime**: `@xriptjs/runtime` in `runtimes/js/` -- QuickJS WASM sandbox with capability enforcement (+ audit channel), hooks, `loadMod()`, real ES module evaluation with auto-registered exports, host-invoke export seam, slot resolver, provider-role resolution, debug protocol, hard caps + cooperative cancellation, fragment processing, 166 tests
-- **Node.js Runtime**: `@xriptjs/runtime-node` in `runtimes/node/` -- Node.js vm-based sandbox at full parity (`SourceTextModule` for ES modules, AST-instrumented debugging, token checked at execute/invoke entry), 165 tests
-- **Rust Runtime**: `xript-runtime` in `runtimes/rust/` -- native QuickJS sandbox via rquickjs with host bindings (sync and async), capability enforcement + audit, hooks, hard caps + cooperative cancellation, ES module evaluation, host-invoke exports, provider roles, debug protocol, `namespace_builder`/`add_mixed_namespace`, `load_mod()`, fragment processing, `XriptHandle` Send+Sync wrapper, 125 tests
-- **C# Runtime**: `Xript.Runtime` in `runtimes/csharp/` -- Jint sandbox at full parity (ES modules, synchronous-thread debugging, cancellation, provider roles, host-invoke exports), 201 tests
+- **Universal Runtime**: `@xriptjs/runtime` in `runtimes/js/` -- QuickJS WASM sandbox with capability enforcement (+ audit channel), hooks, `loadMod()`, real ES module evaluation with auto-registered exports, host-invoke export seam, slot resolver, provider-role resolution, `extends` resolution, debug protocol, hard caps + cooperative cancellation, fragment processing, 187 tests
+- **Node.js Runtime**: `@xriptjs/runtime-node` in `runtimes/node/` -- Node.js vm-based sandbox at full parity (`SourceTextModule` for ES modules, AST-instrumented debugging, `extends` resolution, token checked at execute/invoke entry), 185 tests
+- **Rust Runtime**: `xript-runtime` in `runtimes/rust/` -- native QuickJS sandbox via rquickjs with host bindings (sync and async), capability enforcement + audit, hooks, hard caps + cooperative cancellation, ES module evaluation, host-invoke exports, provider roles, `extends` resolution, debug protocol, `namespace_builder`/`add_mixed_namespace`, `load_mod()`, fragment processing, `XriptHandle` Send+Sync wrapper, 150 tests
+- **C# Runtime**: `Xript.Runtime` in `runtimes/csharp/` -- Jint sandbox at full parity (ES modules, synchronous-thread debugging, cancellation, provider roles, host-invoke exports, `extends` resolution), 229 tests
 - **Ratatui Renderer**: `xript-ratatui` in `renderers/ratatui/` -- fragment renderer for Ratatui terminal apps, parses `application/x-ratatui+json` into native widgets, 58 tests
 - **TUI Wizard**: `xript-wiz` in `tools/wiz/` -- interactive TUI wizard that dogfoods the xript ecosystem (fragments rendered by `xript-ratatui`), audit and diff screens for manifest analysis, 35 tests
-- **Unified CLI**: `@xriptjs/cli` in `tools/cli/` -- single `xript` command with subcommands for validate, typegen, docgen, init, sanitize, and scan, 38 tests
-- **Toolchain**: manifest validator (app + mod, auto-detection, cross-validation, `extends` resolution + cycle detection, 68 tests), type generator (slot + fragment API types, `--ambient` mod-authoring declarations, provider roles, record accessors, 52 tests), doc generator (slot docs + fragment API page + role/record surfaces + `--link-format` + `--frontmatter`, 35 tests), init CLI (app + mod scaffolding + tier 4 + `--mod --typescript` ESM scaffold, 41 tests), sanitizer (93 tests)
+- **Unified CLI**: `@xriptjs/cli` in `tools/cli/` -- single `xript` command with subcommands for validate, typegen, docgen, init, sanitize, scan, describe, score, score-diff, lint, run, and guide, plus `xript mcp` to run as a Model Context Protocol server over stdio (tools mirror the CLI one-to-one, `xript://spec/*` and `xript://guidance/*` resources, doctrine prompts), 60 tests
+- **Toolchain**: manifest validator (app + mod, auto-detection, cross-validation with per-fill payload checks, `extends` resolution + cycle detection, `$schema` overlay resolution, capacity-based `score` + `score-diff` + `lint` analyzers exported for host import, 155 tests), type generator (slot + fragment API types, `--ambient` mod-authoring declarations, provider roles, record accessors, event catalog, open enums, shared `@xriptjs/validate` resolver, 64 tests), doc generator (slot docs + fragment API page + role/record surfaces + events section + `--link-format` + `--frontmatter`, shared resolver, 42 tests), init CLI (app + mod scaffolding + tier 4 + `--mod --typescript` ESM scaffold, 41 tests), sanitizer (93 tests)
 - **Examples**: `expression-evaluator/`, `plugin-system/`, `game-mod-system/`, `ui-dashboard/` (full fragment protocol), and `svelte-fragment-renderer/` (reference host glue rendering inert fragment output as Svelte; not a published package)
 - **Developer Experience**: docs site at xript.dev, getting started guide, runtime API reference, runtime overview comparison, "Authoring Mods in TypeScript" guide, example walkthroughs, interactive hero playground, interactive live demos including Fragment Builder and Fragment Workbench
 - **Publishing**: all npm packages live under `@xriptjs` scope (OIDC trusted publishing, provenance attestations), Rust crates on crates.io, C# package on NuGet; all publish workflows (`publish.yml`, `publish-nuget.yml`, `publish-crates.yml`) trigger on GitHub Release creation with `workflow_dispatch` as manual fallback
@@ -153,9 +160,11 @@ v0.5.0 shipped — Hardening, Roles & a Debugger (1077 tests across 12 packages)
 - **Universal portability**: QuickJS WASM sandbox runs anywhere JavaScript runs (browser, Node, Deno, Bun, Cloudflare Workers)
 - **Fragments are inert templates**: all dynamic behavior routes through the sandbox (data-bind for values, data-if for visibility, events for interaction, command buffer for mutations)
 - **Two smart attributes only**: `data-bind` and `data-if` are the hard wall — everything beyond that goes through the sandbox fragment API
-- **Mod manifests ship with fragments**: mods declare themselves and their UI contributions in a single declarative manifest
+- **Host declares slots, mods fill them**: the contribution surface is one concept — a host declares typed slots (each slot's `accepts` type governs what a valid fill looks like and what the host does with it: mount, call, resolve, or fire), and a mod contributes through a single `fills` object keyed by slot id. Fragments, provider roles, and hook handlers are all just fills of slots of a particular type, not separate top-level surfaces. Legacy `fragments[]` / `contributions` / standalone `hooks` are accepted with deprecation warnings
+- **More extensible, not less**: the framework defaults toward openness; a restriction is permitted only when it genuinely buys convenience or security the framework couldn't otherwise provide, and must justify itself plainly. This is why the manifest top level accepts `$schema` overlays, remote schema resolution is allowed-unless-opted-out, and the mod `license` field exists
+- **Manifests inherit**: a manifest names base manifests in `extends`, resolved and deep-merged base-then-child before validation. A child can add-new, fill an `abstract` base type, or `refine` a concrete one; any other collision errors so inheritance never silently clobbers. The same resolver runs across all four runtimes and across `validate` / `typegen` / `docgen`
+- **Score measures capacity, lint finds problems**: `xript score` rates how much extension surface a host exposes against the ceiling of exposing all of it (capacity, not how much a mod set exercises it); `xript lint` is the actionable findings list behind the number. Analyzers live in `@xriptjs/validate` so hosts can import them
 - **JSML is core**: `application/jsml+json` (JsonML array format) is a built-in fragment format — native JSON markup with no escaping, processed by all JS/Node runtimes alongside `text/html`
 - **Mods compile to ES modules**: `entry.format: "module"` evaluates a real ES module; top-level named exports auto-register as host-invokable. No external imports, no CommonJS — `require`/`module.exports` fail loudly. TypeScript authoring is first-class via `typegen --ambient`
-- **Roles, not hardcoded globals**: cross-addon collaboration goes through `contributions.provides` + host `resolve_role`; declaring a role grants nothing, the named fns stay gated by their own capabilities
 - **Runtimes stay persistence-agnostic**: record types are described through the `types` surface; the host owns storage. Capability-grant shapes are schemas only — grant policy and prompt UX stay host-side
 - **Engine fidelity is documented, not faked**: the debug protocol uses DAP vocabulary across all four runtimes but per-engine limits (rquickjs has no per-line hook, QuickJS-WASM needs the async sandbox, Jint pauses on the engine thread) are surfaced rather than papered over
