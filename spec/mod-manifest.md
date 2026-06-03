@@ -86,7 +86,7 @@ Slot fills reference these exports by name (see the fill shapes below).
         "bindings": [
           { "name": "health", "path": "player.health.val" }
         ],
-        "events": [
+        "handlers": [
           { "selector": "[data-action='heal']", "on": "click", "handler": "onHealClicked" }
         ]
       }
@@ -108,7 +108,7 @@ The `accepts` type a slot declares determines the fill's shape and what the host
   "format": "text/html+jsml",
   "source": "panel.html",
   "bindings": [{ "name": "health", "path": "player.health.val" }],
-  "events": [{ "selector": "[data-action='heal']", "on": "click", "handler": "onHealClicked" }]
+  "handlers": [{ "selector": "[data-action='heal']", "on": "click", "handler": "onHealClicked" }]
 }
 ```
 

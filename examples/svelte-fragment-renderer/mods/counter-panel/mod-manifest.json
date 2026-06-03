@@ -1,6 +1,6 @@
 {
-	"$schema": "https://xript.dev/schema/mod-manifest/v0.3.json",
-	"xript": "0.3",
+	"$schema": "https://xript.dev/schema/mod-manifest/v0.6.json",
+	"xript": "0.6",
 	"name": "counter-panel",
 	"version": "1.0.0",
 	"title": "Counter Panel",
