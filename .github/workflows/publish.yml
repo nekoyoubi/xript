@@ -30,12 +30,12 @@ jobs:
         run: npm run build --workspace=tools/docgen
       - name: build init
         run: npm run build --workspace=tools/init
-      - name: build cli
-        run: npm run build --workspace=tools/cli
       - name: build runtime
         run: npm run build --workspace=runtimes/js
       - name: build runtime-node
         run: npm run build --workspace=runtimes/node
+      - name: build cli
+        run: npm run build --workspace=tools/cli
 
       - name: test sanitize
         run: npm test --workspace=tools/sanitize

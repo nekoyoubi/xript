@@ -222,6 +222,7 @@ fn validate_app_manifest(content: &str) -> serde_json::Value {
             host_bindings: xript_runtime::HostBindings::new(),
             capabilities: vec![],
             console: xript_runtime::ConsoleHandler::default(),
+            ..Default::default()
         },
     ) {
         Ok(_rt) => {

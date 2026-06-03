@@ -13,11 +13,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: publish xript-runtime
+        continue-on-error: true
         run: cargo publish --allow-dirty --manifest-path runtimes/rust/Cargo.toml
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
 
       - name: publish xript-ratatui
+        continue-on-error: true
         run: cargo publish --allow-dirty --manifest-path renderers/ratatui/Cargo.toml
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
@@ -26,6 +28,7 @@ jobs:
         run: sleep 60
 
       - name: publish xript-wiz
+        continue-on-error: true
         run: cargo publish --allow-dirty --manifest-path tools/wiz/Cargo.toml
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
