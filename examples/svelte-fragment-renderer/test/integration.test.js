@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRuntime, loadModFiles, appState } from "../src/host/host.js";
 import { makeDispatch } from "../src/host/dispatch.js";
-import { applyVisibility, applyOps, wireEvents } from "../src/lib/applyFragment.js";
+import { applyVisibility, applyOps, wireHandlers } from "../src/lib/applyFragment.js";
 import { makeRoot, FakeEvent } from "./dom-shim.js";
 
 test("end-to-end: runtime output flows through the renderer core into the DOM", async () => {
@@ -12,7 +12,7 @@ test("end-to-end: runtime output flows through the renderer core into the DOM", 
 	const counter = runtime.loadMod(counterMod.manifest, { fragmentSources: counterMod.sources });
 
 	appState.counter.value = 0;
-	const events = counterMod.manifest.fragments[0].events;
+	const handlers = counterMod.manifest.fragments[0].handlers;
 
 	function frame(root) {
 		const result = counter.updateBindings({ counter: { value: appState.counter.value } })[0];
@@ -28,7 +28,7 @@ test("end-to-end: runtime output flows through the renderer core into the DOM", 
 	assert.equal(root.querySelector(".counter-value").textContent, "0");
 	assert.equal(root.querySelector(".milestone").hasAttribute("hidden"), true);
 
-	const teardown = wireEvents(root, events, dispatch);
+	const teardown = wireHandlers(root, handlers, dispatch);
 	for (let i = 0; i < 5; i++) {
 		root.querySelector(".increment-btn").dispatchEvent(new FakeEvent("click"));
 	}
@@ -44,7 +44,7 @@ test("end-to-end: runtime output flows through the renderer core into the DOM", 
 	runtime.dispose();
 });
 
-test("declared fragment event invokes the named export through the host", async () => {
+test("declared fragment handler invokes the named export through the host", async () => {
 	const runtime = createRuntime(["ui-mount"]);
 	const dispatch = makeDispatch(runtime);
 	const counterMod = await loadModFiles("counter-panel");

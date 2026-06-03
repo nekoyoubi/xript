@@ -434,7 +434,7 @@ function generateTier4Demo(options: TemplateOptions): string {
 
 function generateTier4ModManifest(options: TemplateOptions): string {
 	const manifest: Record<string, unknown> = {
-		$schema: "https://xript.dev/schema/mod-manifest/v0.3.json",
+		$schema: "https://xript.dev/schema/mod-manifest/v0.6.json",
 		xript: "0.3",
 		name: `${options.name}-panel`,
 		version: "0.1.0",
@@ -476,7 +476,7 @@ function generateModManifest(options: TemplateOptions): string {
 	const ext = options.language === "typescript" ? "ts" : "js";
 	const exportName = exampleExportName(options.name);
 	const manifest: Record<string, unknown> = {
-		$schema: "https://xript.dev/schema/mod-manifest/v0.3.json",
+		$schema: "https://xript.dev/schema/mod-manifest/v0.6.json",
 		xript: "0.3",
 		name: options.name,
 		version: "0.1.0",

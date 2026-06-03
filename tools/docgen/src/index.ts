@@ -1,8 +1,8 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { resolve, join, dirname } from "node:path";
-import { resolveExtends } from "./resolve.js";
+import { resolveExtends } from "@xriptjs/validate";
 
-export { resolveExtends, ManifestResolutionError } from "./resolve.js";
+export { resolveExtends, ManifestResolutionError } from "@xriptjs/validate";
 
 interface HookDef {
 	description: string;
@@ -33,6 +33,8 @@ interface Manifest {
 	types?: Record<string, TypeDefinition>;
 	slots?: SlotDef[];
 	contributions?: Contributions;
+	events?: EventDef[];
+	fills?: Record<string, Fill[]>;
 }
 
 type Binding = FunctionBinding | NamespaceBinding;
@@ -78,6 +80,7 @@ interface TypeDefinition {
 	description: string;
 	fields?: Record<string, FieldDefinition>;
 	values?: string[];
+	open?: boolean;
 }
 
 interface FieldDefinition {
@@ -86,6 +89,7 @@ interface FieldDefinition {
 	optional?: boolean;
 	default?: unknown;
 	enum?: unknown[];
+	open?: boolean;
 }
 
 interface ProviderRole {
@@ -95,6 +99,27 @@ interface ProviderRole {
 
 interface Contributions {
 	provides?: ProviderRole[];
+}
+
+interface EventDef {
+	id: string;
+	description: string;
+	payload?: TypeRef;
+}
+
+interface FragmentHandler {
+	selector: string;
+	on: string;
+	handler: string;
+}
+
+interface Fill {
+	format?: string;
+	source?: string;
+	inline?: boolean;
+	id?: string;
+	handlers?: FragmentHandler[];
+	events?: FragmentHandler[];
 }
 
 interface Example {
@@ -226,6 +251,26 @@ function generateIndexPage(manifest: Manifest, options?: DocgenOptions): DocPage
 		lines.push("");
 	}
 
+	if (manifest.events && manifest.events.length > 0) {
+		lines.push("## Events");
+		lines.push("");
+		lines.push(
+			"The named events this host emits, with their payload types. This is a discovery declaration — a catalog of what the host broadcasts — not a presumption of who listens. Sandbox scripts, the host UI, and external subscribers can all consume these events; the manifest only states that they are emitted.",
+		);
+		lines.push("");
+		lines.push(
+			"Keep three neighbors distinct: bindings are *what you can call*, slots and fragment handlers are *what handles*, and events are *what the host emits*. An event-typed slot (`accepts: application/x-xript-hook`) is an extension point an addon fills with a handler; a fragment fill's `handlers` are DOM responses wired onto rendered markup; an event here is a broadcast the host produces, with no consumer presupposed.",
+		);
+		lines.push("");
+		lines.push("| Event | Payload | Description |");
+		lines.push("|-------|---------|-------------|");
+		for (const event of manifest.events) {
+			const payload = event.payload !== undefined ? formatTypeRef(event.payload) : "—";
+			lines.push(`| \`${event.id}\` | ${payload} | ${event.description} |`);
+		}
+		lines.push("");
+	}
+
 	if (manifest.types) {
 		lines.push("## Types");
 		lines.push("");
@@ -284,6 +329,42 @@ function generateIndexPage(manifest: Manifest, options?: DocgenOptions): DocPage
 				lines.push(`| \`${logical}\` | \`${concrete}\` |`);
 			}
 			lines.push("");
+		}
+	}
+
+	if (manifest.fills && Object.keys(manifest.fills).length > 0) {
+		const fillsWithHandlers = Object.entries(manifest.fills).filter(([, fills]) =>
+			fills.some((fill) => (fill.handlers && fill.handlers.length > 0) || (fill.events && fill.events.length > 0)),
+		);
+		if (fillsWithHandlers.length > 0) {
+			lines.push("## Fragment Handlers");
+			lines.push("");
+			lines.push(
+				"DOM event handlers wired onto fragment fills. Each handler binds a sandbox export to an event on elements matching a CSS selector within the rendered fragment.",
+			);
+			lines.push("");
+			for (const [slotId, fills] of fillsWithHandlers) {
+				for (const fill of fills) {
+					const handlers = fill.handlers && fill.handlers.length > 0 ? fill.handlers : fill.events;
+					if (!handlers || handlers.length === 0) continue;
+					const usingAlias = !(fill.handlers && fill.handlers.length > 0);
+					const fillLabel = fill.id ? `\`${slotId}\` (\`${fill.id}\`)` : `\`${slotId}\``;
+					lines.push(`### ${fillLabel}`);
+					lines.push("");
+					if (usingAlias) {
+						lines.push(
+							"> **Deprecated:** this fill declares handlers under the `events` key. `events` is a deprecated alias for `handlers` — rename the key. If both are present, `handlers` wins.",
+						);
+						lines.push("");
+					}
+					lines.push("| Selector | Event | Handler |");
+					lines.push("|----------|-------|---------|");
+					for (const h of handlers) {
+						lines.push(`| \`${h.selector}\` | \`${h.on}\` | \`${h.handler}\` |`);
+					}
+					lines.push("");
+				}
+			}
 		}
 	}
 
@@ -487,10 +568,16 @@ function generateTypePage(name: string, def: TypeDefinition): DocPage {
 			lines.push(`- \`"${value}"\``);
 		}
 		lines.push("");
+		if (def.open) {
+			lines.push(
+				"This is an open enum: the values above are the known set, but any other string is also accepted (for example, addon-contributed values).",
+			);
+			lines.push("");
+		}
 		lines.push("## TypeScript");
 		lines.push("");
 		lines.push("```typescript");
-		lines.push(`type ${name} = ${def.values.map((v) => `"${v}"`).join(" | ")};`);
+		lines.push(`type ${name} = ${def.values.map((v) => `"${v}"`).join(" | ")}${def.open ? " | (string & {})" : ""};`);
 		lines.push("```");
 		lines.push("");
 	} else if (def.fields) {

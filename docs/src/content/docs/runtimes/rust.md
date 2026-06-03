@@ -3,7 +3,7 @@ title: Rust Runtime
 description: Native Rust runtime for sandboxed xript script execution via QuickJS.
 ---
 
-The Rust runtime (`xript-runtime`) executes user scripts inside a native QuickJS sandbox powered by [rquickjs](https://github.com/niclas-aspect/rquickjs). It provides the same manifest-driven binding model and capability enforcement as the JS/WASM and Node.js runtimes, but as a Rust crate with no WASM overhead.
+The Rust runtime (`xript-runtime`) executes user scripts inside a native QuickJS sandbox powered by [rquickjs](https://crates.io/crates/rquickjs). It provides the same manifest-driven binding model and capability enforcement as the JS/WASM and Node.js runtimes, but as a Rust crate with no WASM overhead.
 
 For applications that need to run in browsers or other JavaScript environments, use the [JS/WASM Runtime](/runtimes/js-wasm). For Node.js-only applications, see the [Node.js Runtime](/runtimes/node). For .NET applications, see the [C# Runtime](/runtimes/csharp). For a comparison of all runtimes, see [Choosing a Runtime](/runtimes/overview).
 
@@ -13,13 +13,13 @@ Add `xript-runtime` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-xript-runtime = "0.1"
+xript-runtime = "0.6"
 ```
 
 ## Creating a Runtime
 
 :::note
-`XriptRuntime` is `!Send` — it must stay on the thread that created it. For multi-threaded hosts (Tauri, Axum, Actix), use [`XriptHandle`](#xripthandle-send--sync), which wraps the runtime on a dedicated thread and exposes the same API over channels.
+`XriptRuntime` is `!Send`; it must stay on the thread that created it. For multi-threaded hosts (Tauri, Axum, Actix), use [`XriptHandle`](#xripthandle-send--sync), which wraps the runtime on a dedicated thread and exposes the same API over channels.
 :::
 
 ### From a JSON String
@@ -50,6 +50,7 @@ let runtime = create_runtime(manifest_json, RuntimeOptions {
     host_bindings: bindings,
     capabilities: vec![],
     console: ConsoleHandler::default(),
+    ..Default::default()
 })?;
 ```
 
@@ -65,9 +66,12 @@ let runtime = create_runtime_from_file(
         host_bindings: HostBindings::new(),
         capabilities: vec![],
         console: ConsoleHandler::default(),
+        ..Default::default()
     },
 )?;
 ```
+
+`create_runtime_from_file` resolves the manifest's `extends` chain relative to the file's directory before constructing the runtime, so an inheriting manifest loads as its fully merged form.
 
 ### From a `serde_json::Value`
 
@@ -83,18 +87,24 @@ let runtime = create_runtime_from_value(manifest, RuntimeOptions {
     host_bindings: HostBindings::new(),
     capabilities: vec![],
     console: ConsoleHandler::default(),
+    ..Default::default()
 })?;
 ```
 
 ## Options
 
-`RuntimeOptions` has three fields:
+`RuntimeOptions` derives `Default`, so only the fields you care about need to be set; spread `..Default::default()` for the rest. The full set:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `host_bindings` | `HostBindings` | Map of binding names to host functions |
 | `capabilities` | `Vec<String>` | List of capabilities granted to this script |
-| `console` | `ConsoleHandler` | Console output routing (`log`, `warn`, `error` callbacks) |
+| `console` | `ConsoleHandler` | Console output routing (`log`, `warn`, `error`, plus an optional severity sink) |
+| `cancellation` | `Option<CancellationToken>` | Host-driven cooperative cancellation token; `None` to disable |
+| `audit` | `Option<AuditSink>` | Per-capability audit channel fired once per allowed binding invocation; `None` to disable |
+| `hard_limits` | `Option<HardLimits>` | Host-imposed ceilings clamping the manifest's `limits`; `None` for manifest-only limits |
+| `role_preferences` | `HashMap<String, String>` | Per-role provider preference (`role` → preferred mod name) for `resolve_role` |
+| `debug` | `Option<DebugOptions>` | DAP-shaped debug session options; `None` for zero-overhead off |
 
 ### Host Bindings
 
@@ -135,10 +145,24 @@ let console = ConsoleHandler {
     log: Box::new(|msg| println!("[LOG] {}", msg)),
     warn: Box::new(|msg| eprintln!("[WARN] {}", msg)),
     error: Box::new(|msg| eprintln!("[ERROR] {}", msg)),
+    on: None,
 };
 ```
 
 The default `ConsoleHandler` silently discards all output.
+
+For finer-grained routing, set the `on` field to a single severity sink that receives a `LogSeverity` (`Trace`, `Debug`, `Info`, `Warn`, `Error`) for every console call. When `on` is `Some`, it supersedes the legacy `log`/`warn`/`error` boxes; when it is `None`, the runtime falls back to them (`Info`/`Debug`/`Trace` → `log`, `Warn` → `warn`, `Error` → `error`):
+
+```rust
+use xript_runtime::{ConsoleHandler, LogSeverity};
+
+let console = ConsoleHandler {
+    on: Some(Box::new(|severity: LogSeverity, msg: &str| {
+        eprintln!("[{:?}] {}", severity, msg);
+    })),
+    ..ConsoleHandler::default()
+};
+```
 
 ## Executing Scripts
 
@@ -163,9 +187,14 @@ All errors are variants of `XriptError`:
 |---------|------|
 | `ManifestValidation { issues }` | Manifest fails structural validation |
 | `Binding { binding, message }` | Host function throws or is missing |
-| `CapabilityDenied { binding, capability }` | Calling a gated binding without the required capability |
+| `CapabilityDenied { binding, capability }` | Calling a gated binding (or invoking a gated export) without the required capability |
 | `ExecutionLimit { limit }` | Script exceeds timeout or resource limits |
+| `Cancelled` | Host cancelled execution via the `CancellationToken` (distinct from a timeout) |
+| `Invoke { export, message }` | A host-invoked export was missing/unregistered or threw |
 | `Script(String)` | Script throws an uncaught error |
+| `ModEntry { mod_name, message }` | Mod entry script (classic or module) threw an uncaught error |
+| `ImportDenied { mod_name, specifier }` | A mod attempted to import an external module |
+| `CommonJsDetected { mod_name, artifact }` | A mod entry used CommonJS (`require` / `module.exports`) instead of ES modules |
 | `Engine(String)` | QuickJS engine error |
 | `Json(serde_json::Error)` | Manifest JSON parsing failed |
 | `Io(std::io::Error)` | File I/O failed (for `create_runtime_from_file`) |
@@ -190,23 +219,41 @@ pub fn create_runtime_from_file(path: &Path, options: RuntimeOptions) -> Result<
 pub fn create_runtime_from_value(manifest: Value, options: RuntimeOptions) -> Result<XriptRuntime>;
 
 pub struct XriptRuntime { /* ... */ }
-pub struct RuntimeOptions { /* host_bindings, capabilities, console */ }
+pub struct RuntimeOptions { /* host_bindings, capabilities, console, cancellation, audit, hard_limits, role_preferences, debug */ }
 pub struct HostBindings { /* ... */ }
-pub struct ConsoleHandler { /* log, warn, error */ }
+pub struct ConsoleHandler { /* log, warn, error, on */ }
 pub struct ExecutionResult { pub value: Value, pub duration_ms: f64 }
 pub struct Manifest { pub xript: String, pub name: String, /* ... */ }
-pub enum XriptError { /* ManifestValidation, Binding, CapabilityDenied, ... */ }
+pub enum XriptError { /* ManifestValidation, Binding, CapabilityDenied, Cancelled, Invoke, ModEntry, ImportDenied, CommonJsDetected, ... */ }
 pub type HostFn = Arc<dyn Fn(&[Value]) -> Result<Value, String> + Send + Sync>;
 pub type AsyncHostFn = Arc<dyn Fn(&[Value]) -> Pin<Box<dyn Future<Output = Result<Value, String>> + Send>> + Send + Sync>;
 pub type Result<T> = std::result::Result<T, XriptError>;
 
+// Lifecycle, audit, and limits
+pub struct CancellationToken { /* new(), cancel(), is_cancelled() */ }
+pub struct AuditEvent { pub binding: String, pub capability: Option<String>, pub at_ms: f64 }
+pub type AuditSink = Arc<dyn Fn(AuditEvent) + Send + Sync>;
+pub enum LogSeverity { Trace, Debug, Info, Warn, Error }
+pub struct HardLimits { pub timeout_ms: Option<u64>, pub memory_mb: Option<u64>, pub max_stack_depth: Option<usize> }
+
+// Slot and provider-role resolution
+pub struct SlotContribution { pub mod_name: String, pub fragment_id: String, pub slot: String, pub format: String, pub priority: i32 }
+pub struct RoleResolution { pub addon: String, pub role: String, pub fns: std::collections::BTreeMap<String, String> }
+
 pub struct XriptHandle { /* ... */ }  // Send + Sync wrapper; see below
-pub struct ModInstance { pub fragments: Vec<SanitizedFragment> }
+pub struct FragmentInstance { pub id: String, pub slot: String, pub format: String, pub priority: i32, /* ... */ }
+pub struct ModInstance {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub fragments: Vec<FragmentInstance>,
+    pub provides: Vec<ProviderRole>,
+}
 ```
 
 ## Threading
 
-`XriptRuntime` holds a QuickJS context that is `!Send`. It can only be used from the thread that created it. For multi-threaded hosts (Tauri, Actix, Axum, etc.), use `XriptHandle` instead — it owns the runtime on a dedicated thread and exposes the same API over channels. See [XriptHandle](#xripthandle-send--sync) below.
+`XriptRuntime` holds a QuickJS context that is `!Send`. It can only be used from the thread that created it. For multi-threaded hosts (Tauri, Actix, Axum, etc.), use `XriptHandle` instead; it owns the runtime on a dedicated thread and exposes the same API over channels. See [XriptHandle](#xripthandle-send--sync) below.
 
 ## Async Host Bindings
 
@@ -229,51 +276,152 @@ Script side:
 const data = await fetchData("users");
 ```
 
-`Promise` is available in the sandbox — standard QuickJS async/await works without any extra setup.
+`Promise` is available in the sandbox; standard QuickJS async/await works without any extra setup.
 
 ## Loading Mods
 
 `load_mod()` validates a mod manifest against the app manifest, sanitizes any fragment HTML, and optionally executes the mod's entry script before returning.
 
 ```rust
+use std::collections::{HashMap, HashSet};
+
+let fragment_sources: HashMap<String, String> = HashMap::new();   // source path -> raw HTML
+let mut granted: HashSet<String> = HashSet::new();                // capabilities approved for this mod
+granted.insert("ui-mount".into());
+
 let mod_instance = rt.load_mod(
     mod_manifest_json,           // &str — mod manifest JSON
-    fragment_sources,            // &[(&str, &str)] — (fragment_id, raw_html) pairs
-    &granted_capabilities,       // &[String] — capabilities approved for this mod
-    entry_source,                // Option<&str> — entry script, or None
+    fragment_sources,            // HashMap<String, String> — fragment source path -> raw HTML
+    &granted,                    // &HashSet<String> — capabilities approved for this mod
+    None,                        // Option<&str> — entry script, or None
 )?;
 ```
 
-`entry_source` is run after validation but before `load_mod` returns. If the script throws, `load_mod` returns `XriptError::ModEntry`. The returned `ModInstance` contains the sanitized fragments.
+Fragments declared `inline: true` carry their HTML in the manifest directly; non-inline fragments resolve their `source` path against the `fragment_sources` map. `entry_source` runs after validation but before `load_mod` returns; if it throws, `load_mod` returns `XriptError::ModEntry { mod_name, message }`. The returned `ModInstance` exposes the mod's `id`, `name`, `version`, sanitized `fragments`, and any `provides` (provider-role declarations; see [Slot & Role Resolution](#slot--role-resolution)).
 
-`XriptError` gains one new variant for this:
-
-| Variant | When |
-|---------|------|
-| `ModEntry(String)` | Mod entry script threw an uncaught error |
+A mod entry may be a classic script (using `xript.exports.register(...)`) or an ES module (`entry.format: "module"`); top-level named function exports auto-register as host-invokable. A mod that attempts an external `import` fails with `XriptError::ImportDenied`, and a mod entry carrying CommonJS (`require` / `module.exports`) fails with `XriptError::CommonJsDetected`.
 
 ## Fragment Hooks
 
-`fire_fragment_hook()` fires a lifecycle event for a mounted fragment and returns the command buffer operations the mod script emitted in response.
+`fire_fragment_hook()` fires a lifecycle event for a mounted fragment and returns the command-buffer operations the mod's registered handlers emitted in response.
 
 ```rust
-let commands = rt.fire_fragment_hook(fragment_id, hook_name, &args)?;
+let ops_per_handler = rt.fire_fragment_hook(
+    fragment_id,                       // &str
+    lifecycle,                         // &str — "mount", "unmount", "update", "suspend", or "resume"
+    Some(&serde_json::json!({ "health": 30 })),  // Option<&serde_json::Value> — current bindings
+)?;
 ```
 
-`hook_name` is one of `"mount"`, `"unmount"`, `"update"`, `"suspend"`, or `"resume"`. Each command in the returned `Vec` is an enum variant describing a mutation the host should apply:
+`lifecycle` is one of `"mount"`, `"unmount"`, `"update"`, `"suspend"`, or `"resume"`. The return is a `Vec<serde_json::Value>`: one entry per registered handler, each entry an array of command objects that handler emitted. Each command is a plain JSON object keyed by `op`:
 
 ```rust
-match &commands[0] {
-    FragmentCommand::Toggle { id, visible } => { /* show/hide element */ }
-    FragmentCommand::AddClass { id, class } => { /* add CSS class */ }
-    FragmentCommand::RemoveClass { id, class } => { /* remove CSS class */ }
-    FragmentCommand::SetText { id, text } => { /* update text content */ }
-    FragmentCommand::SetAttr { id, attr, value } => { /* set attribute */ }
-    _ => {}
+for handler_ops in &ops_per_handler {
+    for op in handler_ops.as_array().into_iter().flatten() {
+        match op["op"].as_str() {
+            Some("toggle")          => { /* op["selector"], op["value"] (bool) */ }
+            Some("addClass")        => { /* op["selector"], op["value"] (class) */ }
+            Some("removeClass")     => { /* op["selector"], op["value"] (class) */ }
+            Some("setText")         => { /* op["selector"], op["value"] (text) */ }
+            Some("setAttr")         => { /* op["selector"], op["attr"], op["value"] */ }
+            Some("replaceChildren") => { /* op["selector"], op["value"] (html) */ }
+            _ => {}
+        }
+    }
 }
 ```
 
-The host walks the vec and applies each mutation to its own UI layer.
+The host walks the operations and applies each mutation to its own UI layer.
+
+## Host-Invoke Exports
+
+A mod's entry can register host-invokable functions two ways: by calling `xript.exports.register(name, fn)` in a classic-script entry, or by declaring top-level named function exports in a module-format entry (`entry.format: "module"`). The host calls them through `invoke_export`:
+
+```rust
+let result = rt.invoke_export("computeDamage", &[
+    serde_json::json!(10),
+    serde_json::json!("fire"),
+])?;
+```
+
+Args are JSON-serializable and the return value is honored. An undeclared/unregistered export, or one that throws, surfaces as `XriptError::Invoke`. If the export declares a gating capability the runtime was not granted, the call surfaces as `XriptError::CapabilityDenied` before the function runs.
+
+## Slot & Role Resolution
+
+When a host declares typed `slots`, loaded mods fill them with fragment contributions. `resolve_slot` returns the contributions targeting a slot, ordered by `priority` descending then fragment id ascending; single-cardinality slots (the default, with `multiple` unset) return at most the winner:
+
+```rust
+let contributions = rt.resolve_slot("sidebar.left");      // Vec<SlotContribution>
+let winner = rt.resolve_slot_single("main.overlay");      // Option<SlotContribution>
+```
+
+Provider roles are resolved the same way. A mod that declares `contributions.provides` offers a logical role with a logical→concrete fn map; the host picks a winner with `resolve_role` (first-installed-wins, unless `role_preferences` names a present candidate) or enumerates every candidate with `resolve_role_all` to build its own picker:
+
+```rust
+let provider = rt.resolve_role("storage");                // Option<RoleResolution>
+let all = rt.resolve_role_all("storage");                 // Vec<RoleResolution>
+```
+
+The runtime never invokes the named fns itself; it returns the mapping, and the host calls them through its own export/binding path, so each named fn stays gated by its own capability.
+
+## Cooperative Cancellation
+
+A `CancellationToken` on `RuntimeOptions` lets a host interrupt an in-flight execution at the next interrupt-check point. Cancellation is sticky and idempotent, and surfaces as `XriptError::Cancelled` (distinct from an `ExecutionLimit` timeout):
+
+```rust
+use xript_runtime::CancellationToken;
+
+let token = CancellationToken::new();
+
+let rt = create_runtime(manifest_json, RuntimeOptions {
+    cancellation: Some(token.clone()),
+    ..Default::default()
+})?;
+
+// from another thread / a timer / a UI cancel button:
+token.cancel();
+```
+
+## Audit Channel
+
+An opt-in `AuditSink` fires once per allowed host-binding invocation, before the host function runs, reporting `{ binding, capability, at_ms }`. Emission is best-effort and never propagates errors into the sandbox:
+
+```rust
+use std::sync::Arc;
+use xript_runtime::{AuditEvent, AuditSink};
+
+let sink: AuditSink = Arc::new(|event: AuditEvent| {
+    eprintln!("called {} (cap: {:?}) at {}", event.binding, event.capability, event.at_ms);
+});
+
+let rt = create_runtime(manifest_json, RuntimeOptions {
+    audit: Some(sink),
+    ..Default::default()
+})?;
+```
+
+`RuntimeOptions::with_audit_channel(tx)` is a convenience that wraps an `mpsc::Sender<AuditEvent>` as a sink.
+
+## Hard Limits
+
+A host can impose ceilings the manifest's `limits` cannot exceed. The effective value per field is `min(manifest, hard)`; an over-requesting manifest is clamped silently rather than rejected:
+
+```rust
+use xript_runtime::HardLimits;
+
+let rt = create_runtime(manifest_json, RuntimeOptions {
+    hard_limits: Some(HardLimits {
+        timeout_ms: Some(2000),
+        memory_mb: Some(64),
+        max_stack_depth: Some(256),
+    }),
+    ..Default::default()
+})?;
+```
+
+## Debugging
+
+When `RuntimeOptions::debug` is set, the runtime attaches a DAP-shaped debug session reachable via `rt.debug_session()` (`None` when debug is off, zero overhead when absent). The session uses Debug Adapter Protocol vocabulary (breakpoints, stack frames, scopes, variables, stop reasons) shared across all four runtimes; per-engine fidelity is surfaced through `DebugFidelity` rather than papered over. See the [Debugging](/spec/debugging) spec for the protocol shape.
 
 ## XriptHandle (Send + Sync)
 
@@ -288,7 +436,7 @@ let handle = XriptHandle::new(manifest_json, options)?;
 let result = handle.execute("2 + 2")?;
 ```
 
-`XriptHandle` starts a dedicated owner thread, moves the `XriptRuntime` onto it, and forwards every call through a channel pair. All methods mirror `XriptRuntime` — `execute`, `load_mod`, `fire_fragment_hook`, etc. The channel overhead is negligible for typical scripting workloads.
+`XriptHandle` starts a dedicated owner thread, moves the `XriptRuntime` onto it, and forwards every call through a channel pair. All methods mirror `XriptRuntime` (`execute`, `load_mod`, `fire_fragment_hook`, and so on). The channel overhead is negligible for typical scripting workloads.
 
 Tauri example:
 

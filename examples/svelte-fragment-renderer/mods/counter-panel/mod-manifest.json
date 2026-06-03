@@ -4,23 +4,24 @@
 	"name": "counter-panel",
 	"version": "1.0.0",
 	"title": "Counter Panel",
-	"description": "A click-to-increment counter panel demonstrating bindings, visibility, the command buffer, and declared fragment events.",
+	"description": "A click-to-increment counter panel demonstrating bindings, visibility, the command buffer, and declared fragment handlers.",
 	"author": "xript-examples",
 	"capabilities": ["ui-mount"],
 	"entry": "src/mod.js",
-	"fragments": [
-		{
-			"id": "counter-display",
-			"slot": "sidebar.left",
-			"format": "text/html",
-			"source": "fragments/counter.html",
-			"bindings": [
-				{ "name": "value", "path": "counter.value" }
-			],
-			"events": [
-				{ "selector": ".increment-btn", "on": "click", "handler": "onIncrement" }
-			],
-			"priority": 10
-		}
-	]
+	"fills": {
+		"sidebar.left": [
+			{
+				"id": "counter-display",
+				"format": "text/html",
+				"source": "fragments/counter.html",
+				"bindings": [
+					{ "name": "value", "path": "counter.value" }
+				],
+				"handlers": [
+					{ "selector": ".increment-btn", "on": "click", "handler": "onIncrement" }
+				],
+				"priority": 10
+			}
+		]
+	}
 }

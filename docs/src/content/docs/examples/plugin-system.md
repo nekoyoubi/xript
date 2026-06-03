@@ -3,7 +3,7 @@ title: "Example: Plugin System"
 description: "A tier 2 integration walkthrough: namespaces, capabilities, and custom types."
 ---
 
-This example demonstrates a full-featured plugin system using xript's tier 2 features: namespaces to organize bindings, capabilities to gate destructive operations, and custom types to describe data structures. Five plugins run against the same host, each with a different permission profile.
+A full plugin system built on xript's tier 2 features: namespaces to organize bindings, capabilities to gate destructive operations, and custom types to describe data structures. Five plugins run against the same host, each with a different permission profile.
 
 The full source is in [`examples/plugin-system/`](https://github.com/nekoyoubi/xript/tree/main/examples/plugin-system).
 
@@ -98,7 +98,7 @@ const hostBindings = {
 };
 ```
 
-Each plugin gets its own runtime instance but shares the same underlying `taskStore`. This means plugins can see each other's changes: a deliberate design choice for this example.
+Each plugin gets its own runtime instance but shares the same underlying `taskStore`, so plugins see each other's changes; that shared visibility is deliberate here.
 
 The factory is initialized once, then each plugin creates a runtime from it:
 
@@ -157,6 +157,23 @@ runtime.execute('tasks.remove("2")'); // CapabilityDeniedError: requires "admin"
 
 Having `manage-tasks` does not grant `admin`; each capability must be explicitly granted.
 
+## Auditing Capability Use
+
+Every runtime accepts an optional `audit` callback. The host receives an `AuditEvent` (`{ binding, capability, at }`) each time a plugin invokes a gated binding, so a host can log, rate-limit, or alarm on sensitive operations without changing the bindings themselves:
+
+```javascript
+const runtime = xript.createRuntime(manifest, {
+  hostBindings: createHostBindings(),
+  capabilities: ["manage-tasks", "admin"],
+  audit: ({ binding, capability, at }) => {
+    console.log(`[audit] ${binding} (cap: ${capability ?? "none"}) at ${at}`);
+  },
+});
+runtime.execute('tasks.remove("1")'); // emits an audit event for "tasks.remove" / "admin"
+```
+
+The audit channel is per-capability and host-side only; it observes grants the runtime already enforces and never relaxes them.
+
 ## Running the Demo
 
 ```sh
@@ -165,6 +182,17 @@ node src/demo.js
 ```
 
 The demo runs all five plugins sequentially, showing which operations succeed and which are denied.
+
+You can also point the toolchain at this manifest to validate it, inspect its extension surface, and see how moddable it is:
+
+```sh
+npx xript validate examples/plugin-system/manifest.json   # check it against the spec schema
+npx xript describe examples/plugin-system/manifest.json    # summarize bindings, capabilities, and types
+npx xript score examples/plugin-system/manifest.json       # rate the exposed moddability surface
+npx xript lint examples/plugin-system/manifest.json        # findings-based review of the manifest
+```
+
+`xript score` measures *moddability capacity*: how much of the host's surface (bindings, slots, capabilities, events) is exposed to extenders, not how heavily any particular plugin exercises it.
 
 ## Concepts Demonstrated
 

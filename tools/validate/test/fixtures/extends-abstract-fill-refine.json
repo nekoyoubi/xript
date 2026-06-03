@@ -1,0 +1,28 @@
+{
+	"xript": "0.3",
+	"extends": "./extends-abstract-base.json",
+	"name": "host-fill-refine",
+	"types": {
+		"StatusCode": {
+			"description": "A concrete status code enum.",
+			"values": ["ok", "error", "pending"]
+		},
+		"Envelope": {
+			"refines": true,
+			"fields": {
+				"body": { "type": "string", "description": "The refined response body." },
+				"traceId": { "type": "string", "description": "A correlation id added by the extender." }
+			}
+		}
+	},
+	"slots": [
+		{
+			"id": "statusbar",
+			"refines": true,
+			"payload": {
+				"label": { "type": "string", "description": "The refined label." },
+				"icon": { "type": "string", "description": "An icon the extender adds." }
+			}
+		}
+	]
+}

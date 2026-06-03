@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
-import { resolveExtends } from "./resolve.js";
+import { resolveExtends } from "@xriptjs/validate";
 
-export { resolveExtends, ManifestResolutionError } from "./resolve.js";
+export { resolveExtends, ManifestResolutionError } from "@xriptjs/validate";
 
 export interface TypegenOptions {
 	header?: string;
@@ -49,6 +49,26 @@ interface Contributions {
 	provides?: ProviderRole[];
 }
 
+interface EventDef {
+	id: string;
+	description: string;
+	payload?: TypeRef;
+}
+
+interface FragmentHandler {
+	selector: string;
+	on: string;
+	handler: string;
+}
+
+interface Fill {
+	id?: string;
+	format?: string;
+	source?: string;
+	handlers?: FragmentHandler[];
+	events?: FragmentHandler[];
+}
+
 interface Manifest {
 	xript: string;
 	name: string;
@@ -62,6 +82,8 @@ interface Manifest {
 	slots?: SlotDef[];
 	entry?: string | string[] | EntryBlock;
 	contributions?: Contributions;
+	events?: EventDef[];
+	fills?: Record<string, Fill[]>;
 }
 
 type Binding = FunctionBinding | NamespaceBinding;
@@ -106,6 +128,7 @@ interface TypeDefinition {
 	description: string;
 	fields?: Record<string, FieldDefinition>;
 	values?: string[];
+	open?: boolean;
 }
 
 interface FieldDefinition {
@@ -114,6 +137,7 @@ interface FieldDefinition {
 	optional?: boolean;
 	default?: unknown;
 	enum?: unknown[];
+	open?: boolean;
 }
 
 interface TypegenManifestContext {
@@ -314,12 +338,14 @@ function literalForValue(value: unknown): string {
 
 function resolveFieldType(field: FieldDefinition, types?: Record<string, TypeDefinition>): string {
 	if (Array.isArray(field.enum) && field.enum.length > 0) {
-		return field.enum.map(literalForValue).join(" | ");
+		const openSuffix = field.open ? " | (string & {})" : "";
+		return field.enum.map(literalForValue).join(" | ") + openSuffix;
 	}
 	if (typeof field.type === "string" && types) {
 		const named = types[field.type];
 		if (named && Array.isArray(named.values) && named.values.length > 0) {
-			return named.values.map((v) => `"${v}"`).join(" | ");
+			const openSuffix = named.open ? " | (string & {})" : "";
+			return named.values.map((v) => `"${v}"`).join(" | ") + openSuffix;
 		}
 	}
 	return resolveTypeRef(field.type);
@@ -479,7 +505,8 @@ function generateEnumType(name: string, def: TypeDefinition): string {
 	lines.push(generateJSDoc(def.description));
 
 	const values = (def.values || []).map((v) => `"${v}"`).join(" | ");
-	lines.push(`type ${name} = ${values};`);
+	const openSuffix = def.open ? " | (string & {})" : "";
+	lines.push(`type ${name} = ${values}${openSuffix};`);
 
 	return lines.join("\n");
 }
@@ -553,10 +580,19 @@ export function generateAmbientTypes(manifest: unknown, options?: TypegenOptions
 		globalBlocks.push(generateSlotTypes(m.slots));
 	}
 
+	if (m.events && m.events.length > 0) {
+		globalBlocks.push(generateEventCatalog(m.events));
+	}
+
 	globalBlocks.push(generateXriptConst());
 
 	const globalBody = globalBlocks.map((b) => indent(b, 1)).join("\n\n");
 	sections.push(`declare global {\n${globalBody}\n}`);
+
+	if (m.fills && Object.keys(m.fills).length > 0) {
+		const handlerTypes = generateFragmentHandlerTypes(m.fills);
+		if (handlerTypes) sections.push(handlerTypes);
+	}
 
 	if (m.entry && typeof m.entry === "object" && !Array.isArray(m.entry) && m.entry.exports) {
 		const exportEntries = Object.entries(m.entry.exports);
@@ -624,6 +660,15 @@ export function generateTypes(manifest: unknown, options?: TypegenOptions): stri
 	if (m.slots && m.slots.length > 0) {
 		sections.push(generateFragmentAPITypes());
 		sections.push(generateSlotTypes(m.slots));
+	}
+
+	if (m.events && m.events.length > 0) {
+		sections.push(generateEventCatalog(m.events));
+	}
+
+	if (m.fills && Object.keys(m.fills).length > 0) {
+		const handlerTypes = generateFragmentHandlerTypes(m.fills);
+		if (handlerTypes) sections.push(handlerTypes);
 	}
 
 	if (m.entry && typeof m.entry === "object" && !Array.isArray(m.entry) && m.entry.exports) {
@@ -749,6 +794,76 @@ function generateSlotTypes(slots: SlotDef[]): string {
 		lines.push(indent(generateJSDoc(doc.join(". ") + "."), 1));
 		lines.push(indent(`"${slot.id}": { accepts: ${JSON.stringify(slot.accepts)}; multiple: ${slot.multiple ?? false}; style: "${slot.style ?? "inherit"}" };`, 1));
 	}
+
+	lines.push("}");
+	return lines.join("\n");
+}
+
+function generateEventCatalog(events: EventDef[]): string {
+	const lines: string[] = [];
+
+	lines.push(
+		generateJSDoc(
+			"Catalog of the named events this host emits, mapping event id to payload type. A discovery declaration of what the host broadcasts; consumers (sandbox scripts, host UI, external subscribers) are not presupposed. Distinct from slots and fragment handlers: bindings are what you can call, slots and handlers are what handles, events are what the host emits.",
+		),
+	);
+	lines.push("interface XriptEvents {");
+
+	for (const event of events) {
+		const payload = event.payload !== undefined ? resolveTypeRef(event.payload) : "void";
+		lines.push(indent(generateJSDoc(event.description), 1));
+		lines.push(indent(`"${event.id}": ${payload};`, 1));
+	}
+
+	lines.push("}");
+	lines.push("");
+
+	lines.push(generateJSDoc("An event id the host emits."));
+	const union = events.map((e) => `"${e.id}"`).join(" | ");
+	lines.push(`type XriptEventId = ${union};`);
+
+	return lines.join("\n");
+}
+
+function resolveFillHandlers(fill: Fill): { handlers: FragmentHandler[]; usingAlias: boolean } | undefined {
+	if (fill.handlers && fill.handlers.length > 0) {
+		return { handlers: fill.handlers, usingAlias: false };
+	}
+	if (fill.events && fill.events.length > 0) {
+		return { handlers: fill.events, usingAlias: true };
+	}
+	return undefined;
+}
+
+function generateFragmentHandlerTypes(fills: Record<string, Fill[]>): string | undefined {
+	const lines: string[] = [];
+
+	lines.push(
+		generateJSDoc(
+			"DOM event handlers wired onto fragment fills, keyed by host slot id. Each entry names a sandbox handler bound to an event on elements matching a CSS selector within the rendered fragment.",
+		),
+	);
+	lines.push("interface FragmentHandlers {");
+
+	let emitted = false;
+	for (const [slotId, slotFills] of Object.entries(fills)) {
+		for (const fill of slotFills) {
+			const resolved = resolveFillHandlers(fill);
+			if (!resolved) continue;
+			emitted = true;
+			const key = fill.id ? `${slotId}::${fill.id}` : slotId;
+			const remarks = resolved.usingAlias
+				? "Declared under the deprecated `events` key. Rename it to `handlers`; if both are present, `handlers` wins."
+				: undefined;
+			lines.push(indent(generateJSDoc(`Handlers wired onto the \`${slotId}\` fill.`, { remarks }), 1));
+			const entries = resolved.handlers
+				.map((h) => `{ selector: "${h.selector}"; on: "${h.on}"; handler: "${h.handler}" }`)
+				.join(", ");
+			lines.push(indent(`"${key}": [${entries}];`, 1));
+		}
+	}
+
+	if (!emitted) return undefined;
 
 	lines.push("}");
 	return lines.join("\n");

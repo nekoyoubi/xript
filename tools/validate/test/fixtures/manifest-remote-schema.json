@@ -1,0 +1,6 @@
+{
+	"$schema": "https://example.test/schema/remote-overlay.json",
+	"xript": "0.3",
+	"name": "remote-app",
+	"domainBadge": "silver"
+}

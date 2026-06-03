@@ -4,9 +4,11 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { resolveExtends, ManifestResolutionError } from "./resolve.js";
 import { detectCommonJs, commonJsMessage } from "./cjs.js";
+import { resolveSchema, type SchemaResolveOptions, type ResolvedSchema } from "./schema-resolve.js";
 
-export { resolveExtends, resolveManifestFile, ManifestResolutionError } from "./resolve.js";
+export { resolveExtends, resolveManifestFile, resolveProvenance, ManifestResolutionError, type Provenance } from "./resolve.js";
 export { detectCommonJs, commonJsMessage, COMMONJS_GUIDE_URL } from "./cjs.js";
+export { resolveSchema, type SchemaResolveOptions, type ResolvedSchema } from "./schema-resolve.js";
 
 const require = createRequire(import.meta.url);
 const Ajv = require("ajv/dist/2020").default;
@@ -75,6 +77,36 @@ async function loadModSchema(): Promise<object> {
 	return cachedModSchema;
 }
 
+function schemaId(schema: object): string | undefined {
+	const id = (schema as Record<string, unknown>).$id;
+	return typeof id === "string" ? id : undefined;
+}
+
+const LEGACY_SCHEMA_IDS: Record<string, string> = {
+	"https://xript.dev/schema/manifest/v0.6.json": "https://xript.dev/schema/manifest/v0.3.json",
+	"https://xript.dev/schema/mod-manifest/v0.6.json": "https://xript.dev/schema/mod-manifest/v0.3.json",
+};
+
+/**
+ * Registers the bundled core/mod schemas as referenceable resources so a domain overlay can
+ * `$ref` the core by its canonical `$id`. Each schema is also registered under its prior `$id`
+ * so an overlay still pinning the old id resolves. Skips any id matching the schema being
+ * compiled, which would otherwise be a duplicate-id error in Ajv.
+ */
+async function addBundledRefs(ajv: { addSchema(s: object): void }, compiling: object): Promise<void> {
+	const compilingId = schemaId(compiling);
+	for (const schema of [await loadSchema(), await loadModSchema()]) {
+		const id = schemaId(schema);
+		if (id && id !== compilingId) {
+			ajv.addSchema(schema);
+		}
+		const legacyId = id ? LEGACY_SCHEMA_IDS[id] : undefined;
+		if (legacyId && legacyId !== compilingId) {
+			ajv.addSchema({ ...schema, $id: legacyId });
+		}
+	}
+}
+
 function formatError(error: AjvError): ValidationError {
 	const path = error.instancePath || "/";
 	let message = error.message || "Unknown validation error";
@@ -95,14 +127,44 @@ function formatError(error: AjvError): ValidationError {
 	return { path, message, keyword: error.keyword };
 }
 
+/**
+ * True when a schema closes itself at the top level (declares `unevaluatedProperties`
+ * or `additionalProperties`). Open schemas — the core manifest schema, which stays open
+ * so overlays can extend it — get closed by a wrapper at validation time instead.
+ */
+function topLevelCloses(schema: unknown): boolean {
+	return (
+		typeof schema === "object" &&
+		schema !== null &&
+		("unevaluatedProperties" in schema || "additionalProperties" in schema)
+	);
+}
+
 export async function validateManifest(
 	manifest: unknown,
+	schemaOverride?: object,
 ): Promise<ValidationResult> {
-	const schema = await loadSchema();
+	const schema = schemaOverride ?? (await loadSchema());
 	const ajv = new Ajv({ allErrors: true, verbose: true });
 	addFormats(ajv);
 
-	const validate = ajv.compile(schema);
+	let toCompile: object = schema;
+	const schemaId = (schema as { $id?: string }).$id;
+	if (!topLevelCloses(schema) && schemaId) {
+		// The core manifest schema is open at the top level so a domain overlay can
+		// extend it via `allOf`. A plain manifest must still reject stray top-level
+		// keys, so close it with a wrapper here: the wrapper's `unevaluatedProperties`
+		// sees every property the referenced schema evaluated and rejects only the unknown.
+		// (Putting the close inside the core schema would fire within its own `$ref`
+		// scope and reject a sibling overlay branch's properties — so closing lives here.)
+		ajv.addSchema(schema);
+		await addBundledRefs(ajv, schema);
+		toCompile = { allOf: [{ $ref: schemaId }], unevaluatedProperties: false };
+	} else if (schemaOverride) {
+		await addBundledRefs(ajv, schema);
+	}
+
+	const validate = ajv.compile(toCompile);
 	const valid = validate(manifest) as boolean;
 
 	const warnings = validateFieldEnums(manifest);
@@ -143,10 +205,12 @@ export async function validateShape(
 
 export async function validateModManifest(
 	manifest: unknown,
+	schemaOverride?: object,
 ): Promise<ValidationResult> {
-	const schema = await loadModSchema();
+	const schema = schemaOverride ?? (await loadModSchema());
 	const ajv = new Ajv({ allErrors: true, verbose: true });
 	addFormats(ajv);
+	if (schemaOverride) await addBundledRefs(ajv, schema);
 
 	const validate = ajv.compile(schema);
 	const valid = validate(manifest) as boolean;
@@ -156,8 +220,30 @@ export async function validateModManifest(
 	errors.push(...validateProviderRoles(manifest));
 
 	const warnings = validateProviderRoleFns(manifest);
+	warnings.push(...validateLegacyContributionShapes(manifest));
 
 	return { valid: errors.length === 0, errors, warnings };
+}
+
+function validateLegacyContributionShapes(manifest: unknown): ValidationWarning[] {
+	const warnings: ValidationWarning[] = [];
+	if (typeof manifest !== "object" || manifest === null) return warnings;
+	const mod = manifest as Record<string, unknown>;
+	if ("fragments" in mod) {
+		warnings.push({
+			path: "/fragments",
+			message: "'fragments' is deprecated; declare them as fills of a fragment-format slot under 'fills'",
+			keyword: "deprecated",
+		});
+	}
+	if ("contributions" in mod) {
+		warnings.push({
+			path: "/contributions",
+			message: "'contributions' is deprecated; move slot fills and provider roles under 'fills', keyed by host slot id",
+			keyword: "deprecated",
+		});
+	}
+	return warnings;
 }
 
 function validateProviderRoles(manifest: unknown): ValidationError[] {
@@ -393,16 +479,29 @@ export function validateEntrySource(
 export function isModManifest(manifest: unknown): boolean {
 	if (typeof manifest !== "object" || manifest === null) return false;
 	const obj = manifest as Record<string, unknown>;
-	const hasModSignals = "fragments" in obj || "entry" in obj;
+	const hasModSignals = "fragments" in obj || "entry" in obj || "fills" in obj || "contributions" in obj;
 	const hasAppSignals = "bindings" in obj;
 	return hasModSignals && !hasAppSignals;
+}
+
+export interface CrossValidateOptions {
+	/**
+	 * Validate each fill's payload against the target slot's `payload` JSON Schema.
+	 * Default true. The schema is applied as authored — a slot whose payload allows
+	 * additional properties still accepts a fill that carries more than it declares;
+	 * only a slot that explicitly closes its payload rejects extras. Flip off to skip
+	 * payload conformance and check only slot existence, accepted formats, and gates.
+	 */
+	checkFillPayloads?: boolean;
 }
 
 export async function crossValidate(
 	appManifest: unknown,
 	modManifest: unknown,
+	options: CrossValidateOptions = {},
 ): Promise<ValidationResult> {
 	const errors: ValidationError[] = [];
+	const checkFillPayloads = options.checkFillPayloads !== false;
 
 	if (typeof appManifest !== "object" || appManifest === null) {
 		return {
@@ -420,8 +519,22 @@ export async function crossValidate(
 	const app = appManifest as Record<string, unknown>;
 	const mod = modManifest as Record<string, unknown>;
 
-	const slots = (app.slots ?? []) as Array<{ id: string; accepts: string[]; capability?: string }>;
+	const slots = (app.slots ?? []) as Array<{ id: string; accepts: string[]; capability?: string; payload?: object }>;
 	const slotMap = new Map(slots.map((s) => [s.id, s]));
+
+	const payloadAjv = new Ajv({ allErrors: true, verbose: true });
+	addFormats(payloadAjv);
+	const payloadValidators = new Map<string, ReturnType<typeof payloadAjv.compile> | null>();
+	const payloadValidator = (slotId: string, schema: object): ReturnType<typeof payloadAjv.compile> | null => {
+		if (!payloadValidators.has(slotId)) {
+			try {
+				payloadValidators.set(slotId, payloadAjv.compile(schema));
+			} catch {
+				payloadValidators.set(slotId, null);
+			}
+		}
+		return payloadValidators.get(slotId) ?? null;
+	};
 
 	const fragments = (mod.fragments ?? []) as Array<{ id: string; slot: string; format: string }>;
 	for (let i = 0; i < fragments.length; i++) {
@@ -446,6 +559,46 @@ export async function crossValidate(
 		}
 	}
 
+	const modCapabilitySet = new Set(Array.isArray(mod.capabilities) ? (mod.capabilities as string[]) : []);
+	const fills = mod.fills;
+	if (typeof fills === "object" && fills !== null && !Array.isArray(fills)) {
+		for (const [slotId, fillValue] of Object.entries(fills as Record<string, unknown>)) {
+			const slot = slotMap.get(slotId);
+			if (!slot) {
+				errors.push({
+					path: `/fills/${slotId}`,
+					message: `fills slot "${slotId}" which does not exist in the app manifest`,
+					keyword: "cross-fill-slot",
+				});
+				continue;
+			}
+			if (slot.capability && !modCapabilitySet.has(slot.capability)) {
+				errors.push({
+					path: `/fills/${slotId}`,
+					message: `fills slot "${slotId}" which requires capability "${slot.capability}" that the mod does not declare`,
+					keyword: "cross-fill-capability",
+				});
+			}
+			if (checkFillPayloads && slot.payload && typeof slot.payload === "object") {
+				const validate = payloadValidator(slotId, slot.payload);
+				if (validate) {
+					const entries = Array.isArray(fillValue) ? fillValue : [fillValue];
+					for (let i = 0; i < entries.length; i++) {
+						if (!validate(entries[i])) {
+							for (const err of validate.errors ?? []) {
+								errors.push({
+									path: `/fills/${slotId}/${i}${err.instancePath}`,
+									message: `fill payload ${err.message}`,
+									keyword: "cross-fill-payload",
+								});
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	const appCapabilities = app.capabilities as Record<string, unknown> | undefined;
 	const modCapabilities = (mod.capabilities ?? []) as string[];
 	for (const cap of modCapabilities) {
@@ -466,6 +619,7 @@ export async function crossValidate(
 
 export async function validateManifestFile(
 	filePath: string,
+	options: SchemaResolveOptions = {},
 ): Promise<ValidationResult & { filePath: string }> {
 	const absolutePath = resolve(filePath);
 	let raw: string;
@@ -517,9 +671,23 @@ export async function validateManifestFile(
 		throw e;
 	}
 
-	const result = isModManifest(manifest)
-		? await validateModManifest(manifest)
-		: await validateManifest(manifest);
+	const isMod = isModManifest(manifest);
+	const resolvedSchema = await resolveSchema(
+		manifest,
+		dirname(absolutePath),
+		isMod ? "mod-manifest.schema.json" : "manifest.schema.json",
+		options,
+	);
+
+	const result = isMod
+		? await validateModManifest(manifest, resolvedSchema.schema)
+		: await validateManifest(manifest, resolvedSchema.schema);
+	if (resolvedSchema.warning) {
+		result.warnings = [
+			...(result.warnings ?? []),
+			{ path: "/$schema", message: resolvedSchema.warning, keyword: "schema-fallback" },
+		];
+	}
 	if (isModManifest(manifest)) {
 		const entrySource = await tryReadEntrySource(manifest, dirname(absolutePath));
 		if (entrySource !== null) {
@@ -534,6 +702,7 @@ export async function validateManifestFile(
 
 export async function validateModManifestFile(
 	filePath: string,
+	options: SchemaResolveOptions = {},
 ): Promise<ValidationResult & { filePath: string }> {
 	const absolutePath = resolve(filePath);
 	let raw: string;
@@ -572,7 +741,19 @@ export async function validateModManifestFile(
 		};
 	}
 
-	const result = await validateModManifest(manifest);
+	const resolvedSchema = await resolveSchema(
+		manifest,
+		dirname(absolutePath),
+		"mod-manifest.schema.json",
+		options,
+	);
+	const result = await validateModManifest(manifest, resolvedSchema.schema);
+	if (resolvedSchema.warning) {
+		result.warnings = [
+			...(result.warnings ?? []),
+			{ path: "/$schema", message: resolvedSchema.warning, keyword: "schema-fallback" },
+		];
+	}
 	const entrySource = await tryReadEntrySource(manifest, dirname(absolutePath));
 	if (entrySource !== null) {
 		const { errors, warnings } = validateEntrySource(manifest, entrySource);
@@ -592,3 +773,16 @@ async function tryReadEntrySource(manifest: unknown, baseDir: string): Promise<s
 		return null;
 	}
 }
+
+export { gateCapabilities } from "./manifest-util.js";
+export {
+	scoreManifests,
+	diffScores,
+	type ScoreResult,
+	type ScoreOptions,
+	type ScoreDiff,
+	type MetricDiff,
+	type UtilizationMetric,
+	type IntegrityResult,
+} from "./score.js";
+export { lintManifests, type LintResult, type LintOptions, type Finding, type LintCounts, type Severity } from "./lint.js";

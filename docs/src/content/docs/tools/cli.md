@@ -27,6 +27,13 @@ npx xript <command>
 | `xript init` | Scaffold a new xript app or mod project |
 | `xript sanitize` | Strip dangerous content from HTML fragments |
 | `xript scan` | Read `@xript` annotations from TypeScript source into a manifest |
+| `xript run` | Run a mod in the QuickJS WASM sandbox and optionally invoke an export |
+| `xript describe` | Summarize what a host manifest exposes: bindings, hooks, slots, capabilities |
+| `xript score` | Score a host's moddability capacity, the extension surface it exposes |
+| `xript score-diff` | Compare a host's score against a saved baseline; moved toward or away from xript |
+| `xript lint` | Review a host + mods for actionable findings, the complement to `score` |
+| `xript guide` | Print xript authoring doctrine by topic |
+| `xript mcp` | Start the MCP server: the CLI's capabilities, for agents |
 
 ---
 
@@ -44,16 +51,19 @@ Accepts one or more manifest files. The validator auto-detects whether each file
 
 ### Cross-validation
 
-The `--cross` flag validates that a mod's fragments target valid slots in the host app:
+The `--cross` flag validates that a mod's fills target valid slots in the host app:
 
 ```bash
 xript validate --cross app-manifest.json mod-manifest.json
+xript validate --cross app-manifest.json mod-manifest.json --no-fill-payloads
 ```
 
 Cross-validation checks:
-- Every fragment targets a slot that exists in the app manifest
-- Every fragment's format is in the slot's `accepts` list
+- Every fill targets a slot that exists in the app manifest
+- Every fill's format is in the target slot's `accepts` list
+- The mod holds the capability of every gated slot it fills
 - Every capability the mod requests is defined in the app manifest
+- Each fill's payload is checked against the target slot's payload JSON Schema (on by default). Extra properties pass unless the slot closes its payload; pass `--no-fill-payloads` to skip this check.
 
 ### Example
 
@@ -85,20 +95,22 @@ import {
 } from "@xriptjs/validate";
 
 const result = validateManifest({
-  xript: "0.3",
+  xript: "0.6",
   name: "my-app",
   bindings: { greet: { description: "Greets." } },
   slots: [{ id: "sidebar", accepts: ["text/html"] }],
 });
 
 const modResult = await validateModManifest({
-  xript: "0.3",
+  xript: "0.6",
   name: "my-mod",
   version: "1.0.0",
-  fragments: [{ id: "panel", slot: "sidebar", format: "text/html", source: "<p>hi</p>" }],
+  fills: {
+    sidebar: [{ id: "panel", format: "text/html", source: "<p>hi</p>" }],
+  },
 });
 
-const crossResult = await crossValidate(appManifest, modManifest);
+const crossResult = await crossValidate(appManifest, modManifest, { checkFillPayloads: true });
 
 const fileResult = await validateManifestFile("./manifest.json");
 ```
@@ -133,7 +145,13 @@ Prints to stdout by default. Use `--output` / `-o` to write to a file.
 | `{ "map": "number" }` | `Record<string, number>` |
 | `{ "optional": "string" }` | `string \| undefined` |
 
-Custom object types become `interface` declarations. Enum types become string literal unions.
+Custom object types become `interface` declarations. Enum types become string literal unions. An open enum (`open: true` on a type's `values` or a field's inline `enum`) means "the known values, plus any other string" — the generator emits `"known" | "values" | (string & {})` so authors keep autocomplete on the known set while any string still type-checks.
+
+Pass `--ambient` to emit an ambient `.d.ts` that declares the global `xript` namespace, for authoring mods in TypeScript:
+
+```bash
+xript typegen <manifest> --ambient -o xript.d.ts
+```
 
 ### Fragment API types
 
@@ -211,8 +229,10 @@ The generator creates these page types:
 
 - **Index** (`index.md`) — overview of the entire API surface: global functions, namespaces, types, capabilities table
 - **Binding pages** (`bindings/*.md`) — one per top-level binding with signatures, parameter tables, return types, capability requirements
-- **Type pages** (`types/*.md`) — one per custom type with field tables and TypeScript definitions
+- **Type pages** (`types/*.md`) — one per custom type with field tables and TypeScript definitions. Open enums (`open: true`) are marked extensible — the documented values are the known set, but any string is accepted
+- **Hook pages** (`hooks/*.md`) — one per declared hook
 - **Fragment API** (`fragment-api.md`) — lifecycle hooks and proxy operations (when manifest has slots)
+- **Capability Grant Shapes** (`capability-grant-shapes.md`) — the grant/install/discovery wire shapes, when the manifest opts in
 
 ### Example
 
@@ -327,7 +347,7 @@ const files = generateProjectFiles({ name: "my-app", tier: 3, language: "typescr
 
 ## sanitize
 
-Cleans HTML fragment content before it reaches the host. Pure string-based with no DOM dependency — runs inside QuickJS WASM, Node, Deno, browsers, wherever.
+Cleans HTML fragment content before it reaches the host. Pure string-based with no DOM dependency, so it runs inside QuickJS WASM, Node, Deno, browsers, wherever.
 
 ### Usage
 
@@ -366,7 +386,7 @@ Scoped `<style>` blocks with dangerous CSS properties stripped.
 
 ### Conformance
 
-All xript runtime implementations must produce identical sanitized output. The conformance test suite lives at `spec/sanitizer-tests.json` with 45 test cases.
+All xript runtime implementations must produce identical sanitized output. The conformance test suite lives at `spec/sanitizer-tests.json` with 56 test cases.
 
 ### Programmatic API
 
@@ -490,4 +510,241 @@ const merged = await mergeIntoManifest(existingManifest, scanned);
 // merged.added — new binding paths
 // merged.removed — paths in manifest but not source
 // merged.capabilityGaps — capabilities referenced but not defined
+```
+
+---
+
+## lint
+
+Reviews a host manifest and any number of mod manifests and emits actionable findings about how well they fit together. Where [`score`](/tools/score/) returns a single number, `lint` returns the list of things to fix. Every check is set arithmetic over manifest fields — no source analysis. See the [Lint](/tools/lint/) page for the full check catalog and severity model.
+
+### Usage
+
+```bash
+xript lint <host> [mods...]
+xript lint <host> [mods...] --json
+xript lint <host> [mods...] --strict
+```
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Emit the findings and counts as JSON instead of a formatted report |
+| `--strict` | Treat warnings as failures (exit nonzero on any `warn`) |
+
+### Findings
+
+Each finding carries a `severity` (`error`, `warn`, `info`), a stable `code`, a `message`, and a `suggestion`. Findings are grouped and counted by severity.
+
+| Code | Severity | When |
+|------|----------|------|
+| `filled-but-undeclared` | error | a mod fills a slot id the host never declares |
+| `undeclared-capability` | error | a slot or mod references a capability the host never declares |
+| `abstract-type-unfilled` | error | a type inherited as `abstract` is never concretized by the host |
+| `dead-slot` | warn | a declared slot no supplied mod fills (skips `reserved` and inherited slots) |
+| `vestigial-capability` | warn | a declared capability nothing references — no slot, binding, hook, or mod (skips `reserved` and inherited) |
+| `ungated-slot` | info | a slot with no `capability` — any mod may fill it |
+| `undescribed` | info | a slot or capability missing a `description` |
+| `legacy-shape` | info | a mod uses the deprecated `fragments[]` / `contributions` shape instead of `fills` |
+
+Fills are read from both the new `fills` surface and the legacy `fragments[]` / `contributions.slots`, so lint works mid-migration. Slots and capabilities marked `"reserved": true` are aspirational surface — never flagged as dead or vestigial, and excluded from the coverage denominators. Capabilities that gate a binding or hook (not just a slot) now count as used.
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | No errors (and no warnings under `--strict`) |
+| `1` | At least one error, or any warning under `--strict` |
+
+### Example
+
+```
+$ xript lint host.json mod-a.json mod-b.json
+  ✗ 1 error, 2 warnings, 1 info
+
+  error  filled-but-undeclared slot
+    mod-b fills "sidebar.right" but the host declares no such slot
+    → declare a "sidebar.right" slot, or correct the slot id in mod-b
+
+  warn   dead slot
+    "footer.status" is declared but no mod fills it
+    → drop it, or mark it aspirational
+```
+
+### Programmatic API
+
+The analyzers (`lintManifests`, `scoreManifests`, `diffScores`) live in `@xriptjs/validate`. Import them from the validation library your host already depends on; the CLI and MCP server are thin front-ends over them.
+
+```typescript
+import { lintManifests } from "@xriptjs/validate";
+
+const { findings, counts } = lintManifests(hostManifest, [modA, modB], { strict: false });
+// findings — [{ severity, code, message, suggestion }, ...]
+// counts — { error, warn, info }
+```
+
+---
+
+## run
+
+Loads a mod into the QuickJS WASM sandbox and optionally invokes one of its exports. Useful for exercising a mod against a host without wiring up a full application.
+
+### Usage
+
+```bash
+xript run <mod-manifest.json> <entry-script>
+xript run <mod-manifest.json> <entry-script> --export greet --args '["world"]'
+xript run <mod-manifest.json> <entry-script> --app host.json --cap modify-state,ui-mount
+```
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--export`, `-e <name>` | Invoke a named export after the mod loads |
+| `--args <json>` | JSON array of arguments for the invoked export |
+| `--app <manifest>` | Host app manifest (a minimal host is used otherwise) |
+| `--cap <c1,c2>` | Comma-separated capabilities to grant |
+
+The result (load status, export return value, audit entries) is printed as JSON. Exit code is `0` when the mod loaded, `1` otherwise.
+
+### Programmatic API
+
+```typescript
+import { runMod } from "@xriptjs/cli";
+
+const result = await runMod({ modManifest, source, appManifest, capabilities, invoke });
+```
+
+---
+
+## describe
+
+Summarizes what a host manifest exposes — its bindings, hooks, slots, and capabilities — then prints the generated documentation. The fast way to see a host's extension surface.
+
+### Usage
+
+```bash
+xript describe <manifest.json>
+xript describe <manifest.json> --summary
+```
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--summary` | Print only the surface summary (JSON), not the generated docs |
+
+### Programmatic API
+
+```typescript
+import { describeManifest } from "@xriptjs/cli";
+
+const { summary, docs } = describeManifest(manifest);
+```
+
+---
+
+## score
+
+Rates a host's **moddability capacity**: how much of xript's extension surface (bindings, slots, events, and a capability model) the host exposes, against a ceiling of exposing all of it. The headline is `round(100 × capacity)`, where capacity averages how many of those four surfaces are present.
+
+Exposing a slot no mod fills reads as moddability, not waste, so the score is about what the host *offers*, not how much a supplied mod set happens to exercise. `extends` is resolved before scoring, and resolving inheritance can only raise the score. How much your supplied mods fill (slot and capability coverage) survives as **informational** mod-coverage, reported but not scored, with `reserved` and inherited surface excluded from its denominators.
+
+### Usage
+
+```bash
+xript score <host-manifest> [mods...]
+xript score <host-manifest> [mods...] --min 70
+xript score <host-manifest> [mods...] --json
+```
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--min <n>` | Exit non-zero if the headline is below `n` (or any integrity violation exists) — a CI gate |
+| `--json` | Emit the full result as JSON |
+
+### Programmatic API
+
+```typescript
+import { scoreManifests } from "@xriptjs/validate";
+
+const result = await scoreManifests(hostManifest, [modA, modB], { min: 70 });
+// result.headline — 0–100 moddability capacity
+// result.capacity — exposed / absent surfaces
+// result.slots, result.capabilities — informational mod coverage
+```
+
+---
+
+## score-diff
+
+Compares a host's current score against a saved baseline (a prior `xript score --json` result), reporting whether the codebase moved toward or away from xript.
+
+### Usage
+
+```bash
+xript score host.json mods/*.json --json > baseline.json
+xript score-diff baseline.json host.json mods/*.json
+xript score-diff baseline.json host.json mods/*.json --min-delta 0
+```
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--min-delta <n>` | Gate: exit non-zero if the headline fell by more than `n`, or any new integrity violation appeared |
+| `--json` | Emit the full diff as JSON |
+
+### Programmatic API
+
+```typescript
+import { scoreManifests, diffScores } from "@xriptjs/validate";
+
+const current = await scoreManifests(hostManifest, mods);
+const diff = diffScores(baseline, current, { minDelta: 0 });
+```
+
+---
+
+## guide
+
+Prints xript's authoring doctrine by topic — including "More extensible, not less," the framework's default toward openness. The doctrine is authored once as content and shared verbatim across this command, the `xript_guide` MCP tool, and the `xript://guidance/*` MCP resources.
+
+### Usage
+
+```bash
+xript guide            # list available topics
+xript guide surfaces   # print a topic
+```
+
+Topics include `when-to-use`, `surfaces`, `mod-zero`, `boundary`, `openness`, `authoring`, `hosting`, and `tiers`.
+
+---
+
+## mcp
+
+Starts the CLI's capabilities as an MCP server over stdio, so an agent can validate, score, lint, scaffold, and read xript's spec and doctrine without shelling out.
+
+### Usage
+
+```bash
+xript mcp
+```
+
+Configure your MCP client to run `xript mcp`. The server exposes:
+
+- **Tools** — one per CLI command, mirroring the human surface 1:1: `xript_validate`, `xript_cross_validate`, `xript_typegen`, `xript_docgen`, `xript_sanitize`, `xript_scaffold`, `xript_scan`, `xript_manifest_describe`, `xript_run`, `xript_score`, `xript_score_diff`, `xript_lint`, and `xript_guide`, plus `xript_server_info`.
+- **Resources** — the spec docs under `xript://spec/*` and the authoring guidance under `xript://guidance/*`.
+- **Prompts** — doctrine-carrying prompts for adopting xript, judging whether a surface is xript-native, choosing a surface, and authoring a mod.
+
+### Programmatic API
+
+```typescript
+import { createServer } from "@xriptjs/cli";
+
+const server = await createServer("0.6.0");
 ```

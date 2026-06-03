@@ -500,8 +500,14 @@ public sealed class FragmentInstance
         return FragmentProcessor.ProcessFragment(_declaration.Id, _sanitizedSource, bindings);
     }
 
-    public List<FragmentEventDeclaration> GetEvents()
+    public List<FragmentHandlerDeclaration> GetHandlers()
     {
-        return _declaration.Events ?? [];
+        return _declaration.ResolveHandlers();
+    }
+
+    [Obsolete("Use GetHandlers(). The fragment handler array was renamed from 'events' to 'handlers'.")]
+    public List<FragmentHandlerDeclaration> GetEvents()
+    {
+        return GetHandlers();
     }
 }

@@ -1,0 +1,8 @@
+{
+	"xript": "0.3",
+	"extends": "./extends-abstract-base.json",
+	"name": "host-abstract-unfilled",
+	"types": {
+		"Marker": { "description": "A new sibling type the base never declared.", "fields": { "tag": { "type": "string", "description": "A tag." } } }
+	}
+}

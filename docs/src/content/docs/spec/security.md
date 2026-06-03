@@ -3,7 +3,7 @@ title: Security Guarantees
 description: "The security guarantees xript runtimes must provide: sandbox isolation, resource limits, capability enforcement, and eval prohibition."
 ---
 
-This document defines the security guarantees that xript-conformant runtimes must provide. These guarantees exist so that users running third-party scripts never have to wonder whether a script is safe. It is safe. That is the contract.
+This document defines the security guarantees that xript-conformant runtimes must provide. A user running a third-party script should never have to wonder whether it's safe. It is. That's the contract.
 
 The guarantees formalize the four safety principles from the vision: no sandbox escape, no denial of service, no implicit trust, and no eval. Each guarantee includes the specific runtime behavior required, the failure mode when violated, and testable conformance criteria.
 
@@ -29,7 +29,7 @@ Objects returned from bindings must be copies or proxies, not direct references 
 
 ### 2. No Denial of Service
 
-Scripts cannot consume unbounded resources. The manifest's `executionLimits` section declares the bounds, and the runtime enforces them.
+Scripts cannot consume unbounded resources. The manifest's `limits` section declares the bounds, and the runtime enforces them. A host can additionally impose hard ceilings at runtime; the effective limit per field is `min(manifest, hard)`, clamped silently so an over-greedy manifest still loads under the host ceiling.
 
 **Execution time:**
 
@@ -47,13 +47,17 @@ Every script invocation has a maximum call stack depth. The default is 256 frame
 
 Runtimes must detect and terminate scripts that enter infinite loops or infinite recursion. The timeout limit is the primary mechanism for this, but runtimes may additionally instrument loops with iteration counters for faster detection.
 
+**Cooperative cancellation:**
+
+Beyond the resource-driven terminations above, a host can hold a `CancellationToken` on the runtime options and flip it (`cancel()`) to interrupt in-flight execution at the next interrupt check. This surfaces a cancellation error that is distinct from a timeout, so a host can tell "I stopped this" apart from "this ran out of time." Cancellation is sticky and idempotent; a fresh execution on an already-cancelled token errors immediately. It is a host-side runtime option, not a manifest field, and dropping the runtime does not auto-cancel.
+
 **Failure modes by resource:**
 
 | Resource | Limit Source | Failure | Catchable? |
 |----------|-------------|---------|------------|
-| Time | `executionLimits.timeout_ms` | Script terminated | No |
-| Memory | `executionLimits.memory_mb` | Script terminated | No |
-| Stack | `executionLimits.max_stack_depth` | `RangeError` thrown | Yes |
+| Time | `limits.timeout_ms` | Script terminated | No |
+| Memory | `limits.memory_mb` | Script terminated | No |
+| Stack | `limits.max_stack_depth` | `RangeError` thrown | Yes |
 
 Timeout and memory violations are not catchable because a script that has exhausted these resources cannot be trusted to handle errors correctly. Stack overflow is catchable because the stack unwinds naturally and the script may have legitimate recovery logic (switching from recursive to iterative algorithms).
 
@@ -79,6 +83,10 @@ Scripts cannot grant capabilities to other scripts. Only the host makes grant de
 
 **Failure mode:** Calling a gated function without the required capability throws a `CapabilityDeniedError`. The function does not execute: not partially, not with reduced functionality. The error is catchable, and the script continues running with its existing capabilities.
 
+**Audit observability:**
+
+Default-deny governs what a script *can* do; an optional audit channel lets the host *see* what it does. When the host sets an audit channel on the runtime options, the runtime emits one fire-and-forget event before each *allowed* host-binding invocation, carrying the binding's qualified name, the capability it required (or none), and an epoch-millisecond timestamp. For example: `{ "binding": "app.setClipboard", "capability": "clipboard-write", "at": 1730000000000 }`. Denied calls are not reported here; they already surface as the thrown `CapabilityDeniedError`. The channel is a host-side observation seam only: it never alters grant policy, and omitting it disables auditing with zero overhead. See the [capability model](/spec/capabilities) for the full shape.
+
 ### 4. No Eval
 
 Scripts cannot dynamically generate and execute code. The `eval()` function, the `Function()` constructor, and any other mechanism for runtime code generation must be unavailable.
@@ -90,6 +98,8 @@ Scripts cannot dynamically generate and execute code. The `eval()` function, the
 - `setTimeout(string, ms)` and `setInterval(string, ms)` (the string overloads; callback overloads may be allowed if the runtime supports timers)
 - `import()` (dynamic import expressions)
 - Any runtime-specific mechanism that converts strings to executable code
+
+Module-format mods (`entry.format: "module"`) do not relax this. A module-format mod is a single self-contained entry module with no imports: every static `import` is rejected at link time and dynamic `import()` stays banned, both surfacing as a load-time `ImportDeniedError`. The host evaluates the module and auto-registers its top-level exports; the sandbox never resolves a specifier. See [Module-Format Mods](/spec/modules) for the full contract.
 
 **Why this matters:**
 
@@ -194,7 +204,9 @@ Runtime implementors must verify their implementation against each item in this 
 - [ ] Scripts exceeding `memory_mb` are terminated (not catchable)
 - [ ] Scripts exceeding `max_stack_depth` receive a `RangeError` (catchable)
 - [ ] Infinite loops are terminated by the timeout mechanism
-- [ ] Default limits (5000ms, 64MB, 256 stack frames) are applied when the manifest omits `executionLimits`
+- [ ] Default limits (5000ms, 64MB, 256 stack frames) are applied when the manifest omits `limits`
+- [ ] Host hard limits clamp the effective limit to `min(manifest, hard)` per field
+- [ ] A host-flipped `CancellationToken` interrupts in-flight execution with a cancellation error distinct from a timeout
 - [ ] After termination, the runtime is in a clean state (no leaked resources, no corrupted host state)
 
 ### Capability Enforcement
@@ -204,6 +216,7 @@ Runtime implementors must verify their implementation against each item in this 
 - [ ] The gated function does not partially execute on capability denial
 - [ ] Capabilities cannot be added or removed during script execution
 - [ ] Scripts cannot grant capabilities to themselves or other scripts
+- [ ] When an audit channel is set, every allowed gated invocation emits one audit event; denied calls do not
 
 ### Eval Prohibition
 

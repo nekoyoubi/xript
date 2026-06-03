@@ -28,7 +28,10 @@ import {
 	type ModInstance,
 	type FragmentInstance,
 	type FragmentUpdateResult,
+	type FragmentHandler,
+	type FragmentHandlerDeclaration,
 	type FragmentEvent,
+	type FragmentEventDeclaration,
 	type FragmentDeclaration,
 	type SlotDeclaration,
 	ModManifestValidationError,
@@ -72,7 +75,7 @@ export type {
 	DiscoveredMod,
 } from "./shapes.js";
 export type { HostBindings, HostFunction, HostNamespace, ExecutionResult, FireHookOptions, FragmentOp, ConsoleHandler, LogSeverity, AuditEvent, HardLimits } from "./sandbox.js";
-export type { ModManifest, ModEntry, ExportDeclaration, ModInstance, FragmentInstance, FragmentUpdateResult, FragmentEvent, FragmentDeclaration, SlotDeclaration, ModContributions, ProviderRole } from "./fragment.js";
+export type { ModManifest, ModEntry, ExportDeclaration, ModInstance, FragmentInstance, FragmentUpdateResult, FragmentHandler, FragmentHandlerDeclaration, FragmentEvent, FragmentEventDeclaration, FragmentDeclaration, SlotDeclaration, ModContributions, ProviderRole } from "./fragment.js";
 
 interface Manifest {
 	xript: string;
@@ -87,6 +90,13 @@ interface Manifest {
 		max_stack_depth?: number;
 	};
 	slots?: SlotDeclaration[];
+	events?: HostEventDeclaration[];
+}
+
+export interface HostEventDeclaration {
+	id: string;
+	description: string;
+	payload?: unknown;
 }
 
 export interface ModLoadOptions {

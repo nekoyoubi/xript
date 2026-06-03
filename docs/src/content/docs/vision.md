@@ -7,11 +7,11 @@ description: "The guiding principles behind xript: making any application moddab
 
 Software, games, the web, and embedded processes are closed by default.
 
-Applications are isolated. Games reinvent modding from scratch, or skip it. Tools lock people into whatever the original authors imagined. When extensibility exists, it's bespoke: a unique API, a unique sandbox (or none at all), a unique set of conventions that extenders must learn from zero.
+Applications are isolated. Games reinvent modding from scratch, or skip it. Tools lock people into whatever the original authors imagined. When extensibility exists, it's bespoke: a unique API, a unique sandbox (or none at all), a unique set of conventions extenders have to learn from zero.
 
 The result: users have no voice in how the software they run actually works.
 
-The Elder Scrolls series showed decades ago that when you give a community the tools to extend your work, they sustain it. Skyrim still thrives over a decade later because Bethesda let their community finish what they started. That principle shouldn't be limited to a handful of franchises.
+The Elder Scrolls series proved decades ago that when you hand a community the tools to extend your work, they sustain it. Skyrim still thrives a decade-plus later because Bethesda let their community finish what they started. That principle shouldn't be the privilege of a handful of franchises.
 
 ---
 
@@ -108,6 +108,16 @@ A manifest written for xript-spec v1.0 should be implementable in any language, 
 If an extender can't find how to use a binding, it doesn't matter that it exists. xript treats documentation as a first-class output: generated, versioned, and always in sync with the manifest.
 
 The quality of xript.dev and every generated doc site is as much a part of the product as the runtime itself.
+
+### 8. More Extensible, Not Less
+
+xript is an extensibility substrate, so its defaults lean the way the project does. When a design choice could go either way (expose it or hide it, accept the unknown shape or reject it, allow the reach or wall it off), the open option is the one that matches what xript is for.
+
+A restriction is permitted only when it genuinely buys convenience or security the framework couldn't otherwise provide, and it has to justify itself plainly. The capability model is the real security wall; default-deny, explicit grants, gated surfaces. Restrictions that *are* that boundary are the product, not lockdown. Schema validation is not a security boundary, so tightening a schema is rarely a security argument.
+
+Where a feature could be open or guarded, it ships open and lets the host opt *out*. You opt out of openness, not into it. And an open default fails soft where failing hard would buy nothing: when an optional reach can't complete, fall back to what's bundled and surface a warning instead of taking the whole operation down.
+
+This doctrine is authored as first-class guidance, surfaced through the `xript guide` command, the `xript_guide` MCP tool, and the docs [Doctrine](/guidance/openness/) section, so the same words steer the framework, the tooling, and the people building on it.
 
 ---
 

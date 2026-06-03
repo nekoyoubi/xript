@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyVisibility, applyOp, applyOps, wireEvents } from "../src/lib/applyFragment.js";
+import { applyVisibility, applyOp, applyOps, wireHandlers } from "../src/lib/applyFragment.js";
 import { makeRoot, FakeEvent } from "./dom-shim.js";
 
 test("applyVisibility hides regions whose data-if flag is false", () => {
@@ -75,10 +75,10 @@ test("applyOps applies the buffer in order", () => {
 	assert.equal(root.querySelector(".c").textContent, "second");
 });
 
-test("wireEvents dispatches declared events out to the host callback", () => {
+test("wireHandlers dispatches declared handlers out to the host callback", () => {
 	const root = makeRoot('<button class="increment-btn" type="button">+1</button>');
 	const dispatched = [];
-	wireEvents(
+	wireHandlers(
 		root,
 		[{ selector: ".increment-btn", on: "click", handler: "onIncrement" }],
 		(detail) => dispatched.push(detail),
@@ -89,10 +89,10 @@ test("wireEvents dispatches declared events out to the host callback", () => {
 	assert.equal(dispatched[0].on, "click");
 });
 
-test("wireEvents teardown removes the listeners", () => {
+test("wireHandlers teardown removes the listeners", () => {
 	const root = makeRoot('<button class="increment-btn" type="button">+1</button>');
 	const dispatched = [];
-	const teardown = wireEvents(
+	const teardown = wireHandlers(
 		root,
 		[{ selector: ".increment-btn", on: "click", handler: "onIncrement" }],
 		(detail) => dispatched.push(detail),

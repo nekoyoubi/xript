@@ -89,9 +89,9 @@ describe("validateManifest", () => {
 		});
 		assert.equal(result.valid, false);
 		const extraError = result.errors.find(
-			(e) => e.keyword === "additionalProperties",
+			(e) => e.keyword === "additionalProperties" || e.keyword === "unevaluatedProperties",
 		);
-		assert.ok(extraError, "should report additional property");
+		assert.ok(extraError, "should report unexpected top-level property");
 	});
 
 	it("rejects a binding without a description", async () => {
@@ -327,5 +327,66 @@ describe("crossValidate", () => {
 		);
 		assert.ok(capError, "should report missing capability");
 		assert.ok(capError.message.includes("network-access"));
+	});
+
+	const payloadApp = {
+		xript: "0.6",
+		name: "host",
+		capabilities: { ui: { description: "UI." } },
+		slots: [
+			{
+				id: "panel",
+				accepts: ["text/html+jsml"],
+				capability: "ui",
+				payload: {
+					type: "object",
+					required: ["id", "format", "styling"],
+					additionalProperties: true,
+					properties: {
+						id: { type: "string", minLength: 1 },
+						format: { type: "string", enum: ["text/html+jsml"] },
+						styling: { type: "string", enum: ["inherit", "isolated", "scoped"] },
+					},
+				},
+			},
+		],
+	};
+
+	it("fails a fill whose payload violates the slot's payload schema", async () => {
+		const mod = {
+			xript: "0.6",
+			name: "m",
+			version: "1.0.0",
+			capabilities: ["ui"],
+			fills: { panel: [{ id: "p", format: "application/json" }] },
+		};
+		const result = await crossValidate(payloadApp, mod);
+		assert.equal(result.valid, false);
+		const payloadError = result.errors.find((e) => e.keyword === "cross-fill-payload");
+		assert.ok(payloadError, "should report a payload violation");
+	});
+
+	it("accepts a fill that carries more than the payload declares", async () => {
+		const mod = {
+			xript: "0.6",
+			name: "m",
+			version: "1.0.0",
+			capabilities: ["ui"],
+			fills: { panel: [{ id: "p", format: "text/html+jsml", styling: "scoped", extra: { anything: true } }] },
+		};
+		const result = await crossValidate(payloadApp, mod);
+		assert.equal(result.valid, true, JSON.stringify(result.errors));
+	});
+
+	it("skips payload conformance when checkFillPayloads is off", async () => {
+		const mod = {
+			xript: "0.6",
+			name: "m",
+			version: "1.0.0",
+			capabilities: ["ui"],
+			fills: { panel: [{ id: "p", format: "application/json" }] },
+		};
+		const result = await crossValidate(payloadApp, mod, { checkFillPayloads: false });
+		assert.equal(result.valid, true);
 	});
 });

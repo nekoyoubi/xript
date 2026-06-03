@@ -158,8 +158,19 @@ pub struct FragmentDeclaration {
     pub source: String,
     pub inline: Option<bool>,
     pub bindings: Option<Vec<FragmentBinding>>,
-    pub events: Option<Vec<FragmentEvent>>,
+    pub handlers: Option<Vec<FragmentHandler>>,
+    /// Deprecated alias for `handlers`. Accepted on deserialize for
+    /// back-compat; `handlers` wins when both are present.
+    pub events: Option<Vec<FragmentHandler>>,
     pub priority: Option<i32>,
+}
+
+impl FragmentDeclaration {
+    /// Resolves the fragment's DOM-event handlers, preferring `handlers` and
+    /// falling back to the deprecated `events` alias.
+    pub fn resolved_handlers(&self) -> Option<&Vec<FragmentHandler>> {
+        self.handlers.as_ref().or(self.events.as_ref())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -169,11 +180,13 @@ pub struct FragmentBinding {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct FragmentEvent {
+pub struct FragmentHandler {
     pub selector: String,
     pub on: String,
     pub handler: String,
 }
+
+pub type FragmentEvent = FragmentHandler;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
@@ -430,11 +443,15 @@ const SCALAR_FIELDS: &[&str] = &["name", "version", "title", "description", "xri
 
 /// Resolves a manifest's `extends` field into a flat, composed manifest by
 /// loading base manifests relative to `base_dir` and deep-merging them under the
-/// child. Maps (`bindings`, `capabilities`, `hooks`, `types`) key-merge with
-/// duplicate-id conflicts surfaced as errors; `slots` append (deduped by id,
-/// duplicate ids error); scalar fields take the child's value. Resolution is
-/// transitive with cycle detection. The returned value no longer carries an
-/// `extends` field.
+/// child. Maps (`bindings`, `capabilities`, `hooks`, `types`) key-merge.
+/// `bindings`, `capabilities`, and `hooks` treat duplicate ids as errors. For
+/// `types`, a child redeclaring an abstract base type fills it (the concrete
+/// child replaces the abstract stub), and a child redeclaring a concrete base
+/// type with `refines: true` deep-merges onto it; any other duplicate id is an
+/// error. `slots` append (deduped by id), with a child slot allowed to refine a
+/// base slot id via `refines: true` and other duplicates erroring. Scalar fields
+/// take the child's value. Resolution is transitive with cycle detection. The
+/// returned value no longer carries an `extends` field.
 pub fn resolve_extends(
     manifest: &serde_json::Value,
     base_dir: &std::path::Path,
@@ -506,8 +523,10 @@ fn resolve_extends_inner(
     merge_manifests(&composed, &child)
 }
 
-/// Merges `child` onto `base`, returning the composed value. Conflicting map ids
-/// or duplicate slot ids present in both produce a `ManifestValidation` error.
+/// Merges `child` onto `base`, returning the composed value. An un-opted
+/// concrete-name collision in a map or a duplicate slot id without `refines`
+/// produces a `ManifestValidation` error; abstract-type fills and `refines`
+/// deep-merges are resolved in place.
 pub fn merge_manifests(
     base: &serde_json::Value,
     child: &serde_json::Value,
@@ -551,6 +570,45 @@ pub fn merge_manifests(
     Ok(serde_json::Value::Object(out))
 }
 
+/// A `typeDefinition` carrying `"abstract": true` is a declared-but-unpopulated
+/// contract hole an extending manifest is expected to fill.
+fn is_abstract_type(v: &serde_json::Value) -> bool {
+    v.get("abstract").and_then(|x| x.as_bool()).unwrap_or(false)
+}
+
+/// A child surface carrying `"refines": true` opts into deep-merging onto a
+/// concrete base surface of the same name.
+fn is_refining(v: &serde_json::Value) -> bool {
+    v.get("refines").and_then(|x| x.as_bool()).unwrap_or(false)
+}
+
+/// Deep-merges a refining `child` definition onto a concrete `base` definition.
+/// Per-field, the child field replaces the base field of the same key; base
+/// fields the child omits are retained. Nested object values merge recursively;
+/// arrays and other scalars replace wholesale. The `refines` marker is consumed.
+fn deep_merge(base: &serde_json::Value, child: &serde_json::Value) -> serde_json::Value {
+    match (base, child) {
+        (serde_json::Value::Object(base_obj), serde_json::Value::Object(child_obj)) => {
+            let mut out = base_obj.clone();
+            for (k, v) in child_obj {
+                if k == "refines" {
+                    continue;
+                }
+                match out.get(k) {
+                    Some(existing) if existing.is_object() && v.is_object() => {
+                        out.insert(k.clone(), deep_merge(existing, v));
+                    }
+                    _ => {
+                        out.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+            serde_json::Value::Object(out)
+        }
+        _ => child.clone(),
+    }
+}
+
 fn merge_id_maps(
     base: Option<&serde_json::Value>,
     child: Option<&serde_json::Value>,
@@ -565,7 +623,23 @@ fn merge_id_maps(
             let child_map = c.as_object().cloned().unwrap_or_default();
             let mut out = base_map.clone();
             for (k, v) in &child_map {
-                if base_map.contains_key(k) {
+                if let Some(base_entry) = base_map.get(k) {
+                    // FILL and REFINE apply to the `types` surface only.
+                    if field == "types" {
+                        // FILL: an abstract base type is replaced by the
+                        // concrete child definition; abstractness is the opt-in.
+                        if is_abstract_type(base_entry) {
+                            out.insert(k.clone(), v.clone());
+                            continue;
+                        }
+                        // REFINE: a concrete base type with `refines: true` on
+                        // the child deep-merges, child fields winning per key.
+                        if is_refining(v) {
+                            out.insert(k.clone(), deep_merge(base_entry, v));
+                            continue;
+                        }
+                    }
+                    // Un-opted concrete-name collision: the accident guard.
                     let singular = field.trim_end_matches('s');
                     return Err(XriptError::ManifestValidation {
                         issues: vec![ValidationIssue {
@@ -603,6 +677,17 @@ fn merge_slots(
     for slot in &child_arr {
         if let Some(id) = slot.get("id").and_then(|v| v.as_str()) {
             if seen.contains(id) {
+                // REFINE: a child slot with `refines: true` deep-merges onto the
+                // base slot of the same id (including payload member types).
+                if is_refining(slot) {
+                    if let Some(idx) = out
+                        .iter()
+                        .position(|s| s.get("id").and_then(|v| v.as_str()) == Some(id))
+                    {
+                        out[idx] = deep_merge(&out[idx], slot);
+                    }
+                    continue;
+                }
                 return Err(XriptError::ManifestValidation {
                     issues: vec![ValidationIssue {
                         path: format!("/slots/{}", id),
@@ -616,4 +701,90 @@ fn merge_slots(
     }
 
     Ok(Some(serde_json::Value::Array(out)))
+}
+
+#[cfg(test)]
+mod extends_conformance {
+    use super::resolve_extends;
+
+    const CORPUS: &str = include_str!("../../../spec/extends-tests.json");
+
+    #[derive(serde::Deserialize)]
+    struct Case {
+        description: String,
+        base: serde_json::Value,
+        extender: serde_json::Value,
+        #[serde(default)]
+        resolved: Option<serde_json::Value>,
+        #[serde(default)]
+        error: bool,
+    }
+
+    #[test]
+    fn matches_canonical_extends_corpus() {
+        let cases: Vec<Case> = serde_json::from_str(CORPUS).expect("corpus parses");
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let tmp_dir = std::env::temp_dir()
+            .join(format!("xript-extends-{}-{}", std::process::id(), nonce));
+        std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
+
+        let mut failures = Vec::new();
+        for (i, case) in cases.iter().enumerate() {
+            let base_path = tmp_dir.join(format!("base-{}.json", i));
+            std::fs::write(&base_path, serde_json::to_string(&case.base).unwrap())
+                .expect("write base");
+
+            let mut child = case.extender.clone();
+            child.as_object_mut().unwrap().insert(
+                "extends".into(),
+                serde_json::Value::String(base_path.to_string_lossy().to_string()),
+            );
+
+            let outcome = resolve_extends(&child, &tmp_dir);
+
+            if case.error {
+                if outcome.is_ok() {
+                    failures.push(format!(
+                        "case '{}': expected resolution to error, but it succeeded with {:?}",
+                        case.description,
+                        outcome.unwrap()
+                    ));
+                }
+            } else {
+                let expected = case
+                    .resolved
+                    .as_ref()
+                    .expect("success case has 'resolved'");
+                match outcome {
+                    Ok(got) => {
+                        if &got != expected {
+                            failures.push(format!(
+                                "case '{}'\n  expected: {}\n  got:      {}",
+                                case.description,
+                                serde_json::to_string(expected).unwrap(),
+                                serde_json::to_string(&got).unwrap()
+                            ));
+                        }
+                    }
+                    Err(e) => failures.push(format!(
+                        "case '{}': expected success, got error {:?}",
+                        case.description, e
+                    )),
+                }
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+
+        assert!(
+            failures.is_empty(),
+            "{} of {} extends corpus cases failed:\n{}",
+            failures.len(),
+            cases.len(),
+            failures.join("\n")
+        );
+    }
 }

@@ -1,0 +1,26 @@
+{
+	"xript": "0.3",
+	"name": "host-abstract-base",
+	"version": "1.0.0",
+	"title": "Host Abstract Base",
+	"types": {
+		"StatusCode": { "description": "An abstract status code the base leaves for an extender to fill.", "abstract": true },
+		"Envelope": {
+			"description": "A concrete response envelope.",
+			"fields": {
+				"status": { "type": "StatusCode", "description": "The status of the response." },
+				"body": { "type": "string", "description": "The response body." }
+			}
+		}
+	},
+	"slots": [
+		{
+			"id": "statusbar",
+			"accepts": ["text/html"],
+			"description": "A concrete status bar slot.",
+			"payload": {
+				"label": { "type": "string", "description": "The label to show." }
+			}
+		}
+	]
+}

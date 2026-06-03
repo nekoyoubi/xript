@@ -3,7 +3,7 @@ title: Binding Conventions
 description: "Runtime conventions for xript bindings: error handling, versioning, and TypeScript type mapping."
 ---
 
-Bindings are the bridge between the host application and extender scripts. The [manifest schema](/spec/manifest) defines how bindings are declared. This document covers the runtime conventions that govern how bindings behave: error handling, versioning, and the mapping from manifest declarations to generated TypeScript types.
+Bindings are the bridge between the host application and extender scripts. The [manifest schema](/spec/manifest) defines how bindings are declared. This document covers the runtime conventions that govern binding behavior: error handling, versioning, and the mapping from manifest declarations to generated TypeScript types.
 
 ## Error Handling
 
@@ -44,8 +44,10 @@ The runtime provides these error types to scripts:
 | `BindingError` | A binding function failed during execution |
 | `CapabilityDeniedError` | A gated function was called without the required capability |
 | `TypeError` | Arguments don't match the binding's declared parameter types |
+| `ImportDeniedError` | A module-format mod entry attempted to `import` any specifier (rejected at link time; carries `.specifier`) |
+| `CommonJSDetectedError` | A mod entry contained `require()`, `module.exports`, or `exports.x` artifacts (rejected at load time; carries `.artifact`) |
 
-Runtimes may add additional error types, but these three must be present.
+Runtimes may add additional error types, but these must be present. `ImportDeniedError` and `CommonJSDetectedError` are load-time errors raised by the mod loader when a [module-format mod](/spec/modules) breaks the no-external-imports / no-CommonJS guarantee.
 
 ### Type Validation
 
@@ -158,6 +160,47 @@ Generates:
 type Direction = "north" | "south" | "east" | "west";
 ```
 
+### Open Enums
+
+An enum type's `values` (or a field's inline `enum`) can set `"open": true` to mean "these known values, plus any other string." typegen appends `| (string & {})` so the known values still autocomplete while any string type-checks:
+
+```json
+{
+  "LogLevel": {
+    "description": "A log severity.",
+    "values": ["debug", "info", "warn", "error"],
+    "open": true
+  }
+}
+```
+
+Generates:
+
+```typescript
+/** A log severity. */
+type LogLevel = "debug" | "info" | "warn" | "error" | (string & {});
+```
+
+docgen marks an `open` type as extensible in the generated documentation.
+
+### Field Defaults and Inline Enums
+
+Object-type fields carry optional `default` and inline `enum` metadata. Both are codegen and documentation hints; no runtime reads them, applies defaults, or enforces enum membership.
+
+| Field shape | TypeScript |
+|-------------|-----------|
+| `{ "type": "string", "optional": true }` | `string \| undefined` (`prop?: string`) |
+| `{ "type": "string", "default": "x" }` | `string` (non-optional — a `default` implies a value is always present) |
+| `{ "type": "string", "enum": ["posix", "hybrid", "native"] }` | `"posix" \| "hybrid" \| "native"` |
+| `{ "type": "string", "enum": ["posix", "hybrid"], "open": true }` | `"posix" \| "hybrid" \| (string & {})` |
+| `{ "type": "PathStyle" }` (named `values` enum) | `"posix" \| "hybrid" \| "native"` (identical to inline enum) |
+
+A `default`-present field is non-optional in the emitted interface; an `optional: true` field with no default is `T | undefined`. The inline `enum` form and a referenced named-enum type definition generate identical literal unions.
+
+### Record Accessors
+
+For an object type used as an addon-owned record shape, typegen emits a companion `<TypeName>Accessor` interface alongside the plain interface, with typed `get`/`set` per field (applying the same default-implies-required and enum-implies-union rules). The accessor is pure typing. xript backs no store, so a host that persists records with its own backend gets typed access without xript ever seeing that store.
+
 ### Function Bindings
 
 Function bindings generate typed function declarations with JSDoc:
@@ -202,6 +245,30 @@ declare namespace player {
   function setHealth(value: number): void;
 }
 ```
+
+### Nested Namespaces
+
+Namespaces may nest to arbitrary depth via `members` — a namespace member whose value is itself a namespace:
+
+```jsonc
+{
+  "bindings": {
+    "app": {
+      "description": "Host root namespace.",
+      "members": {
+        "widget": {
+          "description": "Widget operations.",
+          "members": {
+            "list": { "description": "Lists widgets." }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+This exposes `app.widget.list()` to scripts. Capability gating lives on **leaf functions only**; intermediate namespace nodes carry no capability and are plain frozen objects, with the runtime deep-freezing the namespace from its root. The nested `members` form is canonical. The dotted-key form (`"app.widget"` as a top-level binding key) is not used.
 
 ### Async Bindings
 

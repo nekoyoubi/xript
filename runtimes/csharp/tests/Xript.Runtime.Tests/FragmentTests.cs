@@ -29,7 +29,7 @@ public class FragmentTests
                         "bindings": [
                             { "name": "health", "path": "player.health" }
                         ],
-                        "events": [
+                        "handlers": [
                             { "selector": "[data-action='heal']", "on": "click", "handler": "onHeal" }
                         ]
                     }
@@ -51,7 +51,8 @@ public class FragmentTests
         Assert.True(mod.Fragments[0].Inline);
         Assert.Equal(10, mod.Fragments[0].Priority);
         Assert.Single(mod.Fragments[0].Bindings!);
-        Assert.Single(mod.Fragments[0].Events!);
+        Assert.Single(mod.Fragments[0].Handlers!);
+        Assert.Single(mod.Fragments[0].ResolveHandlers());
     }
 
     [Fact]
@@ -455,7 +456,38 @@ public class FragmentTests
     }
 
     [Fact]
-    public void FragmentInstance_GetEvents_Returns_Declared_Events()
+    public void FragmentInstance_GetHandlers_Returns_Declared_Handlers()
+    {
+        var mod = FragmentProcessor.ValidateModManifest("""
+            {
+                "xript": "0.3",
+                "name": "test-mod",
+                "version": "1.0.0",
+                "fragments": [
+                    {
+                        "id": "panel",
+                        "slot": "sidebar.left",
+                        "format": "text/html",
+                        "source": "<button data-action=\"heal\">Heal</button>",
+                        "inline": true,
+                        "handlers": [
+                            { "selector": "[data-action='heal']", "on": "click", "handler": "onHeal" }
+                        ]
+                    }
+                ]
+            }
+            """);
+
+        var instance = new ModInstance(mod, null);
+        var handlers = instance.Fragments[0].GetHandlers();
+        Assert.Single(handlers);
+        Assert.Equal("[data-action='heal']", handlers[0].Selector);
+        Assert.Equal("click", handlers[0].On);
+        Assert.Equal("onHeal", handlers[0].Handler);
+    }
+
+    [Fact]
+    public void FragmentInstance_GetHandlers_Accepts_Deprecated_Events_Alias()
     {
         var mod = FragmentProcessor.ValidateModManifest("""
             {
@@ -478,11 +510,82 @@ public class FragmentTests
             """);
 
         var instance = new ModInstance(mod, null);
-        var events = instance.Fragments[0].GetEvents();
-        Assert.Single(events);
-        Assert.Equal("[data-action='heal']", events[0].Selector);
-        Assert.Equal("click", events[0].On);
-        Assert.Equal("onHeal", events[0].Handler);
+        var handlers = instance.Fragments[0].GetHandlers();
+        Assert.Single(handlers);
+        Assert.Equal("onHeal", handlers[0].Handler);
+    }
+
+    [Fact]
+    public void FragmentDeclaration_Handlers_Wins_When_Both_Present()
+    {
+        var mod = FragmentProcessor.ValidateModManifest("""
+            {
+                "xript": "0.3",
+                "name": "test-mod",
+                "version": "1.0.0",
+                "fragments": [
+                    {
+                        "id": "panel",
+                        "slot": "sidebar.left",
+                        "format": "text/html",
+                        "source": "<button>x</button>",
+                        "inline": true,
+                        "handlers": [
+                            { "selector": ".a", "on": "click", "handler": "fromHandlers" }
+                        ],
+                        "events": [
+                            { "selector": ".b", "on": "click", "handler": "fromEvents" }
+                        ]
+                    }
+                ]
+            }
+            """);
+
+        var resolved = mod.Fragments![0].ResolveHandlers();
+        Assert.Single(resolved);
+        Assert.Equal("fromHandlers", resolved[0].Handler);
+    }
+
+    [Fact]
+    public void Manifest_Deserializes_TopLevel_Events_Catalog()
+    {
+        var app = JsonSerializer.Deserialize<Manifest>("""
+            {
+                "xript": "0.3",
+                "name": "test-app",
+                "events": [
+                    { "id": "player.spawned", "description": "Fires when a player spawns", "payload": { "$ref": "Player" } },
+                    { "id": "round.ended", "description": "Fires when a round ends" }
+                ]
+            }
+            """)!;
+
+        Assert.NotNull(app.Events);
+        Assert.Equal(2, app.Events!.Count);
+        Assert.Equal("player.spawned", app.Events[0].Id);
+        Assert.Equal("Fires when a player spawns", app.Events[0].Description);
+        Assert.NotNull(app.Events[0].Payload);
+        Assert.Equal("round.ended", app.Events[1].Id);
+        Assert.Null(app.Events[1].Payload);
+    }
+
+    [Fact]
+    public void Manifest_With_TopLevel_Events_Does_Not_Break_Runtime_Create()
+    {
+        using var rt = XriptRuntime.Create("""
+            {
+                "xript": "0.3",
+                "name": "test-app",
+                "events": [
+                    { "id": "tick", "description": "Host frame tick" }
+                ],
+                "slots": [
+                    { "id": "sidebar.left", "accepts": ["text/html"] }
+                ]
+            }
+            """);
+
+        Assert.NotNull(rt);
     }
 
     [Fact]

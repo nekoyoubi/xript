@@ -1,16 +1,16 @@
 <script>
-	import { applyVisibility, applyOps, wireEvents } from "./applyFragment.js";
+	import { applyVisibility, applyOps, wireHandlers } from "./applyFragment.js";
 
 	/**
 	 * @typedef {import("./applyFragment.js").FragmentResult} FragmentResult
 	 * @typedef {import("./applyFragment.js").FragmentOp} FragmentOp
-	 * @typedef {import("./applyFragment.js").FragmentEventDeclaration} FragmentEventDeclaration
+	 * @typedef {import("./applyFragment.js").FragmentHandlerDeclaration} FragmentHandlerDeclaration
 	 */
 
 	let {
 		/** @type {FragmentResult} */ fragment,
 		/** @type {FragmentOp[]} */ ops = [],
-		/** @type {FragmentEventDeclaration[]} */ events = [],
+		/** @type {FragmentHandlerDeclaration[]} */ handlers = [],
 		/** @type {(detail: { handler: string, selector: string, on: string, event: Event }) => void} */ dispatch = () => {},
 	} = $props();
 
@@ -25,7 +25,7 @@
 		applyVisibility(root, fragment?.visibility ?? {});
 		applyOps(root, ops);
 		teardown();
-		teardown = wireEvents(root, events, dispatch);
+		teardown = wireHandlers(root, handlers, dispatch);
 		return () => {
 			teardown();
 			teardown = () => {};

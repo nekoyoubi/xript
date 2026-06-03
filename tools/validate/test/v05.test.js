@@ -19,6 +19,7 @@ const {
 	detectCommonJs,
 	resolveExtends,
 	resolveManifestFile,
+	resolveProvenance,
 	ManifestResolutionError,
 } = await import("../dist/index.js");
 
@@ -111,6 +112,243 @@ describe("manifest extends merge", () => {
 				assert.ok(err instanceof ManifestResolutionError);
 				return true;
 			},
+		);
+	});
+});
+
+describe("extends: abstract fill, refine, and the collision guard", () => {
+	it("fills an abstract base type with the child's concrete definition (no marker)", async () => {
+		const merged = await resolveExtends(
+			{
+				xript: "0.3",
+				extends: "./extends-abstract-base.json",
+				name: "host-fill",
+				types: {
+					StatusCode: { description: "A concrete status code enum.", values: ["ok", "error"] },
+				},
+			},
+			fixturesDir,
+		);
+		const resolved = merged.types.StatusCode;
+		assert.deepEqual(resolved.values, ["ok", "error"], "concrete values replace the abstract stub");
+		assert.equal(resolved.abstract, undefined, "the abstract flag does not survive the fill");
+		assert.equal(resolved.description, "A concrete status code enum.", "child description wins on fill");
+	});
+
+	it("fills an abstract base type with concrete object fields", async () => {
+		const merged = await resolveExtends(
+			{
+				xript: "0.3",
+				extends: "./extends-abstract-base.json",
+				name: "host-fill-obj",
+				types: {
+					StatusCode: { description: "A concrete record.", fields: { code: { type: "number", description: "Numeric code." } } },
+				},
+			},
+			fixturesDir,
+		);
+		const resolved = merged.types.StatusCode;
+		assert.ok(resolved.fields && resolved.fields.code, "concrete fields populate the filled type");
+		assert.equal(resolved.abstract, undefined, "the abstract flag is consumed by the fill");
+	});
+
+	it("refines a concrete base type: child fields win, base-only fields retained, marker consumed", async () => {
+		const merged = await resolveExtends(
+			{
+				xript: "0.3",
+				extends: "./extends-abstract-base.json",
+				name: "host-refine-type",
+				types: {
+					Envelope: {
+						refines: true,
+						fields: {
+							body: { type: "string", description: "The refined response body." },
+							traceId: { type: "string", description: "A correlation id." },
+						},
+					},
+				},
+			},
+			fixturesDir,
+		);
+		const envelope = merged.types.Envelope;
+		assert.equal(envelope.refines, undefined, "the refines marker is absent from the resolved manifest");
+		assert.equal(envelope.fields.status.type, "StatusCode", "a base-only field the child omits is retained");
+		assert.equal(envelope.fields.body.description, "The refined response body.", "the child field replaces the base field of the same key");
+		assert.ok(envelope.fields.traceId, "a field the child adds is merged in");
+	});
+
+	it("refines a concrete base slot: payload members deep-merge, marker consumed", async () => {
+		const merged = await resolveExtends(
+			{
+				xript: "0.3",
+				extends: "./extends-abstract-base.json",
+				name: "host-refine-slot",
+				slots: [
+					{
+						id: "statusbar",
+						refines: true,
+						payload: {
+							label: { type: "string", description: "The refined label." },
+							icon: { type: "string", description: "An added icon." },
+						},
+					},
+				],
+			},
+			fixturesDir,
+		);
+		const slots = merged.slots.filter((s) => s.id === "statusbar");
+		assert.equal(slots.length, 1, "the refined slot does not duplicate the base slot");
+		const slot = slots[0];
+		assert.equal(slot.refines, undefined, "the refines marker is absent from the resolved slot");
+		assert.equal(slot.accepts[0], "text/html", "a base-only slot field the child omits is retained");
+		assert.equal(slot.payload.label.description, "The refined label.", "the child payload member replaces the base member of the same key");
+		assert.ok(slot.payload.icon, "a payload member the child adds is merged in");
+	});
+
+	it("throws on a concrete type collision WITHOUT refines", async () => {
+		await assert.rejects(
+			() =>
+				resolveExtends(
+					{
+						xript: "0.3",
+						extends: "./extends-abstract-base.json",
+						name: "host-clobber-type",
+						types: {
+							Envelope: { description: "An un-opted redeclaration.", fields: { body: { type: "string" } } },
+						},
+					},
+					fixturesDir,
+				),
+			(err) => {
+				assert.ok(err instanceof ManifestResolutionError);
+				assert.match(err.message, /Envelope/);
+				return true;
+			},
+		);
+	});
+
+	it("throws on a concrete slot id collision WITHOUT refines", async () => {
+		await assert.rejects(
+			() =>
+				resolveExtends(
+					{
+						xript: "0.3",
+						extends: "./extends-abstract-base.json",
+						name: "host-clobber-slot",
+						slots: [{ id: "statusbar", accepts: ["text/html"], description: "An un-opted redeclaration." }],
+					},
+					fixturesDir,
+				),
+			(err) => {
+				assert.ok(err instanceof ManifestResolutionError);
+				assert.match(err.message, /statusbar/);
+				return true;
+			},
+		);
+	});
+
+	it("adds a new sibling type and slot the base never declared (additive, no marker)", async () => {
+		const merged = await resolveExtends(
+			{
+				xript: "0.3",
+				extends: "./extends-abstract-base.json",
+				name: "host-add-new",
+				types: {
+					Marker: { description: "A brand-new sibling type.", fields: { tag: { type: "string" } } },
+				},
+				slots: [{ id: "footer", accepts: ["text/html"], description: "A brand-new sibling slot." }],
+			},
+			fixturesDir,
+		);
+		assert.ok(merged.types.Marker, "the new type is added alongside the inherited ones");
+		assert.ok(merged.types.Envelope, "the inherited base type is retained");
+		const ids = merged.slots.map((s) => s.id).sort();
+		assert.deepEqual(ids, ["footer", "statusbar"], "the new slot joins the inherited slot");
+	});
+
+	it("resolves the fill+refine fixture end-to-end: type fill, type refine, slot refine in one host", async () => {
+		const merged = await resolveManifestFile(resolve(fixturesDir, "extends-abstract-fill-refine.json"));
+		const statusCode = merged.types.StatusCode;
+		assert.deepEqual(statusCode.values, ["ok", "error", "pending"], "the abstract StatusCode is filled with concrete values");
+		assert.equal(statusCode.abstract, undefined, "the abstract flag is consumed by the fill");
+
+		const envelope = merged.types.Envelope;
+		assert.equal(envelope.refines, undefined, "the type refines marker is consumed");
+		assert.equal(envelope.fields.status.type, "StatusCode", "a base-only field the child omits is retained");
+		assert.equal(envelope.fields.body.description, "The refined response body.", "the child field replaces the base field");
+		assert.ok(envelope.fields.traceId, "a field the child adds is merged in");
+
+		const statusbar = merged.slots.filter((s) => s.id === "statusbar");
+		assert.equal(statusbar.length, 1, "the refined slot does not duplicate the base slot");
+		const slot = statusbar[0];
+		assert.equal(slot.refines, undefined, "the slot refines marker is consumed");
+		assert.equal(slot.accepts[0], "text/html", "a base-only slot field the child omits is retained");
+		assert.equal(slot.payload.label.description, "The refined label.", "the child payload member replaces the base member");
+		assert.ok(slot.payload.icon, "a payload member the child adds is merged in");
+
+		const result = await validateManifestFile(resolve(fixturesDir, "extends-abstract-fill-refine.json"));
+		assert.equal(result.valid, true, JSON.stringify(result.errors));
+	});
+
+	it("resolves the unfilled fixture: a sibling type is added while the inherited abstract is left open", async () => {
+		const { readFile } = await import("node:fs/promises");
+		const fixture = JSON.parse(await readFile(resolve(fixturesDir, "extends-abstract-unfilled.json"), "utf-8"));
+		const provenance = await resolveProvenance(fixture, fixturesDir);
+		assert.ok(provenance.resolved.types.Marker, "the new sibling type is added");
+		assert.ok(
+			(provenance.inheritedAbstractTypes ?? []).includes("StatusCode"),
+			"the inherited abstract StatusCode is left unfilled and surfaced",
+		);
+	});
+
+	it("reports an inherited-but-abstract type through provenance", async () => {
+		const provenance = await resolveProvenance(
+			{
+				xript: "0.3",
+				extends: "./extends-abstract-base.json",
+				name: "host-leaves-abstract",
+			},
+			fixturesDir,
+		);
+		assert.ok(
+			(provenance.inheritedAbstractTypes ?? []).includes("StatusCode"),
+			"an inherited type left abstract is surfaced as inheritedAbstractTypes",
+		);
+	});
+
+	it("does not report a filled inherited type as abstract through provenance", async () => {
+		const provenance = await resolveProvenance(
+			{
+				xript: "0.3",
+				extends: "./extends-abstract-base.json",
+				name: "host-fills-it",
+				types: {
+					StatusCode: { description: "Filled.", values: ["ok", "error"] },
+				},
+			},
+			fixturesDir,
+		);
+		assert.ok(
+			!(provenance.inheritedAbstractTypes ?? []).includes("StatusCode"),
+			"a filled inherited type is no longer abstract and is not surfaced",
+		);
+	});
+
+	it("does not report a locally-declared abstract type as inherited", async () => {
+		const provenance = await resolveProvenance(
+			{
+				xript: "0.3",
+				name: "host-local-abstract",
+				types: {
+					LocalHole: { description: "A locally-declared hole.", abstract: true },
+				},
+			},
+			fixturesDir,
+		);
+		assert.deepEqual(
+			provenance.inheritedAbstractTypes ?? [],
+			[],
+			"a locally-declared abstract type is not inherited and is not surfaced",
 		);
 	});
 });
@@ -293,7 +531,8 @@ describe("provider roles (wave 2)", () => {
 			entry: "main.js",
 			contributions: { provides: [{ role: "clipboard-history", fns: { query: "ch_query" } }] },
 		});
-		assert.equal((result.warnings ?? []).length, 0);
+		const roleWarnings = (result.warnings ?? []).filter((w) => w.keyword !== "deprecated");
+		assert.equal(roleWarnings.length, 0);
 	});
 });
 
@@ -460,7 +699,7 @@ describe("CommonJS guardrail (wave 3)", () => {
 		const cjs = errors.find((e) => e.keyword === "commonjs-detected");
 		assert.ok(cjs, "reports commonjs-detected");
 		assert.equal(cjs.path, "/entry");
-		assert.match(cjs.message, /authoring-mods-in-typescript/);
+		assert.match(cjs.message, /spec\/modules/);
 	});
 
 	it("flags CJS at file-validation time and reports invalid", async () => {

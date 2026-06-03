@@ -37,6 +37,37 @@ function dirOf(path: string): string {
 	return idx >= 0 ? path.slice(0, idx) : "";
 }
 
+function isObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isAbstractType(value: unknown): boolean {
+	return isObject(value) && value.abstract === true;
+}
+
+/**
+ * Recursively merges a child object onto a base, key-by-key. Where both sides hold a plain
+ * object under the same key, the merge recurses; otherwise the child value replaces the base
+ * value (arrays and scalars replace wholesale). Keys present only in the base are retained.
+ * The `refines` marker is consumed here so it never reaches the resolved manifest.
+ */
+function deepMerge(
+	base: Record<string, unknown>,
+	child: Record<string, unknown>,
+): Record<string, unknown> {
+	const result: Record<string, unknown> = { ...base };
+	for (const [key, value] of Object.entries(child)) {
+		if (key === "refines") continue;
+		const existing = base[key];
+		if (isObject(existing) && isObject(value)) {
+			result[key] = deepMerge(existing, value);
+		} else {
+			result[key] = value;
+		}
+	}
+	return result;
+}
+
 function mergeMaps(
 	target: Record<string, unknown>,
 	source: Record<string, unknown>,
@@ -46,6 +77,17 @@ function mergeMaps(
 	const merged: Record<string, unknown> = { ...target };
 	for (const [key, value] of Object.entries(source)) {
 		if (Object.prototype.hasOwnProperty.call(merged, key)) {
+			if (mapKey === "types") {
+				const baseType = target[key];
+				if (isAbstractType(baseType) && isObject(value)) {
+					merged[key] = value;
+					continue;
+				}
+				if (isObject(baseType) && isObject(value) && value.refines === true) {
+					merged[key] = deepMerge(baseType, value);
+					continue;
+				}
+			}
 			conflicts.push({
 				path: `/${mapKey}/${key}`,
 				message: `${mapKey} id '${key}' conflicts with extended base`,
@@ -71,6 +113,13 @@ function mergeSlots(
 	for (const slot of child) {
 		const id = (slot as { id?: unknown })?.id;
 		if (typeof id === "string" && seen.has(id)) {
+			if (isObject(slot) && slot.refines === true) {
+				const idx = merged.findIndex((s) => isObject(s) && s.id === id);
+				if (idx >= 0) {
+					merged[idx] = deepMerge(merged[idx] as Record<string, unknown>, slot);
+					continue;
+				}
+			}
 			conflicts.push({
 				path: `/slots/${id}`,
 				message: `slot id '${id}' conflicts with extended base`,

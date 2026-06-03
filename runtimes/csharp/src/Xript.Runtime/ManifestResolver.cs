@@ -109,12 +109,60 @@ public static class ManifestResolver
         foreach (var (key, value) in childMap)
         {
             if (merged.ContainsKey(key))
+            {
+                if (mapName == "types")
+                {
+                    var baseType = baseMap[key];
+                    if (IsAbstractType(baseType) && value is JsonObject)
+                    {
+                        merged[key] = value.DeepClone();
+                        continue;
+                    }
+                    if (baseType is JsonObject baseTypeObj && value is JsonObject childTypeObj && Refines(childTypeObj))
+                    {
+                        merged[key] = DeepMerge(baseTypeObj, childTypeObj);
+                        continue;
+                    }
+                }
                 throw new ManifestValidationException(
                     [new($"/{mapName}/{key}", $"{Singular(mapName)} id {key} conflicts with extended base")]);
+            }
             merged[key] = value?.DeepClone();
         }
 
         return merged;
+    }
+
+    private static bool IsAbstractType(JsonNode? value) =>
+        value is JsonObject obj && obj.TryGetPropertyValue("abstract", out var flag)
+        && flag is JsonValue v && v.TryGetValue<bool>(out var b) && b;
+
+    private static bool Refines(JsonObject obj) =>
+        obj.TryGetPropertyValue("refines", out var flag)
+        && flag is JsonValue v && v.TryGetValue<bool>(out var b) && b;
+
+    /// <summary>
+    /// Recursively merges a child object onto a base, key-by-key. Where both sides hold a plain
+    /// object under the same key, the merge recurses; otherwise the child value replaces the base
+    /// value (arrays and scalars replace wholesale). Keys present only in the base are retained.
+    /// The <c>refines</c> marker is consumed here so it never reaches the resolved manifest.
+    /// </summary>
+    private static JsonObject DeepMerge(JsonObject baseObj, JsonObject childObj)
+    {
+        var result = new JsonObject();
+        foreach (var (key, value) in baseObj)
+            result[key] = value?.DeepClone();
+
+        foreach (var (key, value) in childObj)
+        {
+            if (key == "refines") continue;
+            if (baseObj[key] is JsonObject existing && value is JsonObject childChild)
+                result[key] = DeepMerge(existing, childChild);
+            else
+                result[key] = value?.DeepClone();
+        }
+
+        return result;
     }
 
     private static JsonArray MergeSlots(JsonArray baseSlots, JsonArray childSlots)
@@ -133,8 +181,19 @@ public static class ManifestResolver
         {
             var id = SlotId(slot);
             if (id is not null && seen.Contains(id))
+            {
+                if (slot is JsonObject childSlot && Refines(childSlot))
+                {
+                    var idx = IndexOfSlot(merged, id);
+                    if (idx >= 0)
+                    {
+                        merged[idx] = DeepMerge((JsonObject)merged[idx]!, childSlot);
+                        continue;
+                    }
+                }
                 throw new ManifestValidationException(
                     [new($"/slots/{id}", $"slot id {id} conflicts with extended base")]);
+            }
             if (id is not null) seen.Add(id);
             merged.Add(slot?.DeepClone());
         }
@@ -148,6 +207,15 @@ public static class ManifestResolver
             && idNode is JsonValue v && v.TryGetValue<string>(out var id))
             return id;
         return null;
+    }
+
+    private static int IndexOfSlot(JsonArray slots, string id)
+    {
+        for (var i = 0; i < slots.Count; i++)
+        {
+            if (SlotId(slots[i]) == id) return i;
+        }
+        return -1;
     }
 
     private static string Singular(string mapName) => mapName switch

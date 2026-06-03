@@ -37,6 +37,21 @@ public record Manifest
 
     [JsonPropertyName("slots")]
     public List<Slot>? Slots { get; init; }
+
+    [JsonPropertyName("events")]
+    public List<EventDeclaration>? Events { get; init; }
+}
+
+public record EventDeclaration
+{
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = "";
+
+    [JsonPropertyName("description")]
+    public string Description { get; init; } = "";
+
+    [JsonPropertyName("payload")]
+    public JsonElement? Payload { get; init; }
 }
 
 public record Slot
@@ -128,11 +143,21 @@ public record FragmentDeclaration
     [JsonPropertyName("bindings")]
     public List<FragmentBinding>? Bindings { get; init; }
 
+    [JsonPropertyName("handlers")]
+    public List<FragmentHandlerDeclaration>? Handlers { get; init; }
+
+    /// <summary>
+    /// Deprecated alias for <see cref="Handlers"/>. A reader accepts either; when both are
+    /// present, <c>handlers</c> wins. Retained for back-compat with manifests authored before
+    /// the rename.
+    /// </summary>
     [JsonPropertyName("events")]
-    public List<FragmentEventDeclaration>? Events { get; init; }
+    public List<FragmentHandlerDeclaration>? Events { get; init; }
 
     [JsonPropertyName("priority")]
     public int? Priority { get; init; }
+
+    public List<FragmentHandlerDeclaration> ResolveHandlers() => Handlers ?? Events ?? [];
 }
 
 public record FragmentBinding
@@ -144,7 +169,7 @@ public record FragmentBinding
     public string Path { get; init; } = "";
 }
 
-public record FragmentEventDeclaration
+public record FragmentHandlerDeclaration
 {
     [JsonPropertyName("selector")]
     public string Selector { get; init; } = "";

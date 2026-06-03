@@ -3,7 +3,7 @@ title: Getting Started
 description: Add safe, sandboxed scripting to your application in five minutes.
 ---
 
-This guide walks through adding xript to an application from scratch. By the end, you will have a working sandboxed expression evaluator that users can extend safely.
+This guide walks through adding xript to an application from scratch. By the end you'll have a working sandboxed expression evaluator that users can safely extend.
 
 ## Install the Runtime
 
@@ -19,8 +19,8 @@ Create a `manifest.json` describing what your application exposes to scripts. St
 
 ```json
 {
-  "$schema": "https://xript.dev/schema/manifest/v0.1.json",
-  "xript": "0.1",
+  "$schema": "https://xript.dev/schema/manifest/v0.6.json",
+  "xript": "0.6",
   "name": "my-app",
   "version": "1.0.0",
   "bindings": {
@@ -112,6 +112,11 @@ The sandbox guarantees that user scripts cannot escape the boundaries you define
 - **Scaffold a new project** with `npx xript init`. See [Init CLI](/tools/cli#init).
 - **Add capabilities** to gate sensitive operations. See the [Capabilities](/spec/capabilities) spec.
 - **Add namespaces** to organize related bindings. See the [Manifest](/spec/manifest) spec.
+- **Expose extension points** by declaring typed slots that mods fill, and broadcast named events the host emits. Bindings are what mods call, slots are what they fill, events are what the host emits. See the [Manifest](/spec/manifest) and [Mod Manifest](/spec/mod-manifest) specs.
+- **Inherit from a base manifest** with `extends`; fill a base's abstract holes, refine its concrete pieces. See the [Manifest](/spec/manifest) spec.
+- **Measure moddability** with `xript score`, which rates how much extension surface your host exposes. See [Extensibility Score](/tools/score).
+- **Drive the toolchain from an agent** by running the CLI as an MCP server with `xript mcp`. See [MCP Server](/tools/mcp).
+- **Read the doctrine** behind xript's open-by-default posture with `xript guide`. See ["More extensible, not less"](/guidance/openness).
 - **Generate TypeScript definitions** from your manifest with `xript typegen`. See [Type Generator](/tools/cli#typegen).
 - **Generate documentation** from your manifest with `xript docgen`. See [Doc Generator](/tools/cli#docgen).
 - **Use the Node.js runtime** for file-based workflows and native V8 performance. See [Node.js Runtime](/runtimes/node).

@@ -8,13 +8,13 @@
 	 *
 	 * @typedef {import("./lib/applyFragment.js").FragmentResult} FragmentResult
 	 * @typedef {import("./lib/applyFragment.js").FragmentOp} FragmentOp
-	 * @typedef {import("./lib/applyFragment.js").FragmentEventDeclaration} FragmentEventDeclaration
+	 * @typedef {import("./lib/applyFragment.js").FragmentHandlerDeclaration} FragmentHandlerDeclaration
 	 */
 
 	let {
 		/** @type {() => FragmentResult} */ updateBindings,
 		/** @type {() => FragmentOp[]} */ fireFragmentHook,
-		/** @type {FragmentEventDeclaration[]} */ events = [],
+		/** @type {FragmentHandlerDeclaration[]} */ handlers = [],
 		/** @type {(detail: { handler: string, selector: string, on: string, event: Event }) => void} */ dispatch = () => {},
 		/** @type {number} */ frame = 0,
 	} = $props();
@@ -31,7 +31,7 @@
 
 <main class="dashboard">
 	<aside class="sidebar-left">
-		<Fragment fragment={result} {ops} {events} {dispatch} />
+		<Fragment fragment={result} {ops} {handlers} {dispatch} />
 	</aside>
 </main>
 

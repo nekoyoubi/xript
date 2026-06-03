@@ -11,6 +11,7 @@ The xript specification defines how applications expose functionality to scripts
 - [bindings.md](./bindings.md): binding conventions and type mapping
 - [hooks.md](./hooks.md): hook conventions, lifecycle phases, and registration
 - [security.md](./security.md): security guarantees and conformance checklist
-- [fragments.md](./fragments.md): the UI fragment protocol (slots, fragments, mod manifests)
+- [fragments.md](./fragments.md): the fragment protocol (the semantics of fragment-format slots)
+- [mod-manifest.md](./mod-manifest.md): the mod manifest format (capabilities, entry, and the `fills` contribution surface)
 - [mod-manifest.schema.json](./mod-manifest.schema.json): the mod manifest JSON Schema
 - [sanitizer-tests.json](./sanitizer-tests.json): HTML sanitizer conformance test suite

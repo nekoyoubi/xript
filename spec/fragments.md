@@ -1,42 +1,19 @@
 # Fragment Protocol
 
-The fragment protocol extends xript with moddable UI. Hosts declare **slots** — mounting points in their interface. Mods declare **fragments** — UI contributions that target those slots. The runtime sanitizes fragment content, resolves data bindings, evaluates conditional visibility, and routes events through the sandbox.
+The fragment protocol is the semantics of one slot type: the **fragment-format slot**. A host declares a slot whose `accepts` names a fragment format (`text/html+jsml`, `application/jsml+json`, `text/html`); a mod fills it with an inert fragment — markup plus declared data bindings and DOM event handlers. A fragment is a fill of a fragment-format slot; it is not a separate top-level mod concept. The runtime sanitizes fragment content, resolves data bindings, evaluates conditional visibility, and routes events through the sandbox.
 
-## Mod Manifests
+See [mod-manifest.md](./mod-manifest.md) for the `fills` surface and the other slot types (code-renderer, role, event), and [manifest.md](./manifest.md) for how a host declares slots and their `style` modes.
 
-A mod manifest is a JSON file declaring what a mod provides and what it needs. It is distinct from the app manifest — the app manifest describes what the host exposes; the mod manifest describes what the mod contributes.
+## Fragment-Format Slots
 
-### Required Fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `xript` | string | Spec version this mod targets (e.g. `"0.3"`) |
-| `name` | string | Machine-readable identifier (`^[a-z][a-z0-9-]*$`, max 64 chars) |
-| `version` | string | Mod version (semver) |
-
-### Optional Fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `title` | string | Human-readable display name |
-| `description` | string | Brief description for users |
-| `author` | string | Author name or handle |
-| `capabilities` | string[] | Capabilities this mod requires from the host |
-| `entry` | string \| string[] | Script entry point(s) relative to mod root |
-| `fragments` | Fragment[] | UI fragment contributions |
-
-The schema lives at `spec/mod-manifest.schema.json`.
-
-## Slots
-
-Hosts declare slots in their app manifest under the `slots` array. Each slot is a named mounting point with format constraints and optional capability gating.
+A host declares a fragment-format slot in its app manifest `slots` array. The slot's `accepts` lists the fragment formats it takes; `style` controls how host styles reach the mounted fragment.
 
 ```json
 {
   "slots": [
     {
       "id": "sidebar.left",
-      "accepts": ["text/html"],
+      "accepts": ["text/html+jsml"],
       "capability": "ui-mount",
       "multiple": true,
       "style": "isolated"
@@ -45,86 +22,81 @@ Hosts declare slots in their app manifest under the `slots` array. Each slot is 
 }
 ```
 
-### Slot Fields
+The full slot field reference and the `inherit` / `isolated` / `scoped` styling modes live in [manifest.md](./manifest.md).
 
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `id` | string | yes | — | Unique slot identifier (`^[a-z][a-z0-9.-]*$`) |
-| `accepts` | string[] | yes | — | MIME types this slot accepts |
-| `capability` | string | no | — | Capability required to mount into this slot |
-| `multiple` | boolean | no | false | Whether multiple mods can contribute to this slot |
-| `style` | enum | no | "inherit" | Styling mode (see below) |
+## Fragment Fills
 
-### Styling Modes
-
-- **`inherit`** — Fragment inherits host styles. Suitable for inline UI like status bars.
-- **`isolated`** — No host styles bleed into the fragment. Suitable for panels and overlays. On the web, implemented via Shadow DOM or equivalent.
-- **`scoped`** — Host exposes CSS custom properties / design tokens; fragment uses them. Best of both worlds.
-
-## Fragments
-
-Mods declare fragments in their mod manifest under the `fragments` array. Each fragment targets a slot, provides markup, and optionally declares data bindings and event handlers.
+A mod fills a fragment-format slot through its `fills` surface, keyed by the host slot id. The fill carries markup and optionally declares data bindings and DOM event handlers.
 
 ```json
 {
-  "fragments": [
-    {
-      "id": "health-panel",
-      "slot": "sidebar.left",
-      "format": "text/html",
-      "source": "fragments/panel.html",
-      "bindings": [
-        { "name": "health", "path": "player.health.val" },
-        { "name": "maxHealth", "path": "player.health.max" }
-      ],
-      "events": [
-        { "selector": "[data-action='heal']", "on": "click", "handler": "onHealClicked" }
-      ],
-      "priority": 10
-    }
-  ]
+  "fills": {
+    "sidebar.left": [
+      {
+        "format": "text/html+jsml",
+        "source": "fragments/panel.html",
+        "bindings": [
+          { "name": "health", "path": "player.health.val" },
+          { "name": "maxHealth", "path": "player.health.max" }
+        ],
+        "handlers": [
+          { "selector": "[data-action='heal']", "on": "click", "handler": "onHealClicked" }
+        ],
+        "priority": 10
+      }
+    ]
+  }
 }
 ```
 
-### Fragment Fields
+### Fill Fields
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `id` | string | yes | — | Unique fragment ID within the mod |
-| `slot` | string | yes | — | Target slot ID from the host's manifest |
-| `format` | string | yes | — | MIME type of the fragment content |
+| `format` | string | yes | — | Fragment format of the content (must be in the slot's `accepts`) |
 | `source` | string | yes | — | File path (relative to mod root) or inline markup |
 | `inline` | boolean | no | false | When true, `source` is inline markup (JSML) |
 | `bindings` | Binding[] | no | — | Data bindings |
-| `events` | Event[] | no | — | Event handlers |
+| `handlers` | Handler[] | no | — | DOM event handlers (entries shaped `{ selector, on, handler }`) |
+| `events` | Handler[] | no | — | **Deprecated** alias for `handlers`. Accepted for back-compat; if both are present, `handlers` wins |
+| `id` | string | no | — | Optional fill identifier, used for ordering tie-breaks and the sandbox fragment API |
 | `priority` | integer | no | 0 | Ordering within the slot (higher = earlier) |
 
-### Inline Fragments (JSML)
+> **`events` → `handlers` migration.** The handler array was renamed: its entries are event *handlers* (`{ selector, on, handler }`), not events, so `handlers` names what it carries. `events` stays accepted as a deprecated alias — a reader honors `handlers` or `events`, and when both appear `handlers` wins. Migrate by renaming the key; the entry shape is unchanged. This mirrors the `hooks` → event-typed-slots back-compat precedent: the old name keeps working, the new name is preferred.
+
+### Inline Fills (JSML)
 
 For simple fragments, the source can be inline markup:
 
 ```json
 {
-  "id": "status-text",
-  "slot": "header.status",
-  "format": "text/html",
-  "source": "<span data-bind=\"health\">0</span> / <span data-bind=\"maxHealth\">0</span>",
-  "inline": true,
-  "bindings": [
-    { "name": "health", "path": "player.health.val" },
-    { "name": "maxHealth", "path": "player.health.max" }
-  ]
+  "fills": {
+    "header.status": [
+      {
+        "id": "status-text",
+        "format": "text/html",
+        "source": "<span data-bind=\"health\">0</span> / <span data-bind=\"maxHealth\">0</span>",
+        "inline": true,
+        "bindings": [
+          { "name": "health", "path": "player.health.val" },
+          { "name": "maxHealth", "path": "player.health.max" }
+        ]
+      }
+    ]
+  }
 }
 ```
 
-### Fragment Ordering
+### Fill Ordering
 
-When multiple fragments target the same slot (requires `multiple: true`):
+When multiple fills target the same slot (requires `multiple: true`):
 
 1. Sort by `priority` descending (higher values render first)
-2. Break ties alphabetically by fragment `id`
+2. Break ties alphabetically by fill `id`
 
 Hosts can override this ordering via user preferences.
+
+> The former top-level `fragments[]` array is a deprecated alias for fragment-format slot fills: each legacy fragment's `slot` becomes the `fills` key and the rest of the entry becomes the fill. Validators still accept it with a deprecation warning. See [mod-manifest.md](./mod-manifest.md#deprecated-aliases).
 
 ## Data Binding: `data-bind`
 
@@ -148,7 +120,7 @@ The `data-bind` attribute is the mechanism for wiring host data into fragment ma
 
 ### Two-Way Binding
 
-For input elements, the runtime can both push values (host → fragment) and listen for changes (fragment → host). Write-back is explicit: use the `events` array to declare handlers for `input` or `change` events on bound elements.
+For input elements, the runtime can both push values (host → fragment) and listen for changes (fragment → host). Write-back is explicit: use the `handlers` array to declare handlers for `input` or `change` events on bound elements.
 
 ## Conditional Visibility: `data-if`
 
@@ -173,17 +145,19 @@ The `data-if` attribute evaluates an expression against the binding context to c
 
 ## Event Routing
 
-Events are declared in the fragment manifest, not in the markup. The runtime attaches listeners to matching elements and delegates to sandbox functions.
+Handlers are declared in the fragment manifest, not in the markup. The runtime attaches listeners to matching elements and delegates to sandbox functions.
 
 ```json
-"events": [
+"handlers": [
   { "selector": "[data-action='heal']", "on": "click", "handler": "onHealClicked" }
 ]
 ```
 
+The deprecated `events` key is accepted as an alias; see [Fill Fields](#fill-fields).
+
 ### How It Works
 
-1. After mounting the fragment, the runtime queries elements matching each event's `selector`
+1. After mounting the fragment, the runtime queries elements matching each handler's `selector`
 2. For each match, the runtime attaches a listener for the specified `on` event
 3. When the event fires, the runtime calls the named `handler` function in the mod's sandboxed script
 4. The handler receives event data (target element info, event type)
@@ -292,29 +266,31 @@ Fragments are inert templates. They carry structure and style. All dynamic behav
 
 1. **Data display** goes through declared `data-bind` bindings
 2. **Conditional visibility** goes through declared `data-if` expressions evaluated by the sandboxed expression engine
-3. **User interaction** goes through declared `events` → sandboxed handler functions
+3. **User interaction** goes through declared `handlers` → sandboxed handler functions
 4. **Complex mutations** go through the sandbox fragment API (command buffer, never direct DOM access)
 
 No inline scripts. No inline event handlers. No embedded code of any kind survives sanitization. The fragment is a skeleton; the sandbox is the muscle.
 
 ## Cross-Validation
 
-When a mod is loaded against a host application, the runtime validates:
+When a mod is loaded against a host application, the runtime validates each fragment fill:
 
-1. Every fragment targets a slot that exists in the app manifest
-2. Every fragment's format is in the target slot's `accepts` list
-3. If the slot requires a capability, the mod must have that capability granted
-4. If the slot has `multiple: false`, only one fragment is resolved — the deterministic winner (highest priority, ties broken alphabetically by fragment id), not insertion order
+1. Every fill keys to a slot that exists in the app manifest
+2. Every fill's format is in the target slot's `accepts` list
+3. If the slot requires a capability, the mod must list that capability
+4. If the slot has `multiple: false`, only one fill is resolved — the deterministic winner (highest priority, ties broken alphabetically by fill id), not insertion order
+
+The runtime validates the keyed slot id and capability for fills of every slot type; the format-in-`accepts` and ordering checks above are specific to fragment-format slots. See [mod-manifest.md](./mod-manifest.md#validation-contract) for the general fill validation contract.
 
 ## Runtime Slot Resolution
 
 Cross-validation runs at load time. v0.5.0 adds a deterministic runtime resolver that answers "what is mounted in this slot, and in what order?"
 
-`resolveSlot(slotId)` returns the loaded fragment contributions targeting `slotId`, ordered by:
+`resolveSlot(slotId)` returns the loaded fills targeting `slotId`, ordered by:
 
 1. `priority` descending
-2. fragment `id` ascending (tie-break)
+2. fill `id` ascending (tie-break)
 
-Cardinality: when the slot's `multiple` is `false` (the default), the resolver yields at most one contribution — the highest-priority winner (ties broken by id). This supersedes the looser "first-come-first-served" wording above: resolution is deterministic and reproducible, not insertion-ordered. A `resolveSlotSingle(slotId)` convenience returns the single winner (or none).
+Cardinality: when the slot's `multiple` is `false` (the default), the resolver yields at most one fill — the highest-priority winner (ties broken by id). This supersedes the looser "first-come-first-served" wording above: resolution is deterministic and reproducible, not insertion-ordered. A `resolveSlotSingle(slotId)` convenience returns the single winner (or none).
 
-Capability-ungranted contributions are excluded from results (they are already filtered at load). Resolving an undeclared slot id returns an empty result, not an error — querying an empty or unknown slot is legitimate.
+Capability-ungranted fills are excluded from results (they are already filtered at load). Resolving an undeclared slot id returns an empty result, not an error — querying an empty or unknown slot is legitimate.

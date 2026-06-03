@@ -21,7 +21,7 @@
  * @property {unknown} [value]
  * @property {string} [attr]
  *
- * @typedef {Object} FragmentEventDeclaration
+ * @typedef {Object} FragmentHandlerDeclaration
  * @property {string} selector
  * @property {string} on
  * @property {string} handler
@@ -107,23 +107,23 @@ export function applyOps(root, ops) {
 }
 
 /**
- * Wire declared fragment events to a host dispatch callback and return a
+ * Wire declared fragment handlers to a host dispatch callback and return a
  * teardown function. The renderer attaches the listeners; the *behavior* runs
  * in the sandbox — `dispatch` is expected to route into
  * `runtime.fireFragmentHook` / `runtime.invokeExport`, never to execute
  * fragment-authored code in the page.
  *
  * @param {Element} root
- * @param {FragmentEventDeclaration[]} events
+ * @param {FragmentHandlerDeclaration[]} handlers
  * @param {(detail: { handler: string, selector: string, on: string, event: Event }) => void} dispatch
  * @returns {() => void} teardown
  */
-export function wireEvents(root, events, dispatch) {
-	if (!root || !Array.isArray(events) || typeof dispatch !== "function") {
+export function wireHandlers(root, handlers, dispatch) {
+	if (!root || !Array.isArray(handlers) || typeof dispatch !== "function") {
 		return () => {};
 	}
 	const bound = [];
-	for (const decl of events) {
+	for (const decl of handlers) {
 		if (!decl || typeof decl.selector !== "string" || typeof decl.on !== "string") continue;
 		const targets = root.querySelectorAll(decl.selector);
 		for (const el of targets) {

@@ -566,8 +566,16 @@ impl FragmentInstance {
         process_fragment(&self.id, &self.sanitized_source, &bindings)
     }
 
-    pub fn get_events(&self) -> Vec<crate::manifest::FragmentEvent> {
-        self.declaration.events.clone().unwrap_or_default()
+    pub fn get_handlers(&self) -> Vec<crate::manifest::FragmentHandler> {
+        self.declaration
+            .resolved_handlers()
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    #[deprecated(note = "renamed to get_handlers")]
+    pub fn get_events(&self) -> Vec<crate::manifest::FragmentHandler> {
+        self.get_handlers()
     }
 }
 

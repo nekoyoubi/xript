@@ -14,6 +14,7 @@ const KNOWN_SHAPES = ["capability-prompt", "install-descriptor", "discovery-resu
 export async function run(args: string[]): Promise<void> {
 	const crossIndex = args.indexOf("--cross");
 	const isCross = crossIndex !== -1;
+	const skipFillPayloads = args.includes("--no-fill-payloads");
 	const shapeIndex = args.indexOf("--shape");
 	const shapeName = shapeIndex !== -1 ? args[shapeIndex + 1] : undefined;
 	const files = shapeIndex !== -1
@@ -117,7 +118,7 @@ export async function run(args: string[]): Promise<void> {
 			process.exit(1);
 		}
 
-		const crossResult = await crossValidate(appManifest!, modManifest!);
+		const crossResult = await crossValidate(appManifest!, modManifest!, { checkFillPayloads: !skipFillPayloads });
 		if (crossResult.valid) {
 			console.log(`\x1b[32m\u2713\x1b[0m cross-validation passed`);
 		} else {
@@ -165,6 +166,7 @@ function printHelp(): void {
 	console.log("");
 	console.log("Options:");
 	console.log("  --cross           Cross-validate an app manifest against a mod manifest");
+	console.log("  --no-fill-payloads  With --cross, skip validating fills against slot payload schemas");
 	console.log("  --shape <name>    Validate a JSON payload against a grant/debug wire shape");
 	console.log("                    (capability-prompt | install-descriptor | discovery-result | debug-messages)");
 	console.log("  --help, -h        Show this help message");

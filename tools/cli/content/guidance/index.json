@@ -1,0 +1,88 @@
+{
+	"topics": [
+		{
+			"id": "when-to-use",
+			"title": "When to reach for xript",
+			"summary": "The default stance and the three questions for any surface.",
+			"file": "when-to-use.md"
+		},
+		{
+			"id": "surfaces",
+			"title": "Choosing an extensibility surface",
+			"summary": "Two surfaces — bindings you call and slots you fill — plus capability and command, and how to pick.",
+			"file": "surfaces.md"
+		},
+		{
+			"id": "mod-zero",
+			"title": "Mod zero",
+			"summary": "The application's own content is its first mod, and why that test holds the line.",
+			"file": "mod-zero.md"
+		},
+		{
+			"id": "boundary",
+			"title": "The host/mod boundary",
+			"summary": "What belongs in the host versus a mod: mechanism vs policy, the deciding question, and why a check beats a reminder.",
+			"file": "boundary.md"
+		},
+		{
+			"id": "openness",
+			"title": "More extensible, not less",
+			"summary": "xript's default leans open: a restriction is allowed only when it buys real convenience or security, and must justify itself plainly.",
+			"file": "openness.md"
+		},
+		{
+			"id": "authoring",
+			"title": "Authoring a mod against a host",
+			"summary": "The read-manifest, declare, script, fill-slots, validate, run loop.",
+			"file": "authoring.md"
+		},
+		{
+			"id": "hosting",
+			"title": "Hosting xript in an application",
+			"summary": "Embedding a runtime: the host/runtime split, the lifecycle, RuntimeOptions, and a map of the host-side records.",
+			"file": "hosting.md"
+		},
+		{
+			"id": "host-fragments",
+			"title": "Hosting: rendering fragments",
+			"summary": "The inert-output seam — load the mod, render fireFragmentHook's ops, and never call the processor directly.",
+			"file": "host-fragments.md"
+		},
+		{
+			"id": "host-capabilities",
+			"title": "Hosting: granting capabilities",
+			"summary": "Default-deny grants, what the runtime enforces, and why the grant decision and prompt UX are the host's.",
+			"file": "host-capabilities.md"
+		},
+		{
+			"id": "host-slots",
+			"title": "Hosting: mounting slots",
+			"summary": "resolveSlot, the SlotContribution shape, and honoring priority and multiple when mounting fills.",
+			"file": "host-slots.md"
+		},
+		{
+			"id": "host-roles",
+			"title": "Hosting: resolving roles",
+			"summary": "resolveRole, the RoleResolution shape, rolePreferences, and why a role grants nothing on its own.",
+			"file": "host-roles.md"
+		},
+		{
+			"id": "host-hooks",
+			"title": "Hosting: firing hooks & events",
+			"summary": "fireHook and event-typed slots, and how they differ from the host's events catalog.",
+			"file": "host-hooks.md"
+		},
+		{
+			"id": "host-safety",
+			"title": "Hosting: limits, cancellation & audit",
+			"summary": "hardLimits, CancellationToken, the audit channel, and the console handler — the caps and signals the runtime gives a host.",
+			"file": "host-safety.md"
+		},
+		{
+			"id": "tiers",
+			"title": "Adoption tiers",
+			"summary": "The four incremental tiers and how to choose one.",
+			"file": "tiers.md"
+		}
+	]
+}

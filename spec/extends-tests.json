@@ -1,0 +1,584 @@
+[
+	{
+		"description": "add-new type: child declares a type the base never knew",
+		"base": {
+			"xript": "0.3",
+			"name": "base-canon",
+			"types": {
+				"Position": {
+					"description": "A 2D position.",
+					"fields": {
+						"x": { "type": "number" },
+						"y": { "type": "number" }
+					}
+				}
+			}
+		},
+		"extender": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"types": {
+				"RetryPolicy": {
+					"description": "How a host retries a failed operation.",
+					"fields": {
+						"maxAttempts": { "type": "number", "default": 3 }
+					}
+				}
+			}
+		},
+		"resolved": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"types": {
+				"Position": {
+					"description": "A 2D position.",
+					"fields": {
+						"x": { "type": "number" },
+						"y": { "type": "number" }
+					}
+				},
+				"RetryPolicy": {
+					"description": "How a host retries a failed operation.",
+					"fields": {
+						"maxAttempts": { "type": "number", "default": 3 }
+					}
+				}
+			}
+		}
+	},
+	{
+		"description": "add-new slot: child appends a slot id the base never declared",
+		"base": {
+			"xript": "0.3",
+			"name": "base-canon",
+			"slots": [
+				{ "id": "sidebar.left", "accepts": ["text/html+jsml"], "capability": "ui-mount" }
+			]
+		},
+		"extender": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"slots": [
+				{ "id": "panel.bottom", "accepts": ["text/html+jsml"], "capability": "ui-mount" }
+			]
+		},
+		"resolved": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"slots": [
+				{ "id": "sidebar.left", "accepts": ["text/html+jsml"], "capability": "ui-mount" },
+				{ "id": "panel.bottom", "accepts": ["text/html+jsml"], "capability": "ui-mount" }
+			]
+		}
+	},
+	{
+		"description": "fill an abstract object type with concrete fields; abstract marker gone",
+		"base": {
+			"xript": "0.3",
+			"name": "base-canon",
+			"types": {
+				"StatusCode": {
+					"description": "A host-defined outcome classifier.",
+					"abstract": true
+				}
+			}
+		},
+		"extender": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"types": {
+				"StatusCode": {
+					"description": "The set of fields this host classifies an outcome by.",
+					"fields": {
+						"code": { "type": "number" },
+						"label": { "type": "string" }
+					}
+				}
+			}
+		},
+		"resolved": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"types": {
+				"StatusCode": {
+					"description": "The set of fields this host classifies an outcome by.",
+					"fields": {
+						"code": { "type": "number" },
+						"label": { "type": "string" }
+					}
+				}
+			}
+		}
+	},
+	{
+		"description": "fill an abstract enum type with concrete values; abstract marker gone",
+		"base": {
+			"xript": "0.3",
+			"name": "base-canon",
+			"types": {
+				"StatusCode": {
+					"description": "A host-defined outcome classifier.",
+					"abstract": true
+				}
+			}
+		},
+		"extender": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"types": {
+				"StatusCode": {
+					"description": "The outcome codes this host recognizes.",
+					"values": ["ok", "retry", "denied", "error"]
+				}
+			}
+		},
+		"resolved": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"types": {
+				"StatusCode": {
+					"description": "The outcome codes this host recognizes.",
+					"values": ["ok", "retry", "denied", "error"]
+				}
+			}
+		}
+	},
+	{
+		"description": "refine a concrete type: child field overrides base field, base-only field retained, refines marker consumed",
+		"base": {
+			"xript": "0.3",
+			"name": "base-canon",
+			"types": {
+				"Envelope": {
+					"description": "A response wrapper.",
+					"fields": {
+						"status": { "type": "StatusCode", "description": "Outcome classification." },
+						"payload": { "type": "number" }
+					}
+				}
+			}
+		},
+		"extender": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"types": {
+				"Envelope": {
+					"refines": true,
+					"fields": {
+						"payload": { "type": "string" },
+						"traceId": { "type": "string" }
+					}
+				}
+			}
+		},
+		"resolved": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"types": {
+				"Envelope": {
+					"description": "A response wrapper.",
+					"fields": {
+						"status": { "type": "StatusCode", "description": "Outcome classification." },
+						"payload": { "type": "string" },
+						"traceId": { "type": "string" }
+					}
+				}
+			}
+		}
+	},
+	{
+		"description": "refine with a nested object field: recursive merge keeps base sub-keys and takes child override",
+		"base": {
+			"xript": "0.3",
+			"name": "base-canon",
+			"types": {
+				"Widget": {
+					"description": "A configurable widget.",
+					"fields": {
+						"layout": { "type": "string" }
+					},
+					"meta": {
+						"renderer": "default",
+						"limits": { "maxItems": 10, "maxDepth": 3 }
+					}
+				}
+			}
+		},
+		"extender": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"types": {
+				"Widget": {
+					"refines": true,
+					"meta": {
+						"limits": { "maxItems": 50 }
+					}
+				}
+			}
+		},
+		"resolved": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"types": {
+				"Widget": {
+					"description": "A configurable widget.",
+					"fields": {
+						"layout": { "type": "string" }
+					},
+					"meta": {
+						"renderer": "default",
+						"limits": { "maxItems": 50, "maxDepth": 3 }
+					}
+				}
+			}
+		}
+	},
+	{
+		"description": "refine where child values replaces base values wholesale (no element-wise merge)",
+		"base": {
+			"xript": "0.3",
+			"name": "base-canon",
+			"types": {
+				"Direction": {
+					"description": "A cardinal direction.",
+					"values": ["north", "south", "east", "west"]
+				}
+			}
+		},
+		"extender": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"types": {
+				"Direction": {
+					"refines": true,
+					"values": ["up", "down"]
+				}
+			}
+		},
+		"resolved": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"types": {
+				"Direction": {
+					"description": "A cardinal direction.",
+					"values": ["up", "down"]
+				}
+			}
+		}
+	},
+	{
+		"description": "refine a slot: scalar field override (multiple) plus a new style scalar, base-only fields retained",
+		"base": {
+			"xript": "0.3",
+			"name": "base-canon",
+			"slots": [
+				{ "id": "sidebar.left", "accepts": ["text/html+jsml"], "capability": "ui-mount", "multiple": false }
+			]
+		},
+		"extender": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"slots": [
+				{ "id": "sidebar.left", "refines": true, "multiple": true, "style": "isolated" }
+			]
+		},
+		"resolved": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"slots": [
+				{ "id": "sidebar.left", "accepts": ["text/html+jsml"], "capability": "ui-mount", "multiple": true, "style": "isolated" }
+			]
+		}
+	},
+	{
+		"description": "refine a slot: deep-merge a payload JSON Schema — base properties retained, child property added, required array replaced wholesale (not unioned)",
+		"base": {
+			"xript": "0.3",
+			"name": "base-canon",
+			"slots": [
+				{
+					"id": "event.commit",
+					"accepts": ["application/x-xript-hook"],
+					"payload": {
+						"type": "object",
+						"required": ["id"],
+						"properties": {
+							"id": { "type": "string" },
+							"timestamp": { "type": "number" }
+						}
+					}
+				}
+			]
+		},
+		"extender": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"slots": [
+				{
+					"id": "event.commit",
+					"refines": true,
+					"payload": {
+						"required": ["author"],
+						"properties": {
+							"author": { "type": "string" }
+						}
+					}
+				}
+			]
+		},
+		"resolved": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"slots": [
+				{
+					"id": "event.commit",
+					"accepts": ["application/x-xript-hook"],
+					"payload": {
+						"type": "object",
+						"required": ["author"],
+						"properties": {
+							"id": { "type": "string" },
+							"timestamp": { "type": "number" },
+							"author": { "type": "string" }
+						}
+					}
+				}
+			]
+		}
+	},
+	{
+		"description": "error: concrete type redeclared without refines",
+		"base": {
+			"xript": "0.3",
+			"name": "base-canon",
+			"types": {
+				"Envelope": {
+					"description": "A response wrapper.",
+					"fields": {
+						"payload": { "type": "string" }
+					}
+				}
+			}
+		},
+		"extender": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"types": {
+				"Envelope": {
+					"description": "A different wrapper.",
+					"fields": {
+						"body": { "type": "string" }
+					}
+				}
+			}
+		},
+		"error": true
+	},
+	{
+		"description": "error: slot id redeclared without refines",
+		"base": {
+			"xript": "0.3",
+			"name": "base-canon",
+			"slots": [
+				{ "id": "sidebar.left", "accepts": ["text/html+jsml"], "capability": "ui-mount" }
+			]
+		},
+		"extender": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"slots": [
+				{ "id": "sidebar.left", "accepts": ["application/jsml+json"], "capability": "ui-mount" }
+			]
+		},
+		"error": true
+	},
+	{
+		"description": "error: duplicate capability (fill/refine do not apply to capabilities)",
+		"base": {
+			"xript": "0.3",
+			"name": "base-canon",
+			"capabilities": {
+				"ui-mount": { "description": "Mount UI into a slot." }
+			}
+		},
+		"extender": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"capabilities": {
+				"ui-mount": { "description": "A conflicting redeclaration." }
+			}
+		},
+		"error": true
+	},
+	{
+		"description": "error: duplicate capability even with a refines marker (capabilities are collision-as-error)",
+		"base": {
+			"xript": "0.3",
+			"name": "base-canon",
+			"capabilities": {
+				"ui-mount": { "description": "Mount UI into a slot." }
+			}
+		},
+		"extender": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"capabilities": {
+				"ui-mount": { "refines": true, "description": "Marker ignored for capabilities." }
+			}
+		},
+		"error": true
+	},
+	{
+		"description": "error: duplicate binding",
+		"base": {
+			"xript": "0.3",
+			"name": "base-canon",
+			"bindings": {
+				"log": { "description": "Write a log line.", "params": [], "returns": "void" }
+			}
+		},
+		"extender": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"bindings": {
+				"log": { "description": "A conflicting redeclaration.", "params": [], "returns": "void" }
+			}
+		},
+		"error": true
+	},
+	{
+		"description": "error: duplicate hook (maps are collision-as-error)",
+		"base": {
+			"xript": "0.3",
+			"name": "base-canon",
+			"hooks": {
+				"onTick": { "description": "Fires each frame." }
+			}
+		},
+		"extender": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"hooks": {
+				"onTick": { "description": "A conflicting redeclaration." }
+			}
+		},
+		"error": true
+	},
+	{
+		"description": "multi-move: one extender fills an abstract, refines a concrete, and adds a new type",
+		"base": {
+			"xript": "0.3",
+			"name": "base-canon",
+			"types": {
+				"StatusCode": {
+					"description": "A host-defined outcome classifier.",
+					"abstract": true
+				},
+				"Envelope": {
+					"description": "A response wrapper.",
+					"fields": {
+						"status": { "type": "StatusCode" },
+						"payload": { "type": "string", "optional": true }
+					}
+				}
+			}
+		},
+		"extender": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"types": {
+				"StatusCode": {
+					"description": "The outcome codes this host recognizes.",
+					"values": ["ok", "error"]
+				},
+				"Envelope": {
+					"refines": true,
+					"fields": {
+						"traceId": { "type": "string" }
+					}
+				},
+				"RetryPolicy": {
+					"description": "How this host retries.",
+					"fields": {
+						"maxAttempts": { "type": "number", "default": 3 }
+					}
+				}
+			}
+		},
+		"resolved": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"types": {
+				"StatusCode": {
+					"description": "The outcome codes this host recognizes.",
+					"values": ["ok", "error"]
+				},
+				"Envelope": {
+					"description": "A response wrapper.",
+					"fields": {
+						"status": { "type": "StatusCode" },
+						"payload": { "type": "string", "optional": true },
+						"traceId": { "type": "string" }
+					}
+				},
+				"RetryPolicy": {
+					"description": "How this host retries.",
+					"fields": {
+						"maxAttempts": { "type": "number", "default": 3 }
+					}
+				}
+			}
+		}
+	},
+	{
+		"description": "scalars are child-wins: child title and description override the base",
+		"base": {
+			"xript": "0.3",
+			"name": "base-canon",
+			"title": "Base Canon",
+			"description": "The shared floor."
+		},
+		"extender": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"title": "Consuming Host"
+		},
+		"resolved": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"title": "Consuming Host",
+			"description": "The shared floor."
+		}
+	},
+	{
+		"description": "add-new across distinct maps: child adds a binding and a capability the base lacks",
+		"base": {
+			"xript": "0.3",
+			"name": "base-canon",
+			"capabilities": {
+				"ui-mount": { "description": "Mount UI into a slot." }
+			}
+		},
+		"extender": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"capabilities": {
+				"storage-read": { "description": "Read from host storage." }
+			},
+			"bindings": {
+				"log": { "description": "Write a log line.", "params": [], "returns": "void" }
+			}
+		},
+		"resolved": {
+			"xript": "0.3",
+			"name": "consuming-host",
+			"capabilities": {
+				"ui-mount": { "description": "Mount UI into a slot." },
+				"storage-read": { "description": "Read from host storage." }
+			},
+			"bindings": {
+				"log": { "description": "Write a log line.", "params": [], "returns": "void" }
+			}
+		}
+	}
+]

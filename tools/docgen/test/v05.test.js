@@ -117,3 +117,17 @@ describe("extends resolution in docs", () => {
 		}
 	});
 });
+
+describe("open enums", () => {
+	it("notes extensibility and emits (string & {}) for an open enum", () => {
+		const result = generateDocs({
+			xript: "0.3",
+			name: "host",
+			types: { ElementKind: { description: "Element kinds.", values: ["text", "image"], open: true } },
+		});
+		const page = findPage(result, "types/ElementKind");
+		assert.ok(page);
+		assert.ok(page.content.includes("open enum"));
+		assert.ok(page.content.includes('type ElementKind = "text" | "image" | (string & {})'));
+	});
+});
