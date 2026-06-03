@@ -304,3 +304,170 @@ describe("extends resolution", () => {
 		}
 	});
 });
+
+describe("top-level events catalog", () => {
+	it("emits an XriptEvents interface mapping event id to payload type", () => {
+		const result = generateTypes({
+			xript: "0.3",
+			name: "host",
+			types: { SaveInfo: { description: "Save info.", fields: { path: { type: "string" } } } },
+			events: [
+				{ id: "document.saved", description: "Fired after a save.", payload: "SaveInfo" },
+				{ id: "selection.changed", description: "Fired when selection changes." },
+			],
+		});
+		assert.match(result, /interface XriptEvents \{/);
+		assert.match(result, /"document\.saved": SaveInfo;/);
+		assert.match(result, /"selection\.changed": void;/);
+	});
+
+	it("emits an XriptEventId union of event ids", () => {
+		const result = generateTypes({
+			xript: "0.3",
+			name: "host",
+			events: [
+				{ id: "a.fired", description: "A." },
+				{ id: "b.fired", description: "B." },
+			],
+		});
+		assert.match(result, /type XriptEventId = "a\.fired" \| "b\.fired";/);
+	});
+
+	it("omits the events catalog when no events are declared", () => {
+		const result = generateTypes({ xript: "0.3", name: "host" });
+		assert.ok(!result.includes("XriptEvents"));
+		assert.ok(!result.includes("XriptEventId"));
+	});
+
+	it("emits the events catalog inside the global block in ambient mode", () => {
+		const out = generateTypes(
+			{ xript: "0.3", name: "host", events: [{ id: "x.fired", description: "X." }] },
+			{ ambient: true },
+		);
+		assert.match(out, /declare global \{/);
+		assert.match(out, /interface XriptEvents \{/);
+	});
+});
+
+describe("fragment fill handlers", () => {
+	it("emits a FragmentHandlers entry from the preferred handlers array", () => {
+		const result = generateTypes({
+			xript: "0.3",
+			name: "panel-mod",
+			version: "1.0.0",
+			fills: {
+				"sidebar.left": [
+					{
+						id: "counter",
+						format: "text/html",
+						source: "panel.html",
+						handlers: [{ selector: "#inc", on: "click", handler: "increment" }],
+					},
+				],
+			},
+		});
+		assert.match(result, /interface FragmentHandlers \{/);
+		assert.match(result, /"sidebar\.left::counter": \[\{ selector: "#inc"; on: "click"; handler: "increment" \}\];/);
+	});
+
+	it("reads the deprecated events alias when handlers is absent", () => {
+		const result = generateTypes({
+			xript: "0.3",
+			name: "panel-mod",
+			version: "1.0.0",
+			fills: {
+				"sidebar.left": [
+					{ format: "text/html", source: "panel.html", events: [{ selector: "#inc", on: "click", handler: "increment" }] },
+				],
+			},
+		});
+		assert.match(result, /"sidebar\.left": \[\{ selector: "#inc"; on: "click"; handler: "increment" \}\];/);
+		assert.match(result, /@deprecated|deprecated `events` key|Rename it to `handlers`/);
+	});
+
+	it("prefers handlers over events when both are present", () => {
+		const result = generateTypes({
+			xript: "0.3",
+			name: "panel-mod",
+			version: "1.0.0",
+			fills: {
+				"slot.a": [
+					{
+						handlers: [{ selector: ".win", on: "click", handler: "fromHandlers" }],
+						events: [{ selector: ".lose", on: "click", handler: "fromEvents" }],
+					},
+				],
+			},
+		});
+		assert.match(result, /handler: "fromHandlers"/);
+		assert.ok(!result.includes("fromEvents"));
+	});
+
+	it("omits FragmentHandlers when no fill declares handlers", () => {
+		const result = generateTypes({
+			xript: "0.3",
+			name: "panel-mod",
+			version: "1.0.0",
+			fills: { "slot.a": [{ format: "text/html", source: "p.html" }] },
+		});
+		assert.ok(!result.includes("FragmentHandlers"));
+	});
+
+	it("emits FragmentHandlers as a top-level section in ambient mode", () => {
+		const out = generateTypes(
+			{
+				xript: "0.3",
+				name: "panel-mod",
+				version: "1.0.0",
+				fills: { "slot.a": [{ handlers: [{ selector: "#x", on: "click", handler: "go" }] }] },
+			},
+			{ ambient: true },
+		);
+		assert.match(out, /interface FragmentHandlers \{/);
+		assert.match(out, /handler: "go"/);
+	});
+});
+
+describe("open enums", () => {
+	it("appends (string & {}) to a named open enum type", () => {
+		const result = generateTypes({
+			xript: "0.3",
+			name: "host",
+			types: { ElementKind: { description: "Element kinds.", values: ["text", "image"], open: true } },
+		});
+		assert.match(result, /type ElementKind = "text" \| "image" \| \(string & \{\}\);/);
+	});
+
+	it("keeps a non-open enum closed", () => {
+		const result = generateTypes({
+			xript: "0.3",
+			name: "host",
+			types: { Closed: { description: "Closed.", values: ["a", "b"] } },
+		});
+		assert.match(result, /type Closed = "a" \| "b";/);
+		assert.doesNotMatch(result, /Closed = "a" \| "b" \| \(string/);
+	});
+
+	it("appends (string & {}) to an inline open field enum", () => {
+		const result = generateTypes({
+			xript: "0.3",
+			name: "host",
+			types: {
+				Cfg: { description: "Config.", fields: { kind: { type: "string", enum: ["text", "image"], open: true } } },
+			},
+		});
+		assert.match(result, /kind: "text" \| "image" \| \(string & \{\}\);/);
+	});
+
+	it("carries open through a field referencing a named open enum", () => {
+		const result = generateTypes({
+			xript: "0.3",
+			name: "host",
+			types: {
+				ElementKind: { description: "Kinds.", values: ["text", "image"], open: true },
+				Cfg: { description: "Config.", fields: { kind: { type: "ElementKind" } } },
+			},
+		});
+		assert.match(result, /kind: "text" \| "image" \| \(string & \{\}\);/);
+	});
+});

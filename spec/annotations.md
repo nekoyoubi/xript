@@ -21,7 +21,7 @@ Produces the manifest binding `data.get` (namespace `data`, member `get`).
 
 ### `@xript-cap <capability>`
 
-Gates this binding behind a named capability. Repeatable — a mod must request ALL listed capabilities to access the binding.
+Gates this binding behind a named capability. A binding carries a single capability — if more than one `@xript-cap` tag is present, the scanner keeps the first and warns about the rest.
 
 ```typescript
 /**
@@ -29,7 +29,6 @@ Gates this binding behind a named capability. Repeatable — a mod must request 
  *
  * @xript economy.transfer
  * @xript-cap modify-state
- * @xript-cap network
  */
 export function transferCurrency(fromId: string, toId: string, amount: number): void { ... }
 ```

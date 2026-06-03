@@ -3,7 +3,7 @@ title: "Example: Expression Evaluator"
 description: "A tier 1 integration walkthrough: safe expression evaluation with flat bindings."
 ---
 
-This example demonstrates the simplest way to use xript: exposing a set of flat functions to user scripts with no capabilities, no namespaces, and no custom types. This is **tier 1** adoption.
+The simplest way to use xript: expose a set of flat functions to user scripts with no capabilities, no namespaces, and no custom types. This is **tier 1** adoption.
 
 The full source is in [`examples/expression-evaluator/`](https://github.com/nekoyoubi/xript/tree/main/examples/expression-evaluator).
 
@@ -13,6 +13,7 @@ The manifest declares 11 bindings across two categories: math operations and str
 
 ```json
 {
+  "$schema": "https://xript.dev/schema/manifest/v0.6.json",
   "xript": "0.1",
   "name": "expression-evaluator",
   "version": "1.0.0",
@@ -29,7 +30,9 @@ The manifest declares 11 bindings across two categories: math operations and str
 
 *(Truncated for readability. The full manifest includes `floor`, `ceil`, `min`, `max`, `lower`, and `len`.)*
 
-There are no `capabilities`, no `types`, and no `limits` sections. This is as minimal as it gets while still being useful.
+No `capabilities`, no `types`, no `limits`. About as minimal as a manifest gets while still being useful.
+
+Even a manifest this small works with the unified CLI: `xript validate manifest.json` checks it against the spec schema, and `xript describe manifest.json` summarizes the bindings, slots, and capabilities it exposes.
 
 ## The Host
 
@@ -56,17 +59,17 @@ const xript = await initXript();
 const runtime = xript.createRuntime(manifest, { hostBindings });
 ```
 
-Each binding is a pure function with no side effects. This is the safest kind of integration: users can compose expressions but cannot modify any application state.
+Each binding is a pure function with no side effects; the safest kind of integration there is. Users compose expressions but cannot touch application state.
 
 ## What Users Can Do
 
-Users write expressions that combine your bindings with standard JavaScript:
+Users write expressions that combine your bindings with standard JavaScript. `execute()` returns an `ExecutionResult` (`{ value, duration_ms }`), so the result is read off `.value`:
 
 ```javascript
-runtime.execute("abs(-42)");                    // 42
-runtime.execute("clamp(round(3.7), 0, 3)");     // 3
-runtime.execute('upper(concat("hello", " xript"))'); // "HELLO XRIPT"
-runtime.execute("[1, 2, 3].map(x => abs(x - 5))");  // [4, 3, 2]
+runtime.execute("abs(-42)").value;                    // 42
+runtime.execute("clamp(round(3.7), 0, 3)").value;     // 3
+runtime.execute('upper(concat("hello", " xript"))').value; // "HELLO XRIPT"
+runtime.execute("[1, 2, 3].map(x => abs(x - 5))").value;  // [4, 3, 2]
 ```
 
 Standard JavaScript features like array methods, template literals, and arrow functions all work inside the sandbox.
@@ -100,4 +103,4 @@ Tier 1 is the right choice when:
 - You do not need to gate any functionality behind permissions
 - You want the **smallest possible manifest** and integration surface
 
-To move beyond tier 1, add [namespaces](/spec/manifest#namespaces), [capabilities](/spec/capabilities), and [custom types](/spec/manifest#types). See the [Plugin System](/examples/plugin-system) example for a tier 2 walkthrough.
+To move beyond tier 1, add [namespaces](/spec/manifest#namespace-bindings), [capabilities](/spec/capabilities), and [custom types](/spec/manifest#types). See the [Plugin System](/examples/plugin-system) example for a tier 2 walkthrough.

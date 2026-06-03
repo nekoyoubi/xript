@@ -50,7 +50,9 @@ export interface FragmentDeclaration {
 	source: string;
 	inline?: boolean;
 	bindings?: FragmentBinding[];
-	events?: FragmentEventDeclaration[];
+	handlers?: FragmentHandlerDeclaration[];
+	/** @deprecated Renamed to `handlers`. Still accepted as an alias; `handlers` wins when both are present. */
+	events?: FragmentHandlerDeclaration[];
 	priority?: number;
 }
 
@@ -59,11 +61,14 @@ export interface FragmentBinding {
 	path: string;
 }
 
-export interface FragmentEventDeclaration {
+export interface FragmentHandlerDeclaration {
 	selector: string;
 	on: string;
 	handler: string;
 }
+
+/** @deprecated Renamed to `FragmentHandlerDeclaration`. */
+export type FragmentEventDeclaration = FragmentHandlerDeclaration;
 
 export interface SlotDeclaration {
 	id: string;
@@ -73,11 +78,14 @@ export interface SlotDeclaration {
 	style?: "inherit" | "isolated" | "scoped";
 }
 
-export interface FragmentEvent {
+export interface FragmentHandler {
 	selector: string;
 	on: string;
 	handler: string;
 }
+
+/** @deprecated Renamed to `FragmentHandler`. */
+export type FragmentEvent = FragmentHandler;
 
 export interface FragmentUpdateResult {
 	fragmentId: string;
@@ -389,7 +397,9 @@ export interface FragmentInstance {
 	readonly declaration: FragmentDeclaration;
 	readonly sanitizedSource: string;
 	getContent(bindings: Record<string, unknown>): FragmentUpdateResult;
-	getEvents(): FragmentEvent[];
+	getHandlers(): FragmentHandler[];
+	/** @deprecated Renamed to `getHandlers`. */
+	getEvents(): FragmentHandler[];
 }
 
 function sanitizeSource(source: string, format: string): string {
@@ -408,10 +418,11 @@ export function createFragmentInstance(
 	source: string,
 ): FragmentInstance {
 	const sanitized = sanitizeSource(source, declaration.format);
-	const events = (declaration.events || []).map(e => ({
-		selector: e.selector,
-		on: e.on,
-		handler: e.handler,
+	const declaredHandlers = declaration.handlers ?? declaration.events ?? [];
+	const handlers = declaredHandlers.map(h => ({
+		selector: h.selector,
+		on: h.on,
+		handler: h.handler,
 	}));
 
 	return {
@@ -434,8 +445,12 @@ export function createFragmentInstance(
 			};
 		},
 
-		getEvents(): FragmentEvent[] {
-			return events;
+		getHandlers(): FragmentHandler[] {
+			return handlers;
+		},
+
+		getEvents(): FragmentHandler[] {
+			return handlers;
 		},
 	};
 }

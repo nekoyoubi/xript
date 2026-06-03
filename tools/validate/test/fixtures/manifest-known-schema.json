@@ -1,0 +1,5 @@
+{
+	"$schema": "https://xript.dev/schema/manifest/v0.6.json",
+	"xript": "0.3",
+	"name": "known-schema-app"
+}

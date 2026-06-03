@@ -1,5 +1,103 @@
 # Changelog
 
+## v0.6.0 — Manifest Inheritance & the Agent CLI
+
+Two stories in one release. Manifests learned to **inherit**: a manifest can `extends` a base, fill the abstract holes the base leaves open, refine the concrete pieces it declares, and the same resolution runs identically across all four runtimes. The CLI grew an **agent**: `@xriptjs/cli` now speaks Model Context Protocol, exposing every capability a human runs at the terminal to an agent over stdio. No separate package, no logic to drift.
+
+### Manifest inheritance (`extends`)
+
+- added manifest inheritance: a manifest names one or more base manifests in `extends`, resolved and deep-merged base-then-child before validation, transitively, with cycle detection
+  - three moves on a name that collides with the base; **add-new** introduces a name the base does not have (additive, no marker), **fill** redeclares an `abstract: true` base type with concrete fields or values (abstractness is the opt-in, so no marker), and **refine** redeclares a concrete base type or slot with `refines: true` to deep-merge (child wins per key, nested objects recurse, arrays and scalars replace wholesale)
+  - any other collision is an error, so inheritance never silently clobbers; concrete-on-concrete without `refines`, a duplicate binding, a duplicate capability, or a duplicate hook all fail
+  - an inherited abstract type left unfilled is an `abstract-type-unfilled` error, so a base can declare a typed hole a child is required to concretize
+- made a slot's `payload` carry a full JSON Schema, so a slot can describe exactly what a valid fill looks like (patterns, nested `required`, the lot) instead of a flat field list
+- added open enums: a type's `values` or a field's inline `enum` can set `open: true` to mean "these known values, plus any other string"; `typegen` emits `... | (string & {})` so the known values autocomplete while any string still type-checks, and `docgen` marks the type extensible
+- brought `extends` resolution to parity across all four runtimes (the universal QuickJS-WASM, Node, Rust, and C#) against an 18-case conformance corpus, so a manifest resolves identically wherever it loads
+- consolidated the resolver: `typegen` and `docgen` now reuse `@xriptjs/validate`'s resolver instead of carrying their own copies; one resolution implementation per language, not one per tool
+- taught the analyzers (`validate`, `score`, `cross-validate`) to resolve `extends` before they run, so inherited slots and capabilities are seen rather than reported missing
+
+### Contribution model
+
+- redesigned the contribution surface around "host declares typed slots, mod fills them"; a host slot's `accepts` type governs what a valid fill looks like and what the host does with it (mount, call, resolve, or fire)
+  - folded fragments, provider roles, and hook handlers into one concept: each is a fill of a slot of a particular type, not a separate top-level surface
+  - mods now contribute through a single `fills` object keyed by host slot id; a fragment is a fill of a fragment-format slot, a provider role is a fill of a role-typed slot, a lifecycle hook handler is a fill of an event-typed slot
+  - standalone `hooks` is deprecated in favor of event-typed slots; a hook is a slot whose `accepts` is the event-handler kind, and firing it calls that slot's fills, with host-side hook firing unchanged
+  - validation stays tolerant of legacy `fragments[]` and `contributions` for smooth migration (still validated, now with a deprecation warning); the fill contract checks that a filled slot exists and the mod holds its capability, and leaves the inner fill shape to the slot's type
+  - clarified that format renderers (`xript-ratatui`, the DOM fragment processor) are runtime infrastructure, not manifest concepts; a slot's `accepts` names the format the runtime must be able to paint
+
+### Manifest surfaces
+
+- renamed a fragment fill's DOM event handler array from `events` to `handlers`; the entries are event _handlers_, not events, and the old name said the wrong thing
+  - `events` stays accepted as a deprecated alias for back-compat (mirroring the standalone-`hooks` to event-slot precedent): a reader takes `handlers` or `events`, `handlers` wins if both are present, and `events` warns; the entry shape (`selector`, `on`, `handler`) is unchanged, so migration is a key rename
+- added a top-level `events` catalog: an optional array declaring the named events a host broadcasts and each one's payload type
+  - it is a consumer-agnostic discovery declaration (what the host emits, with no listener presupposed) and is deliberately distinct from event-typed slots (extension points a mod fills) and fragment `handlers` (DOM responses on a fill); one line: bindings are what you can call, slots and handlers are what handles, `events` is what the host emits
+  - `typegen` emits a typed event catalog and `docgen` renders an events section
+- let a domain extend the top-level manifest vocabulary with a schema overlay, and taught the validator to honor a manifest's declared `$schema`
+  - the core manifest's top level no longer rejects unknown top-level properties, so an `allOf` overlay can add domain surfaces and still validate; deeper objects stay closed, so typos inside known surfaces are still caught
+  - schema resolution leans open: a known schema id resolves to bundled core, a local path resolves relative to the manifest the way `extends` does, and a remote `http(s)` URL is fetched and cached (keyed by URL, pinned per run); offline or uncached-remote falls back to bundled core with a surfaced warning rather than hard-failing
+  - remote resolution is allowed unless a host opts out (allowlist or disable-remote); you opt out of openness, not into it, and honoring a declared schema grants no power, since the capability model, not schema validation, is the security boundary
+- bumped the manifest schema `$id` from the v0.3 line to v0.6, with a legacy-id alias so a manifest or overlay still pinning the old id resolves
+- added an optional `license` field to the mod manifest (an SPDX id or short label); forbidding it bought nothing under the openness doctrine
+
+### Extensibility scoring & lint
+
+- reshaped `xript score` to measure **moddability capacity**: how much of the extension surface a host exposes (bindings to call, slots to fill, events to observe, a capability model to gate them), against a ceiling of exposing all of it, rather than how much a supplied mod set happens to exercise it
+  - exposing a slot the host does not fill itself now reads as moddability, not waste, and resolving `extends` can only raise the score, never drag it down; "find the unused surface" stays `lint`'s job
+  - slot and capability utilization survive as informational mod-coverage, now excluding `reserved` and inherited surface from their denominators
+  - `score-diff` diffs capacity too, and its regression gate keys off the capacity headline
+- taught `cross-validate` to check each fill's payload against the target slot's `payload` schema, closing the gap where a fill could name a real slot, hold its capability, and still carry a payload the slot forbids
+  - the schema is applied as authored: a fill carrying more than the payload declares still passes unless the slot explicitly closes its payload; only declared shape is enforced, extras are not policed
+  - on by default; `--no-fill-payloads` on the CLI and `checkFillPayloads` in the library and MCP tool flex it off
+- added `xript lint`, a findings-based reviewer that complements `score`: where score is the number, lint is the actionable list behind it
+  - checks are set arithmetic over manifest fields; filled-but-undeclared slots and undeclared capabilities are errors, dead slots and vestigial capabilities are warnings, ungated and undescribed surfaces are info
+  - each finding carries a severity, a stable code, a message, and a suggestion; `--strict` promotes warnings to failures for CI, and the exit code gates accordingly
+  - a `legacy-shape` finding flags a mod still on the deprecated `fragments` / `contributions` shape, so migration progress is visible in the linter instead of by grep
+- added `xript score-diff`: it compares a current run against a saved baseline and reports whether the surface moved toward or away from xript, naming the capacity delta, the slots and capabilities gained or lost, and the integrity violations introduced or fixed; `--min-delta N` is the regression gate
+- added a `reserved` flag to slots and capabilities, so a surface declared ahead of a filler (for forward-compat or inherited parity) is treated as aspirational, never flagged dead or vestigial, and is excluded from coverage
+- counted capabilities that gate bindings and hooks (not just slots and mod requests) toward "used," so a capability doing real gating work is never called vestigial
+- moved the analyzers (`scoreManifests`, `diffScores`, `lintManifests`) out of the CLI into `@xriptjs/validate`, so a host application can surface a modder's problems in its own UI by importing the validation library it already depends on; the CLI commands and MCP tools are thin front-ends over them
+
+### Agent tooling
+
+- taught `@xriptjs/cli` to run as a Model Context Protocol server via `xript mcp`
+  - tools mirror the CLI one-to-one (`xript_validate`, `xript_cross_validate`, `xript_typegen`, `xript_docgen`, `xript_sanitize`, `xript_scaffold`, `xript_scan`, `xript_manifest_describe`, `xript_run`, `xript_score`, `xript_score_diff`, `xript_lint`, and `xript_guide`), each calling the same core its matching command does
+  - resources serve the spec straight from source (`xript://spec/*`) alongside authoring guidance (`xript://guidance/*`), and prompts (`adopt-xript`, `is-this-xript-native`, `choose-a-surface`, `author-a-mod`) carry the doctrine as reusable templates
+  - manifest-taking tools accept a file path or inline JSON, so a large host manifest needn't ride through the tool-call tokens; relative paths resolve against the client's workspace root
+- added `xript_server_info`, reporting the server's name, version, build timestamp, and runtime; the timestamp comes from the running module's own file mtime, so a stale server process whose binary predates a repo change is detectable rather than silently serving old results
+- added four commands so the human gets every capability too, not just the agent
+  - `xript run` loads a mod into the QuickJS-WASM sandbox and optionally invokes an export
+  - `xript describe` summarizes what a host manifest exposes: bindings, hooks, slots, capabilities
+  - `xript score` rates a host's moddability capacity, with a `--min` gate for CI
+  - `xript guide` prints xript's authoring doctrine by topic
+- authored the doctrine as markdown content rather than code; one source of truth behind the `xript guide` command, the `xript_guide` tool, and the `xript://guidance/*` resources
+
+### Doctrine
+
+- added xript's "More extensible, not less" doctrine: the framework defaults toward openness, and a restriction is permitted only when it genuinely buys convenience or security the framework couldn't otherwise provide, and must justify itself plainly
+  - authored as guidance content like the other doctrine topics, so it surfaces through the `xript guide` command, the `xript_guide` MCP tool, the `xript://guidance/*` resources, and a Doctrine page on the site from one source
+
+### Docs
+
+- surfaced three subsystems that lived in the spec but never reached the site: Hooks, Module-Format Mods (the TypeScript authoring guide v0.5 promised), and the DAP-shaped Debugging protocol
+- documented the v0.5 manifest surfaces the site had missed: provider roles, owned record types, manifest `extends`, the mod `family` field, and the `entry` module form
+- added an `extends` / inheritance page, MCP server, Extensibility Score, and Lint pages, surfaced the authoring doctrine as a Doctrine section (derived from one source), and expanded the CLI reference with the new commands
+- reframed the manifest, mod-manifest, fragments, and hooks spec pages around the host-slots / mod-fills model; fragments and provider roles and hooks are now documented as typed slot fills, with `fills` as the canonical contribution surface
+- generated `llms.txt` and `llms-full.txt` at build time: a curated index and a full-corpus one-pager for agents, linked from the home page
+- fixed the CommonJS error in `@xriptjs/validate` pointing at a guide URL that never existed; it now points at the published Module-Format Mods page
+
+### Tests
+
+| Package | Before | After |
+|---------|--------|-------|
+| `@xriptjs/validate` | 68 | 155 |
+| `@xriptjs/typegen` | 52 | 64 |
+| `@xriptjs/docgen` | 35 | 42 |
+| `@xriptjs/cli` | 38 | 60 |
+| `@xriptjs/runtime` | 166 | 187 |
+| `@xriptjs/runtime-node` | 165 | 185 |
+| `xript-runtime` (Rust) | 125 | 150 |
+| `Xript.Runtime` (C#) | 201 | 229 |
+
 ## v0.5.0 — Hardening, Roles & a Debugger
 
 The biggest release since the fragment protocol: a security fix that touches every host, a full pass of runtime lifecycle controls, a clutch of new extensibility surfaces, a DAP-shaped debugger across all four runtimes, and first-class TypeScript authoring with real ES module evaluation. Every runtime kept in lockstep against a shared contract.

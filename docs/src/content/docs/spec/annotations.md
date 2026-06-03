@@ -3,7 +3,7 @@ title: Annotations
 description: The @xript JSDoc annotation convention for declaring manifest bindings directly in TypeScript source code.
 ---
 
-The `@xript` annotation convention lets you declare xript manifest bindings directly in TypeScript source code. The `xript scan` command reads these annotations and generates the `bindings` and `capabilities` sections of your manifest automatically.
+The `@xript` annotation convention lets you declare manifest bindings directly in TypeScript source. The `xript scan` command reads these annotations and generates the `bindings` and `capabilities` sections of your manifest, so the binding lives next to the function it describes instead of in a separate file.
 
 ## Tags
 
@@ -24,7 +24,7 @@ Produces the manifest binding `data.get` (namespace `data`, member `get`).
 
 ### `@xript-cap <capability>`
 
-Gates this binding behind a named capability. Repeatable — a mod must request ALL listed capabilities to access the binding.
+Gates this binding behind a named capability. A binding's `capability` field is a single string in the manifest schema, so the scanner writes the **first** `@xript-cap` tag it finds and warns about the rest. Every named capability still gets registered under the manifest's `capabilities` section, auto-generating any that don't yet exist; only the binding-to-capability link is limited to one.
 
 ```typescript
 /**
@@ -32,19 +32,18 @@ Gates this binding behind a named capability. Repeatable — a mod must request 
  *
  * @xript economy.transfer
  * @xript-cap modify-state
- * @xript-cap network
  */
 export function transferCurrency(fromId: string, toId: string, amount: number): void { ... }
 ```
 
 ## What the scanner extracts
 
-All metadata comes from standard JSDoc and TypeScript — `@xript` and `@xript-cap` are the only custom tags.
+All metadata comes from standard JSDoc and TypeScript. `@xript` and `@xript-cap` are the only custom tags.
 
 | Source | Manifest field |
 |--------|---------------|
 | `@xript <path>` | binding path (dot-delimited namespace nesting) |
-| `@xript-cap <name>` | `capability` field on the binding |
+| `@xript-cap <name>` | `capability` field on the binding (single string — first tag wins) |
 | JSDoc description (text before tags) | `description` |
 | `@param` tags + TypeScript parameter types | `params` array |
 | TypeScript return type / `@returns` | `returns` |
@@ -107,11 +106,12 @@ The scanner preserves existing capability definitions and warns about gaps.
 
 ## Scanner behavior
 
-- Only processes exported functions with `@xript` JSDoc tags
-- Ignores functions without `@xript` tags
-- Reports diagnostics for: duplicate binding paths, missing descriptions, `@xript-cap` values with no matching capability definition
-- In merge mode: adds new bindings, warns about removed bindings (does not auto-delete), preserves manual edits to existing bindings
-- Class methods are supported if exported — the scanner treats them as standalone functions at the annotated path
+- only processes exported functions with `@xript` JSDoc tags
+- ignores functions without `@xript` tags
+- reports diagnostics for duplicate binding paths, missing descriptions, and bindings that declare more than one `@xript-cap` (only the first is written to the singular `capability` field)
+- in merge mode, adds new bindings, warns about removed bindings (does not auto-delete), preserves manual edits to existing bindings
+- supports class methods if exported; the scanner treats them as standalone functions at the annotated path
+- generates only the `bindings` and `capabilities` sections; the host's fill surface (typed `slots`, the standalone `events` catalog, and the mod-side `fills` that plug into them) is authored in the manifest directly, not derived from `@xript` annotations
 
 ## Examples
 

@@ -33,16 +33,47 @@ function extendsPaths(manifest: Json): string[] {
 	);
 }
 
+function isAbstractType(value: unknown): boolean {
+	return isObject(value) && value.abstract === true;
+}
+
+/**
+ * Recursively merges a child object onto a base, key-by-key. Where both sides hold a plain
+ * object under the same key, the merge recurses; otherwise the child value replaces the base
+ * value (arrays and scalars replace wholesale). Keys present only in the base are retained.
+ * The `refines` marker is consumed here so it never reaches the resolved manifest.
+ */
+function deepMerge(base: Json, child: Json): Json {
+	const result: Json = { ...base };
+	for (const [key, value] of Object.entries(child)) {
+		if (key === "refines") continue;
+		const existing = base[key];
+		if (isObject(existing) && isObject(value)) {
+			result[key] = deepMerge(existing, value);
+		} else {
+			result[key] = value;
+		}
+	}
+	return result;
+}
+
 function mergeMaps(base: unknown, child: unknown, mapKey: string): Json {
-	const merged: Json = {};
 	const baseMap = isObject(base) ? base : {};
 	const childMap = isObject(child) ? child : {};
-
-	for (const [key, value] of Object.entries(baseMap)) {
-		merged[key] = value;
-	}
+	const merged: Json = { ...baseMap };
 	for (const [key, value] of Object.entries(childMap)) {
 		if (key in baseMap) {
+			if (mapKey === "types") {
+				const baseType = baseMap[key];
+				if (isAbstractType(baseType) && isObject(value)) {
+					merged[key] = value;
+					continue;
+				}
+				if (isObject(baseType) && isObject(value) && value.refines === true) {
+					merged[key] = deepMerge(baseType, value);
+					continue;
+				}
+			}
 			const singular = mapKey === "capabilities" ? "capability" : mapKey.replace(/s$/, "");
 			throw new ManifestResolutionError(
 				`${singular} id "${key}" conflicts with extended base`,
@@ -67,6 +98,13 @@ function mergeSlots(base: unknown, child: unknown): unknown[] {
 	for (const slot of childSlots) {
 		if (isObject(slot) && typeof slot.id === "string") {
 			if (seen.has(slot.id)) {
+				if (slot.refines === true) {
+					const idx = out.findIndex((s) => isObject(s) && s.id === slot.id);
+					if (idx >= 0) {
+						out[idx] = deepMerge(out[idx] as Json, slot);
+						continue;
+					}
+				}
 				throw new ManifestResolutionError(
 					`slot id "${slot.id}" conflicts with extended base`,
 					`/slots`,
@@ -165,4 +203,72 @@ export async function resolveManifestFile(filePath: string): Promise<unknown> {
 	const absPath = resolve(filePath);
 	const manifest = await readManifestFile(absPath);
 	return resolveWithChain(manifest, dirname(absPath), [absPath]);
+}
+
+export interface Provenance {
+	resolved: unknown;
+	inheritedSlots: string[];
+	inheritedCapabilities: string[];
+	inheritedAbstractTypes: string[];
+}
+
+function localSlotIds(manifest: Json): Set<string> {
+	const ids = new Set<string>();
+	const slots = manifest.slots;
+	if (Array.isArray(slots)) {
+		for (const slot of slots) {
+			if (isObject(slot) && typeof slot.id === "string") ids.add(slot.id);
+		}
+	}
+	return ids;
+}
+
+function localCapabilityNames(manifest: Json): Set<string> {
+	const caps = manifest.capabilities;
+	return isObject(caps) ? new Set(Object.keys(caps)) : new Set<string>();
+}
+
+function localTypeNames(manifest: Json): Set<string> {
+	const types = manifest.types;
+	return isObject(types) ? new Set(Object.keys(types)) : new Set<string>();
+}
+
+function abstractTypeNames(manifest: Json): Set<string> {
+	const names = new Set<string>();
+	const types = manifest.types;
+	if (isObject(types)) {
+		for (const [name, def] of Object.entries(types)) {
+			if (isObject(def) && (def as { abstract?: boolean }).abstract === true) names.add(name);
+		}
+	}
+	return names;
+}
+
+/**
+ * Resolves a host manifest's `extends` chain and reports which slot ids and capability
+ * names came from the resolved base(s) versus the host's own local declarations. A slot
+ * or capability is "inherited" when it appears in the resolved manifest but not in the
+ * host's pre-resolution local declarations. An inherited type is additionally flagged as an
+ * unfilled abstract when the resolved definition still carries `abstract: true` — the host
+ * inherited a typed hole and never filled it. When the host has no `extends`, all inherited
+ * lists are empty and `resolved` is the flattened (extends-stripped) host.
+ */
+export async function resolveProvenance(manifest: unknown, baseDir: string): Promise<Provenance> {
+	if (!isObject(manifest)) {
+		return { resolved: manifest, inheritedSlots: [], inheritedCapabilities: [], inheritedAbstractTypes: [] };
+	}
+	const localSlots = localSlotIds(manifest);
+	const localCaps = localCapabilityNames(manifest);
+	const localTypes = localTypeNames(manifest);
+	const resolved = await resolveWithChain(manifest, baseDir, []);
+
+	const inheritedSlots = [...localSlotIds(resolved)].filter((id) => !localSlots.has(id));
+	const inheritedCapabilities = [...localCapabilityNames(resolved)].filter((name) => !localCaps.has(name));
+
+	const resolvedAbstract = abstractTypeNames(resolved);
+	const inheritedAbstractTypes = [...localTypeNames(resolved)].filter(
+		(name) => !localTypes.has(name) && resolvedAbstract.has(name),
+	);
+
+	return { resolved, inheritedSlots, inheritedCapabilities, inheritedAbstractTypes };
 }

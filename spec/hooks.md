@@ -1,12 +1,14 @@
 # xript Hook Conventions
 
-Hooks are the reverse of bindings: the host fires them, and scripts handle them. Bindings let scripts call the host; hooks let the host call scripts. Together, they form a bidirectional communication channel between the application and its mods.
+A hook is an event-typed slot: a host-declared plug-point whose `accepts` is the event-handler type (`application/x-xript-hook`), and whose fills are handlers the host calls when the event fires. Hooks are the reverse of bindings — bindings let scripts call the host; an event slot lets the host call scripts. Together, they form a bidirectional communication channel between the application and its mods.
 
-This document covers hook declaration, lifecycle phases, registration, invocation, and the runtime conventions that govern hook behavior.
+This document covers hook declaration, lifecycle phases, registration, invocation, and the runtime conventions that govern hook behavior. Those conventions are the semantics of the event slot type; everything below applies whether an event is declared as a slot or, for back-compat, in the deprecated standalone `hooks` section.
+
+> **The standalone `hooks` concept is deprecated.** A lifecycle event is an event-typed slot, and firing it means calling that slot's fills. The `hooks` field remains allowed — hosts still fire hooks and runtimes still dispatch them — but new manifests should declare events as slots and let mods fill them. The declaration form below documents the back-compat surface; the conventions it describes carry over unchanged to event slots.
 
 ## Declaration
 
-Hooks are declared in the manifest's `hooks` section:
+A host declares an event as a slot whose `accepts` is the event-handler type. The deprecated standalone form declares it in the manifest's `hooks` section instead:
 
 ```json
 {
@@ -22,7 +24,7 @@ Hooks are declared in the manifest's `hooks` section:
 }
 ```
 
-Every hook requires a `description`. Like bindings, if a modder can't understand what a hook does, it may as well not exist.
+Either form requires a `description`. Like bindings, if a modder can't understand what an event does, it may as well not exist. A mod fills an event slot by naming a handler export (`{ "handler": "onPlayerDamage" }`); the script-side registration helpers below are the runtime's convenience over that wiring.
 
 ## Lifecycle Phases
 

@@ -12,7 +12,7 @@ export function detectCommonJs(source: string): CommonJsArtifact | null {
 	return null;
 }
 
-export const COMMONJS_GUIDE_URL = "https://xript.dev/guides/authoring-mods-in-typescript";
+export const COMMONJS_GUIDE_URL = "https://xript.dev/spec/modules/";
 
 export function commonJsMessage(artifact: CommonJsArtifact): string {
 	return (

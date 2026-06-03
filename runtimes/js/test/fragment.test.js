@@ -277,13 +277,35 @@ describe("data-if evaluation", () => {
 	});
 });
 
-describe("event extraction", () => {
-	it("returns declared events from fragment", () => {
+describe("handler extraction", () => {
+	it("returns declared handlers from fragment", () => {
 		const runtime = xript.createRuntime(appManifest, {
 			hostBindings: { log: () => {} },
 		});
 		const mod = runtime.loadMod({
-			xript: "0.3", name: "events", version: "1.0.0",
+			xript: "0.3", name: "handlers", version: "1.0.0",
+			fragments: [{
+				id: "btn-panel", slot: "sidebar.left", format: "text/html",
+				source: '<button data-action="heal">Heal</button>', inline: true,
+				handlers: [
+					{ selector: "[data-action='heal']", on: "click", handler: "onHeal" },
+				],
+			}],
+		});
+		const handlers = mod.fragments[0].getHandlers();
+		assert.equal(handlers.length, 1);
+		assert.equal(handlers[0].selector, "[data-action='heal']");
+		assert.equal(handlers[0].on, "click");
+		assert.equal(handlers[0].handler, "onHeal");
+		runtime.dispose();
+	});
+
+	it("accepts the deprecated 'events' alias and 'getEvents()'", () => {
+		const runtime = xript.createRuntime(appManifest, {
+			hostBindings: { log: () => {} },
+		});
+		const mod = runtime.loadMod({
+			xript: "0.3", name: "events-alias", version: "1.0.0",
 			fragments: [{
 				id: "btn-panel", slot: "sidebar.left", format: "text/html",
 				source: '<button data-action="heal">Heal</button>', inline: true,
@@ -292,11 +314,58 @@ describe("event extraction", () => {
 				],
 			}],
 		});
-		const events = mod.fragments[0].getEvents();
-		assert.equal(events.length, 1);
-		assert.equal(events[0].selector, "[data-action='heal']");
-		assert.equal(events[0].on, "click");
-		assert.equal(events[0].handler, "onHeal");
+		const viaDeprecated = mod.fragments[0].getEvents();
+		assert.equal(viaDeprecated.length, 1);
+		assert.equal(viaDeprecated[0].handler, "onHeal");
+		// the alias and the preferred accessor return the same wiring
+		const viaHandlers = mod.fragments[0].getHandlers();
+		assert.equal(viaHandlers.length, 1);
+		assert.equal(viaHandlers[0].handler, "onHeal");
+		runtime.dispose();
+	});
+
+	it("prefers 'handlers' over 'events' when both are present", () => {
+		const runtime = xript.createRuntime(appManifest, {
+			hostBindings: { log: () => {} },
+		});
+		const mod = runtime.loadMod({
+			xript: "0.3", name: "both", version: "1.0.0",
+			fragments: [{
+				id: "btn-panel", slot: "sidebar.left", format: "text/html",
+				source: '<button data-action="heal">Heal</button>', inline: true,
+				handlers: [
+					{ selector: "[data-action='heal']", on: "click", handler: "fromHandlers" },
+				],
+				events: [
+					{ selector: "[data-action='heal']", on: "click", handler: "fromEvents" },
+				],
+			}],
+		});
+		const handlers = mod.fragments[0].getHandlers();
+		assert.equal(handlers.length, 1);
+		assert.equal(handlers[0].handler, "fromHandlers");
+		runtime.dispose();
+	});
+});
+
+describe("top-level events catalog", () => {
+	it("accepts an app manifest declaring a host-broadcast events catalog", () => {
+		const withEvents = {
+			...appManifest,
+			events: [
+				{ id: "player.spawned", description: "A player entered the world" },
+				{ id: "player.died", description: "A player died", payload: { type: "string" } },
+			],
+		};
+		const runtime = xript.createRuntime(withEvents, {
+			hostBindings: { log: () => {} },
+			capabilities: ["ui-mount"],
+		});
+		assert.equal(runtime.manifest.events.length, 2);
+		assert.equal(runtime.manifest.events[0].id, "player.spawned");
+		// a top-level events catalog does not interfere with normal mod loading
+		const mod = runtime.loadMod(validModManifest);
+		assert.equal(mod.fragments.length, 1);
 		runtime.dispose();
 	});
 });

@@ -35,6 +35,19 @@ export function createRuntime(capabilities = ["ui-mount"]) {
  *
  * @param {string} modDir
  */
+function fragmentFills(manifest) {
+	if (manifest.fills) {
+		const flat = [];
+		for (const [slot, entries] of Object.entries(manifest.fills)) {
+			for (const entry of entries) {
+				flat.push({ slot, ...entry });
+			}
+		}
+		return flat;
+	}
+	return manifest.fragments ?? [];
+}
+
 export async function loadModFiles(modDir) {
 	const modManifestRaw = await readFile(new URL(`../../mods/${modDir}/mod-manifest.json`, import.meta.url), "utf-8");
 	const modManifest = JSON.parse(modManifestRaw);
@@ -46,14 +59,13 @@ export async function loadModFiles(modDir) {
 			sources[entry] = await readFile(new URL(`../../mods/${modDir}/${entry}`, import.meta.url), "utf-8");
 		}
 	}
-	if (modManifest.fragments) {
-		for (const frag of modManifest.fragments) {
-			if (!frag.inline) {
-				sources[frag.source] = await readFile(new URL(`../../mods/${modDir}/${frag.source}`, import.meta.url), "utf-8");
-			}
+	const fragments = fragmentFills(modManifest);
+	for (const frag of fragments) {
+		if (!frag.inline) {
+			sources[frag.source] = await readFile(new URL(`../../mods/${modDir}/${frag.source}`, import.meta.url), "utf-8");
 		}
 	}
-	return { manifest: modManifest, sources };
+	return { manifest: { ...modManifest, fragments }, sources };
 }
 
 export { appState };

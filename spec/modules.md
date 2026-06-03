@@ -33,7 +33,7 @@ After a module evaluates, the runtime reads its **top-level named function expor
 - The **default export is not harvested** — exports are addressed by name and a default export has no stable invocation name.
 - **Capability gating is unchanged:** `entry.exports[name].capability` gates `invoke_export` by name via the host-side export-capability map, regardless of whether the export came from a module binding or a `register()` call. Audit emission is identical for both origins.
 
-`entry.exports` in the manifest **documents and capability-gates** these exports. It need not enumerate them for invocation to work — the runtime is authoritative for what actually registered — but it SHOULD enumerate them for typed authoring and docs.
+`entry.exports` in the manifest **documents and capability-gates** these exports. It need not enumerate them for invocation to work; the runtime is authoritative for what actually registered. It SHOULD still enumerate them for typed authoring and docs.
 
 ## No External Imports
 
@@ -77,7 +77,7 @@ CommonJS artifacts detected in mod entry (found: <artifact>). xript mods must be
 as ES modules (entry.format: "module", top-level export) or as classic scripts using
 xript.exports.register — never CommonJS. Fix your tsconfig to emit ESM (module: "esnext",
 moduleResolution: "bundler"/"nodenext") or remove the require()/module.exports usage.
-See https://xript.dev/guides/authoring-mods-in-typescript.
+See https://xript.dev/spec/modules/.
 ```
 
 ### Two enforcement homes
@@ -107,8 +107,8 @@ export function transcribe(audioUrl: string): string {
 	return "transcript of " + audioUrl;
 }
 
-hooks.fragment.update((data) => {
-	log("fragment updated with: " + JSON.stringify(data));
+hooks.fragment.update("transcript-panel", (bindings, fragment) => {
+	log("fragment updated with: " + JSON.stringify(bindings));
 });
 ```
 

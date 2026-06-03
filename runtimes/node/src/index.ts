@@ -75,7 +75,7 @@ export type {
 	DiscoveredMod,
 } from "./shapes.js";
 export type { HostBindings, HostFunction, HostNamespace, ExecutionResult, FireHookOptions, FragmentOp, ConsoleHandler, LogSeverity, AuditEvent, HardLimits } from "./sandbox.js";
-export type { ModManifest, ModEntry, ExportDeclaration, ModInstance, FragmentInstance, FragmentUpdateResult, FragmentEvent, FragmentDeclaration, SlotDeclaration, ModContributions, ProviderRole } from "./fragment.js";
+export type { ModManifest, ModEntry, ExportDeclaration, ModInstance, FragmentInstance, FragmentUpdateResult, FragmentHandler, FragmentHandlerDeclaration, FragmentEvent, FragmentEventDeclaration, FragmentDeclaration, SlotDeclaration, ModContributions, ProviderRole } from "./fragment.js";
 
 interface Manifest {
 	xript: string;

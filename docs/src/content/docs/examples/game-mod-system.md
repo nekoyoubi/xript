@@ -3,7 +3,7 @@ title: "Example: Game Mod System"
 description: "A tier 3 integration walkthrough: namespaces, capabilities, async bindings, custom types, and execution limits."
 ---
 
-This example demonstrates the full xript scripting model: namespaces to organize a rich API, capabilities at three risk levels, async bindings for I/O operations, custom types for complex data structures, and execution limits to prevent runaway scripts. This is **tier 3** adoption.
+This is **tier 3** adoption: the full xript scripting model. Namespaces organize a rich API, capabilities gate it at three risk levels, async bindings handle I/O, custom types describe complex data structures, and execution limits stop runaway scripts.
 
 The full source is in [`examples/game-mod-system/`](https://github.com/nekoyoubi/xript/tree/main/examples/game-mod-system).
 
@@ -257,6 +257,15 @@ node src/demo.js
 | Execution limits | Mod 8 hits the 1000ms timeout |
 | Persistent storage | Mods 4 and 5 save/load data |
 | Inline examples | The manifest includes usage examples on `player.setHealth` |
+
+## Reacting to Game Events
+
+This example focuses on the scripting surface: bindings a mod *calls*. A game also wants mods that *react* to things the engine emits, like a turn starting, damage landing, or a level changing. xript models that with two distinct surfaces:
+
+- A top-level **`events` catalog** declares the named events the host broadcasts and each one's payload type; it's a discovery declaration of what the engine emits, with no listener presupposed.
+- **Event-typed slots** are the extension points a mod fills to handle those events: a slot whose `accepts` is the event-handler kind, where firing it calls that slot's fills.
+
+Keep them straight this way: bindings are what you call, slots and handlers are what handles, and `events` is what the host emits. The standalone top-level `hooks` surface is now deprecated in favor of event-typed slots; host-side firing is unchanged. The companion mod that fills those slots lives in a mod manifest; see the [UI Dashboard example](/examples/ui-dashboard/) and the [mod manifest spec](/spec/mod-manifest/) for the `fills` contribution surface.
 
 ## When to Use This Pattern
 

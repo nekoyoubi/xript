@@ -28,7 +28,7 @@ Objects returned from bindings must be copies or proxies, not direct references 
 
 ### 2. No Denial of Service
 
-Scripts cannot consume unbounded resources. The manifest's `executionLimits` section declares the bounds, and the runtime enforces them.
+Scripts cannot consume unbounded resources. The manifest's `limits` section declares the bounds, and the runtime enforces them.
 
 **Execution time:**
 
@@ -50,9 +50,9 @@ Runtimes must detect and terminate scripts that enter infinite loops or infinite
 
 | Resource | Limit Source | Failure | Catchable? |
 |----------|-------------|---------|------------|
-| Time | `executionLimits.timeout_ms` | Script terminated | No |
-| Memory | `executionLimits.memory_mb` | Script terminated | No |
-| Stack | `executionLimits.max_stack_depth` | `RangeError` thrown | Yes |
+| Time | `limits.timeout_ms` | Script terminated | No |
+| Memory | `limits.memory_mb` | Script terminated | No |
+| Stack | `limits.max_stack_depth` | `RangeError` thrown | Yes |
 
 Timeout and memory violations are not catchable because a script that has exhausted these resources cannot be trusted to handle errors correctly. Stack overflow is catchable because the stack unwinds naturally and the script may have legitimate recovery logic (e.g., switching from recursive to iterative algorithms).
 
@@ -196,7 +196,7 @@ Runtime implementors must verify their implementation against each item in this 
 - [ ] Scripts exceeding `memory_mb` are terminated (not catchable)
 - [ ] Scripts exceeding `max_stack_depth` receive a `RangeError` (catchable)
 - [ ] Infinite loops are terminated by the timeout mechanism
-- [ ] Default limits (5000ms, 64MB, 256 stack frames) are applied when the manifest omits `executionLimits`
+- [ ] Default limits (5000ms, 64MB, 256 stack frames) are applied when the manifest omits `limits`
 - [ ] After termination, the runtime is in a clean state (no leaked resources, no corrupted host state)
 
 ### Capability Enforcement
@@ -235,7 +235,7 @@ Runtime implementors must verify their implementation against each item in this 
 
 The security guarantees build on and complement the other xript spec documents:
 
-- **[Manifest](./manifest.md)**: Declares `executionLimits` that this document's resource guarantees enforce. Also declares capabilities that the trust model relies on.
+- **[Manifest](./manifest.md)**: Declares `limits` that this document's resource guarantees enforce. Also declares capabilities that the trust model relies on.
 - **[Capabilities](./capabilities.md)**: Defines the capability model that this document's "no implicit trust" guarantee enforces. The capability spec covers declaration and lifecycle; this document covers the security properties those mechanisms must provide.
 - **[Bindings](./bindings.md)**: Defines how bindings behave at runtime, including the error types (`BindingError`, `CapabilityDeniedError`, `TypeError`, `ImportDeniedError`, `CommonJSDetectedError`) referenced throughout this document.
 - **[Modules](./modules.md)**: Defines the `entry.format: "module"` evaluation mode, the no-external-imports rule, and the CommonJS guard this document references.

@@ -1,0 +1,14 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://example.test/schema/domain-overlay.json",
+	"title": "Domain Overlay",
+	"type": "object",
+	"required": ["xript", "name", "domainBadge"],
+	"properties": {
+		"$schema": { "type": "string" },
+		"xript": { "type": "string", "pattern": "^\\d+\\.\\d+$" },
+		"name": { "type": "string" },
+		"domainBadge": { "type": "string" }
+	},
+	"unevaluatedProperties": false
+}

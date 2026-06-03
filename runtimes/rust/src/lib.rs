@@ -19,7 +19,8 @@ pub use error::{Result, ValidationIssue, XriptError};
 pub use fragment::{FragmentInstance, FragmentResult, ModInstance};
 pub use manifest::{
     is_role_identifier, resolve_extends, Binding, Capability, Contributions, EntryBlock, ExportDecl,
-    Extends, FieldDefinition, FragmentBinding, FragmentDeclaration, FragmentEvent, FunctionBinding,
+    Extends, FieldDefinition, FragmentBinding, FragmentDeclaration, FragmentEvent, FragmentHandler,
+    FunctionBinding,
     HookDef, Limits, Manifest, ModManifest, NamespaceBinding, Parameter, ProviderRole, Slot,
     TypeDefinition,
 };
@@ -668,7 +669,7 @@ mod tests {
                     "bindings": [
                         { "name": "health", "path": "player.health" }
                     ],
-                    "events": [
+                    "handlers": [
                         { "selector": "[data-action='heal']", "on": "click", "handler": "onHeal" }
                     ],
                     "priority": 10
@@ -686,7 +687,77 @@ mod tests {
         assert_eq!(frag.slot, "sidebar.left");
         assert_eq!(frag.priority, Some(10));
         assert_eq!(frag.bindings.as_ref().unwrap().len(), 1);
+        assert_eq!(frag.handlers.as_ref().unwrap().len(), 1);
+        assert_eq!(frag.resolved_handlers().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn accepts_deprecated_events_alias_for_fragment_handlers() {
+        let json = r#"{
+            "xript": "0.3",
+            "name": "legacy-panel",
+            "version": "1.0.0",
+            "fragments": [
+                {
+                    "id": "legacy",
+                    "slot": "sidebar.left",
+                    "format": "text/html",
+                    "source": "fragments/panel.html",
+                    "events": [
+                        { "selector": "[data-action='heal']", "on": "click", "handler": "onHeal" }
+                    ]
+                }
+            ]
+        }"#;
+
+        let mod_manifest: ModManifest = serde_json::from_str(json).unwrap();
+        let frag = &mod_manifest.fragments.as_ref().unwrap()[0];
+        assert!(frag.handlers.is_none());
         assert_eq!(frag.events.as_ref().unwrap().len(), 1);
+        assert_eq!(frag.resolved_handlers().unwrap()[0].handler, "onHeal");
+    }
+
+    #[test]
+    fn fragment_handlers_wins_over_deprecated_events_alias() {
+        let json = r##"{
+            "xript": "0.3",
+            "name": "both-panel",
+            "version": "1.0.0",
+            "fragments": [
+                {
+                    "id": "both",
+                    "slot": "sidebar.left",
+                    "format": "text/html",
+                    "source": "fragments/panel.html",
+                    "handlers": [
+                        { "selector": "#a", "on": "click", "handler": "fromHandlers" }
+                    ],
+                    "events": [
+                        { "selector": "#b", "on": "click", "handler": "fromEvents" }
+                    ]
+                }
+            ]
+        }"##;
+
+        let mod_manifest: ModManifest = serde_json::from_str(json).unwrap();
+        let frag = &mod_manifest.fragments.as_ref().unwrap()[0];
+        let resolved = frag.resolved_handlers().unwrap();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].handler, "fromHandlers");
+    }
+
+    #[test]
+    fn top_level_events_catalog_does_not_break_app_manifest() {
+        let json = r#"{
+            "xript": "0.3",
+            "name": "host-app",
+            "events": [
+                { "id": "player.died", "description": "Fired when the player dies." }
+            ]
+        }"#;
+
+        let manifest: manifest::Manifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.name, "host-app");
     }
 
     #[test]

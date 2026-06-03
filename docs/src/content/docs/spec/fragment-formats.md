@@ -3,9 +3,9 @@ title: Fragment Formats
 description: "The same fragment protocol across HTML, JSML, terminal UI, and desktop apps."
 ---
 
-The fragment protocol is format-agnostic by design. Hosts declare what formats their slots accept; mods provide fragments in those formats. The bindings, events, and lifecycle are universal. Only the rendering changes.
+The fragment protocol is format-agnostic by design. A host declares a fragment-format slot whose `accepts` names the formats it takes; a mod fills that slot with an inert fragment in one of those formats. The bindings, DOM handlers, and lifecycle are universal. Only the rendering changes.
 
-This page shows the same health panel fragment in four formats. Each one uses `data-bind` for value display and `data-if` for conditional visibility.
+This page shows the same health panel fragment across several formats. Each one uses `data-bind` for value display and `data-if` for conditional visibility. The `text/html`, `application/jsml+json`, and `application/x-ratatui+json` formats have shipping processors (the JS/Node runtimes for the first two; the `xript-ratatui` crate for the third). The `application/x-winforms+json` example below is illustrative; it shows how the same protocol would map onto a desktop UI toolkit, but no renderer ships for it yet.
 
 ## `text/html`
 
@@ -43,21 +43,27 @@ JSML (JSON Markup Language) represents the same structure as nested JSON arrays.
 
 JSML sanitization follows the same rules as HTML: dangerous elements stripped, `on*` attributes removed, `javascript:` URIs blocked. The `@xriptjs/sanitize` package handles both formats.
 
-In the mod manifest:
+In the mod manifest, a fragment is a fill of a fragment-format slot. The `fills` object is keyed by the host slot id:
 
 ```json
 {
-  "id": "health-panel",
-  "slot": "sidebar.left",
-  "format": "application/jsml+json",
-  "source": "fragments/panel.jsml.json",
-  "bindings": [
-    { "name": "health", "path": "player.health" },
-    { "name": "maxHealth", "path": "player.maxHealth" },
-    { "name": "name", "path": "player.name" }
-  ]
+  "fills": {
+    "sidebar.left": [
+      {
+        "format": "application/jsml+json",
+        "source": "fragments/panel.jsml.json",
+        "bindings": [
+          { "name": "health", "path": "player.health" },
+          { "name": "maxHealth", "path": "player.maxHealth" },
+          { "name": "name", "path": "player.name" }
+        ]
+      }
+    ]
+  }
 }
 ```
+
+The former top-level `fragments[]` array (a flat list of `{ slot, format, source, bindings }` entries) is a deprecated alias; each legacy fragment's `slot` becomes the `fills` key. Validators still accept it with a deprecation warning. See [the fragment protocol](/spec/fragments/) for the full fill shape.
 
 ## `application/x-ratatui+json`
 
@@ -101,9 +107,9 @@ For Rust terminal applications using [Ratatui](https://ratatui.rs). Widget names
 - `data-bind` on a `Gauge` updates the ratio; on a `Span` updates text
 - Event targeting uses widget IDs (`#heal-button`) instead of CSS selectors
 
-## `application/x-winforms+json`
+## `application/x-winforms+json` (illustrative)
 
-For .NET desktop applications using WinForms. Control names map to `System.Windows.Forms` classes.
+This format is illustrative; no renderer ships for it. It shows how the same protocol would map onto a .NET desktop toolkit: control names map to `System.Windows.Forms` classes, but the bindings, `data-if`, handlers, and lifecycle would be identical to the formats above.
 
 ```json
 ["Panel", {
@@ -167,13 +173,15 @@ Across all four formats, the fragment protocol is identical:
 
 | Concept | Universal |
 |---------|-----------|
-| Slot targeting | `"slot": "sidebar.left"` |
+| Slot targeting | `fills` key is the host slot id (e.g. `"sidebar.left"`) |
 | Bindings | `{ "name": "health", "path": "player.health" }` |
 | `data-bind` | Attribute on the element/widget that displays the value |
 | `data-if` | Attribute controlling visibility based on an expression |
-| Events | `{ "selector": "...", "on": "...", "handler": "..." }` |
+| Handlers | `{ "selector": "...", "on": "...", "handler": "..." }` in the fill's `handlers` array |
 | Lifecycle | mount, unmount, update, suspend, resume |
 | Sandbox API | `hooks.fragment.update(id, callback)` with command buffer |
 | Sanitization | Allowlisted elements/widgets, stripped dangerous content |
 
-The manifest shape, the lifecycle, and the sandbox API are the interop surface. Whether the fragment renders as DOM elements, terminal widgets, or desktop controls is the host's concern.
+The fill shape, the lifecycle, and the sandbox API are the interop surface. Whether the fragment renders as DOM elements, terminal widgets, or desktop controls is the host's concern.
+
+A fragment fill's DOM event handler array is `handlers` (entries shaped `{ selector, on, handler }`). The older key `events` is a deprecated alias kept for back-compat; `handlers` wins if both are present. Do not confuse it with the host's separate top-level `events` catalog, which declares the named events a host broadcasts. The shorthand: bindings are what you call, slots and handlers are what handles, `events` is what the host emits.

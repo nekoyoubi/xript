@@ -1,6 +1,6 @@
 {
-	"$schema": "https://xript.dev/schema/mod-manifest/v0.3.json",
-	"xript": "0.3",
+	"$schema": "https://xript.dev/schema/mod-manifest/v0.6.json",
+	"xript": "0.6",
 	"name": "health-panel",
 	"version": "1.0.0",
 	"title": "Health Panel",
@@ -8,18 +8,19 @@
 	"author": "xript-examples",
 	"capabilities": ["ui-mount"],
 	"entry": "src/mod.js",
-	"fragments": [
-		{
-			"id": "health-display",
-			"slot": "sidebar.left",
-			"format": "text/html",
-			"source": "fragments/panel.html",
-			"bindings": [
-				{ "name": "health", "path": "player.health" },
-				{ "name": "maxHealth", "path": "player.maxHealth" },
-				{ "name": "name", "path": "player.name" }
-			],
-			"priority": 10
-		}
-	]
+	"fills": {
+		"sidebar.left": [
+			{
+				"id": "health-display",
+				"format": "text/html",
+				"source": "fragments/panel.html",
+				"bindings": [
+					{ "name": "health", "path": "player.health" },
+					{ "name": "maxHealth", "path": "player.maxHealth" },
+					{ "name": "name", "path": "player.name" }
+				],
+				"priority": 10
+			}
+		]
+	}
 }

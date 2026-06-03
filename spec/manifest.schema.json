@@ -1,6 +1,6 @@
 {
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
-	"$id": "https://xript.dev/schema/manifest/v0.3.json",
+	"$id": "https://xript.dev/schema/manifest/v0.6.json",
 	"title": "xript Manifest",
 	"description": "Declarative manifest for xript-enabled applications. Defines the API surface, capabilities, and documentation for modders.",
 	"type": "object",
@@ -15,7 +15,7 @@
 			"description": "The xript specification version this manifest conforms to.",
 			"type": "string",
 			"pattern": "^\\d+\\.\\d+$",
-			"examples": ["0.1", "0.3"]
+			"examples": ["0.3", "0.6"]
 		},
 		"extends": {
 			"description": "One or more base manifests to inherit from. Resolved and deep-merged before validation: maps key-merge, arrays append, scalars are child-wins, and duplicate ids are an error. Paths are filesystem-relative to this manifest. Resolution is transitive with cycle detection.",
@@ -69,7 +69,7 @@
 			}
 		},
 		"hooks": {
-			"description": "Hooks that scripts can register handlers for. Hooks are fired by the host and handled by scripts — the reverse direction of bindings.",
+			"description": "DEPRECATED in favor of event-typed slots: declare a slot whose 'accepts' is the event-handler type and fire it by calling its fills. Retained for back-compat; the host still fires registered hook handlers. Hooks are fired by the host and handled by scripts — the reverse direction of bindings.",
 			"type": "object",
 			"additionalProperties": {
 				"$ref": "#/$defs/hook"
@@ -79,12 +79,16 @@
 			"$ref": "#/$defs/executionLimits"
 		},
 		"slots": {
-			"description": "UI mounting points where mods can contribute fragments. Each slot declares an ID, accepted formats, and optional capability gating.",
+			"description": "The canonical fill surface: typed plug-points the host declares and mods fill. Each slot declares an ID, accepted formats/kinds, and optional capability gating. A fill's shape is governed by the slot's 'accepts' type — a fragment, a role map, or an event handler are all fills of slots of the appropriate type.",
 			"type": "array",
 			"items": { "$ref": "#/$defs/slot" }
+		},
+		"events": {
+			"description": "Discovery catalog of the named events this host emits or broadcasts and their payload types. Distinct from slots and from fragment handlers: an event-typed slot is an extension POINT that addons fill with handlers; a fragment's 'handlers' wire DOM responses on a fill; an entry here declares what the host itself emits, with no consumer presupposed — a sandbox script, the host's own UI, or an external subscriber may all listen. In short: bindings are what you can call, slots and handlers are what handles, events are what the host emits.",
+			"type": "array",
+			"items": { "$ref": "#/$defs/eventDefinition" }
 		}
 	},
-	"additionalProperties": false,
 	"$defs": {
 		"typeRef": {
 			"description": "A reference to a type. Can be a primitive, a custom type name, an array type, or a union.",
@@ -234,6 +238,11 @@
 					"enum": ["low", "medium", "high"],
 					"description": "Advisory risk level. Helps users make informed decisions about granting capabilities.",
 					"default": "low"
+				},
+				"reserved": {
+					"type": "boolean",
+					"default": false,
+					"description": "When true, the capability is intentionally declared without yet gating a slot, binding, or hook — inherited for canon parity, or reserved for a future surface. Tooling treats it as aspirational rather than vestigial, and suppresses the unreferenced-capability warning."
 				}
 			},
 			"additionalProperties": false
@@ -258,6 +267,21 @@
 					"type": "array",
 					"items": { "type": "string" },
 					"description": "The allowed values (for enum types)."
+				},
+				"open": {
+					"type": "boolean",
+					"default": false,
+					"description": "When true, the `values` are the known set but any other string is also valid — an open enum. Codegen emits `... | (string & {})` so unlisted values (for example, addon-contributed ones) still type-check; xript does not enforce the closed set at runtime regardless."
+				},
+				"abstract": {
+					"type": "boolean",
+					"default": false,
+					"description": "When true, this type is declared and described but not populated — it supplies neither fields nor values, standing as a contract hole that an extending manifest is expected to fill with concrete fields or values. An abstract type that survives into the resolved manifest is a defect ('abstract-type-unfilled')."
+				},
+				"refines": {
+					"type": "boolean",
+					"default": false,
+					"description": "When true, this definition refines a concrete base type of the same name, deep-merging onto it field by field. Without it, redeclaring a concrete type name is a resolution error. Does not apply to abstract base types, which are filled rather than refined."
 				}
 			},
 			"additionalProperties": false
@@ -286,6 +310,11 @@
 					"items": {},
 					"minItems": 1,
 					"description": "Allowed literal values for this field. Codegen emits a literal union; xript does not enforce at runtime."
+				},
+				"open": {
+					"type": "boolean",
+					"default": false,
+					"description": "When true, the `enum` values are the known set but any other string is also valid — an open enum. Codegen emits `... | (string & {})` so unlisted values still type-check; xript does not enforce the closed set at runtime regardless."
 				}
 			},
 			"additionalProperties": false
@@ -360,7 +389,7 @@
 			"additionalProperties": false
 		},
 		"slot": {
-			"description": "A UI mounting point that mods can target with fragments.",
+			"description": "A typed plug-point the host declares and mods fill. The 'accepts' type governs what a valid fill looks like and what the host does with it (mount it, call it, resolve it, or fire it).",
 			"type": "object",
 			"required": ["id", "accepts"],
 			"properties": {
@@ -373,22 +402,62 @@
 					"type": "array",
 					"items": { "type": "string" },
 					"minItems": 1,
-					"description": "MIME types this slot accepts from fragment contributions."
+					"description": "The format(s) or kind(s) this slot takes from fills, e.g. 'text/html+jsml', 'application/javascript+esm', 'application/json', 'application/x-xript-role', 'application/x-xript-hook'."
+				},
+				"description": {
+					"type": "string",
+					"description": "Human-readable description of what this slot is for. Surfaced in generated docs and used by tooling."
 				},
 				"capability": {
 					"type": "string",
-					"description": "Capability required to mount fragments into this slot."
+					"description": "Capability required to fill this slot."
 				},
 				"multiple": {
 					"type": "boolean",
 					"default": false,
-					"description": "Whether multiple mods can contribute fragments to this slot simultaneously."
+					"description": "Whether multiple mods can fill this slot simultaneously."
+				},
+				"payload": {
+					"type": "object",
+					"additionalProperties": true,
+					"description": "A JSON Schema (draft 2020-12) that a fill's payload for this slot must satisfy. The host validates each fill against it; an extending manifest may refine the contract."
+				},
+				"reserved": {
+					"type": "boolean",
+					"default": false,
+					"description": "When true, the slot is intentionally declared without a current filler — inherited for canon parity, or reserved for future mods. Tooling treats it as aspirational rather than dead, and suppresses the unfilled-slot warning."
 				},
 				"style": {
 					"type": "string",
 					"enum": ["inherit", "isolated", "scoped"],
 					"default": "inherit",
 					"description": "Styling mode: 'inherit' applies host styles, 'isolated' prevents style bleed, 'scoped' exposes CSS custom properties."
+				},
+				"refines": {
+					"type": "boolean",
+					"default": false,
+					"description": "When true, this slot definition refines a base slot of the same id, deep-merging onto it including its payload contract. Without it, redeclaring a slot id is a resolution error."
+				}
+			},
+			"additionalProperties": false
+		},
+		"eventDefinition": {
+			"description": "A named event the host emits or broadcasts. A discovery declaration, not an extension point: it states what the host fires and the shape of the payload, leaving consumers (sandbox scripts, the host UI, external subscribers) unpresupposed.",
+			"type": "object",
+			"required": ["id", "description"],
+			"properties": {
+				"id": {
+					"type": "string",
+					"pattern": "^[a-z][a-z0-9.-]*$",
+					"description": "Unique event identifier (e.g. 'document.saved', 'selection.changed')."
+				},
+				"description": {
+					"type": "string",
+					"description": "What this event represents and when the host emits it. Shown in generated docs."
+				},
+				"payload": {
+					"$ref": "#/$defs/typeRef",
+					"description": "The type of the payload delivered with this event. Omit for events that carry no payload."
 				}
 			},
 			"additionalProperties": false

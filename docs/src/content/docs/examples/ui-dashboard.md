@@ -3,15 +3,17 @@ title: "UI Dashboard"
 description: "A dashboard application demonstrating the xript UI Fragment Protocol with slots, mod manifests, data-bind, data-if, and the sandbox fragment API."
 ---
 
-The full fragment protocol in one shot: an app declares slots, mods contribute fragments, and everything binds to live host data.
+The full fragment protocol in one shot: an app declares slots, mods fill them with fragments, and everything binds to live host data.
+
+A fragment is a *fill* of a fragment-format slot, not a separate top-level mod concept. Mods contribute through a single `fills` object keyed by host slot id; a fragment fill carries markup, declared data bindings, and DOM event handlers. (The former top-level `fragments[]`/`contributions` shape still validates with a deprecation warning, but `fills` is the canonical surface.)
 
 ## What It Shows
 
 - **Host app** with three slots (`sidebar.left`, `header.status`, `main.overlay`)
-- **Health panel mod** using `data-bind` for values and `data-if` for conditional warnings
+- **Health panel mod** that `fills` a slot, using `data-bind` for values and `data-if` for conditional warnings
 - **Inventory panel mod** using the sandbox fragment API for iteration
 - **Fragment lifecycle** with `hooks.fragment.update` handlers
-- **Cross-validation** ensuring mods target valid slots
+- **Cross-validation** ensuring each fill targets a valid slot, matches its `accepts` format, and (when the slot declares a `payload`) satisfies the slot's payload schema
 
 ## Running the Demo
 
@@ -50,6 +52,38 @@ The host declares three slots:
   ]
 }
 ```
+
+Each slot's `accepts` names the fragment formats it takes (`text/html`, `text/html+jsml`, `application/jsml+json`). A slot may also declare a `payload` (a full JSON Schema describing exactly what a valid fill looks like) and a `reserved` flag for surface declared ahead of any filler. The `style` modes (`inherit`, `isolated`, `scoped`) control how host styles reach the mounted fragment.
+
+## Health Panel Mod — Filling a Slot
+
+The health-panel mod declares which slot it fills via its `fills` object, keyed by host slot id:
+
+```json
+{
+  "name": "health-panel",
+  "version": "1.0.0",
+  "capabilities": ["ui-mount"],
+  "entry": "src/mod.js",
+  "fills": {
+    "sidebar.left": [
+      {
+        "id": "health-display",
+        "format": "text/html",
+        "source": "fragments/panel.html",
+        "bindings": [
+          { "name": "health", "path": "player.health" },
+          { "name": "maxHealth", "path": "player.maxHealth" },
+          { "name": "name", "path": "player.name" }
+        ],
+        "priority": 10
+      }
+    ]
+  }
+}
+```
+
+A fill can also declare a `handlers` array (entries shaped `{ selector, on, handler }`) to wire DOM events to sandbox functions. (`events` is a deprecated alias for `handlers`; if both are present, `handlers` wins.) The DOM-handler `handlers` array is distinct from a host's top-level `events` catalog: bindings are what you call, slots and handlers are what handles, `events` is what the host emits.
 
 ## Health Panel Fragment
 
@@ -95,7 +129,7 @@ hooks.fragment.update("inventory-list", function (bindings, fragment) {
 
 ## Loading Mods
 
-The host loads mods using `runtime.loadMod()`:
+The host loads mods using `runtime.loadMod()`, passing the mod manifest (with its `fills`) and the file sources it references:
 
 ```javascript
 const healthMod = runtime.loadMod(modManifest, {
@@ -106,7 +140,7 @@ const healthMod = runtime.loadMod(modManifest, {
 });
 ```
 
-Fragment sources are provided as a `Record<string, string>`; the runtime sanitizes them on load.
+Fragment sources are provided as a `Record<string, string>`; the runtime sanitizes them on load, cross-validates each fill against the host's slots, and resolves the fills into the slots they key.
 
 ## What Happens at Each Step
 

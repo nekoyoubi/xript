@@ -1,7 +1,7 @@
 {
 	"name": "@xriptjs/cli",
-	"version": "0.5.0",
-	"description": "Unified CLI for the xript ecosystem — validate, generate types, generate docs, scaffold projects, sanitize fragments, and scan annotations.",
+	"version": "0.6.0",
+	"description": "Unified CLI for the xript ecosystem — validate, generate types, generate docs, scaffold projects, sanitize fragments, scan annotations, run mods, and serve the same capabilities to agents over MCP.",
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
@@ -12,7 +12,8 @@
 		}
 	},
 	"files": [
-		"dist"
+		"dist",
+		"content"
 	],
 	"repository": {
 		"type": "git",
@@ -24,8 +25,9 @@
 		"xript": "./dist/cli.js"
 	},
 	"scripts": {
-		"build": "tsc",
-		"test": "node --test test/*.test.js",
+		"sync-content": "node scripts/sync-content.mjs",
+		"build": "npm run sync-content && tsc",
+		"test": "npm run sync-content && node --test test/*.test.js",
 		"prepublishOnly": "npm run build"
 	},
 	"keywords": [
@@ -41,11 +43,14 @@
 		"provenance": true
 	},
 	"dependencies": {
-		"@xriptjs/validate": "^0.5.0",
-		"@xriptjs/typegen": "^0.5.0",
-		"@xriptjs/docgen": "^0.5.0",
-		"@xriptjs/init": "^0.5.0",
-		"@xriptjs/sanitize": "^0.5.0"
+		"@modelcontextprotocol/sdk": "^1.12.0",
+		"@xriptjs/docgen": "^0.6.0",
+		"@xriptjs/init": "^0.6.0",
+		"@xriptjs/runtime": "^0.6.0",
+		"@xriptjs/sanitize": "^0.6.0",
+		"@xriptjs/typegen": "^0.6.0",
+		"@xriptjs/validate": "^0.6.0",
+		"zod": "^3.23.8"
 	},
 	"optionalDependencies": {
 		"ts-morph": "^25.0.0"

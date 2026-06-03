@@ -5,7 +5,7 @@ description: Interactive terminal wizard for manifest analysis — audit capabil
 
 import Terminal from '../../../components/Terminal.astro';
 
-`xript-wiz` is an interactive terminal wizard for working with xript manifests. Built in Rust, it dogfoods the xript ecosystem — its UI is rendered via `xript-ratatui`, the same fragment renderer available to any Rust host application.
+`xript-wiz` is an interactive terminal wizard for working with xript manifests. Built in Rust, it dogfoods the xript ecosystem; its UI is rendered via `xript-ratatui`, the same fragment renderer available to any Rust host application.
 
 ## Install
 
@@ -83,11 +83,13 @@ Analyzes a manifest's capability coverage and identifies security gaps. Enter a 
 The report covers:
 
 - **Capabilities summary** — count and risk distribution (low, medium, high)
-- **Ungated bindings** — bindings without capability gates (potential security surface)
+- **Ungated bindings and hooks** — entries without capability gates (potential security surface)
 - **Unused capabilities** — defined but never referenced (dead weight)
-- **Capability gaps** — referenced in bindings but never defined (incomplete manifest)
+- **Capability gaps** — referenced in bindings or hooks but never defined (incomplete manifest)
 
 The report border is green when clean, yellow when issues are found, red on errors.
+
+The wizard's Audit is a fast, in-tool security read of a single manifest. For the canonical analysis surfaces, reach for the CLI: `xript score` reports moddability capacity (how much extension surface the host exposes against a ceiling of exposing all of it), `xript score-diff` reports the capacity delta against a baseline, and `xript lint` is the findings-based reviewer that flags unused or deprecated surface. Those analyzers live in `@xriptjs/validate` and are also reachable over Model Context Protocol via `xript mcp`.
 
 ## Diff
 
@@ -115,7 +117,7 @@ Compares the current manifest against the version at the last git tag, surfacing
 	<div class="term-help">Tab complete · Enter diff · Esc back</div>
 </Terminal>
 
-The wizard runs `git describe --tags` to find the last tag, retrieves the old manifest via `git show`, and diffs the two. Sections with no changes are omitted. If nothing changed, the report reads "No changes since last tag."
+The wizard runs `git describe --tags --abbrev=0` to find the last tag, retrieves the old manifest via `git show`, and diffs the two. Sections with no changes are omitted. If nothing changed, the report reads "No changes since last tag."
 
 ## Keybindings
 

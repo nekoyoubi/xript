@@ -1,6 +1,6 @@
 {
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
-	"$id": "https://xript.dev/schema/mod-manifest/v0.3.json",
+	"$id": "https://xript.dev/schema/mod-manifest/v0.6.json",
 	"title": "xript Mod Manifest",
 	"description": "Declarative manifest for xript mods. Declares metadata, required capabilities, entry scripts, and UI fragment contributions.",
 	"type": "object",
@@ -15,7 +15,7 @@
 			"description": "The xript specification version this mod targets.",
 			"type": "string",
 			"pattern": "^\\d+\\.\\d+$",
-			"examples": ["0.3"]
+			"examples": ["0.6"]
 		},
 		"extends": {
 			"description": "One or more base mod manifests to inherit from. Resolved and deep-merged before validation: maps key-merge, arrays append, scalars are child-wins, and duplicate ids are an error. Paths are filesystem-relative to this manifest. Resolution is transitive with cycle detection.",
@@ -58,6 +58,11 @@
 			"type": "string",
 			"maxLength": 128
 		},
+		"license": {
+			"description": "The mod's license — an SPDX identifier or a short label (e.g. \"MIT\", \"Apache-2.0\", \"Proprietary\").",
+			"type": "string",
+			"maxLength": 128
+		},
 		"capabilities": {
 			"description": "Capabilities this mod requires from the host application.",
 			"type": "array",
@@ -72,13 +77,21 @@
 				{ "$ref": "#/$defs/entryBlock" }
 			]
 		},
+		"fills": {
+			"description": "The canonical contribution surface: an object keyed by host slot id, each value an array of fill entries. The inner shape of a fill is governed by the target slot's 'accepts' type (a fragment, a code-renderer entry, a role map, an event handler). Each filled slot id must exist in the host manifest, and the mod must hold the slot's capability if it declares one.",
+			"type": "object",
+			"additionalProperties": {
+				"type": "array",
+				"items": { "$ref": "#/$defs/fill" }
+			}
+		},
 		"fragments": {
-			"description": "UI fragment contributions targeting host-declared slots.",
+			"description": "DEPRECATED in favor of 'fills': a fragment is a fill of a fragment-format slot. Retained for back-compat; still validated, but emits a deprecation warning.",
 			"type": "array",
 			"items": { "$ref": "#/$defs/fragment" }
 		},
 		"contributions": {
-			"description": "Declarative contributions the mod makes to the host beyond UI fragments.",
+			"description": "DEPRECATED in favor of 'fills': 'provides' becomes a fill of a role-type slot. Retained for back-compat; still validated, but emits a deprecation warning.",
 			"type": "object",
 			"properties": {
 				"provides": {
@@ -92,6 +105,10 @@
 	},
 	"additionalProperties": false,
 	"$defs": {
+		"fill": {
+			"description": "A single fill engaging a host slot. The inner shape is governed by the target slot's 'accepts' type and is not policed here — a fragment fill carries 'format'/'source', a code-renderer fill carries 'kind'/'entry', a role fill carries 'fns', an event/hook fill carries 'handler'. Validation checks only that the slot exists and the mod holds its capability.",
+			"type": "object"
+		},
 		"providerRole": {
 			"description": "A logical role the mod provides, mapping logical method names to concrete export/global fn names the mod registers.",
 			"type": "object",
@@ -228,10 +245,15 @@
 					"type": "array",
 					"items": { "$ref": "#/$defs/fragmentBinding" }
 				},
-				"events": {
-					"description": "Event handlers that wire DOM events to sandboxed script functions.",
+				"handlers": {
+					"description": "DOM-event handlers that wire events on this fill to sandboxed script functions. Each entry pairs a selector, an event name, and a handler function name.",
 					"type": "array",
-					"items": { "$ref": "#/$defs/fragmentEvent" }
+					"items": { "$ref": "#/$defs/fragmentHandler" }
+				},
+				"events": {
+					"description": "DEPRECATED alias for 'handlers': the array holds event HANDLERS, not events, and was renamed accordingly. Still accepted; if both are present, 'handlers' wins. Migrate by renaming this property to 'handlers'.",
+					"type": "array",
+					"items": { "$ref": "#/$defs/fragmentHandler" }
 				},
 				"priority": {
 					"description": "Ordering priority within the target slot. Higher values render earlier. Ties broken alphabetically by fragment ID.",
@@ -257,7 +279,7 @@
 			},
 			"additionalProperties": false
 		},
-		"fragmentEvent": {
+		"fragmentHandler": {
 			"description": "A declarative event-to-handler mapping. The runtime attaches event listeners matching the selector and delegates to the named handler in the mod's sandboxed script.",
 			"type": "object",
 			"required": ["selector", "on", "handler"],
