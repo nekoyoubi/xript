@@ -82,6 +82,10 @@ export function render(md) { return renderMarkdown(md); }
 - **CommonJS guard applies:** registered library source is subject to the same `CommonJSDetectedError` detector as mod entries.
 - **Capability declaration integrity:** a library's `capability` scope must be declared in the manifest's `capabilities` map, the same rule that governs binding and slot gates.
 
+### Runtime requirements
+
+Libraries link at module-entry evaluation, so they ride the module path end to end. In the universal JS runtime that means the **async sandbox**: `initXriptAsync` + `loadModAsync`. The sync sandbox rejects module-format entries outright (`ModuleUnsupportedError`), and there is no other import site — a host on the sync path adopts the async runtime first, then adds `libraries`. The Node, Rust, and C# runtimes evaluate modules on their standard load paths, so no equivalent split exists there.
+
 ### What stays host-side
 
 The library lift is for **pure compute** — markdown rendering, date math, validation, formatting: code that needs no privilege beyond the sandbox. Anything touching host state, the filesystem, or the network stays a **host binding** (host-side execution, JSON boundary, per-function capability). The two columns are complementary, not competing; a host typically offers both.
