@@ -53,6 +53,8 @@ A slot or capability marked `reserved: true` is aspirational: surface declared a
 
 ## What it does not measure
 
+The gauge is also **scoped to the one manifest you hand it**. A host that splits its surface across trust boundaries (an addon-contract manifest and a separate fragment-surface manifest, say) should score each manifest on its own terms; a library exposed only on the fragment surface will not, and should not, register on the addon contract's capacity. Don't pad a manifest with surface nothing on that contract uses just to move the number.
+
 `score` cannot tell whether a binding or hook is *called from inside a mod's script*; that lives in the script, not the manifest. And it cannot tell whether the host/mod boundary is *drawn correctly*: it can confirm the surface is exposed and the contract holds, but it cannot read intent. A 100 means all five surfaces are open and the contract holds, not that the design is right. Use the score as a floor and a litmus; use [`xript lint`](/tools/lint/) for the actionable list of dead slots and vestigial capabilities behind the number, and the [host/mod boundary](/guidance/boundary/) doctrine for the judgment neither tool can make.
 
 ## Gating in CI
