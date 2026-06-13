@@ -30,11 +30,12 @@ export default defineConfig({
 			],
 			sidebar: [
 				{
-					label: "About",
+					label: "Start Here",
 					items: [
 						{ label: "Vision", slug: "vision" },
-						{ label: "Adoption Tiers", slug: "adoption-tiers" },
 						{ label: "Getting Started", slug: "getting-started" },
+						{ label: "Adoption Tiers", slug: "adoption-tiers" },
+						{ label: "Changelog", slug: "changelog" },
 					],
 				},
 				{
@@ -45,21 +46,33 @@ export default defineConfig({
 						{ label: "Mod zero", slug: "guidance/mod-zero" },
 						{ label: "The host/mod boundary", slug: "guidance/boundary" },
 						{ label: "More extensible, not less", slug: "guidance/openness" },
-						{ label: "Authoring a mod", slug: "guidance/authoring" },
-						{ label: "Hosting xript", slug: "guidance/hosting" },
-						{ label: "Hosting: rendering fragments", slug: "guidance/host-fragments" },
-						{ label: "Hosting: granting capabilities", slug: "guidance/host-capabilities" },
-						{ label: "Hosting: mounting slots", slug: "guidance/host-slots" },
-						{ label: "Hosting: resolving roles", slug: "guidance/host-roles" },
-						{ label: "Hosting: firing hooks & events", slug: "guidance/host-hooks" },
-						{ label: "Hosting: limits, cancellation & audit", slug: "guidance/host-safety" },
-						{ label: "Adoption tiers", slug: "guidance/tiers" },
+					],
+				},
+				{
+					label: "Hosting xript",
+					items: [
+						{ label: "Overview", slug: "guidance/hosting" },
+						{ label: "Rendering fragments", slug: "guidance/host-fragments" },
+						{ label: "Granting capabilities", slug: "guidance/host-capabilities" },
+						{ label: "Mounting slots", slug: "guidance/host-slots" },
+						{ label: "Resolving roles", slug: "guidance/host-roles" },
+						{ label: "Firing hooks & events", slug: "guidance/host-hooks" },
+						{ label: "Limits, cancellation & audit", slug: "guidance/host-safety" },
+					],
+				},
+				{
+					label: "Authoring Mods",
+					items: [
+						{ label: "Your first mod", slug: "mods/first-mod" },
+						{ label: "Authoring against a host", slug: "guidance/authoring" },
 					],
 				},
 				{
 					label: "Specification",
 					items: [
+						{ label: "Overview", slug: "spec" },
 						{ label: "Manifest", slug: "spec/manifest" },
+						{ label: "Manifest Inheritance", slug: "spec/extends" },
 						{ label: "Mod Manifest", slug: "spec/mod-manifest" },
 						{ label: "Fragments", slug: "spec/fragments" },
 						{ label: "Fragment Formats", slug: "spec/fragment-formats" },
@@ -67,6 +80,7 @@ export default defineConfig({
 						{ label: "Bindings", slug: "spec/bindings" },
 						{ label: "Hooks", slug: "spec/hooks" },
 						{ label: "Module-Format Mods", slug: "spec/modules" },
+						{ label: "Host Harness", slug: "spec/harness" },
 						{ label: "Debugging", slug: "spec/debugging" },
 						{ label: "Security", slug: "spec/security" },
 						{ label: "Annotations", slug: "spec/annotations" },

@@ -10,7 +10,7 @@ A manifest is a JSON file conforming to the [manifest JSON Schema](./manifest.sc
 
 ```json
 {
-  "xript": "0.1",
+  "xript": "0.7",
   "name": "my-app"
 }
 ```
@@ -21,9 +21,9 @@ From there, complexity is layered on only as needed. The schema is designed so t
 
 ### `xript` (required)
 
-The specification version this manifest conforms to. This is not the application's version — it's the version of the xript spec the manifest was written against. Runtimes use this to determine which features and validation rules apply.
+The specification version this manifest conforms to. This is not the application's version; it's the version of the xript spec the manifest was written against. Runtimes use this to determine which features and validation rules apply.
 
-Format: `major.minor` (e.g., `"0.1"`). Patch versions are intentionally excluded — the spec level doesn't change for non-breaking fixes.
+Format: `major.minor` (e.g., `"0.1"`). Patch versions are intentionally excluded, since the spec level doesn't change for non-breaking fixes.
 
 ### `name` (required)
 
@@ -33,7 +33,7 @@ Constraints: lowercase letters, numbers, and hyphens. Must start with a letter. 
 
 ### `version`
 
-The version of the application's scripting API, following semver. This is distinct from `xript` — it tracks how the application's exposed bindings evolve over time.
+The version of the application's scripting API, following semver. This is distinct from `xript`; it tracks how the application's exposed bindings evolve over time.
 
 When a binding is added, the minor version increments. When a binding's signature changes in a breaking way, the major version increments. This versioning drives compatibility checks and generated type package versioning.
 
@@ -101,7 +101,7 @@ Namespaces group related functions. They create the `namespace.function()` calli
 }
 ```
 
-Namespaces can nest arbitrarily (`game.world.weather.setRain()`), but deep nesting is discouraged — two levels is usually plenty.
+Namespaces can nest arbitrarily (`game.world.weather.setRain()`), but deep nesting is discouraged; two levels is usually plenty.
 
 A binding is distinguished as a namespace by the presence of `members`. A binding with both `members` and `params` is invalid.
 
@@ -130,7 +130,7 @@ Capabilities implement the default-deny security model. Every capability is a na
 
 Capabilities are referenced by name in function bindings via the `capability` field. A function with `"capability": "filesystem"` is only callable if the script has been granted the `filesystem` capability.
 
-The `risk` field is advisory — it helps users make informed decisions about what to grant. It does not affect runtime behavior. Runtimes may use it to display warnings or require additional confirmation for `high` risk capabilities.
+The `risk` field is advisory; it helps users make informed decisions about what to grant. It does not affect runtime behavior. Runtimes may use it to display warnings or require additional confirmation for `high` risk capabilities.
 
 Functions without a `capability` field are always available to any script. This is intentional: the common case is that most bindings are safe read-only operations that don't need gating.
 
@@ -169,7 +169,7 @@ An object type can be marked `"abstract": true` to declare a contract hole with 
 }
 ```
 
-An enum type can also be abstract — a `description` with `"abstract": true` and no `values` — leaving the concrete `values` for an extending manifest to fill. See [Filling Abstract Types](./extends.md#the-three-moves-add-fill-refine).
+An enum type can also be abstract: a `description` with `"abstract": true` and no `values`, leaving the concrete `values` for an extending manifest to fill. See [Filling Abstract Types](./extends.md#the-three-moves-add-fill-refine).
 
 ### Field Defaults and Inline Enums
 
@@ -218,7 +218,7 @@ The shorthand `"string[]"` is equivalent to `{ "array": "string" }`. Both are va
 
 ## Slots
 
-Slots are the host's typed fill surface — the counterpart to bindings. A binding is a callable the host implements and the mod *calls*. A slot is a typed plug-point the host declares and the mod *fills*. Everything a mod contributes is a fill of a slot; the slot's `accepts` type governs what a valid fill looks like and what the host does with it (mount it, call it, resolve it, fire it).
+Slots are the host's typed fill surface, the counterpart to bindings. A binding is a callable the host implements and the mod *calls*. A slot is a typed plug-point the host declares and the mod *fills*. Everything a mod contributes is a fill of a slot; the slot's `accepts` type governs what a valid fill looks like and what the host does with it: mount it, call it, resolve it, fire it.
 
 ```json
 {
@@ -254,7 +254,7 @@ A slot's `accepts` names the format(s) or kind(s) of fill it takes. The type det
 - **Fragment-format slots** — `accepts` names a fragment format (`text/html+jsml`, `application/jsml+json`, `text/html`). The host *mounts* the fill as an inert fragment. The [fragment protocol](./fragments.md) is the semantics of this slot type.
 - **Code-renderer slots** — `accepts` names an executable renderer kind (e.g. `application/javascript+esm`). The host *loads and runs* the fill's code to paint the slot.
 - **Role slots** — `accepts` is `application/x-xript-role`. The host *resolves* the fill's logical-to-concrete function map and calls the named functions itself.
-- **Event slots** — `accepts` is `application/x-xript-hook`. The host *fires* the slot, calling each fill's named handler when the event occurs. This is the modern replacement for the standalone `hooks` concept below.
+- **Event slots** — `accepts` is `application/x-xript-hook`; the host *fires* the slot, calling each fill's named handler when the event occurs. This is the modern replacement for the standalone `hooks` concept below.
 
 Mods fill slots through the `fills` surface in their mod manifest; see [mod-manifest.md](./mod-manifest.md).
 
@@ -268,7 +268,7 @@ For fragment-format slots, `style` controls how host styles reach the fragment:
 
 ## Hooks (deprecated — use event-typed slots)
 
-> **Deprecated.** A lifecycle hook is an event-typed slot (`accepts: ["application/x-xript-hook"]`) whose fills are handlers the host calls when the event fires. Declare lifecycle events as slots and let mods fill them. The `hooks` field remains allowed for back-compat — hosts still fire hooks and runtimes still dispatch them — but new manifests should model events as slots. See [hooks.md](./hooks.md).
+> **Deprecated.** A lifecycle hook is an event-typed slot (`accepts: ["application/x-xript-hook"]`) whose fills are handlers the host calls when the event fires. Declare lifecycle events as slots and let mods fill them. The `hooks` field remains allowed for back-compat. Hosts still fire hooks and runtimes still dispatch them, but new manifests should model events as slots. See [hooks.md](./hooks.md).
 
 Hooks are the reverse of bindings. While bindings let scripts call the host, hooks let the host call scripts. They enable the event-driven programming model that real modding requires: "when the player takes damage," "before the game saves," "after a level loads."
 
@@ -331,7 +331,7 @@ See [hooks.md](./hooks.md) for the full hook conventions, error handling, and Ty
 
 ## Events (Host Broadcast Catalog)
 
-The optional top-level `events` array is a discovery declaration of the named events a host **emits** and the payload each carries. It is consumer-agnostic: it says "here is what this application broadcasts," without presupposing who listens. A sandbox script may subscribe, the host's own UI may react, an external subscriber may observe — the catalog names the signal, not its audience.
+The optional top-level `events` array is the named events a host **emits** and the payload each carries. It says "here is what this application broadcasts," and through the shared dispatch engine that hooks already use, it is *deliverable*: a sandbox script subscribes with `events.on("<id>", handler)`, the host's own UI may react, an external subscriber may observe. The catalog names the signal; sandbox delivery rides the hook registry/fire engine rather than introducing a parallel event subsystem (see [Event Delivery](./hooks.md#event-delivery)).
 
 ```json
 {
@@ -343,7 +343,8 @@ The optional top-level `events` array is a discovery declaration of the named ev
     },
     {
       "id": "level.loaded",
-      "description": "Broadcast after a level finishes loading and is interactive."
+      "description": "Broadcast after a level finishes loading and is interactive.",
+      "capability": "read:world"
     }
   ]
 }
@@ -356,18 +357,50 @@ The optional top-level `events` array is a discovery declaration of the named ev
 | `id` | string | yes | Event identifier, the name the host broadcasts under |
 | `description` | string | yes | What the event signals and when it fires |
 | `payload` | typeRef | no | The type of the data carried with the event (a [type reference](#type-references)) |
+| `capability` | capabilityRef | no | Capability required to subscribe via `events.on`. If omitted, any script may subscribe. Gated at registration time, reusing the hook gate model. |
 
 ### Three Surfaces, One Distinction
 
 `events`, event-typed slots, and fragment handlers all touch "events," but they answer different questions, and the manifest keeps the line clean:
 
-- **`events` (this surface)** — *what the host emits.* A declaration of broadcasts the application produces. Consumers are not presupposed; declaring an event wires up no listener.
+- **`events` (this surface)** — *what the host emits.* A catalog of broadcasts the application produces. A sandbox script subscribes with `events.on(id, fn)`; the host delivers with `emit(id, payload)`. (See [Event Delivery](./hooks.md#event-delivery).)
 - **Event-typed slots** (`accepts: ["application/x-xript-hook"]`) — *extension points addons fill.* The host declares the plug-point; a mod fills it with a handler the host calls when the event fires. (See [Slot Types](#slot-types).)
 - **Fragment `handlers`** — *DOM responses on a fragment fill.* A `{ selector, on, handler }` entry wiring a sandboxed function to a DOM event on mounted markup. (See the [fragment protocol](./fragments.md#event-routing).)
 
-In one line: bindings are *what you can call*, slots and fragment handlers are *what handles*, and `events` is *what the host emits*.
+In one line: bindings are *what you can call*, slots and fragment handlers are *what handles*, and `events` is *what the host emits and a mod subscribes to*.
 
-The catalog is a source of truth for documentation and code generation — typegen emits a typed event catalog, docgen renders an events section. As with the rest of the manifest, xript declares the shape; the host owns dispatch.
+The catalog is a source of truth for documentation and code generation: typegen emits a typed event catalog, docgen renders an events section. Sandbox delivery and the event-typed-slot hook dispatch share one engine: a keyed handler registry plus a fire-from-registry pass. As with the rest of the manifest, xript declares the shape; the host owns dispatch.
+
+## Libraries (Approved Import Allow-List)
+
+The optional top-level `libraries` map is the host's **curated allow-list of importable libraries**: whole pre-bundled modules (a markdown renderer, a date library) that mod code may pull in with a real static `import`. Imports stay default-deny; an entry here is the only thing that lifts the deny, and only for mods holding the entry's capability. This is the capability model applied to modules: the host curates *which* libraries exist, the capability gates *which mods* may import each.
+
+```json
+{
+  "libraries": {
+    "@example/doc": {
+      "description": "Shared markdown + doc rendering.",
+      "capability": "lib.doc",
+      "version": "^1.0.0"
+    },
+    "luxon": {
+      "description": "Date/time parsing, formatting, and arithmetic.",
+      "capability": "lib.luxon"
+    }
+  }
+}
+```
+
+An approved library runs **inside the sandbox at the importing mod's own privilege**: full-fidelity calls, no JSON boundary, and no new power granted. The manifest declares the allow-list; the host supplies each library's source when it constructs the runtime. A library must be **import-clean** (a self-contained bundle with no imports of its own), and its `capability` scope must be declared in `capabilities` like any other gate. Contrast with bindings: a binding runs *host-side* with host privilege behind a JSON boundary; a library runs *sandbox-side* with mod privilege. Pure compute belongs in a library; privileged operations stay bindings. Full semantics, the resolution order, and the import-clean rule live in [Modules — Approved Libraries](./modules.md#approved-libraries).
+
+### Library Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `description` | string | yes | What the library provides to mod code |
+| `capability` | capabilityRef | no | Capability a mod must hold to import it. If omitted, any mod may import it. Checked at link time under subsumption (`lib` ⊇ `lib.doc`) |
+| `version` | string | no | The version or semver range the host ships (the contract mod authors compile against) |
+| `deprecated` | string | no | If present, the library is deprecated; the value says what to use instead |
 
 ## Execution Limits
 
@@ -383,7 +416,7 @@ The `limits` section sets default bounds for script execution:
 }
 ```
 
-These are defaults that runtimes enforce unless the host application overrides them at runtime. They exist in the manifest so that the application author can declare sensible defaults for their use case — a game mod system might allow 100ms per frame tick, while a data processing tool might allow 30 seconds.
+These are defaults that runtimes enforce unless the host application overrides them at runtime. They exist in the manifest so that the application author can declare sensible defaults for their use case: a game mod system might allow 100ms per frame tick, while a data processing tool might allow 30 seconds.
 
 ## Adoption Tiers
 
@@ -395,7 +428,7 @@ The simplest manifest. No bindings, no capabilities. The application uses xript 
 
 ```json
 {
-  "xript": "0.1",
+  "xript": "0.7",
   "name": "calculator"
 }
 ```
@@ -408,7 +441,7 @@ The application exposes a few functions. No capabilities needed because everythi
 
 ```json
 {
-  "xript": "0.1",
+  "xript": "0.7",
   "name": "my-game",
   "version": "1.0.0",
   "title": "My Game",
@@ -439,7 +472,7 @@ See the [game mod system example](../examples/game-mod-system/) for a full tier 
 
 ### Tier 4: Full Feature
 
-Slots and mod manifests. The host declares typed slots; mods fill them — fragments that bind to host state and handle interaction, roles the host resolves, event handlers the host fires.
+Slots and mod manifests. The host declares typed slots; mods fill them: fragments that bind to host state and handle interaction, roles the host resolves, event handlers the host fires.
 
 See the [UI dashboard example](../examples/ui-dashboard/) for a full tier 4 integration.
 
@@ -449,7 +482,7 @@ A manifest may inherit from one or more base manifests via the optional top-leve
 
 ```jsonc
 {
-  "xript": "0.3",
+  "xript": "0.7",
   "extends": "./host.json",
   "name": "my-workflow",
   "bindings": { /* only new bindings; base bindings are merged in */ }
@@ -464,13 +497,13 @@ Resolution happens before schema validation, performed identically by loaders an
 - **Transitive with cycle detection**: a base may itself `extends` another; cycles error.
 - **Paths are relative** to the extending manifest's location. Remote and URL bases are not supported in this version.
 
-When `extends` is an array, bases merge left-to-right (the child applies last). The resolved manifest is a flat, schema-valid manifest — the runtime never sees `extends` after resolution.
+When `extends` is an array, bases merge left-to-right (the child applies last). The resolved manifest is a flat, schema-valid manifest; the runtime never sees `extends` after resolution.
 
-A name present in both base and child resolves by one of three moves — **add** a name the base never declared, **fill** an abstract base type, or **refine** a concrete one with `refines: true`. An un-opted concrete-name collision is an error, not a silent override. The full model — abstract types, the three moves, deep-merge semantics, and the `abstract-type-unfilled` lint — is documented in [Manifest Extension and Inheritance](./extends.md).
+A name present in both base and child resolves by one of three moves: **add** a name the base never declared, **fill** an abstract base type, or **refine** a concrete one with `refines: true`. An un-opted concrete-name collision is an error, not a silent override. The full model (abstract types, the three moves, deep-merge semantics, and the `abstract-type-unfilled` lint) is documented in [Manifest Extension and Inheritance](./extends.md).
 
 ## Mod Manifest `family`
 
-The mod manifest carries an optional top-level `family` string (pattern `^[a-z][a-z0-9-]*$`) for host-side grouping of addons (e.g. a nav rail). When absent, hosts fall back to name-prefix heuristics. The runtime stores and round-trips `family` but does not branch on it — grouping is host policy. `display_name` is intentionally not added; the existing `title` field covers it.
+The mod manifest carries an optional top-level `family` string (pattern `^[a-z][a-z0-9-]*$`) for host-side grouping of addons (e.g. a nav rail). When absent, hosts fall back to name-prefix heuristics. The runtime stores and round-trips `family` but does not branch on it; grouping is host policy. `display_name` is intentionally not added; the existing `title` field covers it.
 
 ## Host-Invokable Exports
 
@@ -493,11 +526,11 @@ A mod's `entry` block may declare named exports the host can invoke and whose re
 }
 ```
 
-The bare `entry: "main.js"` / `entry: ["a.js", "b.js"]` forms remain valid (script mode, no exports). The entry script registers each declared export via the runtime-injected `xript.exports.register(name, fn)`; the host invokes by name with JSON-serializable args and receives a JSON-serializable result. Invoking an undeclared or unregistered export, or an export that throws, surfaces a typed invocation error. An export may declare a required `capability`; invoking it without the grant throws a capability-denied error. **Streaming (partial results) is not yet specified** — only request → single-response is defined in this version.
+The bare `entry: "main.js"` / `entry: ["a.js", "b.js"]` forms remain valid (script mode, no exports). The entry script registers each declared export via the runtime-injected `xript.exports.register(name, fn)`; the host invokes by name with JSON-serializable args and receives a JSON-serializable result. Invoking an undeclared or unregistered export, or an export that throws, surfaces a typed invocation error. An export may declare a required `capability`; invoking it without the grant throws a capability-denied error. **Streaming (partial results) is not yet specified.** Only request → single-response is defined in this version.
 
 ## Role Slots and Resolution
 
-A role slot (`accepts: ["application/x-xript-role"]`) is a host-declared plug-point that any mod can fill. Instead of core UI hardcoding a mod-specific global function name, the host declares a role slot, mods fill it with a logical-to-concrete function map, and the host asks the runtime to resolve the slot — getting back the mod that fills it plus the map from logical method names to the concrete function names that mod registered.
+A role slot (`accepts: ["application/x-xript-role"]`) is a host-declared plug-point that any mod can fill. Instead of core UI hardcoding a mod-specific global function name, the host declares a role slot, mods fill it with a logical-to-concrete function map, and the host asks the runtime to resolve the slot, getting back the mod that fills it plus the map from logical method names to the concrete function names that mod registered.
 
 A mod fills a role slot through its `fills` surface (see [mod-manifest.md](./mod-manifest.md)). The fill is the `fns` map:
 
@@ -538,7 +571,7 @@ A resolution returns `{ addon, role, fns }` where `addon` is the filling mod's `
 
 - **xript never calls the resolved fns.** It returns the name map; the host invokes the concrete functions through its existing export or binding path.
 - **Filling a role slot grants no capability.** The functions it points at remain ordinary exports/bindings gated by their own capabilities. Default-deny is preserved.
-- A role slot with no fill resolves cleanly to `null`/`None` — never an error.
+- A role slot with no fill resolves cleanly to `null`/`None`, never an error.
 - xript stores no preference state and persists nothing; the preference map is host-supplied per run, driven from the host's own settings.
 - `resolve_role` returns only the winner; `resolve_role_all` exposes the full ordered candidate set so the host can build its own picker UI.
 
@@ -553,7 +586,7 @@ Runtimes should validate the `xript` field first and reject manifests with unsup
 
 ## Domain Schema Extension
 
-xript is an extensibility substrate, and that posture extends to its own vocabulary. The core manifest schema is meant to be *extended*, not fenced off: a domain — a particular kind of host, a product family, a deployment context — can add its own top-level surfaces to the manifest and still validate cleanly.
+xript is an extensibility substrate, and that posture extends to its own vocabulary. The core manifest schema is meant to be *extended*, not fenced off: a domain (a particular kind of host, a product family, a deployment context) can add its own top-level surfaces to the manifest and still validate cleanly.
 
 ### Extending the Core Vocabulary
 
@@ -563,7 +596,7 @@ The top-level manifest object uses `unevaluatedProperties: false` rather than a 
 {
   "$schema": "https://example.dev/schemas/my-domain-manifest.schema.json",
   "allOf": [
-    { "$ref": "https://xript.dev/schema/manifest/v0.6.json" },
+    { "$ref": "https://xript.dev/schema/manifest/v0.7.json" },
     {
       "properties": {
         "myDomainSurface": { "type": "object" }
@@ -583,8 +616,8 @@ A manifest may name the schema it was written against via the standard `$schema`
 2. **Local path**, relative to the manifest → the schema at that path, resolved the same way `extends` resolves a base path.
 3. **Remote `http(s)` URL** → fetched, with a local cache keyed by URL. A cache hit uses the cached copy; the resolved schema is pinned so a given manifest validates reproducibly across runs.
 
-When the network is unavailable or a remote schema is uncached and unreachable, validation **falls back to bundled core with a surfaced warning** — it never hard-fails on a schema fetch. Openness beats brittleness: a host should be able to validate the parts of a manifest it understands even when a domain schema is momentarily out of reach.
+When the network is unavailable or a remote schema is uncached and unreachable, validation **falls back to bundled core with a surfaced warning**; it never hard-fails on a schema fetch. Openness beats brittleness: a host should be able to validate the parts of a manifest it understands even when a domain schema is momentarily out of reach.
 
-Remote resolution is **open by default.** A host opts *out* of openness — by setting an allowlist of permitted schema origins, or disabling remote resolution entirely — rather than opting in. Reflexive lockdown is off-brand for an extensibility substrate; a restriction is justified only where it buys real security or convenience the framework could not otherwise provide.
+Remote resolution is **open by default.** A host opts *out* of openness by setting an allowlist of permitted schema origins, or by disabling remote resolution entirely, rather than opting in. Reflexive lockdown is off-brand for an extensibility substrate; a restriction is justified only where it buys real security or convenience the framework could not otherwise provide.
 
-This is safe to honor because **schema validation is not the security boundary — the capability model is.** A declared schema describes shape; it grants no capability and confers no power. Validating against a domain or remote schema cannot widen what a script may do. The real concerns a remote schema raises are operational — offline behavior, reproducibility, and fetch safety — and those are handled by the cache, the schema pin, the bundled-core fallback, and the optional origin restriction, not by refusing to look.
+This is safe to honor because **schema validation is not the security boundary; the capability model is.** A declared schema describes shape; it grants no capability and confers no power. Validating against a domain or remote schema cannot widen what a script may do. The real concerns a remote schema raises are operational (offline behavior, reproducibility, and fetch safety), and those are handled by the cache, the schema pin, the bundled-core fallback, and the optional origin restriction, not by refusing to look.

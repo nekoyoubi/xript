@@ -266,3 +266,86 @@ describe("tools", () => {
 		assert.doesNotMatch(textOf(result), /absolute/i);
 	});
 });
+
+describe("mcp harnessed host sessions", () => {
+	const HOST = {
+		xript: "0.7",
+		name: "mcp-harness-host",
+		capabilities: { fs: { description: "file access" } },
+		bindings: {
+			fs: { description: "files", members: { read: { description: "read", capability: "fs", returns: "string" } } },
+		},
+		events: [{ id: "tick", description: "frame" }],
+	};
+	const MOD = {
+		xript: "0.6",
+		name: "mcp-probe",
+		version: "1.0.0",
+		capabilities: ["fs"],
+		entry: { script: "mod.js", format: "module", exports: { probe: { description: "p" } } },
+	};
+	const MOD_SOURCE = "export function probe(path) { return fs.read(path); }";
+
+	it("registers the session tool family", async () => {
+		const { client } = await connectedClient();
+		const { tools } = await client.listTools();
+		const names = tools.map((tool) => tool.name);
+		for (const expected of ["xript_host_load", "xript_host_step", "xript_host_journal", "xript_host_list", "xript_host_unload"]) {
+			assert.ok(names.includes(expected), `missing tool ${expected}`);
+		}
+	});
+
+	it("drives a full load → step → journal → unload session", async () => {
+		const { client } = await connectedClient();
+		const loaded = await client.callTool({
+			name: "xript_host_load",
+			arguments: {
+				manifest: JSON.stringify(HOST),
+				harness: JSON.stringify({ bindings: { "fs.read": { returns: "session content" } } }),
+			},
+		});
+		assert.notEqual(loaded.isError, true, textOf(loaded));
+		const { hostId, summary } = JSON.parse(textOf(loaded));
+		assert.equal(summary.host, "mcp-harness-host");
+		assert.deepEqual(summary.capabilities, ["fs"]);
+
+		const listed = await client.callTool({ name: "xript_host_list", arguments: {} });
+		assert.ok(JSON.parse(textOf(listed)).some((entry) => entry.id === hostId));
+
+		const modLoad = await client.callTool({
+			name: "xript_host_step",
+			arguments: { hostId, action: "load-mod", manifest: JSON.stringify(MOD), source: MOD_SOURCE },
+		});
+		assert.notEqual(modLoad.isError, true, textOf(modLoad));
+
+		const invoked = await client.callTool({
+			name: "xript_host_step",
+			arguments: { hostId, action: "invoke", exportName: "probe", args: ["mcp.txt"] },
+		});
+		assert.notEqual(invoked.isError, true, textOf(invoked));
+		assert.equal(JSON.parse(textOf(invoked)), "session content");
+
+		const emitted = await client.callTool({
+			name: "xript_host_step",
+			arguments: { hostId, action: "emit", event: "tick", payload: 3 },
+		});
+		assert.notEqual(emitted.isError, true, textOf(emitted));
+
+		const journal = await client.callTool({ name: "xript_host_journal", arguments: { hostId } });
+		const entries = JSON.parse(textOf(journal));
+		assert.ok(entries.some((entry) => entry.kind === "binding" && entry.binding === "fs.read" && entry.returned === "session content"));
+
+		const unloaded = await client.callTool({ name: "xript_host_unload", arguments: { hostId } });
+		assert.notEqual(unloaded.isError, true);
+
+		const gone = await client.callTool({ name: "xript_host_journal", arguments: { hostId } });
+		assert.equal(gone.isError, true);
+	});
+
+	it("errors cleanly on an unknown session id", async () => {
+		const { client } = await connectedClient();
+		const result = await client.callTool({ name: "xript_host_step", arguments: { hostId: "host-999", action: "invoke", exportName: "x" } });
+		assert.equal(result.isError, true);
+		assert.match(textOf(result), /xript_host_load/);
+	});
+});

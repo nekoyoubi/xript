@@ -1,7 +1,4 @@
----
-title: Fragment Formats
-description: "The same fragment protocol across HTML, JSML, terminal UI, and desktop apps."
----
+# Fragment Formats
 
 The fragment protocol is format-agnostic by design. A host declares a fragment-format slot whose `accepts` names the formats it takes; a mod fills that slot with an inert fragment in one of those formats. The bindings, DOM handlers, and lifecycle are universal. Only the rendering changes.
 

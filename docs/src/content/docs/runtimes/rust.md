@@ -28,7 +28,7 @@ xript-runtime = "0.6"
 use xript_runtime::{create_runtime, RuntimeOptions, HostBindings, ConsoleHandler};
 
 let manifest_json = r#"{
-    "xript": "0.1",
+    "xript": "0.7",
     "name": "my-app",
     "bindings": {
         "greet": {
@@ -79,7 +79,7 @@ let runtime = create_runtime_from_file(
 use xript_runtime::{create_runtime_from_value, RuntimeOptions, HostBindings, ConsoleHandler};
 
 let manifest = serde_json::json!({
-    "xript": "0.1",
+    "xript": "0.7",
     "name": "my-app"
 });
 

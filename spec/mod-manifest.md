@@ -11,7 +11,7 @@ A host declares a surface of named, typed plug-points called **slots**. A mod en
 - **bindings** — callables the host implements; the mod *calls* them.
 - **fills** — typed plug-points the host declares as slots; the mod *fills* them.
 
-Everything a mod contributes is a fill. A UI fragment, a provider role, and a lifecycle hook handler are not separate top-level concepts — each is a fill of a slot of a particular type. The target slot's `accepts` type governs what a valid fill looks like and what the host does with it: mount it, call it, resolve it, or fire it.
+Everything a mod contributes is a fill. A UI fragment, a provider role, and a lifecycle hook handler are not separate top-level concepts; each is a fill of a slot of a particular type. The target slot's `accepts` type governs what a valid fill looks like and what the host does with it: mount it, call it, resolve it, or fire it.
 
 See [manifest.md](./manifest.md) for how a host declares slots.
 
@@ -37,7 +37,7 @@ See [manifest.md](./manifest.md) for how a host declares slots.
 
 ## Capabilities
 
-`capabilities` is a flat array of capability names the mod needs — what it *takes*. It is the gate on every binding the mod calls and every slot it fills. A mod that fills a capability-gated slot, or calls a capability-gated binding, must list that capability here.
+`capabilities` is a flat array of capability names the mod needs, what it *takes*. It is the gate on every binding the mod calls and every slot it fills. A mod that fills a capability-gated slot, or calls a capability-gated binding, must list that capability here.
 
 ```json
 {
@@ -68,7 +68,7 @@ The `entry` block declares the mod's code and the named API the host can invoke.
 }
 ```
 
-The bare `entry: "main.js"` and `entry: ["a.js", "b.js"]` forms remain valid (script mode, no exports). The entry script registers each declared export via the runtime-injected `xript.exports.register(name, fn)`; the host invokes by name with JSON-serializable args and receives a JSON-serializable result. Invoking an undeclared or unregistered export, or an export that throws, surfaces a typed invocation error. An export may declare a required `capability`; invoking it without the grant throws a capability-denied error. **Streaming (partial results) is not yet specified** — only request → single-response is defined in this version.
+The bare `entry: "main.js"` and `entry: ["a.js", "b.js"]` forms remain valid (script mode, no exports). The entry script registers each declared export via the runtime-injected `xript.exports.register(name, fn)`; the host invokes by name with JSON-serializable args and receives a JSON-serializable result. Invoking an undeclared or unregistered export, or an export that throws, surfaces a typed invocation error. An export may declare a required `capability`; invoking it without the grant throws a capability-denied error. **Streaming (partial results) is not yet specified.** Only request → single-response is defined in this version.
 
 Slot fills reference these exports by name (see the fill shapes below).
 
@@ -95,7 +95,7 @@ Slot fills reference these exports by name (see the fill shapes below).
 }
 ```
 
-A fill engages exactly one slot — the key it lives under. The inner shape of a fill entry is governed by that slot's `accepts` type, which the host owns. The mod manifest does not redeclare the slot's type; it conforms to it.
+A fill engages exactly one slot: the key it lives under. The inner shape of a fill entry is governed by that slot's `accepts` type, which the host owns. The mod manifest does not redeclare the slot's type; it conforms to it.
 
 ### Representative Fill Shapes
 
@@ -142,6 +142,17 @@ The `accepts` type a slot declares determines the fill's shape and what the host
 }
 ```
 
+**Data slot** (`accepts` names a data format the host reads, e.g. `application/json`). The fill is pure metadata — no fragment, no code, no handler. The host reads it and applies its own policy. This is the canonical shape for grouping and curation surfaces: a host that wants mods to declare collection membership, ordering, or pack-style bundles declares a data slot with a `payload` schema describing the metadata, and a "grouping mod" is simply a mod whose only contribution is a data fill.
+
+```json
+{
+  "members": ["mod-one", "mod-two", "mod-three"],
+  "label": "Starter Pack"
+}
+```
+
+The slot's `payload` schema validates the fill's shape (`xript validate --cross` enforces it); what the host *does* with the metadata (discovery gating, ordering, bundling) is host policy, deliberately outside the spec. No dedicated grouping primitive exists because none is needed: a typed slot plus a payload-schema'd data fill already carries the whole pattern.
+
 ### Multiple Fills per Slot
 
 The value under each slot id is always an array. A slot the host declared with `"multiple": true` accepts more than one fill; a single-fill slot resolves a deterministic winner (the [fragment protocol](./fragments.md) defines ordering for fragment-format slots). Authoring a single fill still uses a one-element array.
@@ -153,7 +164,7 @@ When a mod is loaded against a host, the runtime validates each slot id in `fill
 1. The slot id must exist in the host's `slots` (matched by `id`).
 2. If the slot declares a `capability`, the mod must list that capability in its `capabilities`.
 
-The runtime does **not** police the inner shape of a fill — that is the slot type's contract, enforced by whatever consumes the fill (the fragment processor, the renderer, the role resolver, the hook dispatcher). A fill into an undeclared slot, or into a capability-gated slot the mod lacks the capability for, is an error.
+The runtime does **not** police the inner shape of a fill; that is the slot type's contract, enforced by whatever consumes the fill (the fragment processor, the renderer, the role resolver, the hook dispatcher). A fill into an undeclared slot, or into a capability-gated slot the mod lacks the capability for, is an error.
 
 ## Deprecated Aliases
 

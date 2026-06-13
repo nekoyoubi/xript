@@ -328,6 +328,7 @@ impl ConsoleHandler {
 pub struct RuntimeOptions {
     pub host_bindings: HostBindings,
     pub capabilities: Vec<String>,
+    pub libraries: HashMap<String, String>,
     pub console: ConsoleHandler,
     pub cancellation: Option<CancellationToken>,
     pub audit: Option<AuditSink>,
@@ -377,20 +378,68 @@ pub struct RoleResolution {
     pub fns: std::collections::BTreeMap<String, String>,
 }
 
-/// A module resolver that rejects every specifier. xript mods are
-/// single-entry self-contained modules; no import (bare, absolute, URL, or
-/// relative) is satisfiable from inside the sandbox. Combined with the
-/// pre-evaluation import scan, this is the runtime-side defense-in-depth that
-/// also catches dynamic `import(...)` at call time.
-struct DenyAllResolver;
+/// The runtime's approved-library registry: the manifest's `libraries`
+/// declarations, the sources the host registered, and the granted capability
+/// set. Imports stay default-deny; an entry here, with its capability
+/// satisfied, is the only thing that lifts the deny — and only while a mod
+/// entry module is being linked (`load_phase`), so dynamic `import(...)`
+/// after load gains nothing.
+struct LibraryRegistry {
+    declarations: HashMap<String, Option<String>>,
+    sources: HashMap<String, String>,
+    granted: HashSet<String>,
+    load_phase: AtomicBool,
+}
 
-impl Resolver for DenyAllResolver {
+impl LibraryRegistry {
+    fn approve(&self, mod_name: &str, specifier: &str) -> std::result::Result<(), XriptError> {
+        let Some(capability) = self.declarations.get(specifier) else {
+            return Err(XriptError::ImportDenied {
+                mod_name: mod_name.to_string(),
+                specifier: specifier.to_string(),
+            });
+        };
+        if let Some(cap) = capability {
+            if !crate::cap_match::granted_satisfies(&self.granted, cap) {
+                return Err(XriptError::CapabilityDenied {
+                    binding: specifier.to_string(),
+                    capability: cap.clone(),
+                });
+            }
+        }
+        if !self.sources.contains_key(specifier) {
+            return Err(XriptError::LibraryUnavailable {
+                specifier: specifier.to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    fn importable(&self, specifier: &str) -> bool {
+        self.load_phase.load(Ordering::Relaxed) && self.approve("", specifier).is_ok()
+    }
+}
+
+/// A module resolver that satisfies only approved, registered,
+/// capability-granted library specifiers, and only while a mod entry module
+/// is being linked. Everything else — every other specifier, and every
+/// request outside the load phase (i.e. dynamic `import(...)` at call time) —
+/// is rejected. Combined with the pre-evaluation import scan, this is the
+/// runtime-side defense-in-depth.
+struct LibraryResolver {
+    registry: Arc<LibraryRegistry>,
+}
+
+impl Resolver for LibraryResolver {
     fn resolve<'js>(
         &mut self,
         _ctx: &Ctx<'js>,
         _base: &str,
         name: &str,
     ) -> std::result::Result<String, QjsError> {
+        if self.registry.importable(name) {
+            return Ok(name.to_string());
+        }
         Err(QjsError::new_resolving_message(
             "<sandbox>",
             name.to_string(),
@@ -401,18 +450,24 @@ impl Resolver for DenyAllResolver {
     }
 }
 
-struct DenyAllLoader;
+struct LibraryLoader {
+    registry: Arc<LibraryRegistry>,
+}
 
-impl Loader for DenyAllLoader {
+impl Loader for LibraryLoader {
     fn load<'js>(
         &mut self,
-        _ctx: &Ctx<'js>,
+        ctx: &Ctx<'js>,
         name: &str,
     ) -> std::result::Result<Module<'js, Declared>, QjsError> {
-        Err(QjsError::new_loading_message(
-            name,
-            "xript mods cannot import external modules",
-        ))
+        if !self.registry.importable(name) {
+            return Err(QjsError::new_loading_message(
+                name,
+                "xript mods cannot import external modules",
+            ));
+        }
+        let source = self.registry.sources.get(name).cloned().unwrap_or_default();
+        Module::declare(ctx.clone(), name, source)
     }
 }
 
@@ -426,6 +481,8 @@ pub struct XriptRuntime {
     export_caps: std::sync::Mutex<HashMap<String, Option<String>>>,
     granted: HashSet<String>,
     role_preferences: HashMap<String, String>,
+    library_registry: Arc<LibraryRegistry>,
+    hook_fills: std::sync::Mutex<Vec<crate::fragment::HookFillDecl>>,
     debug: Option<crate::debug::DebugSession>,
 }
 
@@ -460,7 +517,59 @@ impl XriptRuntime {
         crate::manifest::validate_structure(&manifest)?;
 
         let rt = Runtime::new().map_err(|e| XriptError::Engine(e.to_string()))?;
-        rt.set_loader(DenyAllResolver, DenyAllLoader);
+
+        for (specifier, source) in &options.libraries {
+            if manifest
+                .libraries
+                .as_ref()
+                .and_then(|libs| libs.get(specifier))
+                .is_none()
+            {
+                return Err(XriptError::LibraryRegistration {
+                    specifier: specifier.clone(),
+                    reason: "not declared in the host manifest's libraries map".to_string(),
+                });
+            }
+            if let Some(artifact) = crate::module::detect_commonjs(source) {
+                return Err(XriptError::LibraryRegistration {
+                    specifier: specifier.clone(),
+                    reason: format!(
+                        "CommonJS artifacts detected (found: {artifact}); libraries must be pre-bundled ES modules"
+                    ),
+                });
+            }
+            if let Some(nested) = crate::module::first_import_specifier(source) {
+                return Err(XriptError::LibraryRegistration {
+                    specifier: specifier.clone(),
+                    reason: format!(
+                        "not import-clean: contains an import of \"{nested}\"; libraries must be self-contained pre-bundled ES modules with no imports of their own"
+                    ),
+                });
+            }
+        }
+
+        let library_registry = Arc::new(LibraryRegistry {
+            declarations: manifest
+                .libraries
+                .as_ref()
+                .map(|libs| {
+                    libs.iter()
+                        .map(|(specifier, def)| (specifier.clone(), def.capability.clone()))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            sources: options.libraries,
+            granted: options.capabilities.iter().cloned().collect(),
+            load_phase: AtomicBool::new(false),
+        });
+        rt.set_loader(
+            LibraryResolver {
+                registry: library_registry.clone(),
+            },
+            LibraryLoader {
+                registry: library_registry.clone(),
+            },
+        );
 
         let manifest_mem = manifest.limits.as_ref().and_then(|l| l.memory_mb);
         let manifest_stack = manifest.limits.as_ref().and_then(|l| l.max_stack_depth);
@@ -493,6 +602,7 @@ impl XriptRuntime {
             register_console(&ctx, options.console)?;
             register_bindings(&ctx, &manifest, options.host_bindings, &granted, &audit)?;
             register_hooks(&ctx, &manifest, &granted)?;
+            register_events(&ctx, &manifest, &granted)?;
             register_fragment_hooks(&ctx)?;
             register_exports_surface(&ctx)?;
             if let Some(ref session) = debug {
@@ -511,6 +621,8 @@ impl XriptRuntime {
             export_caps: std::sync::Mutex::new(HashMap::new()),
             granted,
             role_preferences,
+            library_registry,
+            hook_fills: std::sync::Mutex::new(Vec::new()),
             debug,
         })
     }
@@ -602,6 +714,13 @@ impl XriptRuntime {
         granted_capabilities: &HashSet<String>,
         entry_source: Option<&str>,
     ) -> Result<crate::fragment::ModInstance> {
+        let (normalized_json, new_hook_fills) = crate::fragment::normalize_mod_fills(
+            mod_manifest_json,
+            self.manifest.slots.as_deref().unwrap_or(&[]),
+            &self.granted,
+        )?;
+        let mod_manifest_json = normalized_json.as_str();
+
         let mod_instance = crate::fragment::load_mod(
             mod_manifest_json,
             &self.manifest,
@@ -626,7 +745,9 @@ impl XriptRuntime {
 
         if let Some(source) = entry_source {
             let mod_name = mod_instance.name.clone();
-            crate::module::check_entry_source(&mod_name, source, is_module)?;
+            crate::module::check_entry_source_with(&mod_name, source, is_module, |specifier| {
+                self.library_registry.approve(&mod_name, specifier)
+            })?;
 
             if is_module {
                 self.eval_module_entry(&mod_name, source)?;
@@ -645,6 +766,7 @@ impl XriptRuntime {
             }
         }
 
+        self.hook_fills.lock().unwrap().extend(new_hook_fills);
         self.loaded_mods.lock().unwrap().push(mod_instance.clone());
 
         Ok(mod_instance)
@@ -674,6 +796,7 @@ impl XriptRuntime {
                 }
             }) as Box<dyn FnMut() -> bool + Send>));
 
+        self.library_registry.load_phase.store(true, Ordering::Relaxed);
         let result = self.ctx.with(|ctx| -> Result<()> {
             let declared = match Module::declare(ctx.clone(), "xript:mod-entry", source) {
                 Ok(m) => m,
@@ -721,6 +844,7 @@ impl XriptRuntime {
 
             harvest_named_exports(&ctx, &evaluated)
         });
+        self.library_registry.load_phase.store(false, Ordering::Relaxed);
 
         self.rt
             .set_interrupt_handler(None::<Box<dyn FnMut() -> bool + Send>>);
@@ -739,7 +863,7 @@ impl XriptRuntime {
         args: &[serde_json::Value],
     ) -> Result<serde_json::Value> {
         if let Some(Some(cap)) = self.export_caps.lock().unwrap().get(name)
-            && !self.granted.contains(cap)
+            && !crate::cap_match::granted_satisfies(&self.granted, cap)
         {
             return Err(XriptError::CapabilityDenied {
                 binding: name.to_string(),
@@ -782,6 +906,100 @@ impl XriptRuntime {
             .get("__xript_ok")
             .cloned()
             .unwrap_or(serde_json::Value::Null))
+    }
+
+    /// Fires a host-declared hook, invoking every registered sandbox handler in
+    /// registration order with the spread payload (object payloads spread to
+    /// positional args per the hook's declared params, anything else passed as a
+    /// single argument). Per-handler errors are swallowed to `undefined`; the
+    /// collected results are returned in registration order. An unknown hook id
+    /// fires nothing and returns an empty list.
+    pub fn fire_hook(
+        &self,
+        hook: &str,
+        payload: &[serde_json::Value],
+    ) -> Result<Vec<serde_json::Value>> {
+        let mut results = self.dispatch_to_registry("__xript_hooks", hook, payload, true)?;
+        let fills: Vec<crate::fragment::HookFillDecl> = self
+            .hook_fills
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|fill| fill.hook == hook)
+            .cloned()
+            .collect();
+        for fill in fills {
+            match self.invoke_export(&fill.handler, payload) {
+                Ok(value) => results.push(value),
+                Err(_) => results.push(serde_json::Value::Null),
+            }
+        }
+        Ok(results)
+    }
+
+    /// Emits a host-declared broadcast event, delivering the payload to every
+    /// `events.on` subscriber in registration order. Shares the hook fan-out
+    /// contract: object payloads spread to positional args, errors swallowed to
+    /// `undefined`, results collected in order. An unknown or undeclared event id
+    /// delivers to nobody and returns an empty list.
+    pub fn emit(
+        &self,
+        event: &str,
+        payload: &[serde_json::Value],
+    ) -> Result<Vec<serde_json::Value>> {
+        self.dispatch_to_registry("__xript_event_handlers", event, payload, false)
+    }
+
+    fn dispatch_to_registry(
+        &self,
+        registry: &str,
+        id: &str,
+        payload: &[serde_json::Value],
+        hook_shaped: bool,
+    ) -> Result<Vec<serde_json::Value>> {
+        let payload_json = serde_json::to_string(payload).unwrap_or_else(|_| "[]".into());
+        let escaped_id = id.replace('\\', "\\\\").replace('\'', "\\'");
+        let escaped_payload = payload_json.replace('\\', "\\\\").replace('`', "\\`");
+        let handler_accessor = if hook_shaped {
+            "(entries[i] && entries[i].handler) || entries[i]"
+        } else {
+            "entries[i]"
+        };
+        let code = format!(
+            r#"(function() {{
+                var registry = globalThis['{registry}'] || {{}};
+                var entries = registry['{id}'] || [];
+                var args = JSON.parse(`{payload}`);
+                var spread = (args.length === 1 && args[0] !== null && typeof args[0] === 'object' && !Array.isArray(args[0]))
+                    ? Object.keys(args[0]).map(function(k) {{ return args[0][k]; }})
+                    : args;
+                var results = [];
+                for (var i = 0; i < entries.length; i++) {{
+                    var handler = {handler_accessor};
+                    if (typeof handler !== 'function') {{ results.push(null); continue; }}
+                    try {{
+                        var r = handler.apply(null, spread);
+                        results.push(r === undefined ? null : r);
+                    }} catch (e) {{
+                        results.push(null);
+                    }}
+                }}
+                return JSON.stringify(results);
+            }})()"#,
+            registry = registry,
+            id = escaped_id,
+            payload = escaped_payload,
+            handler_accessor = handler_accessor,
+        );
+
+        let result = self.execute(&code)?;
+        let raw = result.value.as_str().unwrap_or("[]");
+        let parsed: serde_json::Value =
+            serde_json::from_str(raw).unwrap_or(serde_json::Value::Null);
+        Ok(parsed
+            .as_array()
+            .cloned()
+            .unwrap_or_default())
     }
 
     /// Returns the loaded fragment contributions targeting `slot_id`, ordered by
@@ -1115,7 +1333,7 @@ fn register_bindings(
         match binding {
             Binding::Function(func_def) => {
                 if let Some(ref cap) = func_def.capability {
-                    if !granted.contains(cap) {
+                    if !crate::cap_match::granted_satisfies(granted, cap) {
                         let msg = format!(
                             "{}() requires the \"{}\" capability, which hasn't been granted to this script",
                             name, cap
@@ -1230,7 +1448,7 @@ fn build_namespace_object<'js>(
             }
             Binding::Function(func_def) => {
                 if let Some(ref cap) = func_def.capability {
-                    if !granted.contains(cap) {
+                    if !crate::cap_match::granted_satisfies(granted, cap) {
                         let msg = format!(
                             "{}() requires the \"{}\" capability, which hasn't been granted to this script",
                             full_name, cap
@@ -1359,9 +1577,7 @@ fn deep_freeze(ctx: &Ctx<'_>, name: &str) -> Result<()> {
 }
 
 fn register_hooks(ctx: &Ctx<'_>, manifest: &Manifest, granted: &HashSet<String>) -> Result<()> {
-    let Some(ref hooks) = manifest.hooks else {
-        return Ok(());
-    };
+    let hooks = manifest.effective_hooks();
 
     if hooks.is_empty() {
         return Ok(());
@@ -1370,7 +1586,7 @@ fn register_hooks(ctx: &Ctx<'_>, manifest: &Manifest, granted: &HashSet<String>)
     let mut hook_setup = String::from("globalThis.__xript_hooks = {};\n");
     hook_setup.push_str("globalThis.hooks = {};\n");
 
-    for (hook_name, hook_def) in hooks {
+    for (hook_name, hook_def) in &hooks {
         hook_setup.push_str(&format!(
             "globalThis.__xript_hooks['{}'] = [];\n",
             hook_name
@@ -1381,7 +1597,7 @@ fn register_hooks(ctx: &Ctx<'_>, manifest: &Manifest, granted: &HashSet<String>)
                 hook_setup.push_str(&format!("globalThis.hooks['{}'] = {{}};\n", hook_name));
                 for phase in phases {
                     let registration = if let Some(ref cap) = hook_def.capability {
-                        if !granted.contains(cap) {
+                        if !crate::cap_match::granted_satisfies(granted, cap) {
                             format!(
                                 "globalThis.hooks['{hook}']['{phase}'] = function() {{ throw new Error(\"{hook}.{phase}() requires the \\\"{cap}\\\" capability\"); }};",
                                 hook = hook_name, phase = phase, cap = cap
@@ -1404,7 +1620,7 @@ fn register_hooks(ctx: &Ctx<'_>, manifest: &Manifest, granted: &HashSet<String>)
             }
         } else {
             let registration = if let Some(ref cap) = hook_def.capability {
-                if !granted.contains(cap) {
+                if !crate::cap_match::granted_satisfies(granted, cap) {
                     format!(
                         "globalThis.hooks['{hook}'] = function() {{ throw new Error(\"{hook}() requires the \\\"{cap}\\\" capability\"); }};",
                         hook = hook_name, cap = cap
@@ -1470,6 +1686,69 @@ fn register_fragment_hooks(ctx: &Ctx<'_>) -> Result<()> {
         .map_err(|e| XriptError::Engine(e.to_string()))?;
 
     Ok(())
+}
+
+/// Injects the `events` global and the `__xript_event_handlers` registry,
+/// mirroring the hook gate model: a subscription is admitted only when the
+/// event's declared capability is satisfied by the granted set, otherwise
+/// `events.on` for that id is a throwing stub baked at injection.
+fn register_events(ctx: &Ctx<'_>, manifest: &Manifest, granted: &HashSet<String>) -> Result<()> {
+    let Some(ref events) = manifest.events else {
+        return Ok(());
+    };
+
+    let mut setup = String::from("globalThis.__xript_event_handlers = {};\n");
+    setup.push_str("globalThis.__xript_event_gates = {};\n");
+
+    for event in events {
+        let id = js_string_escape(&event.id);
+        setup.push_str(&format!("globalThis.__xript_event_handlers['{id}'] = [];\n"));
+
+        let admitted = match event.capability {
+            Some(ref cap) => crate::cap_match::granted_satisfies(granted, cap),
+            None => true,
+        };
+
+        if admitted {
+            setup.push_str(&format!("globalThis.__xript_event_gates['{id}'] = true;\n"));
+        } else {
+            let cap = js_string_escape(event.capability.as_deref().unwrap_or(""));
+            setup.push_str(&format!(
+                "globalThis.__xript_event_gates['{id}'] = \"{cap}\";\n"
+            ));
+        }
+    }
+
+    setup.push_str(
+        r#"
+        function __xript_event_subscribe(id, handler) {
+            var gate = globalThis.__xript_event_gates[id];
+            if (gate === undefined) {
+                throw new Error("event \"" + id + "\" is not declared by the host");
+            }
+            if (gate !== true) {
+                throw new Error("events.on(\"" + id + "\") requires the \"" + gate + "\" capability");
+            }
+            if (typeof handler !== 'function') {
+                throw new Error("events.on(\"" + id + "\") handler must be a function");
+            }
+            globalThis.__xript_event_handlers[id].push(handler);
+        }
+        globalThis.events = Object.freeze({
+            on: __xript_event_subscribe,
+            subscribe: __xript_event_subscribe,
+        });
+    "#,
+    );
+
+    ctx.eval::<(), _>(setup.as_str())
+        .map_err(|e| XriptError::Engine(e.to_string()))?;
+
+    Ok(())
+}
+
+fn js_string_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('\'', "\\'").replace('"', "\\\"")
 }
 
 fn create_host_function<'js>(

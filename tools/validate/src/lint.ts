@@ -43,6 +43,7 @@ export interface LintOptions {
 }
 
 import { gateCapabilities } from "./manifest-util.js";
+import { satisfies } from "./capabilities.js";
 
 interface HostSlot {
 	id?: string;
@@ -55,6 +56,7 @@ interface HostSlot {
 interface HostManifest {
 	slots?: HostSlot[];
 	capabilities?: Record<string, { description?: string } | unknown>;
+	libraries?: Record<string, { capability?: string; description?: string }>;
 }
 
 interface ModManifest {
@@ -63,6 +65,13 @@ interface ModManifest {
 	fragments?: Array<{ slot?: string }>;
 	fills?: Record<string, unknown>;
 	contributions?: { slots?: Record<string, unknown> };
+}
+
+function declaredSatisfiesRef(declared: Set<string>, ref: string): boolean {
+	for (const scope of declared) {
+		if (satisfies(scope, ref)) return true;
+	}
+	return false;
 }
 
 function slotFillReferences(mod: ModManifest): Set<string> {
@@ -115,7 +124,7 @@ export function lintManifests(host: unknown, mods: unknown[] = [], options: Lint
 			}
 		}
 		for (const cap of mod.capabilities ?? []) {
-			if (!declaredCapabilities.has(cap)) {
+			if (!declaredSatisfiesRef(declaredCapabilities, cap)) {
 				findings.push({
 					severity: "error",
 					code: "undeclared-capability",
@@ -127,12 +136,23 @@ export function lintManifests(host: unknown, mods: unknown[] = [], options: Lint
 	}
 
 	for (const slot of slots) {
-		if (slot.capability && !declaredCapabilities.has(slot.capability)) {
+		if (slot.capability && !declaredSatisfiesRef(declaredCapabilities, slot.capability)) {
 			findings.push({
 				severity: "error",
 				code: "undeclared-capability",
 				message: `slot "${slot.id ?? "?"}" gates on capability "${slot.capability}" which the host does not declare`,
 				suggestion: `Declare capability "${slot.capability}" in the host manifest, or change the slot's gate.`,
+			});
+		}
+	}
+
+	for (const [specifier, library] of Object.entries(hostManifest.libraries ?? {})) {
+		if (library?.capability && !declaredSatisfiesRef(declaredCapabilities, library.capability)) {
+			findings.push({
+				severity: "error",
+				code: "undeclared-capability",
+				message: `library "${specifier}" gates on capability "${library.capability}" which the host does not declare`,
+				suggestion: `Declare capability "${library.capability}" in the host manifest, or change the library's gate.`,
 			});
 		}
 	}
@@ -152,8 +172,8 @@ export function lintManifests(host: unknown, mods: unknown[] = [], options: Lint
 	const gatedCapabilities = gateCapabilities(hostManifest);
 	for (const [name, def] of Object.entries(hostManifest.capabilities ?? {})) {
 		const reserved = def && typeof def === "object" && (def as { reserved?: boolean }).reserved === true;
-		const usedByGate = gatedCapabilities.has(name);
-		const usedByMod = requestedCapabilities.has(name);
+		const usedByGate = [...gatedCapabilities].some((ref) => satisfies(name, ref));
+		const usedByMod = [...requestedCapabilities].some((ref) => satisfies(name, ref));
 		if (!usedByGate && !usedByMod && !reserved && !inheritedCapabilities.has(name)) {
 			findings.push({
 				severity: "warn",
@@ -206,8 +226,48 @@ export function lintManifests(host: unknown, mods: unknown[] = [], options: Lint
 		}
 	}
 
+	for (const finding of escalationFindings(declaredCapabilities)) findings.push(finding);
+
 	const counts: LintCounts = { error: 0, warn: 0, info: 0 };
 	for (const finding of findings) counts[finding.severity]++;
 
 	return { findings, counts };
+}
+
+/**
+ * Scope segments whose name conventionally connotes broad or administrative authority.
+ * A child scope ending in one of these, nested under a declared (broadly grantable)
+ * ancestor, is a candidate monotonic-privilege violation: a grant on the ancestor would
+ * subsume the escalation child by prefix even though the child's authority exceeds it.
+ */
+const ESCALATION_SEGMENTS = new Set(["admin", "shell", "exec", "root", "sudo", "all", "host"]);
+
+/**
+ * Heuristic, well-formed-only pass behind the per-host monotonic-privilege audit discipline:
+ * the runtime cannot verify privilege ordering, so this flags candidate escalations by name.
+ * A clean result is NOT a proof of monotonicity. A declared capability whose final dotted
+ * segment is an escalation word and which has a declared dotted ancestor is surfaced, since a
+ * broad grant on that ancestor would silently sweep the escalation child in by prefix.
+ */
+function escalationFindings(declaredCapabilities: Set<string>): Finding[] {
+	const findings: Finding[] = [];
+	for (const cap of declaredCapabilities) {
+		const segments = cap.split(".");
+		if (segments.length < 2) continue;
+		const leaf = segments[segments.length - 1];
+		if (!ESCALATION_SEGMENTS.has(leaf)) continue;
+
+		const ancestors: string[] = [];
+		for (let i = 1; i < segments.length; i++) ancestors.push(segments.slice(0, i).join("."));
+		const grantableAncestor = ancestors.find((ancestor) => declaredCapabilities.has(ancestor));
+		if (!grantableAncestor) continue;
+
+		findings.push({
+			severity: "warn",
+			code: "capability-escalation",
+			message: `capability "${cap}" names an escalation segment ("${leaf}") nested under broadly grantable ancestor "${grantableAncestor}"`,
+			suggestion: `A grant on "${grantableAncestor}" subsumes "${cap}" by prefix. If "${cap}" confers more than its ancestor, re-root it under a separate top-level scope rather than nest it. Verify by inspection — a clean lint is not a proof of monotonicity.`,
+		});
+	}
+	return findings;
 }

@@ -1,6 +1,6 @@
 {
 	"name": "@xriptjs/docgen",
-	"version": "0.6.0",
+	"version": "0.7.0",
 	"description": "Generate documentation from xript manifests.",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -37,7 +37,7 @@
 		"provenance": true
 	},
 	"dependencies": {
-		"@xriptjs/validate": "^0.6.0"
+		"@xriptjs/validate": "^0.7.0"
 	},
 	"devDependencies": {
 		"typescript": "^5.7.0",

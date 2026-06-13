@@ -28,3 +28,24 @@ export function findImportSpecifier(source: string): string | null {
 	}
 	return null;
 }
+
+export interface FoundImport {
+	specifier: string;
+	dynamic: boolean;
+}
+
+export function findImportSpecifiers(source: string): FoundImport[] {
+	const found: FoundImport[] = [];
+	for (const [pattern, dynamic] of [
+		[STATIC_IMPORT, false],
+		[BARE_SIDE_EFFECT_IMPORT, false],
+		[EXPORT_FROM, false],
+		[DYNAMIC_IMPORT, true],
+	] as Array<[RegExp, boolean]>) {
+		const global = new RegExp(pattern.source, "g");
+		for (const match of source.matchAll(global)) {
+			found.push({ specifier: match[1], dynamic });
+		}
+	}
+	return found;
+}

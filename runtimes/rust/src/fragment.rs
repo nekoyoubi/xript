@@ -645,6 +645,157 @@ pub fn create_mod_instance(
     }
 }
 
+/// An event/hook-slot fill resolved from a mod's `fills`: when the host fires
+/// the named hook, the runtime also invokes the mod export the fill names.
+#[derive(Debug, Clone)]
+pub struct HookFillDecl {
+    pub hook: String,
+    pub handler: String,
+}
+
+const ROLE_SLOT_ACCEPT: &str = "application/x-xript-role";
+
+/// Resolves a mod's canonical `fills` surface into the runtime's internal
+/// contribution model, typed by each target slot's `accepts`: a fragment-format
+/// fill becomes a fragment declaration, a role fill becomes a provider role, an
+/// event/hook fill becomes an export-backed hook handler. A mod that mixes
+/// `fills` with the deprecated `fragments`/`contributions` surfaces is rejected
+/// rather than silently double-contributing.
+pub fn normalize_mod_fills(
+    mod_manifest_json: &str,
+    slots: &[crate::manifest::Slot],
+    granted: &std::collections::HashSet<String>,
+) -> Result<(String, Vec<HookFillDecl>)> {
+    let mut value: serde_json::Value =
+        serde_json::from_str(mod_manifest_json).map_err(XriptError::Json)?;
+    let Some(obj) = value.as_object_mut() else {
+        return Ok((mod_manifest_json.to_string(), Vec::new()));
+    };
+    if !obj.contains_key("fills") {
+        return Ok((mod_manifest_json.to_string(), Vec::new()));
+    }
+    if obj.contains_key("fragments") || obj.contains_key("contributions") {
+        return Err(XriptError::ManifestValidation {
+            issues: vec![crate::error::ValidationIssue {
+                path: "/fills".into(),
+                message: "a mod contributes through 'fills' alone — remove the deprecated 'fragments'/'contributions' surfaces instead of mixing the two".into(),
+            }],
+        });
+    }
+    let fills = obj.remove("fills").expect("checked above");
+    let Some(fill_map) = fills.as_object() else {
+        return Err(XriptError::ManifestValidation {
+            issues: vec![crate::error::ValidationIssue {
+                path: "/fills".into(),
+                message: "'fills' must be an object keyed by host slot id".into(),
+            }],
+        });
+    };
+
+    let mut issues: Vec<crate::error::ValidationIssue> = Vec::new();
+    let mut fragments: Vec<serde_json::Value> = Vec::new();
+    let mut provides: Vec<serde_json::Value> = Vec::new();
+    let mut hook_fills: Vec<HookFillDecl> = Vec::new();
+
+    for (slot_id, entries) in fill_map {
+        let Some(entries) = entries.as_array() else {
+            issues.push(crate::error::ValidationIssue {
+                path: format!("/fills/{slot_id}"),
+                message: "fill entries must be an array".into(),
+            });
+            continue;
+        };
+        let Some(slot) = slots.iter().find(|slot| &slot.id == slot_id) else {
+            issues.push(crate::error::ValidationIssue {
+                path: format!("/fills/{slot_id}"),
+                message: format!("slot '{slot_id}' does not exist in the app manifest"),
+            });
+            continue;
+        };
+        for (index, entry) in entries.iter().enumerate() {
+            let prefix = format!("/fills/{slot_id}/{index}");
+            let Some(fill) = entry.as_object() else {
+                issues.push(crate::error::ValidationIssue {
+                    path: prefix,
+                    message: "a fill must be an object".into(),
+                });
+                continue;
+            };
+            let gate_denied = slot
+                .capability
+                .as_ref()
+                .is_some_and(|cap| !crate::cap_match::granted_satisfies(granted, cap));
+            if slot.accepts.iter().any(|accept| accept == ROLE_SLOT_ACCEPT) {
+                if !fill.get("fns").map(|fns| fns.is_object()).unwrap_or(false) {
+                    issues.push(crate::error::ValidationIssue {
+                        path: format!("{prefix}/fns"),
+                        message: "a role fill must map logical fn names to exports via 'fns'".into(),
+                    });
+                    continue;
+                }
+                if gate_denied {
+                    issues.push(crate::error::ValidationIssue {
+                        path: prefix,
+                        message: format!(
+                            "slot '{slot_id}' requires capability '{}'",
+                            slot.capability.as_deref().unwrap_or("")
+                        ),
+                    });
+                    continue;
+                }
+                provides.push(serde_json::json!({ "role": slot_id, "fns": fill.get("fns").expect("checked above") }));
+            } else if slot.is_hook_slot() {
+                let handler = fill
+                    .get("handler")
+                    .and_then(|handler| handler.as_str())
+                    .filter(|handler| !handler.is_empty());
+                let Some(handler) = handler else {
+                    issues.push(crate::error::ValidationIssue {
+                        path: format!("{prefix}/handler"),
+                        message: "an event/hook fill must name a 'handler' export".into(),
+                    });
+                    continue;
+                };
+                if gate_denied {
+                    issues.push(crate::error::ValidationIssue {
+                        path: prefix,
+                        message: format!(
+                            "slot '{slot_id}' requires capability '{}'",
+                            slot.capability.as_deref().unwrap_or("")
+                        ),
+                    });
+                    continue;
+                }
+                hook_fills.push(HookFillDecl {
+                    hook: slot_id.clone(),
+                    handler: handler.to_string(),
+                });
+            } else {
+                let mut fragment = serde_json::Map::new();
+                fragment.insert("id".into(), serde_json::json!(format!("{slot_id}-fill-{index}")));
+                for (key, val) in fill {
+                    fragment.insert(key.clone(), val.clone());
+                }
+                fragment.insert("slot".into(), serde_json::json!(slot_id));
+                fragments.push(serde_json::Value::Object(fragment));
+            }
+        }
+    }
+
+    if !issues.is_empty() {
+        return Err(XriptError::ManifestValidation { issues });
+    }
+
+    if !fragments.is_empty() {
+        obj.insert("fragments".into(), serde_json::Value::Array(fragments));
+    }
+    if !provides.is_empty() {
+        obj.insert("contributions".into(), serde_json::json!({ "provides": provides }));
+    }
+
+    Ok((serde_json::to_string(&value).map_err(XriptError::Json)?, hook_fills))
+}
+
 pub fn load_mod(
     mod_manifest_json: &str,
     app_manifest: &crate::manifest::Manifest,

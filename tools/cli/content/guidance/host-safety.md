@@ -1,6 +1,6 @@
-# Hosting: limits, cancellation & audit
+# Limits, cancellation & audit
 
-A host runs untrusted code. The runtime gives it the caps to bound that code and the signals to watch it. **The runtime provides the mechanism; the host sets the policy** — what the limits are, when to cancel, what to do with an audit trail.
+A host runs untrusted code. The runtime gives it the caps to bound that code and the signals to watch it. **The runtime provides the mechanism; the host sets the policy:** what the limits are, when to cancel, what to do with an audit trail.
 
 ## Hard limits
 
@@ -10,11 +10,11 @@ Set `hardLimits` on `createRuntime`:
 - `memory_mb` — sandbox memory ceiling.
 - `max_stack_depth` — recursion ceiling.
 
-Exceeding any of them throws `ExecutionLimitError`. Run without a timeout and a mod can hang the host; set one. Limits are per runtime, enforced by the runtime — the host does not police them by hand.
+Exceeding any of them throws `ExecutionLimitError`. Run without a timeout and a mod can hang the host; set one. Limits are per runtime, enforced by the runtime; the host does not police them by hand.
 
 ## Cooperative cancellation
 
-Pass a `CancellationToken` as `cancellation`. Call `token.cancel()` to request a stop; long-running sandbox work observes the flag and throws `CancellationError`. Cancellation is *cooperative*, not preemptive — it unwinds at the runtime's check points, not instantly. Some engines require the async sandbox (`initXriptAsync`) for cancellation to bite mid-execution; see the [runtime overview](/runtimes/overview/) for per-engine fidelity.
+Pass a `CancellationToken` as `cancellation`. Call `token.cancel()` to request a stop; long-running sandbox work observes the flag and throws `CancellationError`. Cancellation is *cooperative*, not preemptive; it unwinds at the runtime's check points, not instantly. Some engines require the async sandbox (`initXriptAsync`) for cancellation to bite mid-execution; see the [runtime overview](/runtimes/overview/) for per-engine fidelity.
 
 ## Audit
 

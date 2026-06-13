@@ -36,7 +36,7 @@ Generates `.d.ts` files with full JSDoc, namespace support, and hook type defini
 import { generateTypes, generateTypesFromFile } from "@xriptjs/typegen";
 
 const dts = generateTypes({
-  xript: "0.1",
+  xript: "0.7",
   name: "my-app",
   bindings: {
     greet: {

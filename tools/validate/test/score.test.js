@@ -6,17 +6,17 @@ const host = {
 	xript: "0.3",
 	name: "scored-host",
 	slots: [
-		{ id: "used", accepts: ["text/html"], capability: "capUsed", multiple: false },
-		{ id: "dead", accepts: ["text/html"], capability: "capUsed", multiple: false },
+		{ id: "used", accepts: ["text/html"], capability: "cap-used", multiple: false },
+		{ id: "dead", accepts: ["text/html"], capability: "cap-used", multiple: false },
 	],
-	capabilities: { capUsed: { description: "Used cap." }, capVestigial: { description: "Unused cap." } },
+	capabilities: { "cap-used": { description: "Used cap." }, "cap-vestigial": { description: "Unused cap." } },
 };
 
 const mod = {
 	xript: "0.3",
 	name: "m",
 	version: "1.0.0",
-	capabilities: ["capUsed"],
+	capabilities: ["cap-used"],
 	fragments: [{ id: "f", slot: "used", format: "text/html", source: "f.html" }],
 };
 
@@ -31,16 +31,16 @@ describe("scoreManifests", () => {
 	it("computes capability utilization and flags vestigial capabilities", async () => {
 		const result = await scoreManifests(host, [mod]);
 		assert.equal(result.capabilities.score, 0.5);
-		assert.deepEqual(result.capabilities.unused, ["capVestigial"]);
+		assert.deepEqual(result.capabilities.unused, ["cap-vestigial"]);
 	});
 
 	it("rolls up the headline as moddability capacity, not mod coverage", async () => {
 		const result = await scoreManifests(host, [mod]);
-		// host exposes 2 of the 4 surfaces (slots, capabilities); none of how many
+		// host exposes 2 of the 5 surfaces (slots, capabilities); none of how many
 		// slots the mod fills affects this.
-		assert.equal(result.headline, 50);
+		assert.equal(result.headline, 40);
 		assert.deepEqual(result.capacity.exposed.sort(), ["capabilities", "slots"]);
-		assert.deepEqual(result.capacity.absent.sort(), ["bindings", "events"]);
+		assert.deepEqual(result.capacity.absent.sort(), ["bindings", "events", "libraries"]);
 	});
 
 	it("headline does not move when slots go unfilled", async () => {

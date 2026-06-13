@@ -1,4 +1,5 @@
 import { sanitizeHTML, sanitizeHTMLDetailed, sanitizeJsml, type JsmlNode } from "@xriptjs/sanitize";
+import { grantedSatisfies } from "./capabilities.js";
 
 export interface ModManifest {
 	xript: string;
@@ -10,8 +11,19 @@ export interface ModManifest {
 	family?: string;
 	capabilities?: string[];
 	entry?: string | string[] | ModEntry;
+	fills?: Record<string, unknown[]>;
 	fragments?: FragmentDeclaration[];
 	contributions?: ModContributions;
+}
+
+export interface HookFill {
+	hook: string;
+	handler: string;
+}
+
+export interface NormalizedMod {
+	manifest: unknown;
+	hookFills: HookFill[];
 }
 
 export interface ModContributions {
@@ -269,6 +281,106 @@ export function modProviderRoles(modManifest: ModManifest): ProviderRole[] {
 	return modManifest.contributions?.provides ?? [];
 }
 
+const ROLE_SLOT_ACCEPT = "application/x-xript-role";
+const HOOK_SLOT_ACCEPT = "application/x-xript-hook";
+
+/**
+ * Resolves a mod's canonical `fills` surface into the runtime's internal
+ * contribution model, typed by each target slot's `accepts`: a fragment-format
+ * fill becomes a fragment declaration, a role fill becomes a provider role, an
+ * event/hook fill becomes an export-backed hook handler the host fires. A mod
+ * that mixes `fills` with the deprecated `fragments`/`contributions` surfaces
+ * is rejected rather than silently double-contributing.
+ */
+export function normalizeModFills(
+	modManifest: unknown,
+	slots: SlotDeclaration[],
+	grantedCapabilities: Set<string>,
+): NormalizedMod {
+	if (typeof modManifest !== "object" || modManifest === null) {
+		return { manifest: modManifest, hookFills: [] };
+	}
+	const m = modManifest as Record<string, unknown>;
+	if (m.fills === undefined) {
+		return { manifest: modManifest, hookFills: [] };
+	}
+	if (m.fragments !== undefined || m.contributions !== undefined) {
+		throw new ModManifestValidationError([
+			{
+				path: "/fills",
+				message:
+					"a mod contributes through 'fills' alone — remove the deprecated 'fragments'/'contributions' surfaces instead of mixing the two",
+			},
+		]);
+	}
+	if (typeof m.fills !== "object" || Array.isArray(m.fills)) {
+		throw new ModManifestValidationError([{ path: "/fills", message: "'fills' must be an object keyed by host slot id" }]);
+	}
+
+	const issues: Array<{ path: string; message: string }> = [];
+	const slotMap = new Map(slots.map((slot) => [slot.id, slot]));
+	const fragments: Array<Record<string, unknown>> = [];
+	const provides: Array<Record<string, unknown>> = [];
+	const hookFills: HookFill[] = [];
+
+	for (const [slotId, entries] of Object.entries(m.fills as Record<string, unknown>)) {
+		if (!Array.isArray(entries)) {
+			issues.push({ path: `/fills/${slotId}`, message: "fill entries must be an array" });
+			continue;
+		}
+		const slot = slotMap.get(slotId);
+		if (!slot) {
+			issues.push({ path: `/fills/${slotId}`, message: `slot '${slotId}' does not exist in the app manifest` });
+			continue;
+		}
+		entries.forEach((entry, index) => {
+			const prefix = `/fills/${slotId}/${index}`;
+			if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+				issues.push({ path: prefix, message: "a fill must be an object" });
+				return;
+			}
+			const fill = entry as Record<string, unknown>;
+			if (slot.accepts.includes(ROLE_SLOT_ACCEPT)) {
+				if (typeof fill.fns !== "object" || fill.fns === null || Array.isArray(fill.fns)) {
+					issues.push({ path: `${prefix}/fns`, message: "a role fill must map logical fn names to exports via 'fns'" });
+					return;
+				}
+				if (slot.capability && !grantedSatisfies(grantedCapabilities, slot.capability)) {
+					issues.push({ path: prefix, message: `slot '${slotId}' requires capability '${slot.capability}'` });
+					return;
+				}
+				provides.push({ role: slotId, fns: fill.fns });
+			} else if (slot.accepts.includes(HOOK_SLOT_ACCEPT)) {
+				if (typeof fill.handler !== "string" || fill.handler.length === 0) {
+					issues.push({ path: `${prefix}/handler`, message: "an event/hook fill must name a 'handler' export" });
+					return;
+				}
+				if (slot.capability && !grantedSatisfies(grantedCapabilities, slot.capability)) {
+					issues.push({ path: prefix, message: `slot '${slotId}' requires capability '${slot.capability}'` });
+					return;
+				}
+				hookFills.push({ hook: slotId, handler: fill.handler });
+			} else {
+				fragments.push({ id: `${slotId}-fill-${index}`, ...fill, slot: slotId });
+			}
+		});
+	}
+
+	if (issues.length > 0) {
+		throw new ModManifestValidationError(issues);
+	}
+
+	const { fills: _fills, ...rest } = m;
+	return {
+		manifest: {
+			...rest,
+			...(fragments.length > 0 ? { fragments } : {}),
+			...(provides.length > 0 ? { contributions: { provides } } : {}),
+		},
+		hookFills,
+	};
+}
+
 export function validateModAgainstApp(
 	modManifest: ModManifest,
 	slots: SlotDeclaration[],
@@ -292,7 +404,7 @@ export function validateModAgainstApp(
 				issues.push({ path: `${prefix}/format`, message: `slot '${frag.slot}' does not accept format '${frag.format}'` });
 			}
 
-			if (slot.capability && !grantedCapabilities.has(slot.capability)) {
+			if (slot.capability && !grantedSatisfies(grantedCapabilities, slot.capability)) {
 				issues.push({ path: `${prefix}/slot`, message: `slot '${frag.slot}' requires capability '${slot.capability}'` });
 			}
 		}

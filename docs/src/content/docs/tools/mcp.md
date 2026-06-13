@@ -3,7 +3,7 @@ title: MCP Server
 description: The xript MCP server — runs the toolchain and serves xript's authoring doctrine to agents.
 ---
 
-The xript MCP server is a [Model Context Protocol](https://modelcontextprotocol.io) front-end built into `@xriptjs/cli`. It hands an agent the **same capabilities the CLI hands a human**, over one stdio connection: every command as a callable tool, the spec and authoring doctrine as resources, and reusable advisory prompts. Nothing forks; each tool runs the exact code the matching CLI command runs, so the two can't drift.
+The xript MCP server is a [Model Context Protocol](https://modelcontextprotocol.io) front-end built into `@xriptjs/cli`. It hands an agent the **same capabilities the CLI hands a human**, over one stdio connection: every command as a callable tool, the spec and authoring doctrine as resources, and reusable advisory prompts. Nothing forks. Each tool runs the exact code the matching CLI command runs, so the two can't drift.
 
 Agents are first-class mod authors, and without the server they're flying blind. An agent writing a mod guesses at the manifest schema, can't validate without a human shelling out to the CLI, and answers theory questions from stale memory. The MCP closes that loop. Author, validate, run, and stay grounded in canon, all in one place.
 
@@ -36,6 +36,11 @@ Configure your MCP client to launch `xript mcp` (or `npx -y @xriptjs/cli mcp`) o
 | `xript_scan` | Read `@xript` annotations from a source directory into bindings |
 | `xript_manifest_describe` | Summarize exactly what a host exposes: bindings, hooks, slots, capabilities |
 | `xript_run` | Load a mod into the QuickJS WASM sandbox and optionally invoke an export |
+| `xript_host_load` | Create a persistent harnessed host session (stub bindings, capability grants, library sources) that survives across tool calls |
+| `xript_host_step` | Run one step against a session: load-mod, invoke, emit, fire-hook, execute, resolve-slot, resolve-role |
+| `xript_host_journal` | Read (optionally clear) a session's journal — binding calls, audit events, console logs |
+| `xript_host_list` | List the live harnessed host sessions |
+| `xript_host_unload` | Dispose a session and free its sandbox |
 | `xript_score` | Score a host's moddability capacity: contract integrity, and how much extension surface it exposes |
 | `xript_score_diff` | Diff a host's score against a saved baseline; toward or away from xript |
 | `xript_lint` | Review a host + mods for actionable findings; the complement to `xript_score` |
@@ -48,7 +53,7 @@ Configure your MCP client to launch `xript mcp` (or `npx -y @xriptjs/cli mcp`) o
 
 ### Paths or inline
 
-Every tool that takes a manifest accepts **either a file path or the inline JSON**. Pass a path, absolute or relative to the client's workspace root, and the server reads the file itself, so a large manifest never has to ride through the tool-call tokens. A value that starts with `{` or `[` is treated as inline JSON; anything else is treated as a path. Relative paths resolve against the workspace root the client advertises (the same mechanism `xript_scan` uses); without a root, pass an absolute path.
+Every tool that takes a manifest accepts **either a file path or the inline JSON**. Pass a path, absolute or relative to the client's workspace root, and the server reads the file itself, so a large manifest never has to ride through the tool-call tokens. A value that starts with `{` or `[` is treated as inline JSON; anything else is treated as a path. Relative paths resolve against the workspace root the client advertises, the same mechanism `xript_scan` uses; without a root, pass an absolute path.
 
 ## Resources
 

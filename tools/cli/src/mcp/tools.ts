@@ -11,6 +11,8 @@ import { describeManifest } from "../describe.js";
 import { scoreManifests, diffScores, type ScoreResult } from "@xriptjs/validate";
 import { lintManifests, resolveProvenance, resolveExtends } from "@xriptjs/validate";
 import { scanDirectory, mergeIntoManifest } from "../scan/index.js";
+import { createHarnessSession, runSessionStep, type HarnessDescriptor, type HarnessStep } from "../harness.js";
+import { addSession, getSession, removeSession, listSessions } from "./sessions.js";
 import { isAbsolute, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
@@ -123,6 +125,19 @@ function formatValidation(result: ValidationResult): ToolResult {
 	for (const error of result.errors) lines.push(`  error ${error.path}: ${error.message}`);
 	for (const warning of result.warnings ?? []) lines.push(`  warning ${warning.path}: ${warning.message}`);
 	return text(lines.join("\n"), !result.valid);
+}
+
+/** Path-or-inline JSON, without `extends` resolution — for non-manifest payloads like harness descriptors. */
+async function resolveJsonArg(server: McpServer, value: string): Promise<{ ok: true; value: unknown } | { ok: false; error: string }> {
+	const trimmed = value.trimStart();
+	if (trimmed.startsWith("{") || trimmed.startsWith("[")) return parseManifest(value);
+	const resolved = await resolveClientPath(server, value);
+	if (!resolved.ok) return resolved;
+	try {
+		return parseManifest(await readFile(resolved.path, "utf-8"));
+	} catch (error) {
+		return { ok: false, error: `could not read "${value}": ${error instanceof Error ? error.message : String(error)}` };
+	}
 }
 
 async function resolveScanDir(server: McpServer, dir: string): Promise<{ ok: true; dir: string } | { ok: false; error: string }> {
@@ -421,6 +436,134 @@ export function registerTools(server: McpServer, buildInfo: ServerBuildInfo): vo
 			const result = lintManifests(resolved, parsedMods, { ...(strict !== undefined ? { strict } : {}), inheritedSlots, inheritedCapabilities, inheritedAbstractTypes });
 			const failed = result.counts.error > 0 || (strict === true && result.counts.warn > 0);
 			return json(result, failed);
+		},
+	);
+
+	server.registerTool(
+		"xript_host_load",
+		{
+			title: "Load a harnessed host session",
+			description: "Create a persistent harnessed host session from a host manifest: declared bindings are stubbed from the harness descriptor (spec/harness.schema.json), every binding call is journaled, and the session survives across tool calls so mods can be loaded, invoked, and sent events interactively. Returns a hostId for xript_host_step / xript_host_journal / xript_host_unload. The same descriptor and step vocabulary run batch-style via `xript run --harness --steps`.",
+			inputSchema: {
+				manifest: z.string().describe("The host app manifest — a file path (absolute, or relative to the workspace root), or the inline JSON. `extends` is resolved."),
+				harness: z.string().optional().describe("Harness descriptor — a file path or inline JSON: binding stubs (returns/throws/sequence/script/record) keyed by binding name, capability grants, and sources for the host's approved libraries (inline `source`, or `path` relative to the harness file). Omitted: every declared binding records and returns undefined."),
+				capabilities: z.array(z.string()).optional().describe("Capability grants for the session, overriding the descriptor. Default: every capability scope the host declares, granted in full."),
+			},
+		},
+		async ({ manifest, harness, capabilities }) => {
+			const parsed = await resolveManifestArg(server, manifest);
+			if (!parsed.ok) return text(`host ${parsed.error}`, true);
+			let descriptor: HarnessDescriptor = {};
+			let harnessBaseDir: string | undefined;
+			if (harness) {
+				if (!harness.trimStart().startsWith("{")) {
+					const path = await resolveClientPath(server, harness);
+					if (path.ok) harnessBaseDir = dirname(path.path);
+				}
+				const parsedHarness = await resolveJsonArg(server, harness);
+				if (!parsedHarness.ok) return text(`harness ${parsedHarness.error}`, true);
+				descriptor = parsedHarness.value as HarnessDescriptor;
+			}
+			if (capabilities) descriptor = { ...descriptor, capabilities };
+			try {
+				const session = await createHarnessSession({ appManifest: parsed.value, harness: descriptor, baseDir: harnessBaseDir });
+				const record = addSession(session);
+				return json({ hostId: record.id, summary: session.summary });
+			} catch (error) {
+				return text(error instanceof Error ? error.message : String(error), true);
+			}
+		},
+	);
+
+	server.registerTool(
+		"xript_host_step",
+		{
+			title: "Run one step against a harnessed host",
+			description: "Execute a single step against a session created by xript_host_load — load a mod, invoke an export, emit a host event, fire a hook or event-typed slot, execute code in the sandbox, or resolve a slot/role. The step vocabulary matches spec/harness-steps.schema.json, so an interactive session transcribes directly to a replayable steps file.",
+			inputSchema: {
+				hostId: z.string().describe("The session id from xript_host_load."),
+				action: z.enum(["load-mod", "invoke", "emit", "fire-hook", "execute", "resolve-slot", "resolve-role"]).describe("The step to run."),
+				manifest: z.string().optional().describe("load-mod: the mod manifest — a file path or the inline JSON."),
+				source: z.string().optional().describe("load-mod: the entry script source text."),
+				sourcePath: z.string().optional().describe("load-mod: path to the entry script, read server-side."),
+				sources: z.record(z.string(), z.string()).optional().describe("load-mod: additional fragment/script sources the mod's fills reference, keyed by the path the manifest names — each value is INLINE CONTENT (not a path)."),
+				entry: z.string().optional().describe("load-mod: entry path key; defaults to the manifest's entry.script."),
+				exportName: z.string().optional().describe("invoke: the export to call."),
+				args: z.array(z.unknown()).optional().describe("invoke: positional arguments."),
+				event: z.string().optional().describe("emit: the host event id."),
+				payload: z.unknown().optional().describe("emit: the event payload."),
+				hook: z.string().optional().describe("fire-hook: the hook or event-typed slot id."),
+				phase: z.string().optional().describe("fire-hook: the hook phase to fire."),
+				data: z.unknown().optional().describe("fire-hook: the data passed to hook handlers."),
+				code: z.string().optional().describe("execute: script source evaluated in the sandbox."),
+				slot: z.string().optional().describe("resolve-slot: the slot id."),
+				role: z.string().optional().describe("resolve-role: the provider role."),
+			},
+		},
+		async ({ hostId, action, manifest, source, sourcePath, sources, entry, exportName, args, event, payload, hook, phase, data, code, slot, role }) => {
+			const record = getSession(hostId);
+			if (!record) return text(`no session "${hostId}" — load a host with xript_host_load first`, true);
+			try {
+				if (action === "load-mod") {
+					if (!manifest) return text("load-mod requires a manifest", true);
+					const mod = await resolveManifestArg(server, manifest);
+					if (!mod.ok) return text(`mod ${mod.error}`, true);
+					let resolvedSource = source;
+					if (resolvedSource === undefined && sourcePath) {
+						const path = await resolveClientPath(server, sourcePath);
+						if (!path.ok) return text(path.error, true);
+						resolvedSource = await readFile(path.path, "utf-8");
+					}
+					if (resolvedSource === undefined) return text("load-mod requires source or sourcePath", true);
+					return json(await record.session.loadMod(mod.value, resolvedSource, { entry, sources }));
+				}
+				const step: HarnessStep = { action, export: exportName, args, event, payload, hook, phase, data, code, slot, role };
+				return json(await runSessionStep(record.session, step));
+			} catch (error) {
+				return text(error instanceof Error ? error.message : String(error), true);
+			}
+		},
+	);
+
+	server.registerTool(
+		"xript_host_journal",
+		{
+			title: "Read a harnessed host's journal",
+			description: "Return the session's journal in order: every stubbed binding call (name, arguments, outcome), every capability audit event, and every sandbox console log. This is the assertion surface for a harnessed scenario.",
+			inputSchema: {
+				hostId: z.string().describe("The session id from xript_host_load."),
+				clear: z.boolean().optional().describe("Reset the journal after reading it."),
+			},
+		},
+		async ({ hostId, clear }) => {
+			const record = getSession(hostId);
+			if (!record) return text(`no session "${hostId}" — load a host with xript_host_load first`, true);
+			return json(record.session.journal(clear));
+		},
+	);
+
+	server.registerTool(
+		"xript_host_list",
+		{
+			title: "List harnessed host sessions",
+			description: "List the live harnessed host sessions held by this server process.",
+			inputSchema: {},
+		},
+		async () => json(listSessions()),
+	);
+
+	server.registerTool(
+		"xript_host_unload",
+		{
+			title: "Unload a harnessed host session",
+			description: "Dispose a session created by xript_host_load and free its sandbox.",
+			inputSchema: {
+				hostId: z.string().describe("The session id to dispose."),
+			},
+		},
+		async ({ hostId }) => {
+			if (!removeSession(hostId)) return text(`no session "${hostId}"`, true);
+			return text(`unloaded ${hostId}`);
 		},
 	);
 

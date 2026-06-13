@@ -258,6 +258,29 @@ Parameters with a `default` value or `"required": false` become optional:
 declare function greet(name: string, excited?: boolean): string;
 ```
 
+### Open Enums
+
+An enum type's `values` (or a field's inline `enum`) can set `"open": true` to mean "these known values, plus any other string." typegen appends `| (string & {})` so the known values still autocomplete while any string type-checks:
+
+```json
+{
+  "LogLevel": {
+    "description": "A log severity.",
+    "values": ["debug", "info", "warn", "error"],
+    "open": true
+  }
+}
+```
+
+Generates:
+
+```typescript
+/** A log severity. */
+type LogLevel = "debug" | "info" | "warn" | "error" | (string & {});
+```
+
+docgen marks an `open` type as extensible in the generated documentation.
+
 ## Naming Conventions
 
 ### Function Names
@@ -273,3 +296,12 @@ Namespace names should be lowercase nouns or noun phrases:
 - `player`, `world`, `inventory`, `data`
 - Not verbs (`modify`, `handle`, `process`)
 - Not plurals unless they represent collections (`enemies` for a collection manager, but `enemy` for operations on a single enemy)
+
+### Two Grammars, On Purpose
+
+Binding names and capability names follow **different grammars**, and the difference is deliberate:
+
+- **Binding and member names are JavaScript identifiers.** A binding is accessed as `world.getHealth(...)` — a kebab name would parse as subtraction, so the schema places **no segment pattern** on `bindings` keys or namespace `members` keys. camelCase is the convention; underscores are legal.
+- **Capability scopes are kebab dotted paths.** A capability names a node in a scope tree (`fs.addon`, `modify-player`), matched by prefix subsumption — the `capabilityRef` grammar (`^(read:|write:)?[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)*$`) applies to capability declarations and every `capability` reference field, never to binding names.
+
+A gated binding therefore routinely pairs the two: the member `exportReport` (identifier) gates on the capability `reports.export-report` (kebab scope). Tooling that applies the capability grammar to binding names is over-reaching; the validator, `score`, and `lint` constrain only the capability side.

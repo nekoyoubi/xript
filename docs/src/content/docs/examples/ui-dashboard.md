@@ -144,8 +144,8 @@ Fragment sources are provided as a `Record<string, string>`; the runtime sanitiz
 
 ## What Happens at Each Step
 
-1. **Full health (80/100):** `data-if="health < 50"` evaluates to `false` — warnings hidden. Fragment API sets color to green.
-2. **After damage (40/100):** `data-if="health < 50"` flips to `true` — warning shows. Color becomes yellow.
-3. **Critical (15/100):** Both warnings visible. Color becomes red. New item appears in inventory via `replaceChildren`.
+1. **Full health (80/100):** `data-if="health < 50"` evaluates to `false`, so warnings stay hidden. The fragment API sets color to green.
+2. **After damage (40/100):** `data-if="health < 50"` flips to `true`, so the warning shows. Color becomes yellow.
+3. **Critical (15/100):** both warnings visible, color becomes red, and a new item appears in inventory via `replaceChildren`.
 
 See the [source code](https://github.com/nekoyoubi/xript/tree/main/examples/ui-dashboard) for the complete example.

@@ -1,6 +1,6 @@
 {
-	"$schema": "https://xript.dev/schema/manifest/v0.6.json",
-	"xript": "0.6",
+	"$schema": "https://xript.dev/schema/manifest/v0.7.json",
+	"xript": "0.7",
 	"name": "dungeon-crawler",
 	"version": "1.2.0",
 	"title": "Dungeon Crawler",

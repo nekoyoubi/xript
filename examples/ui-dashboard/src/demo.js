@@ -1,19 +1,6 @@
 import { createRuntime, gameState } from "./host.js";
 import { readFile } from "node:fs/promises";
 
-function fragmentFills(manifest) {
-	if (manifest.fills) {
-		const flat = [];
-		for (const [slot, entries] of Object.entries(manifest.fills)) {
-			for (const entry of entries) {
-				flat.push({ slot, ...entry });
-			}
-		}
-		return flat;
-	}
-	return manifest.fragments ?? [];
-}
-
 async function loadModFiles(modDir) {
 	const manifestRaw = await readFile(new URL(`../mods/${modDir}/mod-manifest.json`, import.meta.url), "utf-8");
 	const manifest = JSON.parse(manifestRaw);
@@ -25,13 +12,14 @@ async function loadModFiles(modDir) {
 			sources[entry] = await readFile(new URL(`../mods/${modDir}/${entry}`, import.meta.url), "utf-8");
 		}
 	}
-	const fragments = fragmentFills(manifest);
-	for (const frag of fragments) {
-		if (!frag.inline) {
-			sources[frag.source] = await readFile(new URL(`../mods/${modDir}/${frag.source}`, import.meta.url), "utf-8");
+	for (const entries of Object.values(manifest.fills ?? {})) {
+		for (const fill of entries) {
+			if (!fill.inline && fill.source) {
+				sources[fill.source] = await readFile(new URL(`../mods/${modDir}/${fill.source}`, import.meta.url), "utf-8");
+			}
 		}
 	}
-	return { manifest: { ...manifest, fragments }, sources };
+	return { manifest, sources };
 }
 
 console.log("=== UI Dashboard Demo ===\n");

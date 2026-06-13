@@ -68,6 +68,9 @@ pub fn run_audit(path_str: &str) -> serde_json::Value {
     let bindings = parsed.get("bindings").and_then(|v| v.as_object());
     let capabilities = parsed.get("capabilities").and_then(|v| v.as_object());
     let hooks = parsed.get("hooks").and_then(|v| v.as_object());
+    let slots = parsed.get("slots").and_then(|v| v.as_array());
+    let events = parsed.get("events").and_then(|v| v.as_array());
+    let libraries = parsed.get("libraries").and_then(|v| v.as_object());
 
     let mut ungated: Vec<String> = Vec::new();
     let mut referenced_caps: Vec<String> = Vec::new();
@@ -85,18 +88,39 @@ pub fn run_audit(path_str: &str) -> serde_json::Value {
         }
     }
 
+    for slot in slots.into_iter().flatten() {
+        let id = slot.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+        if let Some(cap) = slot.get("capability").and_then(|v| v.as_str()) {
+            referenced_caps.push(cap.to_string());
+        } else {
+            ungated.push(format!("slot:{}", id));
+        }
+    }
+    for event in events.into_iter().flatten() {
+        if let Some(cap) = event.get("capability").and_then(|v| v.as_str()) {
+            referenced_caps.push(cap.to_string());
+        }
+    }
+    for (specifier, library) in libraries.into_iter().flatten() {
+        if let Some(cap) = library.get("capability").and_then(|v| v.as_str()) {
+            referenced_caps.push(cap.to_string());
+        } else {
+            ungated.push(format!("library:{}", specifier));
+        }
+    }
+
     let defined_caps: Vec<String> = capabilities
         .map(|c| c.keys().cloned().collect())
         .unwrap_or_default();
 
     let unused: Vec<&String> = defined_caps
         .iter()
-        .filter(|c| !referenced_caps.contains(c))
+        .filter(|scope| !referenced_caps.iter().any(|cap| xript_runtime::satisfies(scope, cap)))
         .collect();
 
     let gaps: Vec<&String> = referenced_caps
         .iter()
-        .filter(|c| !defined_caps.contains(c))
+        .filter(|cap| !defined_caps.iter().any(|scope| xript_runtime::satisfies(scope, cap)))
         .collect();
 
     let mut risk_counts = [0u32; 3];
@@ -113,6 +137,18 @@ pub fn run_audit(path_str: &str) -> serde_json::Value {
 
     let name = parsed.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
     let mut report = format!("\u{2714} Audit: {}\n", name);
+
+    let exposed = [
+        bindings.is_some_and(|b| !b.is_empty()),
+        slots.is_some_and(|s| !s.is_empty()),
+        capabilities.is_some_and(|c| !c.is_empty()),
+        events.is_some_and(|e| !e.is_empty()),
+        libraries.is_some_and(|l| !l.is_empty()),
+    ]
+    .iter()
+    .filter(|present| **present)
+    .count();
+    report.push_str(&format!("\nExtension surfaces: {}/5 exposed\n", exposed));
 
     report.push_str(&format!("\nCapabilities: {} defined\n", defined_caps.len()));
     if !defined_caps.is_empty() {
@@ -163,12 +199,65 @@ fn collect_binding_audit(
 
         if let Some(members) = binding.get("members").and_then(|v| v.as_object()) {
             collect_binding_audit(members, &full_path, ungated, referenced_caps);
+        } else if let Some(cap) = binding.get("capability").and_then(|v| v.as_str()) {
+            referenced_caps.push(cap.to_string());
         } else {
-            if let Some(cap) = binding.get("capability").and_then(|v| v.as_str()) {
-                referenced_caps.push(cap.to_string());
-            } else {
-                ungated.push(full_path);
-            }
+            ungated.push(full_path);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run_audit;
+
+    fn audit_of(name: &str, manifest: &str) -> String {
+        let dir = std::env::temp_dir().join(format!("xript-wiz-audit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("{name}.json"));
+        std::fs::write(&path, manifest).unwrap();
+        run_audit(path.to_str().unwrap()).as_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn counts_all_five_extension_surfaces() {
+        let report = audit_of(
+            "surfaces",
+            r#"{
+                "xript": "0.7", "name": "t",
+                "bindings": { "go": { "description": "g", "capability": "run" } },
+                "capabilities": { "run": { "description": "r" } },
+                "slots": [{ "id": "panel", "accepts": ["text/html"] }],
+                "events": [{ "id": "tick", "description": "t" }],
+                "libraries": { "doc-lib": { "description": "d", "capability": "run.doc" } }
+            }"#,
+        );
+        assert!(report.contains("Extension surfaces: 5/5 exposed"), "{report}");
+    }
+
+    #[test]
+    fn matches_capability_references_by_subsumption() {
+        let report = audit_of(
+            "subsumption",
+            r#"{
+                "xript": "0.7", "name": "t",
+                "bindings": { "go": { "description": "g", "capability": "read:run.command" } },
+                "capabilities": { "run": { "description": "r" } }
+            }"#,
+        );
+        assert!(!report.contains("Unused capabilities"), "a subsumed reference counts as use: {report}");
+        assert!(!report.contains("Capability gaps"), "a child-scope reference under a declared parent is not a gap: {report}");
+    }
+
+    #[test]
+    fn flags_an_ungated_library() {
+        let report = audit_of(
+            "ungated-lib",
+            r#"{
+                "xript": "0.7", "name": "t",
+                "libraries": { "open-lib": { "description": "d" } }
+            }"#,
+        );
+        assert!(report.contains("library:open-lib"), "{report}");
     }
 }

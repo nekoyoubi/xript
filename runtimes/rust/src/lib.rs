@@ -1,3 +1,4 @@
+pub mod cap_match;
 pub mod capability;
 pub mod debug;
 mod error;
@@ -15,13 +16,14 @@ pub use debug::{
     instrument_source, Breakpoint, DebugFidelity, DebugOptions, DebugSession, Scope, SourceBreakpoint,
     StackFrame, StopReason, StoppedEvent, Variable, DEBUG_THREAD_ID,
 };
+pub use cap_match::{granted_satisfies, satisfies};
 pub use error::{Result, ValidationIssue, XriptError};
 pub use fragment::{FragmentInstance, FragmentResult, ModInstance};
 pub use manifest::{
-    is_role_identifier, resolve_extends, Binding, Capability, Contributions, EntryBlock, ExportDecl,
-    Extends, FieldDefinition, FragmentBinding, FragmentDeclaration, FragmentEvent, FragmentHandler,
-    FunctionBinding,
-    HookDef, Limits, Manifest, ModManifest, NamespaceBinding, Parameter, ProviderRole, Slot,
+    is_role_identifier, resolve_extends, Binding, Capability, Contributions, EntryBlock, EventDefinition,
+    ExportDecl, Extends, FieldDefinition, FragmentBinding, FragmentDeclaration, FragmentEvent,
+    FragmentHandler, FunctionBinding,
+    HookDef, LibraryDef, Limits, Manifest, ModManifest, NamespaceBinding, Parameter, ProviderRole, Slot,
     TypeDefinition,
 };
 pub use handle::XriptHandle;
@@ -77,6 +79,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -95,6 +98,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -117,6 +121,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -135,6 +140,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -157,6 +163,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -178,6 +185,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -202,6 +210,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -223,6 +232,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -244,6 +254,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -265,6 +276,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -286,6 +298,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -320,6 +333,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -344,6 +358,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -365,6 +380,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -383,6 +399,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -429,6 +446,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -465,6 +483,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -508,6 +527,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -552,6 +572,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -573,6 +594,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -603,6 +625,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -639,6 +662,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -856,6 +880,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -899,6 +924,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -942,6 +968,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -995,6 +1022,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -1030,6 +1058,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -1101,6 +1130,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -1154,6 +1184,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -1204,6 +1235,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -1252,6 +1284,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -1273,6 +1306,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -1293,6 +1327,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -1318,6 +1353,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -1348,6 +1384,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -1407,6 +1444,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -1445,6 +1483,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -1501,6 +1540,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -1572,6 +1612,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -1621,6 +1662,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -1661,6 +1703,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -2233,6 +2276,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences,
                 debug: None,
             },
@@ -2416,6 +2460,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -2533,6 +2578,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: Some(opts),
             },
@@ -2551,6 +2597,7 @@ mod tests {
                 cancellation: None,
                 audit: None,
                 hard_limits: None,
+                libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
                 debug: None,
             },
@@ -2724,5 +2771,356 @@ mod tests {
         let code = instrument_source("var x = 2;\nvar y = x * 3;\ny;");
         let result = rt.execute(&code).unwrap();
         assert_eq!(result.value, serde_json::json!(6));
+    }
+
+    fn caps_runtime(manifest: &str, capabilities: Vec<String>) -> XriptRuntime {
+        create_runtime(
+            manifest,
+            RuntimeOptions {
+                capabilities,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn binding_gate_honors_scope_subsumption() {
+        let manifest = r#"{
+            "xript": "0.7",
+            "name": "test",
+            "bindings": {
+                "runCommand": { "description": "runs", "capability": "run.command" }
+            },
+            "capabilities": { "run.command": { "description": "run" } }
+        }"#;
+
+        let mut with = HostBindings::new();
+        with.add_function("runCommand", |_: &[serde_json::Value]| {
+            Ok(serde_json::json!("ran"))
+        });
+        let rt = create_runtime(
+            manifest,
+            RuntimeOptions {
+                host_bindings: with,
+                capabilities: vec!["run".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(rt.execute("runCommand()").unwrap().value, serde_json::json!("ran"));
+    }
+
+    #[test]
+    fn binding_gate_denies_when_child_grant_does_not_cover_parent_require() {
+        let manifest = r#"{
+            "xript": "0.7",
+            "name": "test",
+            "bindings": {
+                "run": { "description": "runs", "capability": "run" }
+            },
+            "capabilities": { "run": { "description": "run" } }
+        }"#;
+
+        let mut with = HostBindings::new();
+        with.add_function("run", |_: &[serde_json::Value]| {
+            Ok(serde_json::json!("ran"))
+        });
+        let rt = create_runtime(
+            manifest,
+            RuntimeOptions {
+                host_bindings: with,
+                capabilities: vec!["run.command".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let msg = rt
+            .execute("try { run(); 'no error' } catch(e) { e.message }")
+            .unwrap();
+        assert!(msg.value.as_str().unwrap().contains("capability"));
+    }
+
+    #[test]
+    fn binding_gate_mode_lattice_read_grant_denies_write_require() {
+        let manifest = r#"{
+            "xript": "0.7",
+            "name": "test",
+            "bindings": {
+                "writeFs": { "description": "writes", "capability": "write:fs.addon" }
+            },
+            "capabilities": { "fs.addon": { "description": "fs" } }
+        }"#;
+
+        let mut with = HostBindings::new();
+        with.add_function("writeFs", |_: &[serde_json::Value]| {
+            Ok(serde_json::json!("wrote"))
+        });
+        let rt = create_runtime(
+            manifest,
+            RuntimeOptions {
+                host_bindings: with,
+                capabilities: vec!["read:fs.addon".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let msg = rt
+            .execute("try { writeFs(); 'no error' } catch(e) { e.message }")
+            .unwrap();
+        assert!(msg.value.as_str().unwrap().contains("capability"));
+    }
+
+    #[test]
+    fn binding_gate_mode_lattice_write_grant_satisfies_read_require() {
+        let manifest = r#"{
+            "xript": "0.7",
+            "name": "test",
+            "bindings": {
+                "readFs": { "description": "reads", "capability": "read:fs.addon" }
+            },
+            "capabilities": { "fs.addon": { "description": "fs" } }
+        }"#;
+
+        let mut with = HostBindings::new();
+        with.add_function("readFs", |_: &[serde_json::Value]| {
+            Ok(serde_json::json!("read"))
+        });
+        let rt = create_runtime(
+            manifest,
+            RuntimeOptions {
+                host_bindings: with,
+                capabilities: vec!["fs.addon".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(rt.execute("readFs()").unwrap().value, serde_json::json!("read"));
+    }
+
+    #[test]
+    fn events_global_is_injected_for_declared_events() {
+        let manifest = r#"{
+            "xript": "0.7",
+            "name": "test",
+            "events": [ { "id": "player.died", "description": "fired on death" } ]
+        }"#;
+        let rt = caps_runtime(manifest, vec![]);
+        assert_eq!(
+            rt.execute("typeof events.on").unwrap().value,
+            serde_json::json!("function")
+        );
+        assert_eq!(
+            rt.execute("typeof events.subscribe").unwrap().value,
+            serde_json::json!("function")
+        );
+    }
+
+    #[test]
+    fn emit_delivers_object_payload_spread_to_subscriber() {
+        let manifest = r#"{
+            "xript": "0.7",
+            "name": "test",
+            "events": [ { "id": "player.hurt", "description": "fired on damage" } ]
+        }"#;
+        let rt = caps_runtime(manifest, vec![]);
+        rt.execute(
+            "globalThis.__seen = null; events.on('player.hurt', function(amount, source) { globalThis.__seen = amount + ':' + source; });",
+        )
+        .unwrap();
+
+        let results = rt
+            .emit("player.hurt", &[serde_json::json!({ "amount": 7, "source": "fire" })])
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            rt.execute("globalThis.__seen").unwrap().value,
+            serde_json::json!("7:fire")
+        );
+    }
+
+    #[test]
+    fn emit_collects_results_in_registration_order() {
+        let manifest = r#"{
+            "xript": "0.7",
+            "name": "test",
+            "events": [ { "id": "tick", "description": "a tick" } ]
+        }"#;
+        let rt = caps_runtime(manifest, vec![]);
+        rt.execute("events.on('tick', function(n) { return n + 1; });").unwrap();
+        rt.execute("events.on('tick', function(n) { return n * 10; });").unwrap();
+
+        let results = rt.emit("tick", &[serde_json::json!(5)]).unwrap();
+        assert_eq!(results, vec![serde_json::json!(6), serde_json::json!(50)]);
+    }
+
+    #[test]
+    fn emit_swallows_per_handler_errors_to_null() {
+        let manifest = r#"{
+            "xript": "0.7",
+            "name": "test",
+            "events": [ { "id": "boom", "description": "a boom" } ]
+        }"#;
+        let rt = caps_runtime(manifest, vec![]);
+        rt.execute("events.on('boom', function() { throw new Error('handler failed'); });").unwrap();
+        rt.execute("events.on('boom', function() { return 'ok'; });").unwrap();
+
+        let results = rt.emit("boom", &[]).unwrap();
+        assert_eq!(results, vec![serde_json::Value::Null, serde_json::json!("ok")]);
+    }
+
+    #[test]
+    fn emit_unknown_event_delivers_to_nobody() {
+        let manifest = r#"{
+            "xript": "0.7",
+            "name": "test",
+            "events": [ { "id": "known", "description": "known" } ]
+        }"#;
+        let rt = caps_runtime(manifest, vec![]);
+        let results = rt.emit("unknown", &[serde_json::json!(1)]).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn events_subscription_is_capability_gated() {
+        let manifest = r#"{
+            "xript": "0.7",
+            "name": "test",
+            "capabilities": { "spectate": { "description": "watch" } },
+            "events": [ { "id": "secret", "description": "gated", "capability": "spectate" } ]
+        }"#;
+
+        let denied = caps_runtime(manifest, vec![]);
+        let msg = denied
+            .execute("try { events.on('secret', function() {}); 'admitted' } catch(e) { e.message }")
+            .unwrap();
+        assert!(msg.value.as_str().unwrap().contains("capability"));
+
+        let allowed = caps_runtime(manifest, vec!["spectate".into()]);
+        let admitted = allowed
+            .execute("try { events.on('secret', function() {}); 'admitted' } catch(e) { e.message }")
+            .unwrap();
+        assert_eq!(admitted.value, serde_json::json!("admitted"));
+    }
+
+    #[test]
+    fn events_subscription_gate_honors_mode_lattice() {
+        let manifest = r#"{
+            "xript": "0.7",
+            "name": "test",
+            "capabilities": { "world.events": { "description": "world" } },
+            "events": [ { "id": "quake", "description": "gated", "capability": "read:world.events" } ]
+        }"#;
+
+        let granted = caps_runtime(manifest, vec!["write:world".into()]);
+        let admitted = granted
+            .execute("try { events.on('quake', function() {}); 'admitted' } catch(e) { e.message }")
+            .unwrap();
+        assert_eq!(admitted.value, serde_json::json!("admitted"));
+    }
+
+    #[test]
+    fn fire_hook_delivers_to_registered_handlers() {
+        let manifest = r#"{
+            "xript": "0.7",
+            "name": "test",
+            "hooks": { "beforeSave": { "description": "before save" } }
+        }"#;
+        let rt = caps_runtime(manifest, vec![]);
+        rt.execute("hooks.beforeSave(function(doc) { return doc + '!'; });").unwrap();
+
+        let results = rt.fire_hook("beforeSave", &[serde_json::json!("draft")]).unwrap();
+        assert_eq!(results, vec![serde_json::json!("draft!")]);
+    }
+
+    #[test]
+    fn fire_hook_dispatches_event_typed_slot() {
+        let manifest = r#"{
+            "xript": "0.7",
+            "name": "test",
+            "slots": [
+                { "id": "playerDamage", "accepts": ["application/x-xript-hook"], "description": "took damage" }
+            ]
+        }"#;
+        let rt = caps_runtime(manifest, vec![]);
+        rt.execute("globalThis.__hit = 0; hooks.playerDamage(function(amount) { globalThis.__hit = amount; });")
+            .unwrap();
+
+        let results = rt
+            .fire_hook("playerDamage", &[serde_json::json!({ "amount": 25 })])
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            rt.execute("globalThis.__hit").unwrap().value.as_f64(),
+            Some(25.0)
+        );
+    }
+
+    #[test]
+    fn event_typed_slot_hook_registration_is_capability_gated() {
+        let manifest = r#"{
+            "xript": "0.7",
+            "name": "test",
+            "capabilities": { "persistence": { "description": "save" } },
+            "slots": [
+                { "id": "save", "accepts": ["application/x-xript-hook"], "description": "save", "capability": "persistence.disk" }
+            ]
+        }"#;
+
+        let denied = caps_runtime(manifest, vec![]);
+        let msg = denied
+            .execute("try { hooks.save(function() {}); 'ok' } catch(e) { e.message }")
+            .unwrap();
+        assert!(
+            msg.value.as_str().unwrap().contains("capability"),
+            "ungranted slot-hook should throw, got {:?}",
+            msg.value
+        );
+
+        let granted = caps_runtime(manifest, vec!["persistence".into()]);
+        let ok = granted
+            .execute("try { hooks.save(function() {}); 'ok' } catch(e) { e.message }")
+            .unwrap();
+        assert_eq!(ok.value, serde_json::json!("ok"));
+    }
+
+    #[test]
+    fn explicit_hook_wins_over_same_id_slot() {
+        let manifest = r#"{
+            "xript": "0.7",
+            "name": "test",
+            "hooks": { "save": { "description": "explicit", "phases": ["pre", "post"] } },
+            "slots": [
+                { "id": "save", "accepts": ["application/x-xript-hook"], "description": "slot" }
+            ]
+        }"#;
+        let rt = caps_runtime(manifest, vec![]);
+        let phased = rt
+            .execute("typeof hooks.save === 'object' && typeof hooks.save.pre === 'function'")
+            .unwrap();
+        assert_eq!(phased.value, serde_json::json!(true));
+    }
+
+    #[test]
+    fn handle_emit_delivers_event() {
+        let manifest = r#"{
+            "xript": "0.7",
+            "name": "test-app",
+            "events": [ { "id": "ready", "description": "ready" } ]
+        }"#;
+        let handle = handle::XriptHandle::new(
+            manifest.to_string(),
+            RuntimeOptions::default(),
+        )
+        .unwrap();
+        handle
+            .execute("globalThis.__ready = false; events.on('ready', function() { globalThis.__ready = true; });")
+            .unwrap();
+        let results = handle.emit("ready", &[]).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(
+            handle.execute("globalThis.__ready").unwrap().value,
+            serde_json::json!(true)
+        );
     }
 }

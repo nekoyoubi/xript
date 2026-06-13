@@ -150,6 +150,70 @@ describe("generateTypes", () => {
 		assert.ok(result.includes("@remarks Requires capability: `modify-player`"));
 	});
 
+	it("describes a bare capability as write access to its scope", () => {
+		const manifest = {
+			xript: "0.7",
+			name: "test",
+			bindings: {
+				writeAddon: {
+					description: "Writes an addon.",
+					capability: "fs.addon",
+				},
+			},
+		};
+		const result = generateTypes(manifest);
+		assert.ok(result.includes("Requires capability: `fs.addon`"));
+		assert.ok(result.includes("write access to the `fs.addon` scope"));
+		assert.ok(result.includes("any dotted ancestor"));
+	});
+
+	it("describes a read-prefixed capability as read access to the bare scope", () => {
+		const manifest = {
+			xript: "0.7",
+			name: "test",
+			bindings: {
+				readAddon: {
+					description: "Reads an addon.",
+					capability: "read:fs.addon",
+				},
+			},
+		};
+		const result = generateTypes(manifest);
+		assert.ok(result.includes("Requires capability: `read:fs.addon`"));
+		assert.ok(result.includes("read access to the `fs.addon` scope"));
+	});
+
+	it("describes a write-prefixed capability as write access to the bare scope", () => {
+		const manifest = {
+			xript: "0.7",
+			name: "test",
+			bindings: {
+				runCommand: {
+					description: "Runs a command.",
+					capability: "write:run.command",
+				},
+			},
+		};
+		const result = generateTypes(manifest);
+		assert.ok(result.includes("Requires capability: `write:run.command`"));
+		assert.ok(result.includes("write access to the `run.command` scope"));
+	});
+
+	it("preserves dotted scope segments in the capability remark", () => {
+		const manifest = {
+			xript: "0.7",
+			name: "test",
+			hooks: {
+				onRun: {
+					description: "Run hook.",
+					capability: "read:run.command.shell",
+				},
+			},
+		};
+		const result = generateTypes(manifest);
+		assert.ok(result.includes("read access to the `run.command.shell` scope"));
+	});
+
 	it("includes deprecated annotation", () => {
 		const manifest = {
 			xript: "0.1",
@@ -452,6 +516,19 @@ describe("generateTypes", () => {
 		assert.ok(result.includes("scoped"));
 	});
 
+	it("describes a moded slot capability with mode and scope", () => {
+		const manifest = {
+			xript: "0.7",
+			name: "moded-slots",
+			slots: [
+				{ id: "main.overlay", accepts: ["text/html"], capability: "read:ui.mount" },
+			],
+		};
+		const result = generateTypes(manifest);
+		assert.ok(result.includes("Requires capability: `read:ui.mount`"));
+		assert.ok(result.includes("read access to the `ui.mount` scope"));
+	});
+
 	it("does not generate slot types when no slots", () => {
 		const manifest = { xript: "0.1", name: "no-slots" };
 		const result = generateTypes(manifest);
@@ -467,5 +544,59 @@ describe("generateTypes", () => {
 		};
 		const result = generateTypes(manifest);
 		assert.ok(result.includes("bindings: Record<string, unknown>"));
+	});
+});
+
+describe("library module declarations", () => {
+	it("emits ambient module declarations for approved libraries", () => {
+		const result = generateTypes(
+			{
+				xript: "0.7",
+				name: "library-host",
+				libraries: {
+					"@example/doc": { description: "Doc helpers.", capability: "lib.doc", version: "^1.0.0" },
+				},
+			},
+			{ ambient: true },
+		);
+		assert.ok(result.includes('declare module "@example/doc";'));
+		assert.ok(result.includes("Requires capability: lib.doc"));
+		assert.ok(result.includes("Version: ^1.0.0"));
+	});
+
+	it("omits the module block when no libraries are declared", () => {
+		const result = generateTypes({ xript: "0.7", name: "plain" }, { ambient: true });
+		assert.ok(!result.includes("declare module"));
+	});
+});
+
+describe("event-typed slot hook folding", () => {
+	it("emits a hooks registration function for an event-typed slot", () => {
+		const result = generateTypes({
+			xript: "0.7",
+			name: "h",
+			slots: [{ id: "onStart", accepts: ["application/x-xript-hook"], description: "start hook" }],
+		});
+		assert.ok(result.includes("function onStart(handler:"));
+	});
+
+	it("notes bracket access for a hook-slot id that is not a JS identifier", () => {
+		const result = generateTypes({
+			xript: "0.7",
+			name: "h",
+			slots: [{ id: "on-save", accepts: ["application/x-xript-hook"], description: "save hook" }],
+		});
+		assert.ok(result.includes('hooks["on-save"]'));
+	});
+
+	it("lets an explicit hook win over a same-id slot", () => {
+		const result = generateTypes({
+			xript: "0.7",
+			name: "h",
+			hooks: { onStart: { description: "explicit", params: [{ name: "n", type: "number" }] } },
+			slots: [{ id: "onStart", accepts: ["application/x-xript-hook"], description: "slot" }],
+		});
+		assert.ok(result.includes("explicit"));
+		assert.equal(result.match(/function onStart\(/g).length, 1);
 	});
 });

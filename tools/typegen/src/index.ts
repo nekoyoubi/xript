@@ -27,6 +27,19 @@ interface SlotDef {
 	style?: string;
 }
 
+const HOOK_SLOT_ACCEPT = "application/x-xript-hook";
+
+const JS_IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
+
+function effectiveHooks(hooks: Record<string, HookDef> | undefined, slots: SlotDef[] | undefined): Record<string, HookDef> {
+	const merged: Record<string, HookDef> = { ...(hooks ?? {}) };
+	for (const slot of slots ?? []) {
+		if (!slot.accepts?.includes(HOOK_SLOT_ACCEPT) || slot.id in merged) continue;
+		merged[slot.id] = { description: (slot as { description?: string }).description ?? "", capability: slot.capability };
+	}
+	return merged;
+}
+
 interface ExportDef {
 	description: string;
 	params?: Parameter[];
@@ -53,6 +66,7 @@ interface EventDef {
 	id: string;
 	description: string;
 	payload?: TypeRef;
+	capability?: string;
 }
 
 interface FragmentHandler {
@@ -84,6 +98,14 @@ interface Manifest {
 	contributions?: Contributions;
 	events?: EventDef[];
 	fills?: Record<string, Fill[]>;
+	libraries?: Record<string, LibraryDef>;
+}
+
+interface LibraryDef {
+	description?: string;
+	capability?: string;
+	version?: string;
+	deprecated?: string;
 }
 
 type Binding = FunctionBinding | NamespaceBinding;
@@ -188,6 +210,18 @@ function isOptionalParam(param: Parameter): boolean {
 	return param.default !== undefined || param.required === false;
 }
 
+function splitMode(cap: string): { mode: string; scope: string } {
+	const i = cap.indexOf(":");
+	if (i < 0) return { mode: "write", scope: cap };
+	return { mode: cap.slice(0, i), scope: cap.slice(i + 1) };
+}
+
+function describeCapability(cap: string): string {
+	const { mode, scope } = splitMode(cap);
+	const access = mode === "read" ? "read access" : mode === "write" ? "write access" : `\`${mode}:\` access`;
+	return `Requires capability: \`${cap}\` (${access} to the \`${scope}\` scope, satisfied by a grant on that scope or any dotted ancestor).`;
+}
+
 function indent(text: string, level: number): string {
 	const prefix = "\t".repeat(level);
 	return text
@@ -208,7 +242,7 @@ function generateJSDoc(
 		lines.push(` * @deprecated ${extras.deprecated}`);
 	}
 	if (extras?.capability) {
-		lines.push(` * @remarks Requires capability: \`${extras.capability}\``);
+		lines.push(` * @remarks ${describeCapability(extras.capability)}`);
 	}
 	if (extras?.remarks) {
 		lines.push(` * @remarks ${extras.remarks}`);
@@ -423,7 +457,11 @@ function generateHookFunction(name: string, hookDef: HookDef): string {
 			deprecated: hookDef.deprecated,
 		}),
 	);
-	lines.push(`function ${name}(handler: ${handlerType}): void;`);
+	if (JS_IDENTIFIER.test(name)) {
+		lines.push(`function ${name}(handler: ${handlerType}): void;`);
+	} else {
+		lines.push(`// hooks[${JSON.stringify(name)}] — register via bracket access: hooks[${JSON.stringify(name)}](handler)`);
+	}
 	return lines.join("\n");
 }
 
@@ -518,6 +556,48 @@ function stripLeadingDeclare(block: string): string {
 		.join("\n");
 }
 
+function generateCapabilityTypes(capabilities: Record<string, Capability>): string {
+	const lines: string[] = [];
+
+	const keys = Object.keys(capabilities);
+	const scopeUnion = keys.map((k) => `"${k}"`).join(" | ");
+
+	lines.push(
+		generateJSDoc(
+			"A capability scope declared by the host. Scope-only — no `read:`/`write:` mode prefix. Use `CapabilityRef` where a mode-prefixed grant or require string is expected.",
+		),
+	);
+	lines.push(`type Capability = ${scopeUnion};`);
+	lines.push("");
+
+	const refMembers = keys
+		.flatMap((k) => [`"${k}"`, `"read:${k}"`, `"write:${k}"`])
+		.join(" | ");
+
+	lines.push(
+		generateJSDoc(
+			"A capability reference: a declared scope, optionally carrying a `read:`/`write:` mode prefix. A bare scope means `write:` (the top of the mode lattice). Open to any string so an ancestor scope or host-specific grant still type-checks.",
+		),
+	);
+	lines.push(`type CapabilityRef = (${refMembers}) | (string & {});`);
+
+	return lines.join("\n");
+}
+
+function generateLibraryModules(libraries: Record<string, LibraryDef>): string {
+	const blocks: string[] = [];
+	for (const [specifier, def] of Object.entries(libraries)) {
+		const docLines: string[] = [];
+		if (def.description) docLines.push(def.description);
+		if (def.version) docLines.push(`Version: ${def.version}`);
+		if (def.capability) docLines.push(`Requires capability: ${def.capability}`);
+		if (def.deprecated) docLines.push(`@deprecated ${def.deprecated}`);
+		const doc = docLines.length > 0 ? `/**\n${docLines.map((line) => ` * ${line}`).join("\n")}\n */\n` : "";
+		blocks.push(`${doc}declare module ${JSON.stringify(specifier)};`);
+	}
+	return blocks.join("\n\n");
+}
+
 function generateXriptConst(): string {
 	return [
 		generateJSDoc("The in-sandbox xript global. Exposes the imperative export-registration surface."),
@@ -570,9 +650,9 @@ export function generateAmbientTypes(manifest: unknown, options?: TypegenOptions
 	}
 
 	if (m.hooks && Object.keys(m.hooks).length > 0) {
-		globalBlocks.push(stripLeadingDeclare(generateHooksNamespace(m.hooks, m.slots)));
+		globalBlocks.push(stripLeadingDeclare(generateHooksNamespace(effectiveHooks(m.hooks, m.slots), m.slots)));
 	} else if (m.slots && m.slots.length > 0) {
-		globalBlocks.push(stripLeadingDeclare(generateHooksNamespace({}, m.slots)));
+		globalBlocks.push(stripLeadingDeclare(generateHooksNamespace(effectiveHooks(undefined, m.slots), m.slots)));
 	}
 
 	if (m.slots && m.slots.length > 0) {
@@ -582,12 +662,21 @@ export function generateAmbientTypes(manifest: unknown, options?: TypegenOptions
 
 	if (m.events && m.events.length > 0) {
 		globalBlocks.push(generateEventCatalog(m.events));
+		globalBlocks.push(generateEventsGlobal());
+	}
+
+	if (m.capabilities && Object.keys(m.capabilities).length > 0) {
+		globalBlocks.push(generateCapabilityTypes(m.capabilities));
 	}
 
 	globalBlocks.push(generateXriptConst());
 
 	const globalBody = globalBlocks.map((b) => indent(b, 1)).join("\n\n");
 	sections.push(`declare global {\n${globalBody}\n}`);
+
+	if (m.libraries && Object.keys(m.libraries).length > 0) {
+		sections.push(generateLibraryModules(m.libraries));
+	}
 
 	if (m.fills && Object.keys(m.fills).length > 0) {
 		const handlerTypes = generateFragmentHandlerTypes(m.fills);
@@ -652,9 +741,9 @@ export function generateTypes(manifest: unknown, options?: TypegenOptions): stri
 	}
 
 	if (m.hooks && Object.keys(m.hooks).length > 0) {
-		sections.push(generateHooksNamespace(m.hooks, m.slots));
+		sections.push(generateHooksNamespace(effectiveHooks(m.hooks, m.slots), m.slots));
 	} else if (m.slots && m.slots.length > 0) {
-		sections.push(generateHooksNamespace({}, m.slots));
+		sections.push(generateHooksNamespace(effectiveHooks(undefined, m.slots), m.slots));
 	}
 
 	if (m.slots && m.slots.length > 0) {
@@ -664,6 +753,11 @@ export function generateTypes(manifest: unknown, options?: TypegenOptions): stri
 
 	if (m.events && m.events.length > 0) {
 		sections.push(generateEventCatalog(m.events));
+		sections.push(generateEventsGlobal(true));
+	}
+
+	if (m.capabilities && Object.keys(m.capabilities).length > 0) {
+		sections.push(generateCapabilityTypes(m.capabilities));
 	}
 
 	if (m.fills && Object.keys(m.fills).length > 0) {
@@ -788,7 +882,7 @@ function generateSlotTypes(slots: SlotDef[]): string {
 
 	for (const slot of slots) {
 		const doc = [`Accepts: ${slot.accepts.join(", ")}`];
-		if (slot.capability) doc.push(`Requires: \`${slot.capability}\``);
+		if (slot.capability) doc.push(describeCapability(slot.capability));
 		if (slot.multiple) doc.push("Multiple fragments allowed");
 		if (slot.style) doc.push(`Style: ${slot.style}`);
 		lines.push(indent(generateJSDoc(doc.join(". ") + "."), 1));
@@ -811,7 +905,7 @@ function generateEventCatalog(events: EventDef[]): string {
 
 	for (const event of events) {
 		const payload = event.payload !== undefined ? resolveTypeRef(event.payload) : "void";
-		lines.push(indent(generateJSDoc(event.description), 1));
+		lines.push(indent(generateJSDoc(event.description, { capability: event.capability }), 1));
 		lines.push(indent(`"${event.id}": ${payload};`, 1));
 	}
 
@@ -821,6 +915,30 @@ function generateEventCatalog(events: EventDef[]): string {
 	lines.push(generateJSDoc("An event id the host emits."));
 	const union = events.map((e) => `"${e.id}"`).join(" | ");
 	lines.push(`type XriptEventId = ${union};`);
+
+	return lines.join("\n");
+}
+
+function generateEventsGlobal(declare = false): string {
+	const lines: string[] = [];
+
+	lines.push(
+		generateJSDoc(
+			"The in-sandbox `events` global. A mod subscribes to the host's broadcast catalog by event id; the handler receives that event's declared payload. Subscribing to a capability-gated event without the grant throws a `CapabilityDeniedError` at registration time.",
+		),
+	);
+	lines.push(`${declare ? "declare " : ""}namespace events {`);
+	lines.push(
+		indent(
+			generateJSDoc("Subscribes a handler to a declared host event. The payload type is inferred from the event id."),
+			1,
+		),
+	);
+	lines.push(indent("function on<K extends XriptEventId>(id: K, handler: (payload: XriptEvents[K]) => void): void;", 1));
+	lines.push("");
+	lines.push(indent(generateJSDoc("Alias of `events.on`."), 1));
+	lines.push(indent("function subscribe<K extends XriptEventId>(id: K, handler: (payload: XriptEvents[K]) => void): void;", 1));
+	lines.push("}");
 
 	return lines.join("\n");
 }

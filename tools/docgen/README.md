@@ -25,7 +25,7 @@ Generates structured markdown documentation with binding signatures, parameter t
 import { generateDocs, generateDocsFromFile } from "@xriptjs/docgen";
 
 const docs = generateDocs({
-  xript: "0.1",
+  xript: "0.7",
   name: "my-app",
   bindings: {
     greet: {

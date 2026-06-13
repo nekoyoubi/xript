@@ -7,15 +7,27 @@ The `xript` CLI is a single command with subcommands for every tool in the xript
 
 ## Install
 
+The CLI is a separate install from the runtime. `npm install @xriptjs/runtime` gives your *application* a sandbox, but it does not put an `xript` command on your machine. That takes one of these:
+
 ```bash
 npm install -g @xriptjs/cli
 ```
 
-Or run without installing:
+Or run without installing anything, by prefixing every command with `npx`:
 
 ```bash
 npx xript <command>
 ```
+
+Confirm it works before going further:
+
+```bash
+xript --version
+```
+
+:::note[Seeing `xript: command not found`?]
+That means the CLI isn't installed (or your terminal hasn't picked up the new install — open a fresh one). Run the global install above, or use the `npx xript` form, which fetches the CLI on demand.
+:::
 
 ## Commands
 
@@ -95,14 +107,14 @@ import {
 } from "@xriptjs/validate";
 
 const result = validateManifest({
-  xript: "0.6",
+  xript: "0.7",
   name: "my-app",
   bindings: { greet: { description: "Greets." } },
   slots: [{ id: "sidebar", accepts: ["text/html"] }],
 });
 
 const modResult = await validateModManifest({
-  xript: "0.6",
+  xript: "0.7",
   name: "my-mod",
   version: "1.0.0",
   fills: {
@@ -145,7 +157,7 @@ Prints to stdout by default. Use `--output` / `-o` to write to a file.
 | `{ "map": "number" }` | `Record<string, number>` |
 | `{ "optional": "string" }` | `string \| undefined` |
 
-Custom object types become `interface` declarations. Enum types become string literal unions. An open enum (`open: true` on a type's `values` or a field's inline `enum`) means "the known values, plus any other string" — the generator emits `"known" | "values" | (string & {})` so authors keep autocomplete on the known set while any string still type-checks.
+Custom object types become `interface` declarations. Enum types become string literal unions. An open enum (`open: true` on a type's `values` or a field's inline `enum`) means "the known values, plus any other string"; the generator emits `"known" | "values" | (string & {})` so authors keep autocomplete on the known set while any string still type-checks.
 
 Pass `--ambient` to emit an ambient `.d.ts` that declares the global `xript` namespace, for authoring mods in TypeScript:
 
@@ -229,7 +241,7 @@ The generator creates these page types:
 
 - **Index** (`index.md`) — overview of the entire API surface: global functions, namespaces, types, capabilities table
 - **Binding pages** (`bindings/*.md`) — one per top-level binding with signatures, parameter tables, return types, capability requirements
-- **Type pages** (`types/*.md`) — one per custom type with field tables and TypeScript definitions. Open enums (`open: true`) are marked extensible — the documented values are the known set, but any string is accepted
+- **Type pages** (`types/*.md`) — one per custom type with field tables and TypeScript definitions. Open enums (`open: true`) are marked extensible: the documented values are the known set, but any string is accepted
 - **Hook pages** (`hooks/*.md`) — one per declared hook
 - **Fragment API** (`fragment-api.md`) — lifecycle hooks and proxy operations (when manifest has slots)
 - **Capability Grant Shapes** (`capability-grant-shapes.md`) — the grant/install/discovery wire shapes, when the manifest opts in
@@ -483,7 +495,7 @@ With `--manifest`, the scanner compares scanned bindings against the existing ma
 - **Added** bindings are inserted
 - **Removed** bindings are warned about but not deleted
 - **Unchanged** bindings are left untouched (manual edits preserved)
-- **Capability gaps** — capabilities referenced in `@xript-cap` but not defined in the manifest — are auto-generated with `risk: "low"`
+- **Capability gaps** (capabilities referenced in `@xript-cap` but not defined in the manifest) are auto-generated with `risk: "low"`
 
 Without `--write`, merge mode previews the result to stdout. With `--write`, it updates the manifest file on disk.
 
@@ -606,22 +618,40 @@ xript run <mod-manifest.json> <entry-script> --app host.json --cap modify-state,
 | `--args <json>` | JSON array of arguments for the invoked export |
 | `--app <manifest>` | Host app manifest (a minimal host is used otherwise) |
 | `--cap <c1,c2>` | Comma-separated capabilities to grant |
+| `--harness <file>` | Harness descriptor: binding stubs, capability grants, and library sources |
+| `--steps <file>` | Scenario steps to run against the harnessed session |
 
 The result (load status, export return value, audit entries) is printed as JSON. Exit code is `0` when the mod loaded, `1` otherwise.
+
+### Harnessed scenarios
+
+With `--harness` or `--steps`, `run` becomes a synthetic-host session: the `--app` manifest's declared bindings are stubbed from the [harness descriptor](/spec/harness/) (`returns` / `throws` / `sequence` / `script` / `record`), every binding call is journaled alongside capability audit events and console logs, and the [steps file](/schema/harness-steps/v0.7.json) drives a replayable scenario: load mods, invoke exports, emit events, fire hooks, resolve slots and roles, read the journal.
+
+```bash
+xript run --app host.json --harness harness.json --steps steps.json
+```
+
+Output is `{ summary, steps, journal }`; the exit code fails if any step failed, and a step's failure is captured as its result so scenarios can assert expected denials mid-run. When the harness omits `capabilities`, every scope the host declares is granted in full. That's the frictionless test-rig default.
 
 ### Programmatic API
 
 ```typescript
-import { runMod } from "@xriptjs/cli";
+import { runMod, createHarnessSession, runSteps, loadStepsFile } from "@xriptjs/cli";
 
 const result = await runMod({ modManifest, source, appManifest, capabilities, invoke });
+
+const session = await createHarnessSession({ appManifest, harness });
+const { steps, baseDir } = await loadStepsFile("./steps.json");
+const results = await runSteps(session, steps, { baseDir });
+const journal = session.journal();
+session.dispose();
 ```
 
 ---
 
 ## describe
 
-Summarizes what a host manifest exposes — its bindings, hooks, slots, and capabilities — then prints the generated documentation. The fast way to see a host's extension surface.
+Summarizes what a host manifest exposes (bindings, hooks, slots, and capabilities), then prints the generated documentation. The fast way to see a host's extension surface.
 
 ### Usage
 
@@ -648,7 +678,7 @@ const { summary, docs } = describeManifest(manifest);
 
 ## score
 
-Rates a host's **moddability capacity**: how much of xript's extension surface (bindings, slots, events, and a capability model) the host exposes, against a ceiling of exposing all of it. The headline is `round(100 × capacity)`, where capacity averages how many of those four surfaces are present.
+Rates a host's **moddability capacity**: how much of xript's extension surface (bindings, slots, events, libraries, and a capability model) the host exposes, against a ceiling of exposing all of it. The headline is `round(100 × capacity)`, where capacity averages how many of those five surfaces are present.
 
 Exposing a slot no mod fills reads as moddability, not waste, so the score is about what the host *offers*, not how much a supplied mod set happens to exercise. `extends` is resolved before scoring, and resolving inheritance can only raise the score. How much your supplied mods fill (slot and capability coverage) survives as **informational** mod-coverage, reported but not scored, with `reserved` and inherited surface excluded from its denominators.
 
@@ -664,7 +694,7 @@ xript score <host-manifest> [mods...] --json
 
 | Flag | Description |
 |------|-------------|
-| `--min <n>` | Exit non-zero if the headline is below `n` (or any integrity violation exists) — a CI gate |
+| `--min <n>` | Exit non-zero if the headline is below `n`, or any integrity violation exists; a CI gate |
 | `--json` | Emit the full result as JSON |
 
 ### Programmatic API
@@ -737,9 +767,9 @@ xript mcp
 
 Configure your MCP client to run `xript mcp`. The server exposes:
 
-- **Tools** — one per CLI command, mirroring the human surface 1:1: `xript_validate`, `xript_cross_validate`, `xript_typegen`, `xript_docgen`, `xript_sanitize`, `xript_scaffold`, `xript_scan`, `xript_manifest_describe`, `xript_run`, `xript_score`, `xript_score_diff`, `xript_lint`, and `xript_guide`, plus `xript_server_info`.
-- **Resources** — the spec docs under `xript://spec/*` and the authoring guidance under `xript://guidance/*`.
-- **Prompts** — doctrine-carrying prompts for adopting xript, judging whether a surface is xript-native, choosing a surface, and authoring a mod.
+- **Tools:** one per CLI command, mirroring the human surface 1:1: `xript_validate`, `xript_cross_validate`, `xript_typegen`, `xript_docgen`, `xript_sanitize`, `xript_scaffold`, `xript_scan`, `xript_manifest_describe`, `xript_run`, `xript_score`, `xript_score_diff`, `xript_lint`, and `xript_guide`, plus `xript_server_info`.
+- **Resources:** the spec docs under `xript://spec/*` and the authoring guidance under `xript://guidance/*`.
+- **Prompts:** doctrine-carrying prompts for adopting xript, judging whether a surface is xript-native, choosing a surface, and authoring a mod.
 
 ### Programmatic API
 

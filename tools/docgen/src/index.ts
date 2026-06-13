@@ -1,6 +1,6 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { resolve, join, dirname } from "node:path";
-import { resolveExtends } from "@xriptjs/validate";
+import { resolveExtends, splitMode, scopeSubsumes } from "@xriptjs/validate";
 
 export { resolveExtends, ManifestResolutionError } from "@xriptjs/validate";
 
@@ -35,6 +35,14 @@ interface Manifest {
 	contributions?: Contributions;
 	events?: EventDef[];
 	fills?: Record<string, Fill[]>;
+	libraries?: Record<string, LibraryDef>;
+}
+
+interface LibraryDef {
+	description?: string;
+	capability?: string;
+	version?: string;
+	deprecated?: string;
 }
 
 type Binding = FunctionBinding | NamespaceBinding;
@@ -105,6 +113,7 @@ interface EventDef {
 	id: string;
 	description: string;
 	payload?: TypeRef;
+	capability?: string;
 }
 
 interface FragmentHandler {
@@ -176,6 +185,76 @@ function typeRefToCode(ref: TypeRef): string {
 
 function isOptionalParam(param: Parameter): boolean {
 	return param.default !== undefined || param.required === false;
+}
+
+function accessLabel(mode: string): string {
+	return mode === "read" ? "read access" : mode === "write" ? "write access" : `\`${mode}:\` access`;
+}
+
+function describeCapability(cap: string): string {
+	const { mode, scope } = splitMode(cap);
+	return `Requires capability: \`${cap}\` (${accessLabel(mode)} to the \`${scope}\` scope, satisfied by a grant on that scope or any dotted ancestor).`;
+}
+
+interface CapabilityRequirement {
+	capability: string;
+	kind: "binding" | "hook" | "slot" | "event";
+	label: string;
+	link?: string;
+}
+
+function collectCapabilityRequirements(manifest: Manifest, options?: DocgenOptions): CapabilityRequirement[] {
+	const reqs: CapabilityRequirement[] = [];
+	const ext = linkExt(options);
+
+	const walkBinding = (qualified: string, binding: Binding, topLevelName: string): void => {
+		if (isNamespace(binding)) {
+			for (const [memberName, member] of Object.entries(binding.members)) {
+				walkBinding(`${qualified}.${memberName}`, member, topLevelName);
+			}
+			return;
+		}
+		if (binding.capability) {
+			reqs.push({
+				capability: binding.capability,
+				kind: "binding",
+				label: `\`${qualified}()\``,
+				link: `./bindings/${topLevelName}${ext}`,
+			});
+		}
+	};
+
+	if (manifest.bindings) {
+		for (const [name, binding] of Object.entries(manifest.bindings)) {
+			walkBinding(name, binding, name);
+		}
+	}
+
+	if (manifest.hooks) {
+		for (const [name, hook] of Object.entries(manifest.hooks)) {
+			if (hook.capability) {
+				reqs.push({ capability: hook.capability, kind: "hook", label: `\`${name}\``, link: `./hooks/${name}${ext}` });
+			}
+		}
+	}
+
+	if (manifest.slots) {
+		for (const slot of manifest.slots) {
+			if (slot.capability) {
+				reqs.push({ capability: slot.capability, kind: "slot", label: `\`${slot.id}\`` });
+			}
+		}
+	}
+
+	if (manifest.events) {
+		for (const event of manifest.events) {
+			if (event.capability) {
+				reqs.push({ capability: event.capability, kind: "event", label: `\`${event.id}\`` });
+			}
+		}
+	}
+
+	return reqs;
 }
 
 function linkExt(options?: DocgenOptions): string {
@@ -262,11 +341,44 @@ function generateIndexPage(manifest: Manifest, options?: DocgenOptions): DocPage
 			"Keep three neighbors distinct: bindings are *what you can call*, slots and fragment handlers are *what handles*, and events are *what the host emits*. An event-typed slot (`accepts: application/x-xript-hook`) is an extension point an addon fills with a handler; a fragment fill's `handlers` are DOM responses wired onto rendered markup; an event here is a broadcast the host produces, with no consumer presupposed.",
 		);
 		lines.push("");
-		lines.push("| Event | Payload | Description |");
-		lines.push("|-------|---------|-------------|");
-		for (const event of manifest.events) {
-			const payload = event.payload !== undefined ? formatTypeRef(event.payload) : "—";
-			lines.push(`| \`${event.id}\` | ${payload} | ${event.description} |`);
+		lines.push(
+			"A script subscribes to an event with `events.on(\"<event.id>\", handler)` (alias `events.subscribe`). Subscription is capability-gated per event at registration time, reusing the hook gate model: a grant satisfies an event's declared capability by mode-lattice and prefix-subsumption, and a denied subscription throws. Events without a capability are open to any script.",
+		);
+		lines.push("");
+		const eventsHaveCapability = manifest.events.some((event) => event.capability);
+		if (eventsHaveCapability) {
+			lines.push("| Event | Payload | Capability | Description |");
+			lines.push("|-------|---------|------------|-------------|");
+			for (const event of manifest.events) {
+				const payload = event.payload !== undefined ? formatTypeRef(event.payload) : "—";
+				const cap = event.capability ? `\`${event.capability}\`` : "—";
+				lines.push(`| \`${event.id}\` | ${payload} | ${cap} | ${event.description} |`);
+			}
+		} else {
+			lines.push("| Event | Payload | Description |");
+			lines.push("|-------|---------|-------------|");
+			for (const event of manifest.events) {
+				const payload = event.payload !== undefined ? formatTypeRef(event.payload) : "—";
+				lines.push(`| \`${event.id}\` | ${payload} | ${event.description} |`);
+			}
+		}
+		lines.push("");
+	}
+
+	if (manifest.libraries && Object.keys(manifest.libraries).length > 0) {
+		lines.push("## Libraries");
+		lines.push("");
+		lines.push(
+			"Approved importable libraries. Imports are default-deny; these specifiers are the curated allow-list that lifts it, gated per-library by capability. An imported library runs inside the sandbox at the importing mod's own privilege — full-fidelity calls, no JSON boundary — and is a self-contained pre-bundled ES module with no imports of its own.",
+		);
+		lines.push("");
+		lines.push("| Library | Version | Capability | Description |");
+		lines.push("|---------|---------|------------|-------------|");
+		for (const [specifier, library] of Object.entries(manifest.libraries)) {
+			const version = library.version ? `\`${library.version}\`` : "—";
+			const cap = library.capability ? `\`${library.capability}\`` : "—";
+			const deprecated = library.deprecated ? ` **Deprecated:** ${library.deprecated}` : "";
+			lines.push(`| \`${specifier}\` | ${version} | ${cap} | ${library.description ?? ""}${deprecated} |`);
 		}
 		lines.push("");
 	}
@@ -305,13 +417,65 @@ function generateIndexPage(manifest: Manifest, options?: DocgenOptions): DocPage
 	if (manifest.capabilities) {
 		lines.push("## Capabilities");
 		lines.push("");
-		lines.push("| Capability | Description | Risk |");
-		lines.push("|------------|-------------|------|");
+		const capNames = Object.keys(manifest.capabilities);
+		const anyDotted = capNames.some((name) => name.includes("."));
+		lines.push(
+			"Declared capability keys are scope-only: each names a node in a dotted scope tree, with no `read:`/`write:` mode prefix. A *reference* (a binding, hook, slot, or event `capability` field, or a host grant) may carry a mode prefix. A grant satisfies a requirement when its mode covers the required mode (`write` ⊒ `read`) **and** its scope equals or is a dotted ancestor of the required scope.",
+		);
+		lines.push("");
+		lines.push("| Capability | Scope | Description | Risk |");
+		lines.push("|------------|-------|-------------|------|");
 		for (const [name, cap] of Object.entries(manifest.capabilities)) {
 			const risk = cap.risk || "low";
-			lines.push(`| \`${name}\` | ${cap.description} | ${risk} |`);
+			const depth = name.split(".").length;
+			const scopeNote = depth > 1 ? `nested (depth ${depth})` : "top-level";
+			lines.push(`| \`${name}\` | ${scopeNote} | ${cap.description} | ${risk} |`);
 		}
 		lines.push("");
+		if (anyDotted) {
+			lines.push(
+				"Because scopes subsume by prefix, a grant on a parent scope also satisfies any requirement nested beneath it — a grant on `run` covers `run.command`, but not the unrelated sibling `runner`.",
+			);
+			lines.push("");
+		}
+	}
+
+	const capRequirements = collectCapabilityRequirements(manifest, options);
+	if (manifest.capabilities && capRequirements.length > 0) {
+		lines.push("## Capability Requirements");
+		lines.push("");
+		lines.push(
+			"Gate sites grouped by the capability they require, so a modder can read off exactly which grant unlocks what. Each entry lists the bindings, hooks, slots, and events that reference the capability directly, followed by any whose requirement a grant on this scope *also* satisfies through prefix-subsumption.",
+		);
+		lines.push("");
+		for (const [name] of Object.entries(manifest.capabilities)) {
+			const grantScope = splitMode(name).scope;
+			const direct = capRequirements.filter((r) => r.capability === name);
+			const subsumed = capRequirements.filter((r) => {
+				if (r.capability === name) return false;
+				return scopeSubsumes(grantScope, splitMode(r.capability).scope);
+			});
+			if (direct.length === 0 && subsumed.length === 0) continue;
+			lines.push(`### \`${name}\``);
+			lines.push("");
+			const renderReq = (r: CapabilityRequirement): string => {
+				const label = r.link ? `[${r.label}](${r.link})` : r.label;
+				return `- ${label} *(${r.kind})*`;
+			};
+			for (const r of direct) {
+				lines.push(renderReq(r));
+			}
+			if (subsumed.length > 0) {
+				lines.push("");
+				lines.push(
+					`A grant on \`${name}\` also satisfies, by scope subsumption, the requirements of:`,
+				);
+				for (const r of subsumed) {
+					lines.push(`- ${r.link ? `[${r.label}](${r.link})` : r.label} *(${r.kind})* — requires \`${r.capability}\``);
+				}
+			}
+			lines.push("");
+		}
 	}
 
 	const provides = manifest.contributions?.provides;
@@ -424,7 +588,7 @@ function generateFunctionPage(name: string, binding: FunctionBinding): DocPage {
 	if (binding.capability) {
 		lines.push("## Requires Capability");
 		lines.push("");
-		lines.push(`This function requires the \`${binding.capability}\` capability.`);
+		lines.push(describeCapability(binding.capability));
 		lines.push("");
 	}
 
@@ -499,7 +663,7 @@ function appendNamespaceMember(
 	}
 
 	if (fn.capability) {
-		lines.push(`**Requires capability:** \`${fn.capability}\``);
+		lines.push(`**${describeCapability(fn.capability)}**`);
 		lines.push("");
 	}
 
@@ -675,7 +839,7 @@ function generateHookPage(name: string, hookDef: HookDef): DocPage {
 	if (hookDef.capability) {
 		lines.push("## Requires Capability");
 		lines.push("");
-		lines.push(`This hook requires the \`${hookDef.capability}\` capability.`);
+		lines.push(describeCapability(hookDef.capability));
 		lines.push("");
 	}
 
@@ -780,8 +944,21 @@ function generateGrantShapesPage(): DocPage {
 	return { slug: "capability-grant-shapes", title: "Capability Grant Shapes", content: lines.join("\n") };
 }
 
+const HOOK_SLOT_ACCEPT = "application/x-xript-hook";
+
+function effectiveHooks(hooks: Record<string, HookDef> | undefined, slots: SlotDef[] | undefined): Record<string, HookDef> {
+	const merged: Record<string, HookDef> = { ...(hooks ?? {}) };
+	for (const slot of slots ?? []) {
+		if (!slot.accepts?.includes(HOOK_SLOT_ACCEPT) || slot.id in merged) continue;
+		merged[slot.id] = { description: (slot as { description?: string }).description ?? "", capability: slot.capability };
+	}
+	return merged;
+}
+
 export function generateDocs(manifest: unknown, options?: DocgenOptions): DocgenResult {
-	const m = manifest as Manifest;
+	const raw = manifest as Manifest;
+	const folded = effectiveHooks(raw.hooks, raw.slots);
+	const m: Manifest = Object.keys(folded).length > 0 ? { ...raw, hooks: folded } : raw;
 	const pages: DocPage[] = [];
 
 	pages.push(generateIndexPage(m, options));

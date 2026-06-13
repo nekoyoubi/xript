@@ -22,7 +22,7 @@ using Xript.Runtime;
 
 var manifestJson = """
 {
-    "xript": "0.1",
+    "xript": "0.7",
     "name": "my-app",
     "bindings": {
         "greet": {
@@ -216,7 +216,7 @@ As of v0.6 the canonical mod contribution surface is a single `fills` object key
 ```csharp
 var modManifestJson = """
 {
-    "xript": "0.3",
+    "xript": "0.7",
     "name": "health-ui-mod",
     "version": "1.0.0",
     "fragments": [
@@ -280,7 +280,7 @@ A mod can declare named exports the host calls and whose return value it honors.
 ```csharp
 runtime.LoadMod("""
 {
-    "xript": "0.3",
+    "xript": "0.7",
     "name": "transcriber",
     "version": "1.0.0",
     "entry": {
@@ -308,7 +308,7 @@ Mods advertise logical capabilities through `contributions.provides`, mapping a 
 ```csharp
 var modJson = """
 {
-    "xript": "0.3",
+    "xript": "0.7",
     "name": "deepl-translator",
     "version": "1.0.0",
     "entry": {
@@ -350,7 +350,7 @@ Setting `entry.format` to `"module"` evaluates the mod entry as a real ES module
 ```csharp
 runtime.LoadMod("""
 {
-    "xript": "0.3",
+    "xript": "0.7",
     "name": "transcriber",
     "version": "1.0.0",
     "entry": { "script": "main.js", "format": "module" }
@@ -396,7 +396,7 @@ A manifest can `extends` one or more base manifests, resolved and deep-merged ba
 - **fill** — redeclare an `abstract: true` base type with concrete fields or values; abstractness is the opt-in, so no marker is needed
 - **refine** — redeclare a concrete base type or slot with `refines: true` to deep-merge (child wins per key, nested objects recurse, arrays and scalars replace wholesale)
 
-Any other collision — concrete-on-concrete without `refines`, or a duplicate binding, capability, or hook — is a resolution error, so inheritance never silently clobbers. The same resolution runs at parity across all four runtimes.
+Any other collision (concrete-on-concrete without `refines`, or a duplicate binding, capability, or hook) is a resolution error, so inheritance never silently clobbers. The same resolution runs at parity across all four runtimes.
 
 In C#, `CreateFromFile` resolves `extends` automatically (base manifests are referenced by relative file path against the manifest's directory):
 

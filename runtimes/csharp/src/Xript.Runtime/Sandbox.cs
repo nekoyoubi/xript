@@ -15,6 +15,8 @@ internal sealed class Sandbox : IDisposable
     private readonly Manifest _manifest;
     private readonly CancellationToken _cancellation;
     private readonly DenyExternalModuleLoader _moduleLoader = new();
+    private readonly IReadOnlyDictionary<string, string> _libraries;
+    private readonly HashSet<string> _registeredLibraryModules = [];
     private int _moduleCounter;
     private static readonly DateTime EpochStart =
         new(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
@@ -29,6 +31,17 @@ internal sealed class Sandbox : IDisposable
         _cancellation = options.Cancellation;
         var granted = new HashSet<string>(options.Capabilities);
         GrantedCapabilities = granted;
+
+        foreach (var (specifier, source) in options.Libraries)
+        {
+            if (manifest.Libraries?.ContainsKey(specifier) != true)
+                throw new LibraryRegistrationException(specifier, "not declared in the host manifest's libraries map");
+            if (CommonJsDetector.Detect(source) is { } artifact)
+                throw new LibraryRegistrationException(specifier, $"CommonJS artifacts detected (found: {artifact}); libraries must be pre-bundled ES modules");
+            if (ImportScanner.FirstSpecifier(source) is { } nested)
+                throw new LibraryRegistrationException(specifier, $"not import-clean: contains an import of \"{nested}\"; libraries must be self-contained pre-bundled ES modules with no imports of their own");
+        }
+        _libraries = options.Libraries;
 
         var effective = ResolveEffectiveLimits(manifest.Limits, options.HardLimits);
 
@@ -68,6 +81,7 @@ internal sealed class Sandbox : IDisposable
         RegisterBindings(options.HostBindings, granted, options.Audit);
         RegisterFragmentHooks();
         RegisterHooks(granted);
+        RegisterEvents(granted);
         RegisterExportRegistry();
 
         if (debugEnabled)
@@ -132,10 +146,32 @@ internal sealed class Sandbox : IDisposable
         }
     }
 
+    private void ApproveLibraryImport(string specifier)
+    {
+        if (_manifest.Libraries?.TryGetValue(specifier, out var declaration) != true || declaration is null)
+            throw new ImportDeniedException(specifier);
+        if (declaration.Capability is { } cap && !Capabilities.GrantedSatisfies(GrantedCapabilities, cap))
+            throw new CapabilityDeniedException(specifier, cap);
+        if (!_libraries.ContainsKey(specifier))
+            throw new LibraryUnavailableException(specifier);
+    }
+
     internal void EvaluateModule(string source, string modName)
     {
         if (_cancellation.IsCancellationRequested)
             throw new ExecutionCancelledException();
+
+        var allowedLibraries = new List<string>();
+        foreach (var import in ImportScanner.FindAll(source))
+        {
+            if (import.Dynamic)
+                throw new ImportDeniedException(import.Specifier);
+            ApproveLibraryImport(import.Specifier);
+            if (_registeredLibraryModules.Add(import.Specifier))
+                _engine.Modules.Add(import.Specifier, _libraries[import.Specifier]);
+            allowedLibraries.Add(import.Specifier);
+            _moduleLoader.Allow(import.Specifier);
+        }
 
         var specifier = $"__xript_mod_{_moduleCounter++}";
         _moduleLoader.Allow(specifier);
@@ -179,6 +215,8 @@ internal sealed class Sandbox : IDisposable
         finally
         {
             _moduleLoader.Disallow(specifier);
+            foreach (var library in allowedLibraries)
+                _moduleLoader.Disallow(library);
         }
     }
 
@@ -220,7 +258,7 @@ internal sealed class Sandbox : IDisposable
 
     internal JsonElement[] FireHook(string hookName, FireHookOptions? options = null)
     {
-        var hookDef = _manifest.Hooks?.GetValueOrDefault(hookName);
+        var hookDef = _manifest.EffectiveHooks().GetValueOrDefault(hookName);
         if (hookDef is null) return [];
 
         if (options?.Phase is { } phase && hookDef.Phases?.Contains(phase) != true)
@@ -235,6 +273,37 @@ internal sealed class Sandbox : IDisposable
                 dataArg = JsonElementToJsValue(data);
 
             var result = _engine.Invoke("__xript_fire_handlers", registryKey, dataArg);
+
+            if (result is not ObjectInstance arrObj)
+                return [];
+
+            var lengthVal = arrObj.Get("length");
+            var length = (int)lengthVal.AsNumber();
+
+            var results = new JsonElement[length];
+            for (var i = 0; i < length; i++)
+                results[i] = JsValueToJsonElement(arrObj.Get(i.ToString()));
+
+            return results;
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    internal JsonElement[] Emit(string eventId, FireHookOptions? options = null)
+    {
+        var eventDef = _manifest.Events?.FirstOrDefault(e => e.Id == eventId);
+        if (eventDef is null) return [];
+
+        try
+        {
+            JsValue dataArg = JsValue.Undefined;
+            if (options?.Data is { } data)
+                dataArg = JsonElementToJsValue(data);
+
+            var result = _engine.Invoke("__xript_fire_events", eventId, dataArg);
 
             if (result is not ObjectInstance arrObj)
                 return [];
@@ -519,7 +588,7 @@ internal sealed class Sandbox : IDisposable
     {
         var target = $"globalThis['{EscapeJs(name)}']";
 
-        if (TryGetCapability(def, out var capability) && !granted.Contains(capability))
+        if (TryGetCapability(def, out var capability) && !Capabilities.GrantedSatisfies(granted, capability))
         {
             var msg = $"{name}() requires the \"{capability}\" capability, which hasn't been granted to this script";
             AssignThrowingFunction(target, msg);
@@ -578,7 +647,7 @@ internal sealed class Sandbox : IDisposable
                 continue;
             }
 
-            if (TryGetCapability(memberDef, out var capability) && !granted.Contains(capability))
+            if (TryGetCapability(memberDef, out var capability) && !Capabilities.GrantedSatisfies(granted, capability))
             {
                 var msg = $"{qualifiedName}() requires the \"{capability}\" capability, which hasn't been granted to this script";
                 AssignThrowingFunction(memberTarget, msg);
@@ -664,7 +733,8 @@ internal sealed class Sandbox : IDisposable
 
     private void RegisterHooks(HashSet<string> granted)
     {
-        if (_manifest.Hooks is null || _manifest.Hooks.Count == 0) return;
+        var effectiveHooks = _manifest.EffectiveHooks();
+        if (effectiveHooks.Count == 0) return;
 
         _engine.Execute("""
             globalThis.__xript_hook_handlers = {};
@@ -699,14 +769,14 @@ internal sealed class Sandbox : IDisposable
 
         _engine.Execute("if (typeof globalThis.hooks === 'undefined') { globalThis.hooks = {}; }");
 
-        foreach (var (hookName, hookDef) in _manifest.Hooks)
+        foreach (var (hookName, hookDef) in effectiveHooks)
         {
             if (hookDef.Phases is { Count: > 0 } phases)
             {
                 _engine.Execute($"globalThis.hooks['{EscapeJs(hookName)}'] = {{}};");
                 foreach (var phase in phases)
                 {
-                    if (hookDef.Capability is { } cap && !granted.Contains(cap))
+                    if (hookDef.Capability is { } cap && !Capabilities.GrantedSatisfies(granted, cap))
                     {
                         _engine.Execute(
                             $"globalThis.hooks['{EscapeJs(hookName)}']['{EscapeJs(phase)}'] = function() {{ throw new Error(\"{EscapeJs(hookName)}.{EscapeJs(phase)}() requires the \\\"{EscapeJs(cap)}\\\" capability\"); }};");
@@ -720,7 +790,7 @@ internal sealed class Sandbox : IDisposable
             }
             else
             {
-                if (hookDef.Capability is { } cap && !granted.Contains(cap))
+                if (hookDef.Capability is { } cap && !Capabilities.GrantedSatisfies(granted, cap))
                 {
                     _engine.Execute(
                         $"globalThis.hooks['{EscapeJs(hookName)}'] = function() {{ throw new Error(\"{EscapeJs(hookName)}() requires the \\\"{EscapeJs(cap)}\\\" capability\"); }};");
@@ -735,11 +805,74 @@ internal sealed class Sandbox : IDisposable
 
         _engine.Execute("Object.freeze(globalThis.hooks);");
 
-        var hookNsNames = _manifest.Hooks
+        var hookNsNames = effectiveHooks
             .Where(kv => kv.Value.Phases is { Count: > 0 })
             .Select(kv => kv.Key);
         foreach (var nsName in hookNsNames)
             _engine.Execute($"Object.freeze(globalThis.hooks['{EscapeJs(nsName)}']);");
+    }
+
+    private void RegisterEvents(HashSet<string> granted)
+    {
+        if (_manifest.Events is null || _manifest.Events.Count == 0) return;
+
+        _engine.Execute("""
+            globalThis.__xript_event_handlers = {};
+            globalThis.__xript_register_event = function(id, handler) {
+                if (!globalThis.__xript_event_handlers[id]) {
+                    globalThis.__xript_event_handlers[id] = [];
+                }
+                globalThis.__xript_event_handlers[id].push(handler);
+            };
+            globalThis.__xript_fire_events = function(id, data) {
+                var handlers = globalThis.__xript_event_handlers[id];
+                if (!handlers || handlers.length === 0) return [];
+                var args;
+                if (data === undefined) {
+                    args = [];
+                } else if (typeof data === "object" && data !== null && !Array.isArray(data)) {
+                    args = Object.values(data);
+                } else {
+                    args = [data];
+                }
+                var results = [];
+                for (var i = 0; i < handlers.length; i++) {
+                    try {
+                        results.push(handlers[i].apply(null, args));
+                    } catch(e) {
+                        results.push(undefined);
+                    }
+                }
+                return results;
+            };
+            globalThis.__xript_event_subscribers = {};
+            globalThis.events = {
+                on: function(id, handler) {
+                    var register = globalThis.__xript_event_subscribers[id];
+                    if (typeof register !== 'function') {
+                        throw new Error("event '" + id + "' is not declared by the host");
+                    }
+                    return register(handler);
+                }
+            };
+            globalThis.events.subscribe = globalThis.events.on;
+            """);
+
+        foreach (var ev in _manifest.Events)
+        {
+            if (ev.Capability is { } cap && !Capabilities.GrantedSatisfies(granted, cap))
+            {
+                _engine.Execute(
+                    $"globalThis.__xript_event_subscribers['{EscapeJs(ev.Id)}'] = function() {{ throw new Error(\"subscribing to event \\\"{EscapeJs(ev.Id)}\\\" requires the \\\"{EscapeJs(cap)}\\\" capability\"); }};");
+            }
+            else
+            {
+                _engine.Execute(
+                    $"globalThis.__xript_event_subscribers['{EscapeJs(ev.Id)}'] = function(handler) {{ globalThis.__xript_register_event('{EscapeJs(ev.Id)}', handler); }};");
+            }
+        }
+
+        _engine.Execute("Object.freeze(globalThis.events);");
     }
 
     private static bool TryGetCapability(JsonElement def, out string capability)

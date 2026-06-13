@@ -17,7 +17,7 @@ import { createRuntime } from "@xriptjs/runtime-node";
 
 const runtime = createRuntime(
   {
-    xript: "0.1",
+    xript: "0.7",
     name: "my-app",
     bindings: {
       greet: {

@@ -1,6 +1,6 @@
 {
 	"name": "xript",
-	"version": "0.6.0",
+	"version": "0.7.0",
 	"private": true,
 	"workspaces": [
 		"docs",
@@ -8,6 +8,7 @@
 		"tools/*"
 	],
 	"scripts": {
+		"dev": "npm run docs:dev",
 		"version:bump": "node scripts/bump-version.mjs",
 		"release": "node scripts/release.mjs",
 		"docs:dev": "npm run dev -w @xriptjs/docs",

@@ -1,5 +1,100 @@
 # Changelog
 
+## v0.7.0 — Capability Hierarchy & Live Events
+
+The security-and-reactivity chapter, and then some. v0.7.0 started as two pillars and finished as five: **hierarchical capabilities** (grant broad or narrow without a flat-cap explosion), **live events** (the `events` catalog actually reaches subscribing mods now), **xript libs** (whole approved libraries, imported in-sandbox), the **host harness** (test a mod end-to-end with no application running), and **`fills` landing in every runtime** (the canonical contribution surface finally loads as authored). Around the pillars: the static tooling reasons about capabilities the same way the runtimes do, the docs reorganized around who's reading them, and the site now serves every schema and spec page it used to 404 on.
+
+### Hierarchical capabilities
+
+- reshaped capability matching from flat string equality to **prefix subsumption with a read/write mode axis**: a capability reference is `[<mode>:]<scope>`, where the scope is a dotted tree matched on whole segments (`run` covers `run.command`, never `runner`) and the mode is a two-point lattice (`write` covers `read`; a bare reference means `write`)
+  - declared capability keys stay scope-only; the mode axis lives on references and grants, so every existing flat capability keeps its meaning with zero migration
+  - a granted set satisfies a requirement when **any single grant** covers both axes; there is no cross-grant composition
+  - defined the `capabilityRef` grammar in the schema (`^(read:|write:)?[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)*$`) and applied it to every `capability` reference field, where declarations were previously unvalidated free text
+- pinned the model with a shared conformance corpus (`spec/capability-tests.json`, 33 cases) that all four runtimes load and assert, the same cross-runtime oracle pattern as the extends and sanitizer corpora
+- wrote the **monotonic-privilege invariant** into `spec/capabilities.md` as a normative MUST, with the honest caveat that it cannot be statically proven; `xript lint` carries a heuristic `capability-escalation` warning for escalation-named children under broad grantable ancestors
+- documented the **two-grammars rule** in `spec/bindings.md`: binding and member names are JavaScript identifiers (deliberately unconstrained, since kebab would parse as subtraction), capability scopes are kebab dotted paths, and tooling constrains only the capability side
+
+### Live events & hook dispatch
+
+- made the `events` catalog deliverable: a sandbox script subscribes with `events.on(id, handler)` (alias `events.subscribe`), the host broadcasts with `emit(id, payload)`, and delivery rides the same keyed-registry fan-out engine hooks already use rather than a parallel subsystem
+  - an event's optional `capability` gates subscription at registration time, reusing the hook gate model under subsumption; events without a gate stay open to any script
+  - the fan-out contract is byte-for-byte `fireHook`'s: object payloads spread positionally, handlers run in registration order, per-handler errors are swallowed
+- closed #112: event-typed slots (`accepts: application/x-xript-hook`) now register the `hooks` global and fire through `fireHook` across all four runtimes, so a manifest that declares its hooks as slots no longer silently no-ops; an explicit `hooks` entry still wins over a same-id slot
+
+### Adoption gaps — the asks that came back from real hosts
+
+- gave xript.dev a `/changelog/` page, synced from the repo `CHANGELOG.md` at build time and linked from Start Here, so release notes live at the conventional URL instead of taking version spelunking to find
+- served every schema at its `$id` URL: `/schema/manifest/v0.7.json`, `/schema/mod-manifest/v0.7.json`, the harness pair, and the four host-side data shapes now resolve on xript.dev, with prior version ids (v0.6/v0.3/v0.1) answering as aliases; previously only a single stale manifest version was served, so the `$schema` URL every manifest declares was a 404 and editor autocomplete had nothing to fetch
+- mapped the `/spec/` URLs readers guess at: a `/spec/` overview landing (documents + schema directory), plus `/spec/extends/` and `/spec/harness/` pages that existed in the repo but never made it onto the site; internal spec cross-links now resolve on-site instead of pointing at the repository
+- added a minimal end-to-end example to the "Rendering fragments" guidance: a host manifest with one fragment slot, an inert two-binding template, and the ~10-line host loop, every command verified against the real runtime, declared `bindings` and all
+- blessed **host-side role resolution across isolated runtimes** as canon in the "Resolving roles" guidance: a host that gives each mod its own runtime for grant isolation implements `resolveRole` semantics natively over its own registry; the load-bearing invariant is the `{ addon, role, fns }` fill contract and invoke-by-name, not which code path selects the provider
+- fixed `score`'s last string-equality capability checks: its integrity and utilization figures compared slot gates and capability references literally, spuriously flagging mode-prefixed or child-scope gates; they reason by subsumption now, same as `lint` and `crossValidate`
+- blessed **data fills** in the mod-manifest spec: a slot whose `accepts` names a data format takes pure-metadata fills validated by the slot's `payload` schema, the canonical shape for grouping/pack/curation surfaces, with the discovery policy staying host-side; no new primitive needed
+
+### `fills` lands in the runtimes — the canonical surface finally loads
+
+- implemented `fills` consumption in all four runtimes: `loadMod` now resolves the canonical contribution surface against the host's slot types, closing the gap where the validator, lint, spec, and docs all pushed mods toward `fills` while every runtime silently ignored it
+  - a fragment-format fill becomes a fragment declaration (an id-less fill gets a stable synthesized id), a role fill (`application/x-xript-role`) becomes a provider role, and an event/hook fill (`application/x-xript-hook`) registers its named `handler` export so `fireHook` invokes it after in-sandbox-registered handlers, same swallow-errors contract
+  - fills are capability-gated at load against the slot's declared gate (subsumption applies), a fill targeting an undeclared slot fails loudly, and a mod mixing `fills` with the deprecated `fragments`/`contributions` surfaces is rejected rather than silently double-contributing
+  - the `ui-dashboard` and `svelte-fragment-renderer` examples dropped their hand-rolled fills→legacy conversion shims; mods now load as authored
+- made the static capability checks subsumption-aware, matching the runtimes: `crossValidate` accepts a mod requesting a child scope of a declared capability (`fs.addon` under a declared `fs`) or holding a broader grant than a slot's gate, and `lint`'s undeclared/vestigial checks reason over the scope tree instead of string equality
+  - the `satisfies` / `grantedSatisfies` predicate now lives in `@xriptjs/validate` (exported for host import), bound to the shared `spec/capability-tests.json` corpus, and `docgen` reuses it instead of carrying a third copy
+- folded event-typed slots into the tooling's hook surfaces, mirroring the runtimes' dispatch: `typegen` emits a `hooks` registration function for each hook slot (with a bracket-access note for non-identifier ids) and `docgen` lists hook slots in the Hooks section; an explicit hook still wins over a same-id slot
+- modernized the `xript init` scaffolds end to end
+  - manifests author the current shape: `fills` keyed by slot id, `xript: "0.7"`, v0.7 schema ids, slots with explicit `accepts`, the lifecycle hook declared as an event-typed slot
+  - the tier-4 demo now actually runs; it loaded mods without fragment sources and called a `runtime.processFragment` method that doesn't exist, and now loads through `loadMod` + `fragmentSources` and renders via `updateBindings`
+  - the mod scaffold gained a runnable harness-powered demo (`demo/host-manifest.json` + `demo/steps.json`, wired to `npm run demo`), which also exposed and fixed a wrong `hooks.fragment.update` signature the entry script taught
+  - dependencies reference the current release line instead of `^0.2.0`
+- grew the harness steps format a `sources` map on `load-mod`, so a mod whose fills reference file-sourced fragments can load through a steps file or `xript_host_step`
+- advanced the manifest and mod-manifest schema `$id`s to the v0.7 line, with the v0.6 and v0.3 ids kept as resolvable aliases; spec prose, docs examples, and the bundled example manifests now author `xript: "0.7"` against the new ids
+
+### Docs restructure — sections by reader, entry pages for everyone
+
+- reorganized the docs sidebar by reader role: the seven host-implementation pages moved out of Doctrine into their own **Hosting xript** section (the "Hosting:" title prefixes dropped, since the section says it now), a new **Authoring Mods** section pairs the authoring doctrine with a walkthrough, and Doctrine keeps the actual philosophy
+  - the retitles happened at the source, the `xript guide` topic catalog, so the CLI and the docs site stay one set of content
+- added **Your first mod**: zero to a running, sandboxed mod in two files and three commands, no host application required, with every command's expected output shown
+- geared the entry pages for less-technical readers: Getting Started and the CLI page now open with explicit prerequisites (Node check, CLI install, a verify step), a hosting-vs-modding orientation callout, and a `command not found` rescue note; the runtime-vs-CLI install split is now stated instead of assumed
+
+### xript libs — approved in-sandbox libraries
+
+- added the `libraries` manifest surface: a curated allow-list of whole libraries mod code may `import`, the capability model applied to modules
+  - imports stay default-deny; an allow-list entry is the only thing that lifts it, and only for mods whose grants satisfy the entry's capability under subsumption (`lib` ⊇ `lib.doc`); an ungated entry is importable by every mod
+  - the host supplies each library's pre-bundled ES module source at runtime construction; an approved library links **inside the sandbox at the importing mod's own privilege**: full-fidelity calls, no JSON boundary, no new power granted
+  - registration is guarded: a source for an undeclared specifier, a library carrying CommonJS artifacts, or one that is not **import-clean** (it has imports of its own) fails loudly at construction; a declared-but-unregistered library fails a mod's import as a named host bug
+  - dynamic `import()` stays dead: literal dynamic forms are rejected by the static scan, and loaders only answer during entry-module linking
+- implemented the loader in all four runtimes at parity: a QuickJS-WASM module loader (`@xriptjs/runtime`), a `SourceTextModule` linker (`@xriptjs/runtime-node`), an rquickjs resolver/loader pair with a load-phase gate (`xript-runtime`), and Jint module registration (`Xript.Runtime`), all with matching error identities (`ImportDeniedError`, `CapabilityDeniedError`, `LibraryUnavailableError`, `LibraryRegistrationError`) and ~11 tests each
+- taught the toolchain the new surface: `validate` checks the schema shape, `lint` errors on a library gating an undeclared capability and counts library gates as capability use, `score` counts `libraries` as a fifth capacity surface, `describe` lists libraries (and events), `docgen` renders a Libraries table, and `typegen --ambient` emits `declare module` declarations so a TypeScript mod can import approved libraries without type errors
+- documented the model in `spec/manifest.md` (Libraries section) and `spec/modules.md` (Approved Libraries: resolution order, in-sandbox execution semantics, the import-clean rule, and the pure-compute-vs-host-binding line)
+
+### Host harness
+
+- added the host harness: a host manifest executed with stub bindings instead of a live application, so mods, fills, events, and hooks are testable end-to-end with no app running
+  - two spec data shapes define the whole contract: `spec/harness.schema.json` (binding stubs `returns` / `throws` / `sequence` / `script` / `record`, plus capability grants) and `spec/harness-steps.schema.json` (an ordered, replayable scenario: load mods, invoke exports, emit events, fire hooks, resolve slots and roles, read the journal)
+  - every stubbed binding call is journaled in order alongside capability audit events and sandbox console logs; the journal is the scenario's assertion surface
+  - when no grants are listed, every capability scope the host declares is granted in full; capability-denial testing sets the list explicitly
+- taught `xript run` batch harnessing: `xript run --app host.json --harness harness.json --steps steps.json` runs a scenario file against a synthetic host and exits non-zero if any step fails
+- gave the MCP server persistent harnessed sessions: `xript_host_load` holds a live runtime across tool calls, `xript_host_step` speaks the same step vocabulary as the steps file, and `xript_host_journal` / `xript_host_list` / `xript_host_unload` round out the family; an interactive session transcribes directly to a replayable steps file, so nothing is expressible over MCP that the CLI can't replay
+- harness descriptors carry library sources too: `libraries` entries (inline `source` or `path` relative to the harness file) stand in for the host's registration step, so a scenario can exercise a mod that imports an approved library with no app running; the session summary reports each declared library's registration state
+- exposed the harness spec over MCP resources (`xript://spec/harness` and both schemas) and exported the session API (`createHarnessSession`, `runSteps`, `runSessionStep`, `loadStepsFile`) from `@xriptjs/cli` for host import
+
+### Test counts
+
+| Package | v0.6.0 | v0.7.0 |
+|---------|-------:|-------:|
+| `@xriptjs/runtime` (js) | 187 | 256 |
+| `@xriptjs/runtime-node` | 185 | 252 |
+| `xript-runtime` (rust) | 150 | 185 |
+| `Xript.Runtime` (csharp) | 229 | 298 |
+| `@xriptjs/sanitize` | 93 | 93 |
+| `@xriptjs/validate` | 155 | 169 |
+| `@xriptjs/typegen` | 64 | 82 |
+| `@xriptjs/docgen` | 42 | 61 |
+| `@xriptjs/init` | 41 | 44 |
+| `@xriptjs/cli` | 60 | 76 |
+| `xript-ratatui` | 58 | 58 |
+| `xript-wiz` | 35 | 38 |
+| **Total** | **1299** | **1612** |
+
 ## v0.6.0 — Manifest Inheritance & the Agent CLI
 
 Two stories in one release. Manifests learned to **inherit**: a manifest can `extends` a base, fill the abstract holes the base leaves open, refine the concrete pieces it declares, and the same resolution runs identically across all four runtimes. The CLI grew an **agent**: `@xriptjs/cli` now speaks Model Context Protocol, exposing every capability a human runs at the terminal to an agent over stdio. No separate package, no logic to drift.
@@ -139,19 +234,19 @@ The biggest release since the fragment protocol: a security fix that touches eve
 
 ### TypeScript & ES modules
 
-- made `entry.format: "module"` real — the runtimes now evaluate a mod entry as an ES module instead of treating the value as a reserved no-op
+- made `entry.format: "module"` real: the runtimes now evaluate a mod entry as an ES module instead of treating the value as a reserved no-op
   - implemented across rquickjs (Rust), QuickJS-WASM (async sandbox), Node's `vm` (`SourceTextModule`), and Jint (C#)
-  - top-level named function exports become host-invokable exports automatically — `export function transcribe()` needs no `xript.exports.register` call; the two paths coexist and an explicit `register` wins on a name collision
-  - external imports stay denied (`import x from "fs"` fails at load) — the sandbox's no-external-modules guarantee is unchanged
+  - top-level named function exports become host-invokable exports automatically; `export function transcribe()` needs no `xript.exports.register` call, the two paths coexist, and an explicit `register` wins on a name collision
+  - external imports stay denied (`import x from "fs"` fails at load); the sandbox's no-external-modules guarantee is unchanged
 - added a CommonJS guardrail: `require(`, `module.exports`, and top-level `exports.` in a mod entry now fail loudly with a fix-it message instead of breaking silently, so a mis-set `tsconfig` can't quietly produce unrunnable output
 - added first-class typed authoring for TypeScript mods
-  - `@xriptjs/typegen --ambient` emits a `.d.ts` declaring the `xript` global — host bindings, `exports.register`, and the mod's own declared exports and types — so authors get real intellisense and typecheck
+  - `@xriptjs/typegen --ambient` emits a `.d.ts` declaring the `xript` global (host bindings, `exports.register`, and the mod's own declared exports and types), so authors get real intellisense and typecheck
   - `xript init --mod --typescript` now scaffolds an ESM `tsconfig`, an `export`-based example, and the ambient types wired in
   - a new "Authoring Mods in TypeScript" guide documents the canon: compile to ESM, use top-level exports, no external imports, no CommonJS
 
 ### Tooling & ergonomics
 
-- added a reference Svelte fragment renderer under `examples/svelte-fragment-renderer/` — copy-adaptable host glue that renders inert fragment output (`html` + visibility + command-buffer dispatch) as Svelte, staying inside the inert-fragment wall (not a published package, not core-runtime code)
+- added a reference Svelte fragment renderer under `examples/svelte-fragment-renderer/`: copy-adaptable host glue that renders inert fragment output (`html` + visibility + command-buffer dispatch) as Svelte, staying inside the inert-fragment wall (not a published package, not core-runtime code)
 - fixed `@xriptjs/validate` and the CLI failing to locate `manifest.schema.json` from the published package, with a packaging regression test
 - updated `@xriptjs/typegen` and `@xriptjs/docgen` for the new manifest surfaces (provider roles, record accessors, grant payloads)
 - added a `namespace_builder` combinator for async namespaces and `add_mixed_namespace` (property values alongside callable functions) to the Rust runtime
@@ -228,8 +323,8 @@ The biggest release since the fragment protocol: a security fix that touches eve
   - outputs to stdout, to a file, or directly into an existing manifest with `--write`
 - `xript-runtime` (Rust) gained three headline features
   - `load_mod()` now executes mod entry scripts after fragment validation (#87)
-  - async host bindings with `Promise`/`await` support via `pollster` (#86) — host functions return real Promises, JS callers can `await` them, chained awaits work
-  - `XriptHandle` — a `Send + Sync` wrapper that owns an `XriptRuntime` on a dedicated thread, communicates via `mpsc` channels, mirrors the full runtime API (#88)
+  - async host bindings with `Promise`/`await` support via `pollster` (#86); host functions return real Promises, JS callers can `await` them, chained awaits work
+  - `XriptHandle`, a `Send + Sync` wrapper that owns an `XriptRuntime` on a dedicated thread, communicates via `mpsc` channels, mirrors the full runtime API (#88)
 - introduced **tier 4 "Full Feature"** adoption tier covering slots, mod manifests, fragments, and the sandbox fragment API
   - updated adoption tiers docs, spec, vision, README, and CONTRIBUTING
   - `xript init` scaffolds tier 4 apps with slots, companion mod manifests, and fragment HTML
@@ -299,39 +394,39 @@ The biggest release since the fragment protocol: a security fix that touches eve
 - extended app manifests with **slots**: host-declared UI mounting points where mods contribute fragments
   - each slot declares accepted formats, capability gating, multiplicity, and styling mode (`inherit`, `isolated`, `scoped`)
 - added the **fragment protocol** to the spec (`spec/fragments.md`): the full lifecycle for host-declared slots, mod-contributed UI, sanitization, data binding, conditional visibility, event routing, and the sandbox fragment API
-  - `data-bind` for value binding — attributes persist in the DOM for O(1) updates at game-loop speed
-  - `data-if` for conditional visibility — expressions evaluated by the same tier 1 engine
+  - `data-bind` for value binding: attributes persist in the DOM for O(1) updates at game-loop speed
+  - `data-if` for conditional visibility: expressions evaluated by the same tier 1 engine
   - only two "smart" attributes; everything else goes through the sandbox fragment API
-- built `@xriptjs/sanitize` — pure string-based HTML sanitizer with no DOM dependency (`tools/sanitize/`)
-  - works inside QuickJS WASM, Node, Deno, browsers — anywhere
+- built `@xriptjs/sanitize`: a pure string-based HTML sanitizer with no DOM dependency (`tools/sanitize/`)
+  - works inside QuickJS WASM, Node, Deno, and browsers, anywhere
   - 45-case conformance test suite at `spec/sanitizer-tests.json` that all runtime implementations must pass
-  - JSML support (`application/jsml+json`) — JSON Markup Language as a native fragment format, no escaping needed
+  - JSML support (`application/jsml+json`): JSON Markup Language as a native fragment format, no escaping needed
 - added `loadMod()` to all four runtimes
-  - `@xriptjs/runtime` — JS/WASM via QuickJS, JSML support, sandbox fragment API with command buffer pattern
-  - `@xriptjs/runtime-node` — Node.js vm-based, same API surface
-  - `xript-runtime` (Rust) — `load_mod()` with ammonia-based sanitization, cross-validation, fragment hooks
-  - `Xript.Runtime` (C#) — `LoadMod()` with regex-based sanitization, Jint fragment hooks
+  - `@xriptjs/runtime`: JS/WASM via QuickJS, JSML support, sandbox fragment API with command buffer pattern
+  - `@xriptjs/runtime-node`: Node.js vm-based, same API surface
+  - `xript-runtime` (Rust): `load_mod()` with ammonia-based sanitization, cross-validation, fragment hooks
+  - `Xript.Runtime` (C#): `LoadMod()` with regex-based sanitization, Jint fragment hooks
 - added the **sandbox fragment API** to the JS and Node runtimes: `hooks.fragment.update(id, callback)` with a command buffer proxy (`toggle`, `addClass`, `setText`, `setAttr`, `replaceChildren`)
 - `@xriptjs/validate` gained mod manifest validation, auto-detection (app vs mod), and `--cross` flag for cross-validation against app slots
 - `@xriptjs/typegen` now generates `FragmentProxy` interface, `hooks.fragment` namespace, and `XriptSlots` types
 - `@xriptjs/docgen` produces slot documentation tables and a Fragment API reference page
 - `@xriptjs/init` gained a `--mod` flag for mod project scaffolding: generates `mod-manifest.json`, fragment HTML, and entry script
-- built `xript-ratatui` — fragment renderer for Ratatui terminal applications (`renderers/ratatui/`)
+- built `xript-ratatui`: a fragment renderer for Ratatui terminal applications (`renderers/ratatui/`)
   - parses `application/x-ratatui+json` fragment trees into native Ratatui widgets
   - layout engine, style mapper, color/modifier support, `data-bind`/`data-if` processing
   - reusable logo module with ANSI art rendered via `ansi-to-tui`
-- built `xript-wiz` — interactive TUI wizard for the xript toolchain (`tools/wiz/`)
+- built `xript-wiz`: an interactive TUI wizard for the xript toolchain (`tools/wiz/`)
   - dogfoods the xript ecosystem: app manifest with slots, fragments rendered by `xript-ratatui`
   - card-style menu with icons, tab-completion file input, scaffold form with toggle cards
   - validate, scaffold, and sanitize workflows
-- added `examples/ui-dashboard/` — full fragment protocol demo with two mods (health panel, inventory panel)
+- added `examples/ui-dashboard/`: a full fragment protocol demo with two mods (health panel, inventory panel)
   - demonstrates `data-bind`, `data-if`, sandbox fragment API iteration, cross-validation, and mod loading
-- added four new fragment format examples to the docs — HTML, JSML, Ratatui JSON, WinForms JSON
+- added four new fragment format examples to the docs: HTML, JSML, Ratatui JSON, WinForms JSON
   - same health panel rendered in four formats showing the protocol is rendering-agnostic
-- added 6 new docs pages — mod manifest spec, fragment protocol spec, fragment formats, sanitizer tool, UI dashboard example, Fragment Builder interactive demo
+- added 6 new docs pages: mod manifest spec, fragment protocol spec, fragment formats, sanitizer tool, UI dashboard example, Fragment Builder interactive demo
   - updated all tool docs pages (validator, typegen, docgen, init) with v0.3 features
   - sidebar expanded to 30 pages
-- fixed a binding-name injection vulnerability in `evaluateCondition` — mod-authored binding names are now validated against a safe identifier pattern before interpolation
+- fixed a binding-name injection vulnerability in `evaluateCondition`: mod-authored binding names are now validated against a safe identifier pattern before interpolation
 - created tracking issues for future fragment renderer packages (#76 hub, #77 xript-ratatui, #78 xript-winforms)
 
 ### Test counts

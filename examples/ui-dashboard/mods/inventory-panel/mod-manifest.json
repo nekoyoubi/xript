@@ -1,6 +1,6 @@
 {
-	"$schema": "https://xript.dev/schema/mod-manifest/v0.6.json",
-	"xript": "0.6",
+	"$schema": "https://xript.dev/schema/mod-manifest/v0.7.json",
+	"xript": "0.7",
 	"name": "inventory-panel",
 	"version": "1.0.0",
 	"title": "Inventory Panel",

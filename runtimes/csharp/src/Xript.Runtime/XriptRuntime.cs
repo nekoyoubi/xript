@@ -6,6 +6,7 @@ public sealed class XriptRuntime : IDisposable
 {
     private readonly Sandbox _sandbox;
     private readonly List<LoadedMod> _mods = [];
+    private readonly List<HookFillDecl> _hookFills = [];
     private readonly Dictionary<string, string> _exportCapabilities = new();
     private readonly IReadOnlyDictionary<string, string> _rolePreferences;
 
@@ -48,8 +49,36 @@ public sealed class XriptRuntime : IDisposable
     public ExecutionResult Execute(string code, string source) =>
         _sandbox.Execute(code, source);
 
-    public JsonElement[] FireHook(string hookName, FireHookOptions? options = null) =>
-        _sandbox.FireHook(hookName, options);
+    public JsonElement[] FireHook(string hookName, FireHookOptions? options = null)
+    {
+        var results = _sandbox.FireHook(hookName, options).ToList();
+        if (options?.Phase is null)
+        {
+            foreach (var fill in _hookFills.Where(fill => fill.Hook == hookName))
+            {
+                try
+                {
+                    results.Add(_sandbox.InvokeExport(fill.Handler, HookFillArgs(options?.Data)));
+                }
+                catch
+                {
+                    results.Add(JsonDocument.Parse("null").RootElement);
+                }
+            }
+        }
+        return [.. results];
+    }
+
+    private static JsonElement[] HookFillArgs(JsonElement? data)
+    {
+        if (data is not { } element) return [];
+        if (element.ValueKind == JsonValueKind.Object)
+            return [.. element.EnumerateObject().Select(property => property.Value)];
+        return [element];
+    }
+
+    public JsonElement[] Emit(string eventId, FireHookOptions? options = null) =>
+        _sandbox.Emit(eventId, options);
 
     public FragmentOp[] FireFragmentHook(string fragmentId, string lifecycle, Dictionary<string, object?>? bindings = null) =>
         _sandbox.FireFragmentHook(fragmentId, lifecycle, bindings);
@@ -57,7 +86,7 @@ public sealed class XriptRuntime : IDisposable
     public JsonElement InvokeExport(string name, JsonElement[] args)
     {
         if (_exportCapabilities.TryGetValue(name, out var capability)
-            && !_sandbox.GrantedCapabilities.Contains(capability))
+            && !Capabilities.GrantedSatisfies(_sandbox.GrantedCapabilities, capability))
             throw new CapabilityDeniedException(name, capability);
 
         return _sandbox.InvokeExport(name, args);
@@ -65,6 +94,11 @@ public sealed class XriptRuntime : IDisposable
 
     public ModInstance LoadMod(string modManifestJson, Dictionary<string, string>? fragmentSources = null)
     {
+        var grantedForFills = new HashSet<string>(_sandbox.GrantedCapabilities);
+        var (normalizedJson, hookFills) = FillsNormalizer.Normalize(
+            modManifestJson, Manifest.Slots ?? [], grantedForFills);
+        modManifestJson = normalizedJson;
+
         var mod = FragmentProcessor.ValidateModManifest(modManifestJson);
 
         var grantedCapabilities = new HashSet<string>(_sandbox.GrantedCapabilities);
@@ -77,6 +111,7 @@ public sealed class XriptRuntime : IDisposable
         RunEntryScripts(mod, fragmentSources);
 
         var instance = new ModInstance(mod, fragmentSources);
+        _hookFills.AddRange(hookFills);
         _mods.Add(new LoadedMod(instance, grantedCapabilities, mod));
         return instance;
     }

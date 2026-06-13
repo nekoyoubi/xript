@@ -107,7 +107,7 @@ public sealed class FragmentProcessor
             if (!slot.Accepts.Contains(frag.Format))
                 issues.Add($"slot '{frag.Slot}' does not accept format '{frag.Format}'");
 
-            if (slot.Capability is not null && !grantedCapabilities.Contains(slot.Capability))
+            if (slot.Capability is not null && !Capabilities.GrantedSatisfies(grantedCapabilities, slot.Capability))
                 issues.Add($"slot '{frag.Slot}' requires capability '{slot.Capability}'");
         }
 

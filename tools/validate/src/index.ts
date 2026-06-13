@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { satisfies, grantedSatisfies } from "./capabilities.js";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -82,9 +83,15 @@ function schemaId(schema: object): string | undefined {
 	return typeof id === "string" ? id : undefined;
 }
 
-const LEGACY_SCHEMA_IDS: Record<string, string> = {
-	"https://xript.dev/schema/manifest/v0.6.json": "https://xript.dev/schema/manifest/v0.3.json",
-	"https://xript.dev/schema/mod-manifest/v0.6.json": "https://xript.dev/schema/mod-manifest/v0.3.json",
+const LEGACY_SCHEMA_IDS: Record<string, string[]> = {
+	"https://xript.dev/schema/manifest/v0.7.json": [
+		"https://xript.dev/schema/manifest/v0.6.json",
+		"https://xript.dev/schema/manifest/v0.3.json",
+	],
+	"https://xript.dev/schema/mod-manifest/v0.7.json": [
+		"https://xript.dev/schema/mod-manifest/v0.6.json",
+		"https://xript.dev/schema/mod-manifest/v0.3.json",
+	],
 };
 
 /**
@@ -100,9 +107,10 @@ async function addBundledRefs(ajv: { addSchema(s: object): void }, compiling: ob
 		if (id && id !== compilingId) {
 			ajv.addSchema(schema);
 		}
-		const legacyId = id ? LEGACY_SCHEMA_IDS[id] : undefined;
-		if (legacyId && legacyId !== compilingId) {
-			ajv.addSchema({ ...schema, $id: legacyId });
+		for (const legacyId of (id ? LEGACY_SCHEMA_IDS[id] : undefined) ?? []) {
+			if (legacyId !== compilingId) {
+				ajv.addSchema({ ...schema, $id: legacyId });
+			}
 		}
 	}
 }
@@ -371,7 +379,7 @@ function validateExportCapabilities(manifest: unknown): ValidationError[] {
 	for (const [name, def] of Object.entries(exportsMap as Record<string, unknown>)) {
 		if (typeof def !== "object" || def === null) continue;
 		const capability = (def as Record<string, unknown>).capability;
-		if (typeof capability === "string" && !declared.has(capability)) {
+		if (typeof capability === "string" && !grantedSatisfies(declared, capability)) {
 			errors.push({
 				path: `/entry/exports/${name}`,
 				message: `export "${name}" requires capability "${capability}" which is not declared in the mod's capabilities`,
@@ -572,7 +580,7 @@ export async function crossValidate(
 				});
 				continue;
 			}
-			if (slot.capability && !modCapabilitySet.has(slot.capability)) {
+			if (slot.capability && !grantedSatisfies(modCapabilitySet, slot.capability)) {
 				errors.push({
 					path: `/fills/${slotId}`,
 					message: `fills slot "${slotId}" which requires capability "${slot.capability}" that the mod does not declare`,
@@ -600,9 +608,10 @@ export async function crossValidate(
 	}
 
 	const appCapabilities = app.capabilities as Record<string, unknown> | undefined;
+	const declaredScopes = Object.keys(appCapabilities ?? {});
 	const modCapabilities = (mod.capabilities ?? []) as string[];
 	for (const cap of modCapabilities) {
-		if (!appCapabilities || !(cap in appCapabilities)) {
+		if (!declaredScopes.some((scope) => satisfies(scope, cap))) {
 			errors.push({
 				path: `/capabilities`,
 				message: `requests capability "${cap}" which is not defined in the app manifest`,
@@ -786,3 +795,5 @@ export {
 	type IntegrityResult,
 } from "./score.js";
 export { lintManifests, type LintResult, type LintOptions, type Finding, type LintCounts, type Severity } from "./lint.js";
+
+export { satisfies, grantedSatisfies, splitMode, scopeSubsumes } from "./capabilities.js";

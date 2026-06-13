@@ -143,12 +143,40 @@ pub fn run_diff(path_str: &str) -> serde_json::Value {
     let added_slots: Vec<&String> = new_slots.iter().filter(|s| !old_slots.contains(s)).collect();
     let removed_slots: Vec<&String> = old_slots.iter().filter(|s| !new_slots.contains(s)).collect();
 
+    let event_ids = |manifest: &serde_json::Value| -> Vec<String> {
+        manifest
+            .get("events")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|e| e.get("id").and_then(|v| v.as_str()).map(|s| s.to_string())).collect())
+            .unwrap_or_default()
+    };
+    let old_events = event_ids(&old);
+    let new_events = event_ids(&current);
+    let added_events: Vec<&String> = new_events.iter().filter(|e| !old_events.contains(e)).collect();
+    let removed_events: Vec<&String> = old_events.iter().filter(|e| !new_events.contains(e)).collect();
+
+    let library_ids = |manifest: &serde_json::Value| -> Vec<String> {
+        manifest
+            .get("libraries")
+            .and_then(|v| v.as_object())
+            .map(|o| o.keys().cloned().collect())
+            .unwrap_or_default()
+    };
+    let old_libs = library_ids(&old);
+    let new_libs = library_ids(&current);
+    let added_libs: Vec<&String> = new_libs.iter().filter(|l| !old_libs.contains(l)).collect();
+    let removed_libs: Vec<&String> = old_libs.iter().filter(|l| !new_libs.contains(l)).collect();
+
     let has_changes = !added.is_empty()
         || !removed.is_empty()
         || !added_caps.is_empty()
         || !removed_caps.is_empty()
         || !added_slots.is_empty()
-        || !removed_slots.is_empty();
+        || !removed_slots.is_empty()
+        || !added_events.is_empty()
+        || !removed_events.is_empty()
+        || !added_libs.is_empty()
+        || !removed_libs.is_empty();
 
     if !has_changes {
         report.push_str("\nNo changes since last tag.\n");
@@ -189,6 +217,31 @@ pub fn run_diff(path_str: &str) -> serde_json::Value {
         report.push_str(&format!("\nRemoved slots ({}):\n", removed_slots.len()));
         for s in &removed_slots {
             report.push_str(&format!("  - {}\n", s));
+        }
+    }
+
+    if !added_events.is_empty() {
+        report.push_str(&format!("\nAdded events ({}):\n", added_events.len()));
+        for e in &added_events {
+            report.push_str(&format!("  + {}\n", e));
+        }
+    }
+    if !removed_events.is_empty() {
+        report.push_str(&format!("\nRemoved events ({}):\n", removed_events.len()));
+        for e in &removed_events {
+            report.push_str(&format!("  - {}\n", e));
+        }
+    }
+    if !added_libs.is_empty() {
+        report.push_str(&format!("\nAdded libraries ({}):\n", added_libs.len()));
+        for l in &added_libs {
+            report.push_str(&format!("  + {}\n", l));
+        }
+    }
+    if !removed_libs.is_empty() {
+        report.push_str(&format!("\nRemoved libraries ({}):\n", removed_libs.len()));
+        for l in &removed_libs {
+            report.push_str(&format!("  - {}\n", l));
         }
     }
 

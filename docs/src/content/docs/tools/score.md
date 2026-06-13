@@ -11,7 +11,7 @@ xript score host.json mods/*.json --min 70
 
 It is also an MCP tool (`xript_score`) and a library export (`scoreManifests` from `@xriptjs/validate`), so an agent, a CI job, and a host application reach the same computation the terminal does, without bundling the CLI.
 
-The headline is **moddability capacity**, not coverage: it measures how much surface the host exposes, *not* how much a supplied mod set happens to exercise. Exposing a slot that no mod fills reads as moddability, not waste; and because resolving `extends` only adds inherited surface, inheritance can only raise the score, never drag it down. Mod manifests are still accepted (and cross-validated for contract integrity), but how thoroughly they fill the surface is reported as informational context, not scored.
+The headline is **moddability capacity**, not coverage: it measures how much surface the host exposes, *not* how much a supplied mod set happens to exercise. Exposing a slot that no mod fills reads as moddability, not waste, and because resolving `extends` only adds inherited surface, inheritance can only raise the score, never drag it down. Mod manifests are still accepted (and cross-validated for contract integrity), but how thoroughly they fill the surface is reported as informational context, not scored.
 
 ## What it measures
 
@@ -19,14 +19,15 @@ Every metric is set arithmetic over fields that already exist in the manifests. 
 
 ### Moddability capacity (the headline)
 
-The headline number is **capacity**: of xript's four extension surfaces, how many does the host expose? A surface counts as exposed the moment the host declares at least one of it.
+The headline number is **capacity**: of xript's five extension surfaces, how many does the host expose? A surface counts as exposed the moment the host declares at least one of it.
 
 - **`bindings`** — host functions a mod can call
 - **`slots`** — typed extension points a mod fills (fragments, provider roles, event handlers)
 - **`events`** — named events the host broadcasts for a mod to observe
+- **`libraries`** — approved libraries mod code may import in-sandbox
 - **`capabilities`** — the model that gates the other three
 
-The score is the fraction of those four surfaces the host exposes, scaled to 100 (`round(100 * exposed / 4)`). A host that exposes bindings, slots, and capabilities but declares no `events` catalog scores 75. There is no penalty for declaring a slot nothing fills — an unfilled slot is open modding surface, so capacity only ever rises as a host opens up more.
+The score is the fraction of those five surfaces the host exposes, scaled to 100 (`round(100 * exposed / 5)`). A host that exposes bindings, slots, capabilities, and events but declares no `libraries` allow-list scores 80. There is no penalty for declaring a slot nothing fills; an unfilled slot is open modding surface, so capacity only ever rises as a host opens up more.
 
 ### Contract integrity
 
@@ -48,11 +49,11 @@ Slots and capabilities the host **inherited** through `extends`, and any flagged
 
 ## Reserved surface
 
-A slot or capability marked `reserved: true` is aspirational — surface declared ahead of a filler, for forward-compat or to match an inherited base. Reserved surface still counts as exposed for the capacity headline, but it is never flagged dead or vestigial and is excluded from the coverage denominators. Use it when you want to publish a slot before any mod fills it without the linter nagging that it is unused.
+A slot or capability marked `reserved: true` is aspirational: surface declared ahead of a filler, for forward-compat or to match an inherited base. Reserved surface still counts as exposed for the capacity headline, but it is never flagged dead or vestigial and is excluded from the coverage denominators. Use it when you want to publish a slot before any mod fills it without the linter nagging that it is unused.
 
 ## What it does not measure
 
-`score` cannot tell whether a binding or hook is *called from inside a mod's script*; that lives in the script, not the manifest. And it cannot tell whether the host/mod boundary is *drawn correctly*: it can confirm the surface is exposed and the contract holds, but it cannot read intent. A 100 means all four surfaces are open and the contract holds, not that the design is right. Use the score as a floor and a litmus; use [`xript lint`](/tools/lint/) for the actionable list of dead slots and vestigial capabilities behind the number, and the [host/mod boundary](/guidance/boundary/) doctrine for the judgment neither tool can make.
+`score` cannot tell whether a binding or hook is *called from inside a mod's script*; that lives in the script, not the manifest. And it cannot tell whether the host/mod boundary is *drawn correctly*: it can confirm the surface is exposed and the contract holds, but it cannot read intent. A 100 means all five surfaces are open and the contract holds, not that the design is right. Use the score as a floor and a litmus; use [`xript lint`](/tools/lint/) for the actionable list of dead slots and vestigial capabilities behind the number, and the [host/mod boundary](/guidance/boundary/) doctrine for the judgment neither tool can make.
 
 ## Gating in CI
 
@@ -66,7 +67,7 @@ Drop that into a project's check script and the host contract is enforced on eve
 
 ## Tracking it over time
 
-A number is a floor; a *trend* is a direction. `xript score-diff` compares a current run against a saved baseline and reports whether the surface moved toward or away from xript: the capacity delta (which of the four surfaces became exposed or went absent), the informational coverage deltas, and any integrity violation introduced or fixed.
+A number is a floor; a *trend* is a direction. `xript score-diff` compares a current run against a saved baseline and reports whether the surface moved toward or away from xript: the capacity delta (which of the five surfaces became exposed or went absent), the informational coverage deltas, and any integrity violation introduced or fixed.
 
 Save a baseline once, then diff against it:
 

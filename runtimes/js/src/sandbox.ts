@@ -6,8 +6,9 @@ import type {
 	QuickJSAsyncRuntime,
 	QuickJSWASMModule,
 } from "quickjs-emscripten";
-import { BindingError, CapabilityDeniedError, CancellationError, InvokeError, ModEntryError, ImportDeniedError, ModuleUnsupportedError } from "./errors.js";
-import { findImportSpecifier } from "./module-support.js";
+import { BindingError, CapabilityDeniedError, CancellationError, InvokeError, ModEntryError, ImportDeniedError, ModuleUnsupportedError, LibraryUnavailableError, LibraryRegistrationError } from "./errors.js";
+import { grantedSatisfies } from "./capabilities.js";
+import { findImportSpecifier, findImportSpecifiers, detectCommonJS } from "./module-support.js";
 import { marshalToQuickJS, safeDispose } from "./marshal.js";
 import type { DebugOptions, DebugSession } from "./debug-types.js";
 import { DebugUnsupportedError } from "./debug-types.js";
@@ -55,8 +56,52 @@ interface Manifest {
 	version?: string;
 	bindings?: Record<string, Binding>;
 	hooks?: Record<string, HookDef>;
+	slots?: Slot[];
 	capabilities?: Record<string, CapabilityDef>;
+	events?: EventDef[];
+	libraries?: Record<string, LibraryDef>;
 	limits?: ExecutionLimits;
+}
+
+interface LibraryDef {
+	description: string;
+	capability?: string;
+	version?: string;
+	deprecated?: string;
+}
+
+interface Slot {
+	id: string;
+	accepts: string[];
+	description?: string;
+	capability?: string;
+	payload?: unknown;
+}
+
+const HOOK_SLOT_ACCEPT = "application/x-xript-hook";
+
+function isHookSlot(slot: Slot): boolean {
+	return Array.isArray(slot.accepts) && slot.accepts.includes(HOOK_SLOT_ACCEPT);
+}
+
+function effectiveHooks(manifest: Manifest): Record<string, HookDef> {
+	const hooks: Record<string, HookDef> = { ...(manifest.hooks ?? {}) };
+	for (const slot of manifest.slots ?? []) {
+		if (!isHookSlot(slot)) continue;
+		if (slot.id in hooks) continue;
+		hooks[slot.id] = {
+			description: slot.description ?? "",
+			capability: slot.capability,
+		};
+	}
+	return hooks;
+}
+
+interface EventDef {
+	id: string;
+	description: string;
+	payload?: unknown;
+	capability?: string;
 }
 
 interface HookDef {
@@ -149,6 +194,7 @@ export interface SandboxOptions {
 	manifest: Manifest;
 	hostBindings: HostBindings;
 	capabilities?: string[];
+	libraries?: Record<string, string>;
 	console?: ConsoleHandler;
 	audit?: (event: AuditEvent) => void;
 	hardLimits?: HardLimits;
@@ -159,6 +205,41 @@ export interface SandboxOptions {
 export interface ExecutionResult {
 	value: unknown;
 	duration_ms: number;
+}
+
+export function validateLibraryRegistration(manifest: Manifest, libraries: Record<string, string> | undefined): void {
+	for (const [specifier, source] of Object.entries(libraries ?? {})) {
+		if (!manifest.libraries?.[specifier]) {
+			throw new LibraryRegistrationError(specifier, "not declared in the host manifest's libraries map");
+		}
+		const artifact = detectCommonJS(source);
+		if (artifact) {
+			throw new LibraryRegistrationError(specifier, `CommonJS artifacts detected (found: ${artifact}); libraries must be pre-bundled ES modules`);
+		}
+		const nested = findImportSpecifier(source);
+		if (nested !== null) {
+			throw new LibraryRegistrationError(specifier, `not import-clean: contains an import of "${nested}"; libraries must be self-contained pre-bundled ES modules with no imports of their own`);
+		}
+	}
+}
+
+export function makeLibraryResolver(
+	manifest: Manifest,
+	libraries: Record<string, string> | undefined,
+	granted: Set<string>,
+): (specifier: string) => string {
+	return (specifier: string) => {
+		const declaration = manifest.libraries?.[specifier];
+		if (!declaration) throw new ImportDeniedError(specifier);
+		if (declaration.capability && !grantedSatisfies(granted, declaration.capability)) {
+			const error = new CapabilityDeniedError(specifier, declaration.capability);
+			error.message = `import of "${specifier}" requires the "${declaration.capability}" capability, which hasn't been granted to this script. Ask the app developer to enable it.`;
+			throw error;
+		}
+		const source = libraries?.[specifier];
+		if (source === undefined) throw new LibraryUnavailableError(specifier);
+		return source;
+	};
 }
 
 function isNamespace(binding: Binding): binding is NamespaceBinding {
@@ -291,7 +372,7 @@ function createHostFunctionWrapper(
 	audit?: (binding: string, capability: string | null) => void,
 ): QuickJSHandle {
 	return context.newFunction(qualifiedName, (...handles: QuickJSHandle[]) => {
-		if (binding.capability && !grantedCapabilities.has(binding.capability)) {
+		if (binding.capability && !grantedSatisfies(grantedCapabilities, binding.capability)) {
 			return createCapabilityError(context, qualifiedName, binding.capability);
 		}
 
@@ -327,7 +408,7 @@ function registerAsyncBinding(
 	audit?: (binding: string, capability: string | null) => void,
 ): void {
 	const asyncKey = `__xript_async_${qualifiedName.replace(/\./g, "_")}`;
-	const capabilityDenied = !!(binding.capability && !grantedCapabilities.has(binding.capability));
+	const capabilityDenied = !!(binding.capability && !grantedSatisfies(grantedCapabilities, binding.capability));
 	const missingImpl = !hostFn;
 
 	if (!capabilityDenied && !missingImpl) {
@@ -545,21 +626,22 @@ function injectHooks(
 ): void {
 	injectHookHelpers(context);
 
-	if (!manifest.hooks) {
+	const hooks = effectiveHooks(manifest);
+	if (Object.keys(hooks).length === 0) {
 		evalAndDispose(context, "globalThis.hooks = {};");
 		return;
 	}
 
 	const hooksObj = context.newObject();
 
-	for (const [hookName, hookDef] of Object.entries(manifest.hooks)) {
+	for (const [hookName, hookDef] of Object.entries(hooks)) {
 		if (hookDef.phases && hookDef.phases.length > 0) {
 			const hookNs = context.newObject();
 
 			for (const phase of hookDef.phases) {
 				const registryKey = `${hookName}:${phase}`;
 				const regFn = context.newFunction(`hooks.${hookName}.${phase}`, (...handles: QuickJSHandle[]) => {
-					if (hookDef.capability && !grantedCapabilities.has(hookDef.capability)) {
+					if (hookDef.capability && !grantedSatisfies(grantedCapabilities, hookDef.capability)) {
 						return createCapabilityError(context, `hooks.${hookName}.${phase}`, hookDef.capability);
 					}
 					if (handles.length === 0) {
@@ -576,7 +658,7 @@ function injectHooks(
 		} else {
 			const registryKey = hookName;
 			const regFn = context.newFunction(`hooks.${hookName}`, (...handles: QuickJSHandle[]) => {
-				if (hookDef.capability && !grantedCapabilities.has(hookDef.capability)) {
+				if (hookDef.capability && !grantedSatisfies(grantedCapabilities, hookDef.capability)) {
 					return createCapabilityError(context, `hooks.${hookName}`, hookDef.capability);
 				}
 				if (handles.length === 0) {
@@ -594,15 +676,140 @@ function injectHooks(
 
 }
 
+function injectEventHelpers(context: QuickJSContext | QuickJSAsyncContext): void {
+	evalAndDispose(context, `
+		globalThis.__xript_event_handlers = {};
+		globalThis.__xript_register_event_handler = function(id, handler) {
+			if (!globalThis.__xript_event_handlers[id]) {
+				globalThis.__xript_event_handlers[id] = [];
+			}
+			globalThis.__xript_event_handlers[id].push(handler);
+		};
+		globalThis.__xript_emit = function(id, payload) {
+			var handlers = globalThis.__xript_event_handlers[id];
+			if (!handlers || handlers.length === 0) return [];
+			var args;
+			if (payload === undefined) {
+				args = [];
+			} else if (typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
+				args = Object.values(payload);
+			} else {
+				args = [payload];
+			}
+			var results = [];
+			for (var i = 0; i < handlers.length; i++) {
+				try {
+					results.push(handlers[i].apply(null, args));
+				} catch(e) {
+					results.push(undefined);
+				}
+			}
+			return results;
+		};
+	`);
+}
+
+function injectEvents(
+	context: QuickJSContext | QuickJSAsyncContext,
+	manifest: Manifest,
+	grantedCapabilities: Set<string>,
+): void {
+	injectEventHelpers(context);
+
+	const eventDefs = manifest.events ?? [];
+	const gateByEventId = new Map<string, string | undefined>();
+	for (const def of eventDefs) {
+		gateByEventId.set(def.id, def.capability);
+	}
+
+	const subscribe = context.newFunction("events.on", (...handles: QuickJSHandle[]) => {
+		if (handles.length < 2) {
+			return createBindingError(context, "events.on", "expected (eventId, handler)");
+		}
+		const eventId = context.dump(handles[0]);
+		if (typeof eventId !== "string" || eventId.length === 0) {
+			return createBindingError(context, "events.on", "eventId must be a non-empty string");
+		}
+		if (!gateByEventId.has(eventId)) {
+			return createBindingError(context, "events.on", `event '${eventId}' is not declared in the host manifest`);
+		}
+		const required = gateByEventId.get(eventId);
+		if (required && !grantedSatisfies(grantedCapabilities, required)) {
+			return createCapabilityError(context, "events.on", required);
+		}
+
+		const registerFn = context.getProp(context.global, "__xript_register_event_handler");
+		const idStr = context.newString(eventId);
+		const callResult = context.callFunction(registerFn, context.undefined, idStr, handles[1]);
+		idStr.dispose();
+		registerFn.dispose();
+		if (callResult.error) {
+			callResult.error.dispose();
+		} else {
+			callResult.value.dispose();
+		}
+	});
+
+	const eventsObj = context.newObject();
+	context.setProp(eventsObj, "on", subscribe);
+	context.setProp(eventsObj, "subscribe", subscribe);
+	subscribe.dispose();
+
+	context.setProp(context.global, "events", eventsObj);
+	eventsObj.dispose();
+
+	evalAndDispose(context, "Object.freeze(globalThis.events);");
+}
+
+function emitInContext(
+	context: QuickJSContext | QuickJSAsyncContext,
+	manifest: Manifest,
+	eventId: string,
+	payload?: unknown,
+): unknown[] {
+	const declared = manifest.events?.some((e) => e.id === eventId) ?? false;
+	if (!declared) return [];
+
+	const emitFn = context.getProp(context.global, "__xript_emit");
+	const idStr = context.newString(eventId);
+
+	const payloadHandle = payload !== undefined
+		? marshalToQuickJS(context, payload)
+		: context.undefined;
+
+	const callResult = context.callFunction(emitFn, context.undefined, idStr, payloadHandle);
+	idStr.dispose();
+	if (payload !== undefined) safeDispose(context, payloadHandle);
+	emitFn.dispose();
+
+	if (callResult.error) {
+		callResult.error.dispose();
+		return [];
+	}
+
+	const arrHandle = callResult.value;
+	const lengthHandle = context.getProp(arrHandle, "length");
+	const length = context.dump(lengthHandle) as number;
+	lengthHandle.dispose();
+
+	const results: unknown[] = [];
+	for (let i = 0; i < length; i++) {
+		const elemHandle = context.getProp(arrHandle, String(i));
+		results.push(context.dump(elemHandle));
+		elemHandle.dispose();
+	}
+
+	arrHandle.dispose();
+	return results;
+}
+
 function freezeHooksAndFragments(
 	context: QuickJSContext | QuickJSAsyncContext,
 	manifest: Manifest,
 ): void {
-	const hookNsNames = manifest.hooks
-		? Object.entries(manifest.hooks)
-			.filter(([_, h]) => h.phases && h.phases.length > 0)
-			.map(([name]) => name)
-		: [];
+	const hookNsNames = Object.entries(effectiveHooks(manifest))
+		.filter(([_, h]) => h.phases && h.phases.length > 0)
+		.map(([name]) => name);
 
 	const freezeParts = [
 		...hookNsNames.map((n) => `Object.freeze(hooks.${n});`),
@@ -821,7 +1028,7 @@ function fireHookInContext(
 	hookName: string,
 	options?: FireHookOptions,
 ): unknown[] {
-	const hookDef = manifest.hooks?.[hookName];
+	const hookDef = effectiveHooks(manifest)[hookName];
 	if (!hookDef) return [];
 
 	let registryKey: string;
@@ -903,6 +1110,7 @@ export interface SandboxResult {
 	invokeExportAsync: (name: string, args: unknown[]) => Promise<unknown>;
 	fireHook: (hookName: string, options?: FireHookOptions) => unknown[];
 	fireFragmentHook: (fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>) => FragmentOp[];
+	emit: (eventId: string, payload?: unknown) => unknown[];
 	debugSession: () => DebugSession | null;
 	dispose: () => void;
 }
@@ -979,6 +1187,7 @@ export function createSandboxSync(
 	}
 	const { manifest, hostBindings, capabilities = [], cancellation } = options;
 	const grantedCapabilities = new Set(capabilities);
+	validateLibraryRegistration(manifest, options.libraries);
 	const limits = manifest.limits || {};
 	const hard = options.hardLimits || {};
 	const timeoutMs = clampLimit(limits.timeout_ms ?? 5000, hard.timeout_ms) ?? 5000;
@@ -1004,6 +1213,7 @@ export function createSandboxSync(
 	injectErrorClasses(context);
 	injectBindings(context, manifest, hostBindings, grantedCapabilities, false, auditEmit);
 	injectHooks(context, manifest, grantedCapabilities);
+	injectEvents(context, manifest, grantedCapabilities);
 	injectFragmentAPI(context);
 	injectExportsAPI(context);
 	freezeHooksAndFragments(context, manifest);
@@ -1088,6 +1298,10 @@ export function createSandboxSync(
 		return fireFragmentHookInContext(context, fragmentId, lifecycle, bindings);
 	}
 
+	function emit(eventId: string, payload?: unknown): unknown[] {
+		return emitInContext(context, manifest, eventId, payload);
+	}
+
 	function debugExecute(): Promise<ExecutionResult> {
 		return Promise.reject(
 			new DebugUnsupportedError("Debugging requires the async sandbox; this sync sandbox has no debug session."),
@@ -1107,7 +1321,7 @@ export function createSandboxSync(
 		runtime.dispose();
 	}
 
-	return { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, fireHook, fireFragmentHook, debugSession, dispose };
+	return { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, fireHook, fireFragmentHook, emit, debugSession, dispose };
 }
 
 export async function createSandboxAsync(
@@ -1127,9 +1341,16 @@ export async function createSandboxAsync(
 	const context = await newAsyncContext();
 	const runtime = context.runtime;
 
-	runtime.setModuleLoader((moduleName) => ({
-		error: new ImportDeniedError(moduleName),
-	}));
+	validateLibraryRegistration(manifest, options.libraries);
+	const resolveLibrary = makeLibraryResolver(manifest, options.libraries, grantedCapabilities);
+
+	runtime.setModuleLoader((moduleName) => {
+		try {
+			return { value: resolveLibrary(moduleName) };
+		} catch (error) {
+			return { error: error as Error };
+		}
+	});
 
 	if (memoryMb) {
 		runtime.setMemoryLimit(memoryMb * 1024 * 1024);
@@ -1147,6 +1368,7 @@ export async function createSandboxAsync(
 	injectErrorClasses(context);
 	injectBindings(context, manifest, hostBindings, grantedCapabilities, true, auditEmit);
 	injectHooks(context, manifest, grantedCapabilities);
+	injectEvents(context, manifest, grantedCapabilities);
 	injectFragmentAPI(context);
 	injectExportsAPI(context);
 	freezeHooksAndFragments(context, manifest);
@@ -1218,9 +1440,9 @@ export async function createSandboxAsync(
 	async function evaluateModule(modName: string, code: string): Promise<string[]> {
 		if (cancellation?.cancelled) throw new CancellationError();
 
-		const specifier = findImportSpecifier(code);
-		if (specifier !== null) {
-			throw new ImportDeniedError(specifier);
+		for (const { specifier, dynamic } of findImportSpecifiers(code)) {
+			if (dynamic) throw new ImportDeniedError(specifier);
+			resolveLibrary(specifier);
 		}
 
 		runtime.setInterruptHandler(buildInterruptHandler(Date.now() + timeoutMs, cancellation));
@@ -1311,10 +1533,14 @@ export async function createSandboxAsync(
 		return fireFragmentHookInContext(context, fragmentId, lifecycle, bindings);
 	}
 
+	function emit(eventId: string, payload?: unknown): unknown[] {
+		return emitInContext(context, manifest, eventId, payload);
+	}
+
 	function dispose(): void {
 		context.dispose();
 		runtime.dispose();
 	}
 
-	return { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, fireHook, fireFragmentHook, debugSession, dispose };
+	return { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, fireHook, fireFragmentHook, emit, debugSession, dispose };
 }

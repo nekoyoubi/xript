@@ -349,6 +349,81 @@ describe("top-level events catalog", () => {
 	});
 });
 
+describe("event subscription surface", () => {
+	const manifest = {
+		xript: "0.3",
+		name: "host",
+		types: { SaveInfo: { description: "Save info.", fields: { path: { type: "string" } } } },
+		events: [
+			{ id: "document.saved", description: "Fired after a save.", payload: "SaveInfo" },
+			{ id: "selection.changed", description: "Selection changed." },
+		],
+	};
+
+	it("emits a typed events global with on/subscribe over the event id union (ambient)", () => {
+		const out = generateTypes(manifest, { ambient: true });
+		assert.match(out, /namespace events \{/);
+		assert.match(out, /function on<K extends XriptEventId>\(id: K, handler: \(payload: XriptEvents\[K\]\) => void\): void;/);
+		assert.match(out, /function subscribe<K extends XriptEventId>\(id: K, handler: \(payload: XriptEvents\[K\]\) => void\): void;/);
+	});
+
+	it("declares the events global in non-ambient mode", () => {
+		const out = generateTypes(manifest);
+		assert.match(out, /declare namespace events \{/);
+	});
+
+	it("surfaces an event's subscription capability in the catalog JSDoc", () => {
+		const out = generateTypes({
+			xript: "0.3",
+			name: "host",
+			events: [{ id: "world.changed", description: "World changed.", capability: "read:world" }],
+		});
+		assert.match(out, /Requires capability: `read:world`/);
+	});
+
+	it("omits the events global when no events are declared", () => {
+		const out = generateTypes({ xript: "0.3", name: "host" });
+		assert.ok(!out.includes("namespace events"));
+	});
+});
+
+describe("capability typing surface", () => {
+	const manifest = {
+		xript: "0.3",
+		name: "host",
+		capabilities: {
+			"modify-state": { description: "x", risk: "medium" },
+			"run.command": { description: "y" },
+		},
+	};
+
+	it("emits a Capability scope union of declared keys", () => {
+		const out = generateTypes(manifest);
+		assert.match(out, /type Capability = "modify-state" \| "run\.command";/);
+	});
+
+	it("emits an open CapabilityRef permitting read:/write: prefixes", () => {
+		const out = generateTypes(manifest);
+		assert.match(out, /type CapabilityRef = \(/);
+		assert.match(out, /"read:modify-state"/);
+		assert.match(out, /"write:run\.command"/);
+		assert.match(out, /\| \(string & \{\}\)/);
+	});
+
+	it("emits capability types inside the global block in ambient mode", () => {
+		const out = generateTypes(manifest, { ambient: true });
+		assert.match(out, /declare global \{/);
+		assert.match(out, /\ttype Capability =/);
+		assert.match(out, /\ttype CapabilityRef =/);
+	});
+
+	it("omits capability types when none are declared", () => {
+		const out = generateTypes({ xript: "0.3", name: "host" });
+		assert.ok(!out.includes("type Capability"));
+		assert.ok(!out.includes("type CapabilityRef"));
+	});
+});
+
 describe("fragment fill handlers", () => {
 	it("emits a FragmentHandlers entry from the preferred handlers array", () => {
 		const result = generateTypes({

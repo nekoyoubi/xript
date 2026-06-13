@@ -1,4 +1,4 @@
-# Hosting: granting capabilities
+# Granting capabilities
 
 Capabilities are default-deny. A mod requests the ones it needs in its manifest; the host decides which to honor. **Granting is host policy; enforcement is runtime mechanism.** The runtime never grants on its own and never prompts — it enforces exactly the allow-list the host hands it.
 
@@ -16,7 +16,7 @@ Every gated binding call is observable through the `audit` callback — see [lim
 
 ## Grant UX is host-side
 
-The spec ships capability-grant *data shapes* only — `capability-prompt`, `install-descriptor`, `discovery-result` — and no prompt implementation. Whether to show a consent dialog, remember a decision, or grant silently from a trusted manifest is entirely the host's call. The runtime takes a finished allow-list; how the host arrived at it is out of scope. See the [security model](/spec/security/) and [capability reference](/spec/capabilities/).
+The spec ships capability-grant *data shapes* only (`capability-prompt`, `install-descriptor`, `discovery-result`) and no prompt implementation. Whether to show a consent dialog, remember a decision, or grant silently from a trusted manifest is entirely the host's call. The runtime takes a finished allow-list; how the host arrived at it is out of scope. See the [security model](/spec/security/) and [capability reference](/spec/capabilities/).
 
 ## Common mistakes
 

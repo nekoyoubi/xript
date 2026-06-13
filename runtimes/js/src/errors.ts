@@ -105,3 +105,25 @@ export class ModuleUnsupportedError extends Error {
 		this.name = "ModuleUnsupportedError";
 	}
 }
+
+export class LibraryUnavailableError extends Error {
+	public readonly specifier: string;
+
+	constructor(specifier: string) {
+		super(
+			`library "${specifier}" is declared in the host manifest but no source was registered with the runtime; the host must supply it via the runtime's libraries option`,
+		);
+		this.name = "LibraryUnavailableError";
+		this.specifier = specifier;
+	}
+}
+
+export class LibraryRegistrationError extends Error {
+	public readonly specifier: string;
+
+	constructor(specifier: string, reason: string) {
+		super(`library "${specifier}" failed registration: ${reason}`);
+		this.name = "LibraryRegistrationError";
+		this.specifier = specifier;
+	}
+}

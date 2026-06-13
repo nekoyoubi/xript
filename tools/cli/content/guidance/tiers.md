@@ -4,7 +4,7 @@ xript is adopted incrementally. A host does not have to expose everything at onc
 
 ## Tier 1 — expressions
 
-The host evaluates user-supplied expressions in a sandbox. No bindings, no host calls — just safe evaluation of values. Use when the extensibility you need is "let users write a formula" and nothing more.
+The host evaluates user-supplied expressions in a sandbox. No bindings, no host calls, just safe evaluation of values. Use when the extensibility you need is "let users write a formula" and nothing more.
 
 ## Tier 2 — simple bindings
 
@@ -20,4 +20,4 @@ Everything, including UI contribution: slots, fragments, contributions, and the 
 
 ## Choosing a tier
 
-Pick the lowest tier that covers what mods genuinely need now. Adding a higher tier later is additive — new bindings, hooks, slots, and capabilities extend the manifest without breaking existing mods. Do not expose tier 4 surfaces for a host whose mods only need tier 2; do not cap a host at tier 2 when its mods clearly want to contribute UI. The manifest grows with the need.
+Pick the lowest tier that covers what mods genuinely need now. Adding a higher tier later is additive: new bindings, hooks, slots, and capabilities extend the manifest without breaking existing mods. Do not expose tier 4 surfaces for a host whose mods only need tier 2; do not cap a host at tier 2 when its mods clearly want to contribute UI. The manifest grows with the need.

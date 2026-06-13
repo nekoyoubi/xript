@@ -1,5 +1,6 @@
 import { validateManifest, crossValidate } from "./index.js";
 import { gateCapabilities } from "./manifest-util.js";
+import { satisfies } from "./capabilities.js";
 
 export interface UtilizationMetric {
 	score: number;
@@ -45,9 +46,9 @@ export interface ScoreOptions {
 }
 
 const DISCLAIMER =
-	"Measures moddability capacity — how much of xript's extension surface the host exposes (bindings to call, slots to fill, events to observe, a capability model to gate them), against a ceiling of exposing all of it. It does not prove the surface is well-designed: a high score with a poorly drawn host/mod boundary is possible. Integrity violations are bugs. The slot and capability figures are informational mod-coverage of the host's own non-reserved surface, not part of the headline — exposing a slot no supplied mod fills is moddability, not waste.";
+	"Measures moddability capacity — how much of xript's extension surface the host exposes (bindings to call, slots to fill, events to observe, libraries to import, a capability model to gate them), against a ceiling of exposing all of it. It does not prove the surface is well-designed: a high score with a poorly drawn host/mod boundary is possible. Integrity violations are bugs. The slot and capability figures are informational mod-coverage of the host's own non-reserved surface, not part of the headline — exposing a slot no supplied mod fills is moddability, not waste.";
 
-const CAPACITY_SURFACES = ["bindings", "slots", "capabilities", "events"] as const;
+const CAPACITY_SURFACES = ["bindings", "slots", "capabilities", "events", "libraries"] as const;
 
 interface HostManifest {
 	slots?: Array<{ id?: string; capability?: string; reserved?: boolean }>;
@@ -122,10 +123,11 @@ export async function scoreManifests(host: unknown, mods: unknown[], options: Sc
 	const hostValidation = await validateManifest(host);
 	for (const error of hostValidation.errors) violations.push(`host ${error.path}: ${error.message}`);
 
-	const declaredCaps = new Set(capabilityNames(hostManifest));
+	const declaredCaps = capabilityNames(hostManifest);
 	for (const slot of hostManifest.slots ?? []) {
-		if (slot.capability && !declaredCaps.has(slot.capability)) {
-			violations.push(`slot "${slot.id ?? "?"}" references undeclared capability "${slot.capability}"`);
+		const gate = slot.capability;
+		if (gate && !declaredCaps.some((scope) => satisfies(scope, gate))) {
+			violations.push(`slot "${slot.id ?? "?"}" references undeclared capability "${gate}"`);
 		}
 	}
 
@@ -158,12 +160,13 @@ export async function scoreManifests(host: unknown, mods: unknown[], options: Sc
 	};
 
 	const ownCaps = capabilityNames(hostManifest).filter((name) => !inheritedCaps.has(name) && !reservedCaps.has(name));
-	const referencedCaps = new Set([...modCapabilityRequests(modManifests), ...gateCapabilities(host)]);
-	const usedCapNames = ownCaps.filter((name) => referencedCaps.has(name));
+	const referencedCaps = [...new Set([...modCapabilityRequests(modManifests), ...gateCapabilities(host)])];
+	const usedCapNames = ownCaps.filter((name) => referencedCaps.some((ref) => satisfies(name, ref)));
+	const usedCapSet = new Set(usedCapNames);
 	const capabilityMetric: UtilizationMetric = {
 		score: ownCaps.length ? usedCapNames.length / ownCaps.length : 1,
 		used: usedCapNames,
-		unused: ownCaps.filter((name) => !referencedCaps.has(name)),
+		unused: ownCaps.filter((name) => !usedCapSet.has(name)),
 	};
 
 	const result: ScoreResult = { headline, integrity, capacity, slots: slotMetric, capabilities: capabilityMetric, disclaimer: DISCLAIMER };

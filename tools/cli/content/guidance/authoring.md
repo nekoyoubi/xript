@@ -13,11 +13,11 @@ A mod is a manifest plus the scripts it declares. The host's manifest tells you 
 
 ## Everything you contribute is a fill
 
-There is one contribution surface: `fills`, keyed by host slot `id`. A panel of UI is a fill of a fragment-format slot. Satisfying a host role — a transcriber, a formatter, a provider — is a fill of a role slot. Reacting to startup or to a state change is a fill of an event slot. Don't reach for a separate `fragments` or `provides` or `hooks` field; the slot's `accepts` type already says what the fill must look like.
+There is one contribution surface: `fills`, keyed by host slot `id`. A panel of UI is a fill of a fragment-format slot. Satisfying a host role (a transcriber, a formatter, a provider) is a fill of a role slot. Reacting to startup or to a state change is a fill of an event slot. Don't reach for a separate `fragments` or `provides` or `hooks` field; the slot's `accepts` type already says what the fill must look like.
 
 ## Fragments carry no logic
 
-A fragment is an inert template you fill into a fragment-format slot. Bind a value with `data-bind`. Toggle visibility with `data-if`. For anything else — events, mutations, computed content — route through the sandbox fragment API. A fragment that tries to branch or compute on its own is the most common authoring mistake; move that logic into the entry script.
+A fragment is an inert template you fill into a fragment-format slot. Bind a value with `data-bind`. Toggle visibility with `data-if`. For anything else, events and mutations and computed content, route through the sandbox fragment API. A fragment that tries to branch or compute on its own is the most common authoring mistake; move that logic into the entry script.
 
 ## Capabilities are requested, not assumed
 
@@ -25,4 +25,4 @@ If a binding call or a gated slot needs a capability, the mod must request it in
 
 ## Keep types in the loop
 
-Generate TypeScript definitions from the host manifest and author against them. The types describe the real surface — the bindings you can call and the slots you can fill; if a call or a fill does not typecheck, it is not something the host declares. This closes the gap between what an author assumes exists and what the manifest actually declares.
+Generate TypeScript definitions from the host manifest and author against them. The types describe the real surface: the bindings you can call and the slots you can fill. If a call or a fill does not typecheck, it is not something the host declares. This closes the gap between what an author assumes exists and what the manifest actually declares.

@@ -1,0 +1,80 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://xript.dev/schema/harness/v0.7.json",
+	"title": "xript Host Harness",
+	"description": "Declarative description of a synthetic host environment: stub implementations for a host manifest's declared bindings, plus the capability grants in force. A harness lets a mod execute against a host manifest with no live application behind it — binding calls are journaled and answered from the descriptor instead of real host code.",
+	"type": "object",
+	"properties": {
+		"$schema": { "type": "string" },
+		"capabilities": {
+			"description": "Capability grants in force for the session. Each entry is a capability reference (optionally mode-prefixed, e.g. `read:fs`). When omitted, every capability scope the host manifest declares is granted in full.",
+			"type": "array",
+			"items": {
+				"type": "string",
+				"pattern": "^(read:|write:)?[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*$"
+			}
+		},
+		"bindings": {
+			"description": "Stub implementations keyed by binding name. Namespace members are addressed by dotted path (`fs.read`). The key `*` sets the default stub for any declared binding the harness does not name. A declared binding with no matching key falls back to a recording stub that returns undefined.",
+			"type": "object",
+			"additionalProperties": { "$ref": "#/$defs/bindingStub" }
+		},
+		"libraries": {
+			"description": "Sources for the host manifest's approved libraries, keyed by specifier. Each entry supplies the pre-bundled ES module the session registers — inline via `source`, or via `path` resolved relative to the harness file. The manifest's `libraries` allow-list and capability gates still govern what a mod may import; this only stands in for the host's registration step.",
+			"type": "object",
+			"additionalProperties": {
+				"type": "object",
+				"properties": {
+					"source": {
+						"description": "Inline pre-bundled ES module source.",
+						"type": "string"
+					},
+					"path": {
+						"description": "Path to the module source, resolved relative to the harness file.",
+						"type": "string"
+					}
+				},
+				"additionalProperties": false
+			}
+		}
+	},
+	"additionalProperties": false,
+	"$defs": {
+		"bindingStub": {
+			"description": "How a stubbed binding answers a call. Every call is journaled regardless of mode. At most one of `returns`, `throws`, `sequence`, or `script` may be set; a bare `{}` or `{ \"mode\": \"record\" }` records the call and returns undefined.",
+			"type": "object",
+			"properties": {
+				"mode": {
+					"description": "Explicit marker for the default record-only behavior.",
+					"type": "string",
+					"enum": ["record"]
+				},
+				"returns": {
+					"description": "Fixed value returned on every call."
+				},
+				"throws": {
+					"description": "Error message thrown on every call.",
+					"type": "string"
+				},
+				"sequence": {
+					"description": "Per-call outcomes consumed in order. After the last entry, the last entry repeats.",
+					"type": "array",
+					"minItems": 1,
+					"items": {
+						"type": "object",
+						"properties": {
+							"returns": { "description": "Value returned for this call." },
+							"throws": { "description": "Error message thrown for this call.", "type": "string" }
+						},
+						"additionalProperties": false
+					}
+				},
+				"script": {
+					"description": "JavaScript function body run HOST-SIDE in the trusted harness process (not in the sandbox). Receives `args` (the call's argument array) and `calls` (the number of prior calls to this binding); its return value is the binding result. Harness scripts are host code by definition — they carry the same trust as the host application they stand in for.",
+					"type": "string"
+				}
+			},
+			"additionalProperties": false
+		}
+	}
+}
