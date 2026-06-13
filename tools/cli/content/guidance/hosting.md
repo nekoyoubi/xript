@@ -7,7 +7,7 @@ A host embeds a runtime, loads mods through it, and drives what they contribute.
 - **The host provides** the bindings a mod may call, the grant decision (which capabilities are honored), and the places contributions mount. It renders inert output and routes interaction back into the sandbox.
 - **The runtime owns** the sandbox, default-deny capability enforcement, fragment sanitization, hook firing, and slot/role resolution. It is the only thing that executes mod code.
 
-The boundary is one-directional: a host drives the runtime and consumes what it returns. It never imports the runtime's internals to do the runtime's job — if a host finds itself wanting to, it is hosting the wrong unit (see [rendering fragments](/guidance/host-fragments/) for the canonical case).
+The boundary is one-directional: a host drives the runtime and consumes what it returns. It never imports the runtime's internals to do the runtime's job. If a host finds itself wanting to, it is hosting the wrong unit (see [rendering fragments](/guidance/host-fragments/) for the canonical case).
 
 ## The lifecycle
 
@@ -32,9 +32,9 @@ The boundary is one-directional: a host drives the runtime and consumes what it 
 
 ## The host-side records
 
-- [Hosting: rendering fragments](/guidance/host-fragments/) — the inert-output seam, and why you never call the processor directly.
-- [Hosting: granting capabilities](/guidance/host-capabilities/) — default-deny, what granting means, and why the grant decision is the host's.
-- [Hosting: mounting slots](/guidance/host-slots/) — `resolveSlot`, the `SlotContribution` shape, and honoring `priority` and `multiple`.
-- [Hosting: resolving roles](/guidance/host-roles/) — `resolveRole`, the `RoleResolution` shape, and picking among providers.
-- [Hosting: firing hooks & events](/guidance/host-hooks/) — `fireHook`, event-typed slots, and how they differ from the `events` catalog.
-- [Hosting: limits, cancellation & audit](/guidance/host-safety/) — the caps the runtime enforces and the signals it hands back.
+- [Rendering fragments](/guidance/host-fragments/) — the inert-output seam, and why you never call the processor directly.
+- [Granting capabilities](/guidance/host-capabilities/) — default-deny, what granting means, and why the grant decision is the host's.
+- [Mounting slots](/guidance/host-slots/) — `resolveSlot`, the `SlotContribution` shape, and honoring `priority` and `multiple`.
+- [Resolving roles](/guidance/host-roles/) — `resolveRole`, the `RoleResolution` shape, and picking among providers.
+- [Firing hooks & events](/guidance/host-hooks/) — `fireHook`, event-typed slots, and how they differ from the `events` catalog.
+- [Limits, cancellation & audit](/guidance/host-safety/) — the caps the runtime enforces and the signals it hands back.

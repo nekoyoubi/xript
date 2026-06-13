@@ -24,6 +24,16 @@ enum Command {
         args: Vec<serde_json::Value>,
         tx: mpsc::Sender<Result<serde_json::Value>>,
     },
+    FireHook {
+        hook: String,
+        payload: Vec<serde_json::Value>,
+        tx: mpsc::Sender<Result<Vec<serde_json::Value>>>,
+    },
+    Emit {
+        event: String,
+        payload: Vec<serde_json::Value>,
+        tx: mpsc::Sender<Result<Vec<serde_json::Value>>>,
+    },
     ResolveSlot {
         slot_id: String,
         tx: mpsc::Sender<Vec<SlotContribution>>,
@@ -85,6 +95,12 @@ impl XriptHandle {
                     }
                     Command::InvokeExport { name, args, tx } => {
                         let _ = tx.send(rt.invoke_export(&name, &args));
+                    }
+                    Command::FireHook { hook, payload, tx } => {
+                        let _ = tx.send(rt.fire_hook(&hook, &payload));
+                    }
+                    Command::Emit { event, payload, tx } => {
+                        let _ = tx.send(rt.emit(&event, &payload));
                     }
                     Command::ResolveSlot { slot_id, tx } => {
                         let _ = tx.send(rt.resolve_slot(&slot_id));
@@ -161,6 +177,40 @@ impl XriptHandle {
             .send(Command::InvokeExport {
                 name: name.to_string(),
                 args: args.to_vec(),
+                tx,
+            })
+            .map_err(|_| XriptError::Engine("runtime thread is gone".into()))?;
+        rx.recv()
+            .map_err(|_| XriptError::Engine("runtime thread dropped response".into()))?
+    }
+
+    pub fn fire_hook(
+        &self,
+        hook: &str,
+        payload: &[serde_json::Value],
+    ) -> Result<Vec<serde_json::Value>> {
+        let (tx, rx) = mpsc::channel();
+        self.cmd_tx
+            .send(Command::FireHook {
+                hook: hook.to_string(),
+                payload: payload.to_vec(),
+                tx,
+            })
+            .map_err(|_| XriptError::Engine("runtime thread is gone".into()))?;
+        rx.recv()
+            .map_err(|_| XriptError::Engine("runtime thread dropped response".into()))?
+    }
+
+    pub fn emit(
+        &self,
+        event: &str,
+        payload: &[serde_json::Value],
+    ) -> Result<Vec<serde_json::Value>> {
+        let (tx, rx) = mpsc::channel();
+        self.cmd_tx
+            .send(Command::Emit {
+                event: event.to_string(),
+                payload: payload.to_vec(),
                 tx,
             })
             .map_err(|_| XriptError::Engine("runtime thread is gone".into()))?;

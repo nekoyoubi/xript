@@ -1,9 +1,10 @@
 import vm from "node:vm";
-import { BindingError, CapabilityDeniedError, ExecutionLimitError, CancellationError, InvokeError, ModEntryError, ImportDeniedError, ModuleUnsupportedError } from "./errors.js";
-import { findImportSpecifier } from "./module-support.js";
+import { BindingError, CapabilityDeniedError, ExecutionLimitError, CancellationError, InvokeError, ModEntryError, ImportDeniedError, ModuleUnsupportedError, LibraryUnavailableError, LibraryRegistrationError } from "./errors.js";
+import { findImportSpecifier, findImportSpecifiers, detectCommonJS } from "./module-support.js";
 import type { DebugOptions, DebugSession } from "./debug-types.js";
 import { createDebugController } from "./debug-session.js";
 import { instrumentSource } from "./debug-instrument.js";
+import { grantedSatisfies } from "./capabilities.js";
 
 interface Manifest {
 	xript: string;
@@ -11,8 +12,52 @@ interface Manifest {
 	version?: string;
 	bindings?: Record<string, Binding>;
 	hooks?: Record<string, HookDef>;
+	slots?: Slot[];
+	events?: EventDef[];
 	capabilities?: Record<string, CapabilityDef>;
+	libraries?: Record<string, LibraryDef>;
 	limits?: ExecutionLimits;
+}
+
+interface LibraryDef {
+	description: string;
+	capability?: string;
+	version?: string;
+	deprecated?: string;
+}
+
+interface Slot {
+	id: string;
+	accepts: string[];
+	description?: string;
+	capability?: string;
+	payload?: unknown;
+}
+
+const HOOK_SLOT_ACCEPT = "application/x-xript-hook";
+
+function isHookSlot(slot: Slot): boolean {
+	return Array.isArray(slot.accepts) && slot.accepts.includes(HOOK_SLOT_ACCEPT);
+}
+
+function effectiveHooks(manifest: Manifest): Record<string, HookDef> {
+	const hooks: Record<string, HookDef> = { ...(manifest.hooks ?? {}) };
+	for (const slot of manifest.slots ?? []) {
+		if (!isHookSlot(slot)) continue;
+		if (slot.id in hooks) continue;
+		hooks[slot.id] = {
+			description: slot.description ?? "",
+			capability: slot.capability,
+		};
+	}
+	return hooks;
+}
+
+interface EventDef {
+	id: string;
+	description: string;
+	payload?: unknown;
+	capability?: string;
 }
 
 interface HookDef {
@@ -105,6 +150,7 @@ export interface SandboxOptions {
 	manifest: Manifest;
 	hostBindings: HostBindings;
 	capabilities?: string[];
+	libraries?: Record<string, string>;
 	console?: ConsoleHandler;
 	audit?: (event: AuditEvent) => void;
 	hardLimits?: HardLimits;
@@ -274,7 +320,7 @@ function buildFunction(
 	audit?: (event: AuditEvent) => void,
 ): HostFunction {
 	return (...args: unknown[]) => {
-		if (binding.capability && !grantedCapabilities.has(binding.capability)) {
+		if (binding.capability && !grantedSatisfies(grantedCapabilities, binding.capability)) {
 			throw new CapabilityDeniedError(qualifiedName, binding.capability);
 		}
 
@@ -359,15 +405,16 @@ function buildHooksGlobal(
 ): Record<string, unknown> {
 	const hooksObj: Record<string, unknown> = {};
 
-	if (manifest.hooks) {
-		for (const [hookName, hookDef] of Object.entries(manifest.hooks)) {
+	const hooks = effectiveHooks(manifest);
+	{
+		for (const [hookName, hookDef] of Object.entries(hooks)) {
 			if (hookDef.phases && hookDef.phases.length > 0) {
 				const hookNs: Record<string, unknown> = {};
 
 				for (const phase of hookDef.phases) {
 					const registryKey = `${hookName}:${phase}`;
 					hookNs[phase] = (handler: (...args: unknown[]) => unknown) => {
-						if (hookDef.capability && !grantedCapabilities.has(hookDef.capability)) {
+						if (hookDef.capability && !grantedSatisfies(grantedCapabilities, hookDef.capability)) {
 							throw new CapabilityDeniedError(`hooks.${hookName}.${phase}`, hookDef.capability);
 						}
 						if (typeof handler !== "function") {
@@ -381,7 +428,7 @@ function buildHooksGlobal(
 			} else {
 				const registryKey = hookName;
 				hooksObj[hookName] = (handler: (...args: unknown[]) => unknown) => {
-					if (hookDef.capability && !grantedCapabilities.has(hookDef.capability)) {
+					if (hookDef.capability && !grantedSatisfies(grantedCapabilities, hookDef.capability)) {
 						throw new CapabilityDeniedError(`hooks.${hookName}`, hookDef.capability);
 					}
 					if (typeof handler !== "function") {
@@ -409,13 +456,76 @@ function buildHooksGlobal(
 	return Object.freeze(hooksObj);
 }
 
+function buildEventsGlobal(
+	manifest: Manifest,
+	grantedCapabilities: Set<string>,
+	eventRegistry: HandlerRegistry,
+): Record<string, unknown> {
+	const eventDefs = new Map<string, EventDef>();
+	if (manifest.events) {
+		for (const def of manifest.events) {
+			eventDefs.set(def.id, def);
+		}
+	}
+
+	function subscribe(eventId: string, handler: (...args: unknown[]) => unknown): void {
+		const def = eventDefs.get(eventId);
+		if (!def) {
+			throw new BindingError(`events.on(${eventId})`, "event is not declared in the host manifest");
+		}
+		if (def.capability && !grantedSatisfies(grantedCapabilities, def.capability)) {
+			throw new CapabilityDeniedError(`events.on(${eventId})`, def.capability);
+		}
+		if (typeof handler !== "function") {
+			throw new BindingError(`events.on(${eventId})`, "expected a handler function");
+		}
+		eventRegistry.register(eventId, { fn: handler });
+	}
+
+	const eventsObj = {
+		on: subscribe,
+		subscribe,
+	};
+
+	return Object.freeze(eventsObj);
+}
+
+function emitFromRegistry(
+	eventRegistry: HandlerRegistry,
+	manifest: Manifest,
+	eventId: string,
+	payload?: unknown,
+): unknown[] {
+	const declared = manifest.events?.some((def) => def.id === eventId) ?? false;
+	if (!declared) return [];
+
+	const entries = eventRegistry.handlers.get(eventId);
+	if (!entries || entries.length === 0) return [];
+
+	const args = payload !== undefined
+		? (typeof payload === "object" && payload !== null && !Array.isArray(payload)
+			? Object.values(payload as Record<string, unknown>)
+			: [payload])
+		: [];
+
+	const results: unknown[] = [];
+	for (const entry of entries) {
+		try {
+			results.push(entry.fn(...args));
+		} catch {
+			results.push(undefined);
+		}
+	}
+	return results;
+}
+
 function fireHookFromRegistry(
 	hookRegistry: HandlerRegistry,
 	manifest: Manifest,
 	hookName: string,
 	options?: FireHookOptions,
 ): unknown[] {
-	const hookDef = manifest.hooks?.[hookName];
+	const hookDef = effectiveHooks(manifest)[hookName];
 	if (!hookDef) return [];
 
 	let registryKey: string;
@@ -497,15 +607,51 @@ export interface SandboxResult {
 	invokeExport: (name: string, args: unknown[]) => unknown;
 	invokeExportAsync: (name: string, args: unknown[]) => Promise<unknown>;
 	fireHook: (hookName: string, options?: FireHookOptions) => unknown[];
+	emit: (eventId: string, payload?: unknown) => unknown[];
 	fireFragmentHook: (fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>) => FragmentOp[];
 	debugSession: () => DebugSession | null;
 }
 
 interface SourceTextModuleInstance {
-	link(linker: (specifier: string) => never): Promise<void>;
+	link(linker: (specifier: string) => SourceTextModuleInstance): Promise<void>;
 	evaluate(): Promise<void>;
 	readonly namespace: Record<string, unknown>;
 	readonly status: string;
+}
+
+function validateLibraryRegistration(manifest: Manifest, libraries: Record<string, string> | undefined): void {
+	for (const [specifier, source] of Object.entries(libraries ?? {})) {
+		if (!manifest.libraries?.[specifier]) {
+			throw new LibraryRegistrationError(specifier, "not declared in the host manifest's libraries map");
+		}
+		const artifact = detectCommonJS(source);
+		if (artifact) {
+			throw new LibraryRegistrationError(specifier, `CommonJS artifacts detected (found: ${artifact}); libraries must be pre-bundled ES modules`);
+		}
+		const nested = findImportSpecifier(source);
+		if (nested !== null) {
+			throw new LibraryRegistrationError(specifier, `not import-clean: contains an import of "${nested}"; libraries must be self-contained pre-bundled ES modules with no imports of their own`);
+		}
+	}
+}
+
+function makeLibraryResolver(
+	manifest: Manifest,
+	libraries: Record<string, string> | undefined,
+	granted: Set<string>,
+): (specifier: string) => string {
+	return (specifier: string) => {
+		const declaration = manifest.libraries?.[specifier];
+		if (!declaration) throw new ImportDeniedError(specifier);
+		if (declaration.capability && !grantedSatisfies(granted, declaration.capability)) {
+			const error = new CapabilityDeniedError(specifier, declaration.capability);
+			error.message = `import of "${specifier}" requires the "${declaration.capability}" capability, which hasn't been granted to this script. Ask the app developer to enable it.`;
+			throw error;
+		}
+		const source = libraries?.[specifier];
+		if (source === undefined) throw new LibraryUnavailableError(specifier);
+		return source;
+	};
 }
 
 interface SourceTextModuleCtor {
@@ -520,15 +666,20 @@ function getSourceTextModule(): SourceTextModuleCtor | null {
 export function createSandbox(options: SandboxOptions): SandboxResult {
 	const { manifest, capabilities = [], cancellation } = options;
 	const grantedCapabilities = new Set(capabilities);
+	validateLibraryRegistration(manifest, options.libraries);
+	const resolveLibrary = makeLibraryResolver(manifest, options.libraries, grantedCapabilities);
+	const libraryModules = new Map<string, SourceTextModuleInstance>();
 	const limits = manifest.limits || {};
 	const hard = options.hardLimits || {};
 	const timeoutMs = clampLimit(limits.timeout_ms ?? 5000, hard.timeout_ms) ?? 5000;
 	const hookRegistry = createHandlerRegistry();
 	const fragmentRegistry = createHandlerRegistry();
+	const eventRegistry = createHandlerRegistry();
 	const exportRegistry = new Map<string, HostFunction>();
 
 	const sandboxGlobals = buildSandboxGlobal(options);
 	sandboxGlobals.hooks = buildHooksGlobal(manifest, grantedCapabilities, hookRegistry, fragmentRegistry);
+	sandboxGlobals.events = buildEventsGlobal(manifest, grantedCapabilities, eventRegistry);
 
 	const debugController = options.debug ? createDebugController(options.debug, "instrumented") : null;
 	if (debugController) {
@@ -660,9 +811,9 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 	async function evaluateModule(modName: string, code: string): Promise<string[]> {
 		if (cancellation?.cancelled) throw new CancellationError();
 
-		const specifier = findImportSpecifier(code);
-		if (specifier !== null) {
-			throw new ImportDeniedError(specifier);
+		for (const { specifier, dynamic } of findImportSpecifiers(code)) {
+			if (dynamic) throw new ImportDeniedError(specifier);
+			resolveLibrary(specifier);
 		}
 
 		const SourceTextModule = getSourceTextModule();
@@ -672,14 +823,21 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 			);
 		}
 
+		const ModuleCtor = SourceTextModule;
+		function linkLibrary(spec: string): SourceTextModuleInstance {
+			const cached = libraryModules.get(spec);
+			if (cached) return cached;
+			const library = new ModuleCtor(resolveLibrary(spec), { context, identifier: `xript-lib-${spec}` });
+			libraryModules.set(spec, library);
+			return library;
+		}
+
 		const mod = new SourceTextModule(code, { context, identifier: `xript-mod-${modName}` });
 		try {
-			await mod.link((spec: string) => {
-				throw new ImportDeniedError(spec);
-			});
+			await mod.link(linkLibrary);
 			await mod.evaluate();
 		} catch (e) {
-			if (e instanceof ImportDeniedError) throw e;
+			if (e instanceof ImportDeniedError || e instanceof CapabilityDeniedError || e instanceof LibraryUnavailableError) throw e;
 			const message = e instanceof Error ? e.message : String(e);
 			throw new ModEntryError(modName, message);
 		}
@@ -701,6 +859,10 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 		return fireHookFromRegistry(hookRegistry, manifest, hookName, opts);
 	}
 
+	function emit(eventId: string, payload?: unknown): unknown[] {
+		return emitFromRegistry(eventRegistry, manifest, eventId, payload);
+	}
+
 	function fireFragmentHook(fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>): FragmentOp[] {
 		return fireFragmentHookFromRegistry(fragmentRegistry, fragmentId, lifecycle, bindings);
 	}
@@ -709,5 +871,5 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 		return debugController ? debugController.session : null;
 	}
 
-	return { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, fireHook, fireFragmentHook, debugSession };
+	return { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, fireHook, emit, fireFragmentHook, debugSession };
 }

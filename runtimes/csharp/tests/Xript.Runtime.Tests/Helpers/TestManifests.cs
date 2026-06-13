@@ -127,6 +127,33 @@ internal static class TestManifests
         }
         """;
 
+    internal const string WithEvents = """
+        {
+            "xript": "0.1",
+            "name": "test",
+            "events": [
+                { "id": "player.spawned", "description": "fired when a player spawns" }
+            ]
+        }
+        """;
+
+    internal const string WithCapabilityGatedEvent = """
+        {
+            "xript": "0.1",
+            "name": "test",
+            "events": [
+                {
+                    "id": "world.changed",
+                    "description": "fired when the world changes",
+                    "capability": "read:world"
+                }
+            ],
+            "capabilities": {
+                "world": { "description": "world observation" }
+            }
+        }
+        """;
+
     internal const string WithShortTimeout = """
         {
             "xript": "0.1",

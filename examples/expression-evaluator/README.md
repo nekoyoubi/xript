@@ -23,7 +23,7 @@ node examples/expression-evaluator/src/host.js
 
 ## The Manifest
 
-The manifest (`manifest.json`) declares 11 bindings -- basic math and string operations:
+The manifest (`manifest.json`) declares 11 bindings: basic math and string operations.
 
 | Binding | Description |
 |---------|-------------|

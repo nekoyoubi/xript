@@ -1,0 +1,200 @@
+[
+	{
+		"description": "exact scope match, both bare (write) — grant equals require",
+		"grant": "fs.addon",
+		"require": "fs.addon",
+		"expected": true
+	},
+	{
+		"description": "prefix subsumption: parent scope grant covers child require",
+		"grant": "run",
+		"require": "run.command",
+		"expected": true
+	},
+	{
+		"description": "deep prefix subsumption: grandparent covers grandchild",
+		"grant": "fs",
+		"require": "fs.addon.config",
+		"expected": true
+	},
+	{
+		"description": "child grant does NOT subsume parent require (subsumption is one-directional)",
+		"grant": "run.command",
+		"require": "run",
+		"expected": false
+	},
+	{
+		"description": "segment-boundary discipline: 'run' must not subsume 'runner' (no partial-segment match)",
+		"grant": "run",
+		"require": "runner",
+		"expected": false
+	},
+	{
+		"description": "segment-boundary discipline: 'run' must not subsume 'running.task'",
+		"grant": "run",
+		"require": "running.task",
+		"expected": false
+	},
+	{
+		"description": "sibling scopes never match",
+		"grant": "fs.addon",
+		"require": "fs.config",
+		"expected": false
+	},
+	{
+		"description": "unrelated top-level scopes never match",
+		"grant": "network",
+		"require": "storage",
+		"expected": false
+	},
+	{
+		"description": "mode lattice: bare grant is write, satisfies a read require on the same scope",
+		"grant": "fs.addon",
+		"require": "read:fs.addon",
+		"expected": true
+	},
+	{
+		"description": "mode lattice: explicit write grant satisfies read require (write ⊒ read)",
+		"grant": "write:fs.addon",
+		"require": "read:fs.addon",
+		"expected": true
+	},
+	{
+		"description": "mode lattice: explicit write grant satisfies write require",
+		"grant": "write:fs.addon",
+		"require": "write:fs.addon",
+		"expected": true
+	},
+	{
+		"description": "mode lattice: write grant satisfies bare (write) require",
+		"grant": "write:fs.addon",
+		"require": "fs.addon",
+		"expected": true
+	},
+	{
+		"description": "mode lattice breakage proof — read grant does NOT satisfy write require (the write→read direction must not reverse)",
+		"grant": "read:fs.addon",
+		"require": "write:fs.addon",
+		"expected": false
+	},
+	{
+		"description": "mode lattice breakage proof — read grant does NOT satisfy bare (write) require",
+		"grant": "read:fs.addon",
+		"require": "fs.addon",
+		"expected": false
+	},
+	{
+		"description": "mode lattice: read grant satisfies read require on the same scope",
+		"grant": "read:fs.addon",
+		"require": "read:fs.addon",
+		"expected": true
+	},
+	{
+		"description": "mode lattice: read grant satisfies read require on a subsumed child scope",
+		"grant": "read:fs",
+		"require": "read:fs.addon.config",
+		"expected": true
+	},
+	{
+		"description": "mode + scope composed: write grant on parent satisfies read require on child",
+		"grant": "write:run",
+		"require": "read:run.command",
+		"expected": true
+	},
+	{
+		"description": "mode + scope composed: write grant on parent satisfies write require on child",
+		"grant": "run",
+		"require": "write:run.command",
+		"expected": true
+	},
+	{
+		"description": "mode + scope composed: read grant on parent does NOT satisfy write require on child (mode axis still gates)",
+		"grant": "read:run",
+		"require": "write:run.command",
+		"expected": false
+	},
+	{
+		"description": "broad bare-prefix grant on a top-level scope sweeps the whole subtree",
+		"grant": "fs",
+		"require": "fs.addon.cache.entry",
+		"expected": true
+	},
+	{
+		"description": "single-segment scope with hyphen: exact match (hyphen stays within a segment)",
+		"grant": "modify-player",
+		"require": "modify-player",
+		"expected": true
+	},
+	{
+		"description": "single-segment scope with hyphen: no subsumption across the hyphen boundary",
+		"grant": "modify",
+		"require": "modify-player",
+		"expected": false
+	},
+	{
+		"description": "dotted scope with hyphenated segments: parent subsumes child across the dot",
+		"grant": "player.modify-stat",
+		"require": "player.modify-stat.health",
+		"expected": true
+	},
+	{
+		"description": "read-mode broad grant covers a deeply nested read require",
+		"grant": "read:world",
+		"require": "read:world.terrain.chunk",
+		"expected": true
+	},
+	{
+		"description": "write-mode broad grant on parent confers at least read on child subtree",
+		"grant": "write:world",
+		"require": "read:world.terrain.chunk",
+		"expected": true
+	},
+	{
+		"description": "mode prefix does not leak into scope: write:run does not subsume runner",
+		"grant": "write:run",
+		"require": "write:runner",
+		"expected": false
+	},
+	{
+		"description": "identical deep scopes with matching read mode",
+		"grant": "read:a.b.c.d",
+		"require": "read:a.b.c.d",
+		"expected": true
+	},
+	{
+		"description": "deep require with no ancestor in the grant set partial — single grant must cover both axes",
+		"grant": "read:a.b",
+		"require": "write:a.b.c",
+		"expected": false
+	},
+	{
+		"granted": ["read:fs.addon", "write:run.command"],
+		"require": "write:run.command",
+		"expected": true,
+		"description": "granted SET: existential — a second grant in the set satisfies the require"
+	},
+	{
+		"granted": ["read:fs", "read:run"],
+		"require": "read:run.command",
+		"expected": true,
+		"description": "granted SET: one grant subsumes the require by prefix and mode"
+	},
+	{
+		"granted": ["read:fs.addon", "read:run.command"],
+		"require": "write:run.command",
+		"expected": false,
+		"description": "granted SET: no cross-grant composition — no single grant covers both axes, so deny"
+	},
+	{
+		"granted": [],
+		"require": "fs.addon",
+		"expected": false,
+		"description": "granted SET: empty set denies (vacuous any)"
+	},
+	{
+		"granted": ["fs"],
+		"require": "fs.addon",
+		"expected": true,
+		"description": "granted SET: single broad grant subsumes the require"
+	}
+]

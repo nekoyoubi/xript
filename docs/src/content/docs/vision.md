@@ -11,7 +11,7 @@ Applications are isolated. Games reinvent modding from scratch, or skip it. Tool
 
 The result: users have no voice in how the software they run actually works.
 
-The Elder Scrolls series proved decades ago that when you hand a community the tools to extend your work, they sustain it. Skyrim still thrives a decade-plus later because Bethesda let their community finish what they started. That principle shouldn't be the privilege of a handful of franchises.
+The Elder Scrolls series proved decades ago that when you hand a community the tools to extend your work, they sustain it. Skyrim still thrives a decade-plus on because Bethesda let their community finish what they started. That shouldn't be the privilege of a handful of franchises.
 
 ---
 

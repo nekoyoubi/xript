@@ -1,6 +1,6 @@
 {
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
-	"$id": "https://xript.dev/schema/mod-manifest/v0.6.json",
+	"$id": "https://xript.dev/schema/mod-manifest/v0.7.json",
 	"title": "xript Mod Manifest",
 	"description": "Declarative manifest for xript mods. Declares metadata, required capabilities, entry scripts, and UI fragment contributions.",
 	"type": "object",

@@ -1,0 +1,91 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://xript.dev/schema/harness-steps/v0.7.json",
+	"title": "xript Harness Steps",
+	"description": "An ordered scenario executed against a harnessed host session. Each step is one action — load a mod, invoke an export, emit an event, fire a hook, execute code, resolve a slot or role, or read the journal. The same step vocabulary drives the CLI's batch mode and the MCP server's interactive session tools.",
+	"type": "object",
+	"required": ["steps"],
+	"properties": {
+		"$schema": { "type": "string" },
+		"steps": {
+			"type": "array",
+			"items": { "$ref": "#/$defs/step" }
+		}
+	},
+	"additionalProperties": false,
+	"$defs": {
+		"step": {
+			"type": "object",
+			"required": ["action"],
+			"properties": {
+				"action": {
+					"type": "string",
+					"enum": ["load-mod", "invoke", "emit", "fire-hook", "execute", "resolve-slot", "resolve-role", "journal"]
+				},
+				"manifest": {
+					"description": "load-mod: the mod manifest — an inline object, or a path resolved relative to the steps file."
+				},
+				"source": {
+					"description": "load-mod: path to the entry script, resolved relative to the steps file.",
+					"type": "string"
+				},
+				"sourceText": {
+					"description": "load-mod: inline entry script source, used instead of `source`.",
+					"type": "string"
+				},
+				"sources": {
+					"description": "load-mod: additional fragment/script sources the mod's fills reference, keyed by the path the manifest names, each value a file path resolved relative to the steps file.",
+					"type": "object",
+					"additionalProperties": { "type": "string" }
+				},
+				"entry": {
+					"description": "load-mod: entry path key; defaults to the manifest's entry.script.",
+					"type": "string"
+				},
+				"export": {
+					"description": "invoke: the export name to call.",
+					"type": "string"
+				},
+				"args": {
+					"description": "invoke: positional arguments.",
+					"type": "array"
+				},
+				"event": {
+					"description": "emit: the host event id to broadcast.",
+					"type": "string"
+				},
+				"payload": {
+					"description": "emit: the event payload."
+				},
+				"hook": {
+					"description": "fire-hook: the hook or event-typed slot id to fire.",
+					"type": "string"
+				},
+				"phase": {
+					"description": "fire-hook: the hook phase to fire.",
+					"type": "string"
+				},
+				"data": {
+					"description": "fire-hook: the data passed to hook handlers."
+				},
+				"code": {
+					"description": "execute: script source evaluated in the sandbox.",
+					"type": "string"
+				},
+				"slot": {
+					"description": "resolve-slot: the slot id to resolve contributions for.",
+					"type": "string"
+				},
+				"role": {
+					"description": "resolve-role: the provider role to resolve.",
+					"type": "string"
+				},
+				"clear": {
+					"description": "journal: reset the journal after reading it.",
+					"type": "boolean"
+				}
+			},
+			"additionalProperties": false
+		}
+	}
+}

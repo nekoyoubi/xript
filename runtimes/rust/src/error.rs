@@ -32,6 +32,12 @@ pub enum XriptError {
     #[error("CommonJS artifacts detected in mod entry of `{mod_name}` (found: {artifact}). xript mods must be authored as ES modules (entry.format: \"module\", top-level export) or as classic scripts using xript.exports.register — never CommonJS. Fix your tsconfig to emit ESM (module: \"esnext\", moduleResolution: \"bundler\"/\"nodenext\") or remove the require()/module.exports usage. See https://xript.dev/guides/authoring-mods-in-typescript.")]
     CommonJsDetected { mod_name: String, artifact: String },
 
+    #[error("library \"{specifier}\" is declared in the host manifest but no source was registered with the runtime; the host must supply it via the runtime's libraries option")]
+    LibraryUnavailable { specifier: String },
+
+    #[error("library \"{specifier}\" failed registration: {reason}")]
+    LibraryRegistration { specifier: String, reason: String },
+
     #[error("QuickJS error: {0}")]
     Engine(String),
 

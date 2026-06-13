@@ -35,15 +35,56 @@ After a module evaluates, the runtime reads its **top-level named function expor
 
 `entry.exports` in the manifest **documents and capability-gates** these exports. It need not enumerate them for invocation to work; the runtime is authoritative for what actually registered. It SHOULD still enumerate them for typed authoring and docs.
 
-## No External Imports
+## Imports Are Default-Deny; Approved Libraries Lift It
 
-A module-format mod is a single self-contained entry module with **no imports**. Every `import` specifier — bare (`"fs"`, `"lodash"`), absolute, URL, and (in v1) relative — is **rejected at link/instantiation time**, before any top-level code runs. This preserves [security guarantee #1](./security.md) (no sandbox escape) and the eval ban on dynamic `import()`.
+A module-format mod is a self-contained entry module whose imports are **denied by default**. Every `import` specifier is **rejected at link/instantiation time**, before any top-level code runs, **unless** the specifier names a library the host has approved (see [Approved Libraries](#approved-libraries)). That covers bare specifiers (`"fs"`, `"lodash"`), absolute, URL, and (in v1) relative alike. This preserves [security guarantee #1](./security.md) (no sandbox escape) and the eval ban on dynamic `import()`.
 
-- Static `import x from "..."` fails at link time.
-- Dynamic `import("...")` fails at call time (already covered by the no-eval / dynamic-import ban; module mode does not re-enable it).
+- Static `import x from "..."` of an unapproved specifier fails at link time.
+- Dynamic `import("...")` fails at call time regardless of approval (already covered by the no-eval / dynamic-import ban; module mode does not re-enable it, and the library lift applies only to static imports).
 - The rejection is a **load-time error** with a stable, cross-runtime identity: error name `ImportDeniedError`, with `.specifier` set, and a message of the form: `import of "<specifier>" is not permitted; xript mods cannot import external modules (see security guarantee: no sandbox escape)`.
 
-Relative intra-mod imports are denied in v1: the single-entry self-contained module is the baseline, and deny-all is the only import semantics that is trivially identical across every runtime's module loader.
+Relative intra-mod imports are denied in v1: the single-entry self-contained module is the baseline.
+
+## Approved Libraries
+
+The host manifest's top-level `libraries` map is a **curated allow-list of importable libraries** — the capability model applied to modules. Default-deny is intact: the host curates *which* libraries exist, and a capability gates *which mods* may import each.
+
+```jsonc
+// host manifest
+{
+	"libraries": {
+		"@example/doc": {
+			"description": "Shared markdown + doc rendering.",
+			"capability": "lib.doc",
+			"version": "^1.0.0"
+		}
+	}
+}
+```
+
+```ts
+// host wiring — the host ships the implementation; xript provides the link path
+createRuntime(manifest, { hostBindings, libraries: { "@example/doc": docModuleSource } });
+```
+
+```js
+// mod entry — a real static import, linked in-sandbox
+import { renderMarkdown } from "@example/doc";
+export function render(md) { return renderMarkdown(md); }
+```
+
+### Semantics
+
+- **Resolution order at link time:** the specifier must (1) be declared in the resolved host manifest's `libraries`, (2) have source registered by the host at runtime construction, and (3) pass the capability gate — the granted set must satisfy the library's `capability` under the v0.7 subsumption rules (`lib` ⊇ `lib.doc`). A miss at any step is a load-time error: undeclared → `ImportDeniedError`; declared-but-unregistered → `LibraryUnavailableError` (the host forgot to supply the source — a host bug, named as such); capability denied → `CapabilityDeniedError` naming the specifier and the missing capability. An ungated library (no `capability`) skips step (3).
+- **In-sandbox execution:** an approved library evaluates **inside the sandbox, at the importing mod's own privilege**. It sees the same ambient environment the mod sees and crosses no marshalling boundary — imports are full-fidelity object/function references, not JSON. Approving a library grants the mod no new power; it is the host vouching "this is sandbox-safe shared code I choose to offer."
+- **One instance per runtime:** a library module is instantiated once and shared by everything that imports it in that runtime, standard ES module semantics.
+- **Import-clean rule:** an approved library must be a **self-contained, pre-bundled ES module with no imports of its own**. Library source is run through the same default-deny loader — a library importing an unapproved specifier fails exactly as a mod would, and runtimes MUST reject a registered library whose source contains static `import` / `export … from` / dynamic `import(` forms at registration time, using the same conservative-detector posture as the CommonJS guard (false positives in strings/comments are accepted). This stops the import-deny from being laundered through a library's dependency tree.
+- **CommonJS guard applies:** registered library source is subject to the same `CommonJSDetectedError` detector as mod entries.
+- **Capability declaration integrity:** a library's `capability` scope must be declared in the manifest's `capabilities` map, the same rule that governs binding and slot gates.
+
+### What stays host-side
+
+The library lift is for **pure compute** — markdown rendering, date math, validation, formatting: code that needs no privilege beyond the sandbox. Anything touching host state, the filesystem, or the network stays a **host binding** (host-side execution, JSON boundary, per-function capability). The two columns are complementary, not competing; a host typically offers both.
 
 ## CommonJS Is Never Supported
 
@@ -93,7 +134,7 @@ A TypeScript mod must compile to an **ES module** the runtime can evaluate. The 
 
 1. **Compile to ESM.** Set `module: "ESNext"` (or `"NodeNext"`) and `moduleResolution: "Bundler"` (or `"NodeNext"`) in `tsconfig.json`. `module: "Node16"` with a default package can emit CJS-shaped output — the exact footgun the CommonJS guard exists to catch.
 2. **Use top-level `export`s for invokable functions.** `export function transcribe(...)` is registered automatically; no `xript.exports.register` call is needed. Declare each export in the mod manifest's `entry.exports` for typed authoring, docs, and capability gating.
-3. **No external imports.** A mod is a single self-contained entry module. Any `import` is rejected at load time. Use host bindings (available as ambient globals) instead of pulling in packages.
+3. **Import only approved libraries.** Imports are default-deny; the only specifiers that link are the ones in the host's `libraries` allow-list (gated by their declared capability). For everything else, use host bindings (available as ambient globals) instead of pulling in packages.
 4. **Never CommonJS.** No `require(...)`, no `module.exports`, no `exports.x = ...`. These fail loudly at both validate and load time.
 5. **Type against the ambient surface.** Generate an ambient declaration file with `xript typegen --ambient` from the mod (and optionally the host) manifest, and reference it from `tsconfig` `types` or a triple-slash directive. This types the `xript` global, the host bindings, `hooks`, and the mod's own `Exports`.
 

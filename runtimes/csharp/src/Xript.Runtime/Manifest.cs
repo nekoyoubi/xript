@@ -40,6 +40,56 @@ public record Manifest
 
     [JsonPropertyName("events")]
     public List<EventDeclaration>? Events { get; init; }
+
+    [JsonPropertyName("libraries")]
+    public Dictionary<string, LibraryDef>? Libraries { get; init; }
+
+    /// <summary>
+    /// The effective hook map the runtime dispatches: the explicit <c>hooks</c>
+    /// section plus a synthesized phaseless <see cref="HookDef"/> for every
+    /// event-typed slot (<c>accepts</c> contains <c>application/x-xript-hook</c>).
+    /// An explicit hook wins over a same-id slot; slots never clobber a declared hook.
+    /// </summary>
+    public Dictionary<string, HookDef> EffectiveHooks()
+    {
+        var hooks = Hooks is null
+            ? new Dictionary<string, HookDef>()
+            : new Dictionary<string, HookDef>(Hooks);
+        if (Slots is not null)
+        {
+            foreach (var slot in Slots)
+            {
+                if (!slot.IsHookSlot() || hooks.ContainsKey(slot.Id)) continue;
+                hooks[slot.Id] = new HookDef
+                {
+                    Description = slot.Description ?? "",
+                    Capability = slot.Capability,
+                };
+            }
+        }
+        return hooks;
+    }
+}
+
+/// <summary>
+/// An approved importable library: the host vouches that the registered
+/// pre-bundled ES module is sandbox-safe shared code. <c>Capability</c> gates
+/// which mods may import it; <c>Version</c> documents the contract mod authors
+/// compile against.
+/// </summary>
+public record LibraryDef
+{
+    [JsonPropertyName("description")]
+    public string? Description { get; init; }
+
+    [JsonPropertyName("capability")]
+    public string? Capability { get; init; }
+
+    [JsonPropertyName("version")]
+    public string? Version { get; init; }
+
+    [JsonPropertyName("deprecated")]
+    public string? Deprecated { get; init; }
 }
 
 public record EventDeclaration
@@ -52,6 +102,9 @@ public record EventDeclaration
 
     [JsonPropertyName("payload")]
     public JsonElement? Payload { get; init; }
+
+    [JsonPropertyName("capability")]
+    public string? Capability { get; init; }
 }
 
 public record Slot
@@ -62,6 +115,9 @@ public record Slot
     [JsonPropertyName("accepts")]
     public List<string> Accepts { get; init; } = new();
 
+    [JsonPropertyName("description")]
+    public string? Description { get; init; }
+
     [JsonPropertyName("capability")]
     public string? Capability { get; init; }
 
@@ -70,6 +126,10 @@ public record Slot
 
     [JsonPropertyName("style")]
     public string? Style { get; init; }
+
+    public const string HookAccept = "application/x-xript-hook";
+
+    public bool IsHookSlot() => Accepts.Contains(HookAccept);
 }
 
 public record ModManifest

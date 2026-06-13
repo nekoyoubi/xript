@@ -13,8 +13,8 @@ The manifest declares 11 bindings across two categories: math operations and str
 
 ```json
 {
-  "$schema": "https://xript.dev/schema/manifest/v0.6.json",
-  "xript": "0.1",
+  "$schema": "https://xript.dev/schema/manifest/v0.7.json",
+  "xript": "0.7",
   "name": "expression-evaluator",
   "version": "1.0.0",
   "title": "Expression Evaluator",

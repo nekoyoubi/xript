@@ -19,9 +19,10 @@ const SPEC_DOCS = [
 	"vision.md",
 	"annotations.md",
 	"debug-protocol.md",
+	"harness.md",
 ];
 
-const SPEC_SCHEMAS = ["manifest.schema.json", "mod-manifest.schema.json"];
+const SPEC_SCHEMAS = ["manifest.schema.json", "mod-manifest.schema.json", "harness.schema.json", "harness-steps.schema.json"];
 
 await rm(specTarget, { recursive: true, force: true });
 await mkdir(specTarget, { recursive: true });

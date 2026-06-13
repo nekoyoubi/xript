@@ -282,13 +282,59 @@ fn unescape_specifier(raw: &str) -> String {
     raw.replace("\\\"", "\"").replace("\\'", "'").replace("\\\\", "\\")
 }
 
+/// An import discovered in module entry source: the specifier plus whether it
+/// came from a dynamic `import(...)` call rather than a static form.
+pub struct FoundImport {
+    pub specifier: String,
+    pub dynamic: bool,
+}
+
+/// Scans module entry source and returns every static and dynamic import
+/// specifier, in source order.
+pub fn all_import_specifiers(source: &str) -> Vec<FoundImport> {
+    let stripped = strip_strings_and_comments_keep_specifiers(source);
+    let mut found = Vec::new();
+    for (clean_pos, raw_spec) in &stripped.specifiers {
+        if let Some(dynamic) = import_specifier_kind_at(&stripped.text, *clean_pos) {
+            found.push(FoundImport {
+                specifier: unescape_specifier(raw_spec),
+                dynamic,
+            });
+        }
+    }
+    found
+}
+
+/// Like [`import_specifier_at`] but reports the import's kind: `Some(true)`
+/// for a dynamic `import(...)`, `Some(false)` for a static form, `None` when
+/// the literal is not an import specifier at all.
+fn import_specifier_kind_at(text: &str, clean_pos: usize) -> Option<bool> {
+    let prefix = text[..clean_pos].trim_end();
+    if prefix.ends_with("import(") || prefix.ends_with("import (") {
+        return Some(true);
+    }
+    if prefix.ends_with("from") && preceded_by_import_or_export(prefix) {
+        return Some(false);
+    }
+    if prefix.ends_with("import") {
+        let before = prefix[..prefix.len() - "import".len()].trim_end();
+        if before.is_empty() || ends_at_statement_boundary(before) {
+            return Some(false);
+        }
+    }
+    None
+}
+
 /// Runs the pre-evaluation guardrails common to both script and module mode.
-/// CommonJS detection fires in both modes; import denial fires only when a
-/// module-format entry declares a static or dynamic import.
-pub fn check_entry_source(
+/// CommonJS detection fires in both modes; import handling fires only when a
+/// module-format entry declares an import: dynamic imports are always denied,
+/// static imports are passed to `approve_import`, which errors unless the
+/// specifier names an approved, registered, capability-satisfied library.
+pub fn check_entry_source_with(
     mod_name: &str,
     source: &str,
     is_module: bool,
+    approve_import: impl Fn(&str) -> Result<(), XriptError>,
 ) -> Result<(), XriptError> {
     if let Some(artifact) = detect_commonjs(source) {
         return Err(XriptError::CommonJsDetected {
@@ -297,14 +343,31 @@ pub fn check_entry_source(
         });
     }
     if is_module {
-        if let Some(specifier) = first_import_specifier(source) {
-            return Err(XriptError::ImportDenied {
-                mod_name: mod_name.to_string(),
-                specifier,
-            });
+        for import in all_import_specifiers(source) {
+            if import.dynamic {
+                return Err(XriptError::ImportDenied {
+                    mod_name: mod_name.to_string(),
+                    specifier: import.specifier,
+                });
+            }
+            approve_import(&import.specifier)?;
         }
     }
     Ok(())
+}
+
+/// [`check_entry_source_with`] under the historical deny-all import policy.
+pub fn check_entry_source(
+    mod_name: &str,
+    source: &str,
+    is_module: bool,
+) -> Result<(), XriptError> {
+    check_entry_source_with(mod_name, source, is_module, |specifier| {
+        Err(XriptError::ImportDenied {
+            mod_name: mod_name.to_string(),
+            specifier: specifier.to_string(),
+        })
+    })
 }
 
 #[cfg(test)]

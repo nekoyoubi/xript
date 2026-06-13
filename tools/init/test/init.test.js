@@ -55,7 +55,7 @@ describe("generateProjectFiles", () => {
 	it("manifest includes $schema reference", () => {
 		const files = generateProjectFiles({ name: "test", tier: 2, language: "javascript" });
 		const manifest = JSON.parse(files["manifest.json"]);
-		assert.equal(manifest.$schema, "https://xript.dev/schema/manifest/v0.1.json");
+		assert.equal(manifest.$schema, "https://xript.dev/schema/manifest/v0.7.json");
 	});
 
 	it("manifest uses project name", () => {
@@ -81,8 +81,8 @@ describe("generateProjectFiles", () => {
 		assert.ok(manifest.bindings);
 		assert.ok(manifest.bindings.counter);
 		assert.ok(manifest.bindings.counter.members);
-		assert.ok(manifest.hooks);
-		assert.ok(manifest.hooks.onStart);
+		assert.ok(Array.isArray(manifest.slots));
+		assert.ok(manifest.slots.some((slot) => slot.id === "onStart" && slot.accepts.includes("application/x-xript-hook")));
 		assert.ok(manifest.capabilities);
 		assert.ok(manifest.capabilities["modify-state"]);
 	});
@@ -187,8 +187,8 @@ describe("generateProjectFiles", () => {
 		const manifest = JSON.parse(files["manifest.json"]);
 		assert.ok(manifest.bindings);
 		assert.ok(manifest.bindings.counter);
-		assert.ok(manifest.hooks);
-		assert.ok(manifest.hooks.onStart);
+		assert.ok(Array.isArray(manifest.slots));
+		assert.ok(manifest.slots.some((slot) => slot.id === "onStart" && slot.accepts.includes("application/x-xript-hook")));
 		assert.ok(manifest.capabilities);
 		assert.ok(manifest.capabilities["modify-state"]);
 		assert.ok(manifest.capabilities["ui-mount"]);
@@ -199,9 +199,10 @@ describe("generateProjectFiles", () => {
 	it("tier 4 mod manifest targets sidebar slot", () => {
 		const files = generateProjectFiles({ name: "test", tier: 4, language: "javascript" });
 		const manifest = JSON.parse(files["mod-manifest.json"]);
-		assert.equal(manifest.xript, "0.3");
-		assert.ok(Array.isArray(manifest.fragments));
-		assert.equal(manifest.fragments[0].slot, "sidebar.left");
+		assert.equal(manifest.xript, "0.7");
+		assert.ok(manifest.fills);
+		assert.ok(Array.isArray(manifest.fills["sidebar.left"]));
+		assert.equal(manifest.fills["sidebar.left"][0].format, "text/html");
 	});
 
 	it("tier 4 host uses fireHook", () => {
@@ -244,6 +245,8 @@ describe("generateModProjectFiles", () => {
 		const files = generateProjectFiles({ name: "my-mod", tier: 2, language: "javascript", type: "mod" });
 		const paths = Object.keys(files).sort();
 		assert.deepEqual(paths, [
+			"demo/host-manifest.json",
+			"demo/steps.json",
 			"fragments/panel.html",
 			"mod-manifest.json",
 			"package.json",
@@ -255,6 +258,8 @@ describe("generateModProjectFiles", () => {
 		const files = generateModProjectFiles({ name: "my-mod", tier: 2, language: "typescript" });
 		const paths = Object.keys(files).sort();
 		assert.deepEqual(paths, [
+			"demo/host-manifest.json",
+			"demo/steps.json",
 			"fragments/panel.html",
 			"mod-manifest.json",
 			"package.json",
@@ -300,6 +305,28 @@ describe("generateModProjectFiles", () => {
 		assert.ok(ambient.includes("export interface Exports {"));
 	});
 
+	it("ambient types declare the typed events subscription surface", () => {
+		const files = generateModProjectFiles({ name: "my-mod", tier: 2, language: "typescript" });
+		const ambient = files["src/xript-env.d.ts"];
+		assert.ok(ambient.includes("interface XriptEvents {"));
+		assert.ok(ambient.includes("type XriptEventId = keyof XriptEvents;"));
+		assert.ok(ambient.includes("namespace events {"));
+		assert.ok(ambient.includes("function on<K extends XriptEventId>(id: K, handler: (payload: XriptEvents[K]) => void): void;"));
+	});
+
+	it("ambient types declare capability scope and reference types", () => {
+		const files = generateModProjectFiles({ name: "my-mod", tier: 2, language: "typescript" });
+		const ambient = files["src/xript-env.d.ts"];
+		assert.ok(ambient.includes("type Capability ="));
+		assert.ok(ambient.includes("type CapabilityRef ="));
+		assert.ok(ambient.includes("(string & {})"));
+	});
+
+	it("mod entry demonstrates a typed events.on subscription", () => {
+		const files = generateModProjectFiles({ name: "my-mod", tier: 2, language: "typescript" });
+		assert.ok(files["src/mod.ts"].includes('events.on("app.status-changed"'));
+	});
+
 	it("scaffolds no CommonJS artifacts in the entry", () => {
 		const files = generateModProjectFiles({ name: "my-mod", tier: 2, language: "typescript" });
 		const entry = files["src/mod.ts"];
@@ -310,23 +337,22 @@ describe("generateModProjectFiles", () => {
 	it("mod manifest is valid JSON with required fields", () => {
 		const files = generateModProjectFiles({ name: "cool-mod", tier: 2, language: "javascript" });
 		const manifest = JSON.parse(files["mod-manifest.json"]);
-		assert.equal(manifest.xript, "0.3");
+		assert.equal(manifest.xript, "0.7");
 		assert.equal(manifest.name, "cool-mod");
 		assert.equal(manifest.version, "0.1.0");
 		assert.equal(manifest.title, "Cool Mod");
 		assert.ok(manifest.entry);
-		assert.ok(Array.isArray(manifest.fragments));
-		assert.ok(manifest.fragments.length > 0);
+		assert.ok(manifest.fills);
+		assert.ok(manifest.fills["sidebar.left"].length > 0);
 		assert.ok(Array.isArray(manifest.capabilities));
 	});
 
 	it("mod manifest fragment targets sidebar.left slot", () => {
 		const files = generateModProjectFiles({ name: "my-mod", tier: 2, language: "javascript" });
 		const manifest = JSON.parse(files["mod-manifest.json"]);
-		const fragment = manifest.fragments[0];
-		assert.equal(fragment.slot, "sidebar.left");
-		assert.equal(fragment.format, "text/html");
-		assert.ok(fragment.bindings);
+		const fill = manifest.fills["sidebar.left"][0];
+		assert.equal(fill.format, "text/html");
+		assert.ok(fill.bindings);
 	});
 
 	it("fragment HTML file includes data-bind and data-if", () => {

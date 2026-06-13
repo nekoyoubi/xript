@@ -29,25 +29,6 @@ export function createRuntime(capabilities = ["ui-mount"]) {
 	});
 }
 
-/**
- * Load a mod's manifest plus its entry and fragment sources from disk,
- * mirroring `examples/ui-dashboard`.
- *
- * @param {string} modDir
- */
-function fragmentFills(manifest) {
-	if (manifest.fills) {
-		const flat = [];
-		for (const [slot, entries] of Object.entries(manifest.fills)) {
-			for (const entry of entries) {
-				flat.push({ slot, ...entry });
-			}
-		}
-		return flat;
-	}
-	return manifest.fragments ?? [];
-}
-
 export async function loadModFiles(modDir) {
 	const modManifestRaw = await readFile(new URL(`../../mods/${modDir}/mod-manifest.json`, import.meta.url), "utf-8");
 	const modManifest = JSON.parse(modManifestRaw);
@@ -59,13 +40,14 @@ export async function loadModFiles(modDir) {
 			sources[entry] = await readFile(new URL(`../../mods/${modDir}/${entry}`, import.meta.url), "utf-8");
 		}
 	}
-	const fragments = fragmentFills(modManifest);
-	for (const frag of fragments) {
-		if (!frag.inline) {
-			sources[frag.source] = await readFile(new URL(`../../mods/${modDir}/${frag.source}`, import.meta.url), "utf-8");
+	for (const entries of Object.values(modManifest.fills ?? {})) {
+		for (const fill of entries) {
+			if (!fill.inline && fill.source) {
+				sources[fill.source] = await readFile(new URL(`../../mods/${modDir}/${fill.source}`, import.meta.url), "utf-8");
+			}
 		}
 	}
-	return { manifest: { ...modManifest, fragments }, sources };
+	return { manifest: modManifest, sources };
 }
 
 export { appState };

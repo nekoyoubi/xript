@@ -1,6 +1,6 @@
 {
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
-	"$id": "https://xript.dev/schema/manifest/v0.6.json",
+	"$id": "https://xript.dev/schema/manifest/v0.7.json",
 	"title": "xript Manifest",
 	"description": "Declarative manifest for xript-enabled applications. Defines the API surface, capabilities, and documentation for modders.",
 	"type": "object",
@@ -55,8 +55,11 @@
 			}
 		},
 		"capabilities": {
-			"description": "Named capabilities that scripts can request. Each capability gates access to a set of bindings or behaviors.",
+			"description": "Named capabilities that scripts can request. Each capability gates access to a set of bindings or behaviors. Keys are scope-only: a declared capability names a scope node (e.g. 'run', 'run.command', 'fs.addon') with no mode prefix. The 'read:'/'write:' axis is a property of a grant or require reference, not of the declaration.",
 			"type": "object",
+			"propertyNames": {
+				"pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*$"
+			},
 			"additionalProperties": {
 				"$ref": "#/$defs/capability"
 			}
@@ -87,9 +90,48 @@
 			"description": "Discovery catalog of the named events this host emits or broadcasts and their payload types. Distinct from slots and from fragment handlers: an event-typed slot is an extension POINT that addons fill with handlers; a fragment's 'handlers' wire DOM responses on a fill; an entry here declares what the host itself emits, with no consumer presupposed — a sandbox script, the host's own UI, or an external subscriber may all listen. In short: bindings are what you can call, slots and handlers are what handles, events are what the host emits.",
 			"type": "array",
 			"items": { "$ref": "#/$defs/eventDefinition" }
+		},
+		"libraries": {
+			"description": "Curated allow-list of libraries mod code may import. Keys are module specifiers (npm-style: '@example/doc', 'lodash'). The blanket import-deny stays in force; an approved specifier is the only thing that lifts it, and only for mods holding the library's capability. An imported library runs IN the sandbox at the importing mod's own privilege — approving one vouches 'this is sandbox-safe shared code I choose to offer', it grants no new power. The host supplies each library's source at runtime construction; xript provides the allow-listed link path, never the library itself.",
+			"type": "object",
+			"propertyNames": {
+				"pattern": "^(@[a-z0-9-~][a-z0-9-._~]*\\/)?[a-z0-9-~][a-z0-9-._~]*$"
+			},
+			"additionalProperties": {
+				"$ref": "#/$defs/library"
+			}
 		}
 	},
 	"$defs": {
+		"library": {
+			"description": "An approved importable library. The host registers the matching pre-bundled ES module source when constructing the runtime; the manifest entry declares that the specifier exists, what gates it, and what version contract the host vouches for.",
+			"type": "object",
+			"required": ["description"],
+			"properties": {
+				"description": {
+					"type": "string",
+					"description": "What this library provides to mod code. Shown in generated docs."
+				},
+				"capability": {
+					"$ref": "#/$defs/capabilityRef",
+					"description": "The capability a mod must hold to import this library. Omit for an ungated library available to every mod."
+				},
+				"version": {
+					"type": "string",
+					"description": "The version (or semver range) of the library the host ships. Informational: documents the contract mod authors compile against."
+				},
+				"deprecated": {
+					"type": "string",
+					"description": "If present, the library is deprecated; the value explains what to use instead."
+				}
+			},
+			"additionalProperties": false
+		},
+		"capabilityRef": {
+			"type": "string",
+			"pattern": "^(read:|write:)?[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)*$",
+			"description": "A capability name: an optional 'read:'/'write:' mode prefix followed by a dot-delimited scope. Each scope segment is lowercase-hyphen (e.g. 'modify-player'). Absent prefix means write (full access). Examples: 'fs.addon', 'read:fs.addon', 'write:run.command'."
+		},
 		"typeRef": {
 			"description": "A reference to a type. Can be a primitive, a custom type name, an array type, or a union.",
 			"oneOf": [
@@ -190,8 +232,8 @@
 					"default": false
 				},
 				"capability": {
-					"type": "string",
-					"description": "The capability required to call this function. If omitted, the function is always available."
+					"$ref": "#/$defs/capabilityRef",
+					"description": "The capability required to call this function. If omitted, the function is always available. May carry a 'read:'/'write:' mode prefix and a dotted scope; a grant satisfies it by mode-lattice and prefix-subsumption."
 				},
 				"examples": {
 					"type": "array",
@@ -364,8 +406,8 @@
 					"description": "The parameters passed to hook handlers when fired."
 				},
 				"capability": {
-					"type": "string",
-					"description": "The capability required to register for this hook. If omitted, any script can register."
+					"$ref": "#/$defs/capabilityRef",
+					"description": "The capability required to register for this hook. If omitted, any script can register. May carry a 'read:'/'write:' mode prefix and a dotted scope; a grant satisfies it by mode-lattice and prefix-subsumption."
 				},
 				"async": {
 					"type": "boolean",
@@ -409,8 +451,8 @@
 					"description": "Human-readable description of what this slot is for. Surfaced in generated docs and used by tooling."
 				},
 				"capability": {
-					"type": "string",
-					"description": "Capability required to fill this slot."
+					"$ref": "#/$defs/capabilityRef",
+					"description": "Capability required to fill this slot. May carry a 'read:'/'write:' mode prefix and a dotted scope; a grant satisfies it by mode-lattice and prefix-subsumption."
 				},
 				"multiple": {
 					"type": "boolean",
@@ -458,6 +500,10 @@
 				"payload": {
 					"$ref": "#/$defs/typeRef",
 					"description": "The type of the payload delivered with this event. Omit for events that carry no payload."
+				},
+				"capability": {
+					"$ref": "#/$defs/capabilityRef",
+					"description": "The capability required to subscribe to this event via 'events.on'. If omitted, any script can subscribe. Gating happens at registration time, reusing the hook gate model: a grant satisfies it by mode-lattice and prefix-subsumption."
 				}
 			},
 			"additionalProperties": false

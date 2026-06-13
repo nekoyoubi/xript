@@ -4,7 +4,7 @@ xript exists so that a user-facing surface can be **composed from a manifest, sc
 
 ## The default
 
-The framework provides primitives. The application's own content is its first mod. If the host cannot be replaced by a mod doing the same thing through the same surface, the surface is not yet extensible — it is hardcoded with a manifest sitting next to it. Proximity to a manifest is not the same as being manifest-driven.
+The framework provides primitives. The application's own content is its first mod. If the host cannot be replaced by a mod doing the same thing through the same surface, the surface is not yet extensible. It is hardcoded with a manifest sitting next to it. Proximity to a manifest is not the same as being manifest-driven.
 
 ## Three questions for any surface
 

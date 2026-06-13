@@ -1,6 +1,6 @@
 # The host/mod boundary
 
-The hardest recurring question in an extensible app is where the line sits: what belongs *in the host* versus what belongs *in a mod*. The rule is short — **the host provides mechanism; mods provide policy and content. The host declares the surface; mods fill it.** Everything else is applying that rule to a specific case.
+The hardest recurring question in an extensible app is where the line sits: what belongs *in the host* versus what belongs *in a mod*. The rule is short. **The host provides mechanism; mods provide policy and content. The host declares the surface; mods fill it.** Everything else is applying that rule to a specific case.
 
 ## What belongs in the host
 
@@ -21,7 +21,7 @@ The hardest recurring question in an extensible app is where the line sits: what
 > Could a third party do this as a mod, through the declared surface?
 
 - **Yes** → it is mod territory. Build it as mod zero even though it ships with the app. If the host *can't* currently let a mod do it, that gap is the signal: the surface is missing a binding, a slot, or a capability. Close the gap rather than keeping the feature as private host code.
-- **No** — because it *is* the surface, or a mechanism nothing can reach around, or a security boundary — → it is host code.
+- **No** → it is host code, because it *is* the surface, or a mechanism nothing can reach around, or a security boundary.
 
 ## The drift to watch, both directions
 
@@ -32,4 +32,4 @@ Both are the line moving the wrong way. Name which side a thing belongs on, and 
 
 ## Prefer the check to the reminder
 
-This is doctrine, and doctrine is advisory — easy to forget mid-task. Where the boundary can be made *checkable*, prefer the check: a slot only the host can declare, a capability that gates access, a cross-validation that fails loudly when a mod's fills or requests don't match the host contract. A validator that fails on every commit holds the line in a way a remembered principle cannot. Use the doctrine to decide where the line is; use the contract to keep it there.
+This is doctrine, and doctrine is advisory; easy to forget mid-task. Where the boundary can be made *checkable*, prefer the check: a slot only the host can declare, a capability that gates access, a cross-validation that fails loudly when a mod's fills or requests don't match the host contract. A validator that fails on every commit holds the line in a way a remembered principle cannot. Use the doctrine to decide where the line is; use the contract to keep it there.

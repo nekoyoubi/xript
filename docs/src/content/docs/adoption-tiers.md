@@ -3,7 +3,7 @@ title: Adoption Tiers
 description: "xript's four-tier incremental adoption model, from safe eval replacement to full-featured modding with UI."
 ---
 
-No application has to go all-in on xript. The four adoption tiers let you start simple and add complexity only when you need it. Each tier stands on its own as a valid integration point.
+No application has to go all-in on xript. The four adoption tiers let you start simple and add complexity only when you need it. Each tier stands on its own as a valid place to stop.
 
 ## The Four Tiers
 
@@ -29,7 +29,7 @@ The manifest is minimal:
 
 ```json
 {
-  "xript": "0.1",
+  "xript": "0.7",
   "name": "calculator"
 }
 ```
@@ -54,7 +54,7 @@ The manifest adds bindings, capabilities, and custom types:
 
 ```json
 {
-  "xript": "0.1",
+  "xript": "0.7",
   "name": "task-manager",
   "version": "1.0.0",
   "bindings": {
@@ -140,7 +140,7 @@ Mods declare themselves in a [mod manifest](/spec/mod-manifest/) and contribute 
 
 ```json
 {
-  "xript": "0.6",
+  "xript": "0.7",
   "name": "health-panel",
   "version": "1.0.0",
   "capabilities": ["ui-mount"],

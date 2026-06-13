@@ -44,37 +44,37 @@
 		},
 		{
 			"id": "host-fragments",
-			"title": "Hosting: rendering fragments",
+			"title": "Rendering fragments",
 			"summary": "The inert-output seam — load the mod, render fireFragmentHook's ops, and never call the processor directly.",
 			"file": "host-fragments.md"
 		},
 		{
 			"id": "host-capabilities",
-			"title": "Hosting: granting capabilities",
+			"title": "Granting capabilities",
 			"summary": "Default-deny grants, what the runtime enforces, and why the grant decision and prompt UX are the host's.",
 			"file": "host-capabilities.md"
 		},
 		{
 			"id": "host-slots",
-			"title": "Hosting: mounting slots",
+			"title": "Mounting slots",
 			"summary": "resolveSlot, the SlotContribution shape, and honoring priority and multiple when mounting fills.",
 			"file": "host-slots.md"
 		},
 		{
 			"id": "host-roles",
-			"title": "Hosting: resolving roles",
+			"title": "Resolving roles",
 			"summary": "resolveRole, the RoleResolution shape, rolePreferences, and why a role grants nothing on its own.",
 			"file": "host-roles.md"
 		},
 		{
 			"id": "host-hooks",
-			"title": "Hosting: firing hooks & events",
+			"title": "Firing hooks & events",
 			"summary": "fireHook and event-typed slots, and how they differ from the host's events catalog.",
 			"file": "host-hooks.md"
 		},
 		{
 			"id": "host-safety",
-			"title": "Hosting: limits, cancellation & audit",
+			"title": "Limits, cancellation & audit",
 			"summary": "hardLimits, CancellationToken, the audit channel, and the console handler — the caps and signals the runtime gives a host.",
 			"file": "host-safety.md"
 		},

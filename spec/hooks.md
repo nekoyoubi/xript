@@ -4,7 +4,7 @@ A hook is an event-typed slot: a host-declared plug-point whose `accepts` is the
 
 This document covers hook declaration, lifecycle phases, registration, invocation, and the runtime conventions that govern hook behavior. Those conventions are the semantics of the event slot type; everything below applies whether an event is declared as a slot or, for back-compat, in the deprecated standalone `hooks` section.
 
-> **The standalone `hooks` concept is deprecated.** A lifecycle event is an event-typed slot, and firing it means calling that slot's fills. The `hooks` field remains allowed — hosts still fire hooks and runtimes still dispatch them — but new manifests should declare events as slots and let mods fill them. The declaration form below documents the back-compat surface; the conventions it describes carry over unchanged to event slots.
+> **The standalone `hooks` concept is deprecated.** A lifecycle event is an event-typed slot, and firing it means calling that slot's fills. The `hooks` field remains allowed (hosts still fire hooks and runtimes still dispatch them), but new manifests should declare events as slots and let mods fill them. The declaration form below documents the back-compat surface; the conventions it describes carry over unchanged to event slots.
 
 ## Declaration
 
@@ -95,6 +95,52 @@ const postResults = runtime.fireHook("save", { phase: "post", data: savePayload 
 ```
 
 `fireHook` returns an array of results from all registered handlers, in registration order. If no handlers are registered, it returns an empty array.
+
+## Event Delivery
+
+Hook dispatch and the top-level [`events` broadcast catalog](./manifest.md#events-host-broadcast-catalog) are two faces of **one dispatch engine**: a keyed handler registry plus a fire-from-registry pass. The `hooks` global, the `__xript_hook_handlers` registry, and `fireHook` already *are* an event bus, merely keyed off `manifest.hooks`. The `events` catalog rides that same machinery rather than introducing a parallel event subsystem — the least new vocabulary is one subscribe verb, one host method, and one optional schema field.
+
+### Subscription (script side)
+
+Alongside the `hooks` global, the runtime injects an `events` global. A mod subscribes by event id:
+
+```javascript
+events.on("player.damaged", (event) => {
+  log(`took ${event.amount} damage`);
+});
+
+events.subscribe("level.loaded", () => { /* alias of events.on */ });
+```
+
+The call pushes the handler into a registry keyed by event id (`__xript_event_handlers["<id>"]`), preserving registration order — exactly like `hooks.<name>(fn)` pushes into `__xript_hook_handlers`. Multiple handlers per event id run in registration order.
+
+### Delivery (host side)
+
+The host emits with `emit`, the sibling of `fireHook`:
+
+```javascript
+const results = runtime.emit("player.damaged", { amount: 25, source: "trap" });
+```
+
+`emit` resolves the event id in the `events` catalog, looks up `__xript_event_handlers[id]`, and invokes each handler — an object payload spreads to positional arguments per the event's declared `payload` shape, otherwise the payload is passed as a single argument. Results are collected in registration order; a handler that throws contributes `undefined` and does not stop the others. This is byte-for-byte the `fireHook` fan-out contract.
+
+### Subscription capability gate
+
+An event may declare a `capability` that gates subscription, reusing the hook gate model:
+
+```json
+{
+  "events": [
+    {
+      "id": "world.changed",
+      "description": "Broadcast when world terrain mutates.",
+      "capability": "read:world"
+    }
+  ]
+}
+```
+
+`events.on` checks the event's declared `capability` against the granted set via `grantedSatisfies` (mode-lattice + prefix-subsumption — see [Capability Model](./capabilities.md#hierarchical-capabilities)) before admitting the handler. A subscription denied for lack of capability throws a `CapabilityDeniedError` at registration time. An event with no `capability` admits any subscriber.
 
 ## Capability Gating
 

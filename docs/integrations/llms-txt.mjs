@@ -8,7 +8,7 @@ const SUMMARY =
 	"xript (eXtensible Runtime Interface Protocol Tooling) is a platform specification for making any application moddable through sandboxed JavaScript. A single manifest declares the bindings, capabilities, hooks, types, and slots a host exposes; everything else — TypeScript definitions, docs, validation — derives from it.";
 
 const SECTIONS = [
-	{ title: "Introduction", slugs: ["", "getting-started", "vision", "adoption-tiers"] },
+	{ title: "Introduction", slugs: ["", "getting-started", "vision", "adoption-tiers", "changelog"] },
 	{
 		title: "Doctrine",
 		slugs: [
@@ -17,7 +17,12 @@ const SECTIONS = [
 			"guidance/mod-zero",
 			"guidance/boundary",
 			"guidance/openness",
-			"guidance/authoring",
+			"guidance/tiers",
+		],
+	},
+	{
+		title: "Hosting xript",
+		slugs: [
 			"guidance/hosting",
 			"guidance/host-fragments",
 			"guidance/host-capabilities",
@@ -25,13 +30,18 @@ const SECTIONS = [
 			"guidance/host-roles",
 			"guidance/host-hooks",
 			"guidance/host-safety",
-			"guidance/tiers",
 		],
+	},
+	{
+		title: "Authoring Mods",
+		slugs: ["mods/first-mod", "guidance/authoring"],
 	},
 	{
 		title: "Specification",
 		slugs: [
+			"spec/index",
 			"spec/manifest",
+			"spec/extends",
 			"spec/mod-manifest",
 			"spec/fragments",
 			"spec/fragment-formats",
@@ -39,6 +49,7 @@ const SECTIONS = [
 			"spec/bindings",
 			"spec/hooks",
 			"spec/modules",
+			"spec/harness",
 			"spec/debugging",
 			"spec/security",
 			"spec/annotations",

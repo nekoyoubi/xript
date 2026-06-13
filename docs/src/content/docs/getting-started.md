@@ -5,9 +5,26 @@ description: Add safe, sandboxed scripting to your application in five minutes.
 
 This guide walks through adding xript to an application from scratch. By the end you'll have a working sandboxed expression evaluator that users can safely extend.
 
+:::tip[Hosting or modding?]
+xript has two sides. **Hosting** means your application embeds xript so others can extend it. That's this page. **Modding** means writing an extension for an app that already speaks xript; start at [Your first mod](/mods/first-mod/) instead.
+:::
+
+## Before You Start
+
+- **Node.js 20 or newer** (or a browser project; the universal runtime runs anywhere JavaScript does). Check with `node --version`; an error instead of a version number means [install Node](https://nodejs.org) first.
+- **A JavaScript project to add xript to.** No project yet? `mkdir my-app && cd my-app && npm init -y` gives you one.
+- **The CLI, for the tooling steps.** The runtime below is a library you `npm install`; the `xript` *command* (validate, typegen, init, and friends) is a separate global install:
+
+  ```sh
+  npm install -g @xriptjs/cli
+  xript --version
+  ```
+
+  If `xript --version` prints a version, you're set. If it prints `command not found`, the CLI isn't installed yet. Anywhere this site says `xript <something>`, `npx xript <something>` works without the global install.
+
 ## Install the Runtime
 
-The universal runtime uses QuickJS compiled to WebAssembly: it works in browsers, Node.js, Deno, and more.
+The universal runtime uses QuickJS compiled to WebAssembly: it works in browsers, Node.js, Deno, and more. From your project folder:
 
 ```sh
 npm install @xriptjs/runtime
@@ -19,8 +36,8 @@ Create a `manifest.json` describing what your application exposes to scripts. St
 
 ```json
 {
-  "$schema": "https://xript.dev/schema/manifest/v0.6.json",
-  "xript": "0.6",
+  "$schema": "https://xript.dev/schema/manifest/v0.7.json",
+  "xript": "0.7",
   "name": "my-app",
   "version": "1.0.0",
   "bindings": {
@@ -105,7 +122,7 @@ runtime.execute('eval("1 + 1")');      // Error: eval() is not permitted
 runtime.execute('fetch("https://x")'); // Error: fetch is not defined
 ```
 
-The sandbox guarantees that user scripts cannot escape the boundaries you define.
+User scripts cannot escape the boundaries you define. That's the whole point.
 
 ## Next Steps
 

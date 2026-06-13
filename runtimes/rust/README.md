@@ -17,7 +17,7 @@ xript-runtime = "0.1"
 use xript_runtime::{create_runtime, RuntimeOptions, HostBindings, ConsoleHandler};
 
 let manifest = r#"{
-    "xript": "0.1",
+    "xript": "0.7",
     "name": "my-app",
     "bindings": {
         "greet": {

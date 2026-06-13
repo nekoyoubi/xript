@@ -34,8 +34,11 @@ export const SPEC_RESOURCES: SpecResource[] = [
 	{ id: "vision", title: "Vision", description: "What xript is and the problem it solves.", file: "vision.md", mimeType: "text/markdown" },
 	{ id: "annotations", title: "Annotations", description: "@xript JSDoc tags scanned into manifest bindings.", file: "annotations.md", mimeType: "text/markdown" },
 	{ id: "debug-protocol", title: "Debug protocol", description: "The DAP-shaped debugging surface across runtimes.", file: "debug-protocol.md", mimeType: "text/markdown" },
+	{ id: "harness", title: "Host harness", description: "Synthetic hosts for testing — stub bindings, journaled calls, and replayable step scenarios.", file: "harness.md", mimeType: "text/markdown" },
 	{ id: "manifest-schema", title: "Manifest JSON Schema", description: "The app manifest JSON Schema.", file: "manifest.schema.json", mimeType: "application/json" },
 	{ id: "mod-manifest-schema", title: "Mod manifest JSON Schema", description: "The mod manifest JSON Schema.", file: "mod-manifest.schema.json", mimeType: "application/json" },
+	{ id: "harness-schema", title: "Harness JSON Schema", description: "The harness descriptor JSON Schema — binding stubs and capability grants.", file: "harness.schema.json", mimeType: "application/json" },
+	{ id: "harness-steps-schema", title: "Harness steps JSON Schema", description: "The harness steps JSON Schema — the replayable scenario format.", file: "harness-steps.schema.json", mimeType: "application/json" },
 ];
 
 export async function loadGuidanceIndex(): Promise<GuidanceTopic[]> {

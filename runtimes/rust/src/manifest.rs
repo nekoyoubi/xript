@@ -18,6 +18,32 @@ pub struct Manifest {
     pub limits: Option<Limits>,
     pub slots: Option<Vec<Slot>>,
     pub types: Option<HashMap<String, TypeDefinition>>,
+    pub events: Option<Vec<EventDefinition>>,
+    pub libraries: Option<HashMap<String, LibraryDef>>,
+}
+
+/// An approved importable library: the host vouches that the registered
+/// pre-bundled ES module is sandbox-safe shared code. `capability` gates which
+/// mods may import it; `version` documents the contract mod authors compile
+/// against.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct LibraryDef {
+    pub description: Option<String>,
+    pub capability: Option<String>,
+    pub version: Option<String>,
+    pub deprecated: Option<String>,
+}
+
+/// A host-declared broadcast event. The host emits it by id; sandbox mods
+/// subscribe through `events.on(id, handler)`. `payload` is a codegen/docs hint;
+/// `capability` gates subscription at registration time through the same gate
+/// model hooks use.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct EventDefinition {
+    pub id: String,
+    pub description: Option<String>,
+    pub payload: Option<serde_json::Value>,
+    pub capability: Option<String>,
 }
 
 /// A custom type definition in `manifest.types`. An object type carries `fields`
@@ -63,9 +89,49 @@ impl Extends {
 pub struct Slot {
     pub id: String,
     pub accepts: Vec<String>,
+    pub description: Option<String>,
     pub capability: Option<String>,
     pub multiple: Option<bool>,
     pub style: Option<String>,
+}
+
+/// The accept type that marks a slot as an event-typed hook slot.
+pub const HOOK_SLOT_ACCEPT: &str = "application/x-xript-hook";
+
+impl Slot {
+    /// Whether this slot is an event-typed hook slot the host fires.
+    pub fn is_hook_slot(&self) -> bool {
+        self.accepts.iter().any(|a| a == HOOK_SLOT_ACCEPT)
+    }
+}
+
+impl Manifest {
+    /// The effective hook map the runtime dispatches: the explicit `hooks`
+    /// section plus a synthesized phaseless `HookDef` for every event-typed
+    /// slot. An explicit `hooks` entry wins over a same-id slot — slots never
+    /// clobber a declared hook.
+    pub fn effective_hooks(&self) -> HashMap<String, HookDef> {
+        let mut hooks = self.hooks.clone().unwrap_or_default();
+        if let Some(ref slots) = self.slots {
+            for slot in slots {
+                if !slot.is_hook_slot() || hooks.contains_key(&slot.id) {
+                    continue;
+                }
+                hooks.insert(
+                    slot.id.clone(),
+                    HookDef {
+                        description: slot.description.clone().unwrap_or_default(),
+                        phases: None,
+                        params: None,
+                        capability: slot.capability.clone(),
+                        r#async: None,
+                        deprecated: None,
+                    },
+                );
+            }
+        }
+        hooks
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -420,7 +486,7 @@ pub fn validate_mod_against_app(
                     }
 
                     if let Some(ref cap) = slot.capability {
-                        if !granted_capabilities.contains(cap) {
+                        if !crate::cap_match::granted_satisfies(granted_capabilities, cap) {
                             issues.push(ValidationIssue {
                                 path: format!("{}/slot", prefix),
                                 message: format!(

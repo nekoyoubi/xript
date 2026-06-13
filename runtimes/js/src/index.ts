@@ -34,18 +34,22 @@ import {
 	type FragmentEventDeclaration,
 	type FragmentDeclaration,
 	type SlotDeclaration,
+	type HookFill,
+	normalizeModFills,
 	ModManifestValidationError,
 } from "./fragment.js";
 import { resolveExtends, type ManifestLoader } from "./extends.js";
+import { grantedSatisfies } from "./capabilities.js";
 import { resolveSlotContributions, type SlotContribution } from "./slots.js";
 import { resolveRole as resolveRoleImpl, resolveRoleAll as resolveRoleAllImpl, type RoleResolution } from "./roles.js";
 import type { DebugOptions, DebugSession } from "./debug-types.js";
 
-export { BindingError, CapabilityDeniedError, ExecutionLimitError, CancellationError, InvokeError, ModEntryError, ImportDeniedError, CommonJSDetectedError, ModuleUnsupportedError } from "./errors.js";
+export { BindingError, CapabilityDeniedError, ExecutionLimitError, CancellationError, InvokeError, ModEntryError, ImportDeniedError, CommonJSDetectedError, ModuleUnsupportedError, LibraryUnavailableError, LibraryRegistrationError } from "./errors.js";
 export { ModManifestValidationError } from "./fragment.js";
 export { CancellationToken } from "./sandbox.js";
 export { resolveExtends } from "./extends.js";
 export type { ManifestLoader } from "./extends.js";
+export { satisfies, grantedSatisfies } from "./capabilities.js";
 export type { SlotContribution } from "./slots.js";
 export type { RoleResolution } from "./roles.js";
 export type {
@@ -97,6 +101,7 @@ export interface HostEventDeclaration {
 	id: string;
 	description: string;
 	payload?: unknown;
+	capability?: string;
 }
 
 export interface ModLoadOptions {
@@ -110,6 +115,7 @@ import { assertNoCommonJS } from "./module-support.js";
 export interface RuntimeOptions {
 	hostBindings: HostBindings;
 	capabilities?: string[];
+	libraries?: Record<string, string>;
 	console?: ConsoleHandler;
 	audit?: (event: AuditEvent) => void;
 	hardLimits?: HardLimits;
@@ -127,6 +133,7 @@ export interface XriptRuntime {
 	invokeExportAsync(name: string, args: unknown[]): Promise<unknown>;
 	fireHook(hookName: string, options?: FireHookOptions): unknown[];
 	fireFragmentHook(fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>): FragmentOp[];
+	emit(eventId: string, payload?: unknown): unknown[];
 	loadMod(modManifest: unknown, options?: ModLoadOptions): ModInstance;
 	loadModAsync(modManifest: unknown, options?: ModLoadOptions): Promise<ModInstance>;
 	resolveSlot(slotId: string): SlotContribution[];
@@ -202,10 +209,31 @@ function buildRuntime(
 	const loadedMods: ModInstance[] = [];
 	const slots = m.slots || [];
 	const exportCapabilities = new Map<string, string | undefined>();
+	const hookFillRegistry: HookFill[] = [];
+
+	function hookFillArgs(data: unknown): unknown[] {
+		if (data === undefined) return [];
+		if (typeof data === "object" && data !== null && !Array.isArray(data)) return Object.values(data);
+		return [data];
+	}
+
+	function fireHookWithFills(hookName: string, options?: FireHookOptions): unknown[] {
+		const results = sandbox.fireHook(hookName, options);
+		if (options?.phase !== undefined) return results;
+		for (const fill of hookFillRegistry) {
+			if (fill.hook !== hookName) continue;
+			try {
+				results.push(sandbox.invokeExport(fill.handler, hookFillArgs(options?.data)));
+			} catch {
+				results.push(undefined);
+			}
+		}
+		return results;
+	}
 
 	function gateExport(name: string): void {
 		const capability = exportCapabilities.get(name);
-		if (capability && !grantedCapabilities.has(capability)) {
+		if (capability && !grantedSatisfies(grantedCapabilities, capability)) {
 			throw new CapabilityDeniedError(name, capability);
 		}
 	}
@@ -230,11 +258,13 @@ function buildRuntime(
 			gateExport(name);
 			return sandbox.invokeExportAsync(name, args);
 		},
-		fireHook: sandbox.fireHook,
+		fireHook: fireHookWithFills,
 		fireFragmentHook: sandbox.fireFragmentHook,
+		emit: sandbox.emit,
 
 		loadMod(modManifest: unknown, modOptions?: ModLoadOptions): ModInstance {
-			const validated = validateModManifest(modManifest);
+			const { manifest: normalized, hookFills } = normalizeModFills(modManifest, slots, grantedCapabilities);
+			const validated = validateModManifest(normalized);
 			const issues = validateModAgainstApp(validated, slots, grantedCapabilities);
 			if (issues.length > 0) {
 				throw new ModManifestValidationError(issues);
@@ -255,12 +285,14 @@ function buildRuntime(
 			}
 
 			registerExportCapabilities(validated.entry);
+			hookFillRegistry.push(...hookFills);
 			loadedMods.push(mod);
 			return mod;
 		},
 
 		async loadModAsync(modManifest: unknown, modOptions?: ModLoadOptions): Promise<ModInstance> {
-			const validated = validateModManifest(modManifest);
+			const { manifest: normalized, hookFills } = normalizeModFills(modManifest, slots, grantedCapabilities);
+			const validated = validateModManifest(normalized);
 			const issues = validateModAgainstApp(validated, slots, grantedCapabilities);
 			if (issues.length > 0) {
 				throw new ModManifestValidationError(issues);
@@ -281,6 +313,7 @@ function buildRuntime(
 			}
 
 			registerExportCapabilities(validated.entry);
+			hookFillRegistry.push(...hookFills);
 			loadedMods.push(mod);
 			return mod;
 		},
@@ -319,6 +352,7 @@ export async function initXript(): Promise<XriptFactory> {
 				manifest: m as SandboxOptions["manifest"],
 				hostBindings: options.hostBindings,
 				capabilities: options.capabilities,
+				libraries: options.libraries,
 				console: options.console,
 				audit: options.audit,
 				hardLimits: options.hardLimits,
@@ -343,6 +377,7 @@ export async function initXriptAsync(): Promise<{
 				manifest: m as SandboxOptions["manifest"],
 				hostBindings: options.hostBindings,
 				capabilities: options.capabilities,
+				libraries: options.libraries,
 				console: options.console,
 				audit: options.audit,
 				hardLimits: options.hardLimits,

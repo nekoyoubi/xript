@@ -45,6 +45,7 @@ describe("diffScores", () => {
 				slots: [{ id: "a", accepts: ["text/html"], capability: "ui", description: "A." }],
 				capabilities: { ui: { description: "UI." } },
 				events: [{ id: "x.y", description: "X." }],
+				libraries: { "doc-lib": { description: "Doc helpers.", capability: "ui" } },
 			},
 			[],
 		);

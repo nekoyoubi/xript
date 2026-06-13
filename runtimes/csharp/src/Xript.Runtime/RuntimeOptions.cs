@@ -6,6 +6,7 @@ public class RuntimeOptions
 {
     public HostBindings HostBindings { get; set; } = new();
     public List<string> Capabilities { get; set; } = [];
+    public IReadOnlyDictionary<string, string> Libraries { get; set; } = new Dictionary<string, string>();
     public ConsoleHandler Console { get; set; } = new();
     public CancellationToken Cancellation { get; set; } = CancellationToken.None;
     public Action<AuditEvent>? Audit { get; set; }

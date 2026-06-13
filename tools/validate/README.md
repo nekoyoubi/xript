@@ -43,7 +43,7 @@ Exit code is `1` if any file fails validation.
 import { validateManifest, validateManifestFile } from "@xriptjs/validate";
 
 const result = await validateManifest({
-  xript: "0.1",
+  xript: "0.7",
   name: "my-app",
   bindings: {
     greet: {

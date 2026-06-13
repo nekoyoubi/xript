@@ -12,6 +12,7 @@ fn opts() -> RuntimeOptions {
         cancellation: None,
         audit: None,
         hard_limits: None,
+        libraries: HashMap::new(),
         role_preferences: HashMap::new(),
         debug: None,
     }

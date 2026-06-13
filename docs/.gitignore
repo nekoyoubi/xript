@@ -1,1 +1,5 @@
 src/content/docs/guidance/
+src/content/docs/changelog.md
+public/schema/
+src/content/docs/spec/*
+!src/content/docs/spec/index.md

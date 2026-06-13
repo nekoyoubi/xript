@@ -8,6 +8,7 @@ const fixturesDir = resolve(__dirname, "fixtures");
 
 const {
 	validateManifest,
+	satisfies,
 	validateManifestFile,
 	validateModManifest,
 	validateModManifestFile,
@@ -388,5 +389,89 @@ describe("crossValidate", () => {
 		};
 		const result = await crossValidate(payloadApp, mod, { checkFillPayloads: false });
 		assert.equal(result.valid, true);
+	});
+});
+
+describe("libraries surface", () => {
+	it("validates a manifest with a libraries allow-list", async () => {
+		const result = await validateManifest({
+			xript: "0.7",
+			name: "library-host",
+			capabilities: { lib: { description: "Shared libraries." } },
+			libraries: {
+				"@example/doc": { description: "Doc helpers.", capability: "lib.doc", version: "^1.0.0" },
+			},
+		});
+		assert.equal(result.valid, true, JSON.stringify(result.errors));
+	});
+
+	it("rejects a library entry with unknown fields", async () => {
+		const result = await validateManifest({
+			xript: "0.7",
+			name: "library-host",
+			libraries: { "doc-lib": { description: "Doc helpers.", sneaky: true } },
+		});
+		assert.equal(result.valid, false);
+	});
+
+	it("rejects a malformed library specifier", async () => {
+		const result = await validateManifest({
+			xript: "0.7",
+			name: "library-host",
+			libraries: { "Not A Specifier!": { description: "Nope." } },
+		});
+		assert.equal(result.valid, false);
+	});
+});
+
+describe("capability predicate — shared conformance corpus", () => {
+	it("matches every case in spec/capability-tests.json", async () => {
+		const { readFile } = await import("node:fs/promises");
+		const { fileURLToPath } = await import("node:url");
+		const { dirname, resolve } = await import("node:path");
+		const here = dirname(fileURLToPath(import.meta.url));
+		const corpus = JSON.parse(await readFile(resolve(here, "../../../spec/capability-tests.json"), "utf-8"));
+		assert.ok(corpus.length >= 30, "corpus is present");
+		const { grantedSatisfies } = await import("../dist/index.js");
+		for (const testCase of corpus) {
+			const actual = testCase.granted !== undefined
+				? grantedSatisfies(testCase.granted, testCase.require)
+				: satisfies(testCase.grant, testCase.require);
+			assert.equal(actual, testCase.expected, `${testCase.description}`);
+		}
+	});
+});
+
+describe("crossValidate — capability subsumption", () => {
+	const host = {
+		xript: "0.7",
+		name: "h",
+		capabilities: { fs: { description: "files" }, lib: { description: "libs" } },
+		slots: [{ id: "panel", accepts: ["text/html"], capability: "lib.doc", description: "p" }],
+	};
+
+	it("accepts a mod requesting a child scope of a declared capability", async () => {
+		const result = await crossValidate(host, {
+			xript: "0.7", name: "m", version: "1.0.0",
+			capabilities: ["fs.addon", "read:fs"],
+		});
+		assert.equal(result.valid, true, JSON.stringify(result.errors));
+	});
+
+	it("accepts a mod holding a broader capability than a slot's gate", async () => {
+		const result = await crossValidate(host, {
+			xript: "0.7", name: "m", version: "1.0.0",
+			capabilities: ["lib"],
+			fills: { panel: [{ format: "text/html", source: "p.html" }] },
+		});
+		assert.equal(result.valid, true, JSON.stringify(result.errors));
+	});
+
+	it("still rejects a request no declared scope subsumes", async () => {
+		const result = await crossValidate(host, {
+			xript: "0.7", name: "m", version: "1.0.0",
+			capabilities: ["net"],
+		});
+		assert.equal(result.valid, false);
 	});
 });

@@ -4,7 +4,7 @@ The strongest test of an extensibility surface is whether the host's *own* featu
 
 ## The principle
 
-Build the framework in host code. Author the behavior and content in data and script. The first mod — "mod zero" — is the application itself, loaded through the public surface. Third-party mods are then not a special case; they are more of the same.
+Build the framework in host code. Author the behavior and content in data and script. The first mod, "mod zero," is the application itself, loaded through the public surface. Third-party mods are then not a special case; they are more of the same.
 
 ## Why it holds the line
 
@@ -18,4 +18,4 @@ A renderer, panel, or behavior written directly in host code, with a manifest pl
 
 ## Applying it
 
-When adding a host feature, ask whether it *could* be authored as a mod against the existing surface. If yes, author it that way even though it ships with the app. If no, that gap is the signal — the surface is missing a binding, a slot, a hook, or a capability. Close the gap rather than routing around it with private host code.
+When adding a host feature, ask whether it *could* be authored as a mod against the existing surface. If yes, author it that way even though it ships with the app. If no, that gap is the signal: the surface is missing a binding, a slot, a hook, or a capability. Close the gap rather than routing around it with private host code.

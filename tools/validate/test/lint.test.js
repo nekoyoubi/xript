@@ -6,12 +6,12 @@ const host = {
 	xript: "0.3",
 	name: "linted-host",
 	slots: [
-		{ id: "filled", accepts: ["text/html"], capability: "capUsed", description: "A filled slot." },
-		{ id: "dead", accepts: ["text/html"], capability: "capUsed", description: "A dead slot." },
+		{ id: "filled", accepts: ["text/html"], capability: "cap-used", description: "A filled slot." },
+		{ id: "dead", accepts: ["text/html"], capability: "cap-used", description: "A dead slot." },
 	],
 	capabilities: {
-		capUsed: { description: "Used cap." },
-		capVestigial: { description: "Unused cap." },
+		"cap-used": { description: "Used cap." },
+		"cap-vestigial": { description: "Unused cap." },
 	},
 };
 
@@ -19,7 +19,7 @@ const mod = {
 	xript: "0.3",
 	name: "m",
 	version: "1.0.0",
-	capabilities: ["capUsed"],
+	capabilities: ["cap-used"],
 	fills: { filled: [{ format: "text/html", source: "f.html" }] },
 };
 
@@ -38,7 +38,7 @@ describe("lintManifests", () => {
 	});
 
 	it("flags an undeclared capability requested by a mod as an error", () => {
-		const result = lintManifests(host, [{ ...mod, capabilities: ["capUsed", "capMissing"] }]);
+		const result = lintManifests(host, [{ ...mod, capabilities: ["cap-used", "capMissing"] }]);
 		assert.ok(codes(result, "error").includes("undeclared-capability"));
 	});
 
@@ -50,7 +50,7 @@ describe("lintManifests", () => {
 
 	it("flags a vestigial capability as a warning", () => {
 		const result = lintManifests(host, [mod]);
-		assert.ok(result.findings.some((f) => f.code === "vestigial-capability" && /capVestigial/.test(f.message)));
+		assert.ok(result.findings.some((f) => f.code === "vestigial-capability" && /cap-vestigial/.test(f.message)));
 	});
 
 	it("flags an ungated slot as info", () => {
@@ -86,7 +86,7 @@ describe("lintManifests", () => {
 			xript: "0.3",
 			name: "legacy",
 			version: "1.0.0",
-			capabilities: ["capUsed"],
+			capabilities: ["cap-used"],
 			fragments: [{ id: "f", slot: "dead", format: "text/html", source: "f.html" }],
 		};
 		const result = lintManifests(host, [mod, legacyMod]);
@@ -183,14 +183,14 @@ describe("lintManifests", () => {
 		const resolvedHost = {
 			xript: "0.3",
 			name: "h",
-			slots: [{ id: "statusbar", accepts: ["text/html"], capability: "capUsed", description: "Inherited then refined." }],
-			capabilities: { capUsed: { description: "Used cap." } },
+			slots: [{ id: "statusbar", accepts: ["text/html"], capability: "cap-used", description: "Inherited then refined." }],
+			capabilities: { "cap-used": { description: "Used cap." } },
 		};
 		const fillingMod = {
 			xript: "0.3",
 			name: "m",
 			version: "1.0.0",
-			capabilities: ["capUsed"],
+			capabilities: ["cap-used"],
 			fills: { statusbar: [{ format: "text/html", source: "f.html" }] },
 		};
 		const result = lintManifests(resolvedHost, [fillingMod], { inheritedSlots: ["statusbar"] });
@@ -212,5 +212,107 @@ describe("lintManifests", () => {
 		};
 		const result = lintManifests(resolvedHost, [usingMod], { inheritedCapabilities: ["storage"] });
 		assert.ok(!result.findings.some((f) => f.code === "vestigial-capability" && /storage/.test(f.message)));
+	});
+
+	it("flags an escalation-named child under a declared ancestor as a warning", () => {
+		const escalatingHost = {
+			xript: "0.3",
+			name: "h",
+			slots: [],
+			capabilities: {
+				fs: { description: "Filesystem access." },
+				"fs.host": { description: "Host-level filesystem access." },
+			},
+		};
+		const result = lintManifests(escalatingHost, []);
+		assert.ok(
+			result.findings.some(
+				(f) => f.code === "capability-escalation" && f.severity === "warn" && /fs\.host/.test(f.message) && /"fs"/.test(f.message),
+			),
+		);
+	});
+
+	it("flags an escalation child even when an intermediate ancestor is undeclared", () => {
+		const escalatingHost = {
+			xript: "0.3",
+			name: "h",
+			slots: [],
+			capabilities: {
+				run: { description: "Run things." },
+				"run.command.shell": { description: "Shell escape." },
+			},
+		};
+		const result = lintManifests(escalatingHost, []);
+		assert.ok(
+			result.findings.some(
+				(f) => f.code === "capability-escalation" && /run\.command\.shell/.test(f.message) && /"run"/.test(f.message),
+			),
+		);
+	});
+
+	it("does not flag an escalation-named scope with no declared ancestor", () => {
+		const reRootedHost = {
+			xript: "0.3",
+			name: "h",
+			slots: [],
+			capabilities: {
+				fs: { description: "Filesystem access." },
+				"host-fs": { description: "Re-rooted privileged filesystem access." },
+			},
+		};
+		const result = lintManifests(reRootedHost, []);
+		assert.ok(!result.findings.some((f) => f.code === "capability-escalation"));
+	});
+
+	it("does not flag a benign narrowing child under a declared ancestor", () => {
+		const benignHost = {
+			xript: "0.3",
+			name: "h",
+			slots: [],
+			capabilities: {
+				fs: { description: "Filesystem access." },
+				"fs.addon": { description: "Addon directory access." },
+			},
+		};
+		const result = lintManifests(benignHost, []);
+		assert.ok(!result.findings.some((f) => f.code === "capability-escalation"));
+	});
+
+	it("does not flag a top-level escalation-named capability with no ancestor", () => {
+		const topLevelHost = {
+			xript: "0.3",
+			name: "h",
+			slots: [],
+			capabilities: {
+				admin: { description: "Top-level admin scope, declared on purpose." },
+			},
+		};
+		const result = lintManifests(topLevelHost, []);
+		assert.ok(!result.findings.some((f) => f.code === "capability-escalation"));
+	});
+});
+
+describe("library lint checks", () => {
+	const libraryHost = {
+		xript: "0.7",
+		name: "library-host",
+		capabilities: { lib: { description: "Shared libraries." } },
+		libraries: {
+			"doc-lib": { description: "Doc helpers.", capability: "lib" },
+		},
+	};
+
+	it("accepts a library gated on a declared capability, and the gate counts as use", () => {
+		const result = lintManifests(libraryHost, []);
+		assert.ok(!codes(result, "error").includes("undeclared-capability"));
+		assert.ok(!codes(result, "warn").includes("vestigial-capability"));
+	});
+
+	it("errors when a library gates on an undeclared capability", () => {
+		const broken = { ...libraryHost, libraries: { "doc-lib": { description: "Doc helpers.", capability: "ghost" } } };
+		const result = lintManifests(broken, []);
+		const finding = result.findings.find((f) => f.code === "undeclared-capability");
+		assert.ok(finding);
+		assert.match(finding.message, /library "doc-lib"/);
 	});
 });
