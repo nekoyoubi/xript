@@ -119,6 +119,9 @@ export async function run(args: string[]): Promise<void> {
 		}
 
 		const crossResult = await crossValidate(appManifest!, modManifest!, { checkFillPayloads: !skipFillPayloads });
+		for (const warning of crossResult.warnings ?? []) {
+			console.error(`\x1b[33m!\x1b[0m ${warning.path}: ${warning.message}`);
+		}
 		if (crossResult.valid) {
 			console.log(`\x1b[32m\u2713\x1b[0m cross-validation passed`);
 		} else {

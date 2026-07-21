@@ -1,0 +1,70 @@
+{
+	"$schema": "https://xript.dev/schema/manifest/v0.8.json",
+	"xript": "0.8",
+	"name": "fragment-vocabulary",
+	"version": "1.0.0",
+	"title": "Fragment Vocabulary",
+	"description": "A host that declares its own fragment vocabulary. Mods author UI as a typed node tree, not HTML. Run validate, typegen, and docgen against this manifest to see the vocabulary checked, typed, and documented.",
+
+	"bindings": {
+		"log": {
+			"description": "Writes a message to the console.",
+			"params": [{ "name": "message", "type": "string" }]
+		}
+	},
+
+	"capabilities": {
+		"ui-mount": {
+			"description": "Mount UI fragments into application slots.",
+			"risk": "low"
+		}
+	},
+
+	"slots": [
+		{
+			"id": "sidebar",
+			"description": "Panels a mod contributes to the sidebar, authored in the component vocabulary.",
+			"accepts": ["application/x-panel+json"],
+			"capability": "ui-mount",
+			"multiple": true,
+			"style": "isolated"
+		}
+	],
+
+	"formats": {
+		"application/x-panel+json": {
+			"description": "The component vocabulary the sidebar renderer speaks.",
+			"syntax": "j5ml",
+			"nodes": {
+				"Panel": {
+					"description": "A titled container. Holds any nested content, including other panels.",
+					"props": {
+						"heading": { "type": "string" },
+						"collapsible": { "type": "boolean", "default": false }
+					}
+				},
+				"Link": {
+					"description": "A hyperlink with text content.",
+					"children": "text",
+					"props": { "href": { "type": "string", "sink": "uri" } }
+				},
+				"Progress": {
+					"description": "A determinate progress bar.",
+					"children": "none",
+					"bindTo": "value",
+					"props": {
+						"value": { "type": "number" },
+						"max": { "type": "number", "default": 100 },
+						"tone": { "type": "string", "enum": ["ok", "warn", "error"] }
+					}
+				}
+			}
+		}
+	},
+
+	"limits": {
+		"timeout_ms": 1000,
+		"memory_mb": 16,
+		"max_stack_depth": 128
+	}
+}

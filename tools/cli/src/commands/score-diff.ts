@@ -26,7 +26,7 @@ export async function run(args: string[]): Promise<void> {
 	}
 
 	try {
-		const baseline = JSON.parse(await readFile(resolve(baselinePath), "utf-8")) as ScoreResult;
+		const baseline = await readBaseline(baselinePath);
 		const hostAbs = resolve(hostPath);
 		const host = JSON.parse(await readFile(hostAbs, "utf-8"));
 		const mods = await Promise.all(modPaths.map(async (path) => JSON.parse(await readFile(resolve(path), "utf-8"))));
@@ -44,12 +44,63 @@ export async function run(args: string[]): Promise<void> {
 	}
 }
 
+const BASELINE_HINT = "Produce one with:  xript score <host-manifest> [mods...] --json > baseline.json";
+
+/**
+ * The baseline is a saved `xript score --json`, and the easy mistake is handing it the host
+ * manifest that produced the score. That used to reach `diffScores` and die on a raw
+ * `Cannot read properties of undefined (reading 'violations')`, so every failure here names the
+ * problem and points at the command that makes a real baseline.
+ */
+async function readBaseline(path: string): Promise<ScoreResult> {
+	let raw: string;
+	try {
+		raw = await readFile(resolve(path), "utf-8");
+	} catch {
+		throw new Error(`The baseline '${path}' could not be read.\n${BASELINE_HINT}`);
+	}
+
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch (error) {
+		const detail = error instanceof Error ? error.message : String(error);
+		throw new Error(`The baseline '${path}' is not valid JSON: ${detail}\n${BASELINE_HINT}`);
+	}
+
+	if (!isScoreResult(parsed)) {
+		const looksLikeManifest = typeof parsed === "object" && parsed !== null && "xript" in parsed;
+		const because = looksLikeManifest ? " — it looks like a manifest" : "";
+		throw new Error(`The baseline '${path}' is not a saved score${because}.\n${BASELINE_HINT}`);
+	}
+	return parsed;
+}
+
+function isScoreResult(value: unknown): value is ScoreResult {
+	if (typeof value !== "object" || value === null) return false;
+	const candidate = value as Partial<ScoreResult>;
+	return (
+		typeof candidate.headline === "number" &&
+		typeof candidate.integrity === "object" &&
+		candidate.integrity !== null &&
+		Array.isArray((candidate.integrity as { violations?: unknown }).violations) &&
+		typeof candidate.capacity === "object" &&
+		candidate.capacity !== null
+	);
+}
+
 function signed(n: number): string {
 	return n >= 0 ? `+${n}` : `${n}`;
 }
 
 function printMetric(label: string, metric: MetricDiff, gainedLabel: string, lostLabel: string): void {
-	console.log(`  ${label.padEnd(16)} ${Math.round(metric.baseline * 100)}% → ${Math.round(metric.current * 100)}% (${signed(metric.delta)})`);
+	// An empty surface scores 1 vacuously, so deleting the only slot rendered `0% → 100% (+1)`:
+	// a regression reading as an improvement. Show `n/a` for a side that had nothing to cover.
+	const side = (score: number, total: number | undefined): string => (total === 0 ? "n/a" : `${Math.round(score * 100)}%`);
+	const from = side(metric.baseline, metric.baselineTotal);
+	const to = side(metric.current, metric.currentTotal);
+	const movement = from === "n/a" || to === "n/a" ? "" : ` (${signed(metric.delta)})`;
+	console.log(`  ${label.padEnd(16)} ${from} → ${to}${movement}`);
 	if (metric.gained.length) console.log(`    ${gainedLabel}: ${metric.gained.join(", ")}`);
 	if (metric.lost.length) console.log(`    ${lostLabel}: ${metric.lost.join(", ")}`);
 }
@@ -67,7 +118,29 @@ function printDiff(diff: ScoreDiff): void {
 	console.log("  mod coverage (informational):");
 	printMetric("  slots", diff.slots, "newly filled", "newly unfilled");
 	printMetric("  capabilities", diff.capabilities, "newly used", "newly unreferenced");
+	printCommandDiff(diff);
 	if (diff.gate) console.log(`\n  gate (--min-delta ${diff.gate.minDelta}): ${diff.gate.passed ? "pass" : "fail"}`);
+}
+
+/**
+ * Command-slot movement. A gained or lost slot already moved the slot metric; the rows worth
+ * reading are the two that weaken a surface without moving the score — a slot that stopped being
+ * gated, and one that lost its `multiple` and now resolves to a single command.
+ */
+function printCommandDiff(diff: ScoreDiff): void {
+	const commands = diff.commands;
+	if (!commands) return;
+	const rows: Array<[string, string[]]> = [
+		["gained", commands.gained],
+		["lost", commands.lost],
+		["newly ungated", commands.ungated],
+		["narrowed to one command", commands.narrowed],
+	];
+	if (rows.every(([, ids]) => ids.length === 0)) return;
+	console.log("  command slots:");
+	for (const [label, ids] of rows) {
+		if (ids.length) console.log(`    ${label}: ${ids.join(", ")}`);
+	}
 }
 
 function printHelp(): void {

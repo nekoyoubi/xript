@@ -1,0 +1,935 @@
+{
+  "description": "Conformance corpus for declared execution intent. Every runtime and every tool that resolves or widens an `execution` block asserts against this file. It carries the canonical `executionIntent` schema block so the copies in manifest.schema.json and mod-manifest.schema.json cannot drift apart, the defaulting and inheritance rules, the widen lattice, the host-versus-mod precedence rules, and the lint expectations.",
+  "notes": [
+    "Intent is advisory. It is not `limits` (enforcement) and it is not a capability (no grant is consulted).",
+    "`duration` is totally ordered instant < brief < long < unbounded. `affinity` is totally ordered any < pinned < isolated.",
+    "A surface resolves to its own `execution`, else its manifest's top-level `execution`, else the schema defaults.",
+    "The schema block is duplicated across the two schema files rather than `$ref`'d across them, so that offline mod validation never depends on host-schema resolution. This corpus is what keeps the copies identical.",
+    "`limits` is declarable on a hook and on a slot, never on a binding: a binding is host code, and once control is inside it no xript timeout reaches it. `execution-long-no-limits` therefore applies to slots and hooks, and a long binding gets `execution-long-binding-blocks` instead, which asks the host to route the call rather than to widen a budget it cannot declare."
+  ],
+  "schemaBlock": {
+    "description": "How a host should expect this surface to behave in time and where it may run. Advisory routing signal — never enforced, never a capability. Enforcement lives in `limits`.",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "duration": {
+        "type": "string",
+        "enum": [
+          "instant",
+          "brief",
+          "long",
+          "unbounded"
+        ],
+        "default": "brief",
+        "description": "How long a host should expect this to take."
+      },
+      "affinity": {
+        "type": "string",
+        "enum": [
+          "any",
+          "pinned",
+          "isolated"
+        ],
+        "default": "any",
+        "description": "Where this may run. `any` is poolable. `pinned` must run on the runtime that owns the calling mod's state. `isolated` wants a runtime nobody else is using."
+      }
+    }
+  },
+  "defaults": {
+    "duration": "brief",
+    "affinity": "any"
+  },
+  "durationOrder": [
+    "instant",
+    "brief",
+    "long",
+    "unbounded"
+  ],
+  "affinityOrder": [
+    "any",
+    "pinned",
+    "isolated"
+  ],
+  "widen": [
+    {
+      "name": "two silent sides fall to the defaults",
+      "a": {},
+      "b": {},
+      "expected": {
+        "duration": "brief",
+        "affinity": "any"
+      }
+    },
+    {
+      "name": "the more expensive duration wins",
+      "a": {
+        "duration": "brief"
+      },
+      "b": {
+        "duration": "long"
+      },
+      "expected": {
+        "duration": "long",
+        "affinity": "any"
+      }
+    },
+    {
+      "name": "widen is symmetric",
+      "a": {
+        "duration": "long"
+      },
+      "b": {
+        "duration": "brief"
+      },
+      "expected": {
+        "duration": "long",
+        "affinity": "any"
+      }
+    },
+    {
+      "name": "neither party can weaken the other",
+      "a": {
+        "duration": "unbounded",
+        "affinity": "isolated"
+      },
+      "b": {
+        "duration": "instant",
+        "affinity": "any"
+      },
+      "expected": {
+        "duration": "unbounded",
+        "affinity": "isolated"
+      }
+    },
+    {
+      "name": "the axes widen independently",
+      "a": {
+        "duration": "long",
+        "affinity": "any"
+      },
+      "b": {
+        "duration": "instant",
+        "affinity": "pinned"
+      },
+      "expected": {
+        "duration": "long",
+        "affinity": "pinned"
+      }
+    },
+    {
+      "name": "an explicit instant still loses to the other side's default",
+      "a": {
+        "duration": "instant"
+      },
+      "b": {},
+      "expected": {
+        "duration": "brief",
+        "affinity": "any"
+      }
+    }
+  ],
+  "resolve": [
+    {
+      "name": "an undeclared binding takes the schema defaults",
+      "manifest": {
+        "xript": "0.8",
+        "name": "resolve-host",
+        "bindings": {
+          "getTick": {
+            "description": "Reads the tick."
+          }
+        }
+      },
+      "path": "bindings/getTick",
+      "declared": null,
+      "expected": {
+        "duration": "brief",
+        "affinity": "any"
+      }
+    },
+    {
+      "name": "a binding's own execution wins",
+      "manifest": {
+        "xript": "0.8",
+        "name": "resolve-host",
+        "bindings": {
+          "fetch": {
+            "description": "Fetches.",
+            "execution": {
+              "duration": "long"
+            }
+          }
+        }
+      },
+      "path": "bindings/fetch",
+      "declared": {
+        "duration": "long"
+      },
+      "expected": {
+        "duration": "long",
+        "affinity": "any"
+      }
+    },
+    {
+      "name": "an undeclared binding inherits the manifest default",
+      "manifest": {
+        "xript": "0.8",
+        "name": "resolve-host",
+        "execution": {
+          "duration": "long",
+          "affinity": "pinned"
+        },
+        "bindings": {
+          "grind": {
+            "description": "Grinds."
+          }
+        }
+      },
+      "path": "bindings/grind",
+      "declared": null,
+      "expected": {
+        "duration": "long",
+        "affinity": "pinned"
+      }
+    },
+    {
+      "name": "a surface may declare cheaper than the manifest default; inheritance is not widen",
+      "manifest": {
+        "xript": "0.8",
+        "name": "resolve-host",
+        "execution": {
+          "duration": "long"
+        },
+        "bindings": {
+          "getTick": {
+            "description": "Reads the tick.",
+            "execution": {
+              "duration": "instant"
+            }
+          }
+        }
+      },
+      "path": "bindings/getTick",
+      "declared": {
+        "duration": "instant"
+      },
+      "expected": {
+        "duration": "instant",
+        "affinity": "any"
+      }
+    },
+    {
+      "name": "a partial declaration takes the schema default on the axis it omits, not the manifest default",
+      "manifest": {
+        "xript": "0.8",
+        "name": "resolve-host",
+        "execution": {
+          "duration": "long",
+          "affinity": "isolated"
+        },
+        "bindings": {
+          "getTick": {
+            "description": "Reads the tick.",
+            "execution": {
+              "duration": "instant"
+            }
+          }
+        }
+      },
+      "path": "bindings/getTick",
+      "declared": {
+        "duration": "instant"
+      },
+      "expected": {
+        "duration": "instant",
+        "affinity": "any"
+      }
+    },
+    {
+      "name": "a namespaced binding resolves by dotted name",
+      "manifest": {
+        "xript": "0.8",
+        "name": "resolve-host",
+        "bindings": {
+          "net": {
+            "description": "Network.",
+            "members": {
+              "fetch": {
+                "description": "Fetches.",
+                "execution": {
+                  "duration": "unbounded"
+                }
+              }
+            }
+          }
+        }
+      },
+      "path": "bindings/net.fetch",
+      "declared": {
+        "duration": "unbounded"
+      },
+      "expected": {
+        "duration": "unbounded",
+        "affinity": "any"
+      }
+    },
+    {
+      "name": "a hook resolves by id",
+      "manifest": {
+        "xript": "0.8",
+        "name": "resolve-host",
+        "hooks": {
+          "onSave": {
+            "description": "Fires on save.",
+            "execution": {
+              "duration": "long"
+            }
+          }
+        }
+      },
+      "path": "hooks/onSave",
+      "declared": {
+        "duration": "long"
+      },
+      "expected": {
+        "duration": "long",
+        "affinity": "any"
+      }
+    },
+    {
+      "name": "a slot resolves by id",
+      "manifest": {
+        "xript": "0.8",
+        "name": "resolve-host",
+        "slots": [
+          {
+            "id": "sidebar.left",
+            "accepts": [
+              "text/html"
+            ],
+            "execution": {
+              "affinity": "pinned"
+            }
+          }
+        ]
+      },
+      "path": "slots/sidebar.left",
+      "declared": {
+        "affinity": "pinned"
+      },
+      "expected": {
+        "duration": "brief",
+        "affinity": "pinned"
+      }
+    },
+    {
+      "name": "a mod export resolves by name",
+      "manifest": {
+        "xript": "0.8",
+        "name": "resolve-mod",
+        "version": "1.0.0",
+        "entry": {
+          "script": "main.js",
+          "exports": {
+            "crunch": {
+              "description": "Crunches.",
+              "execution": {
+                "duration": "long"
+              }
+            }
+          }
+        }
+      },
+      "path": "exports/crunch",
+      "declared": {
+        "duration": "long"
+      },
+      "expected": {
+        "duration": "long",
+        "affinity": "any"
+      }
+    },
+    {
+      "name": "an undeclared mod export inherits the mod-wide default",
+      "manifest": {
+        "xript": "0.8",
+        "name": "resolve-mod",
+        "version": "1.0.0",
+        "execution": {
+          "duration": "long"
+        },
+        "entry": {
+          "script": "main.js",
+          "exports": {
+            "crunch": {
+              "description": "Crunches."
+            }
+          }
+        }
+      },
+      "path": "exports/crunch",
+      "declared": null,
+      "expected": {
+        "duration": "long",
+        "affinity": "any"
+      }
+    },
+    {
+      "name": "an unknown path falls to the manifest default rather than failing",
+      "manifest": {
+        "xript": "0.8",
+        "name": "resolve-host",
+        "execution": {
+          "duration": "long"
+        }
+      },
+      "path": "bindings/nope",
+      "declared": null,
+      "expected": {
+        "duration": "long",
+        "affinity": "any"
+      }
+    }
+  ],
+  "extends": [
+    {
+      "name": "a child inherits the base's manifest-wide execution",
+      "base": {
+        "xript": "0.8",
+        "name": "base",
+        "execution": {
+          "duration": "long",
+          "affinity": "pinned"
+        }
+      },
+      "child": {
+        "xript": "0.8",
+        "name": "child"
+      },
+      "expected": {
+        "duration": "long",
+        "affinity": "pinned"
+      }
+    },
+    {
+      "name": "a child refines per-property, keeping the axis it does not state",
+      "base": {
+        "xript": "0.8",
+        "name": "base",
+        "execution": {
+          "duration": "long",
+          "affinity": "pinned"
+        }
+      },
+      "child": {
+        "xript": "0.8",
+        "name": "child",
+        "execution": {
+          "duration": "brief"
+        }
+      },
+      "expected": {
+        "duration": "brief",
+        "affinity": "pinned"
+      }
+    },
+    {
+      "name": "a child may move duration in either direction and it is never an error",
+      "base": {
+        "xript": "0.8",
+        "name": "base",
+        "execution": {
+          "duration": "instant"
+        }
+      },
+      "child": {
+        "xript": "0.8",
+        "name": "child",
+        "execution": {
+          "duration": "unbounded"
+        }
+      },
+      "expected": {
+        "duration": "unbounded",
+        "affinity": "any"
+      }
+    }
+  ],
+  "precedence": [
+    {
+      "name": "the host slot and the mod export are widened",
+      "host": {
+        "xript": "0.8",
+        "name": "precedence-host",
+        "slots": [
+          {
+            "id": "jobs",
+            "accepts": [
+              "application/x-xript-hook"
+            ],
+            "execution": {
+              "duration": "brief",
+              "affinity": "pinned"
+            }
+          }
+        ]
+      },
+      "mod": {
+        "xript": "0.8",
+        "name": "precedence-mod",
+        "version": "1.0.0",
+        "entry": {
+          "script": "main.js",
+          "exports": {
+            "crunch": {
+              "description": "Crunches.",
+              "execution": {
+                "duration": "long"
+              }
+            }
+          }
+        }
+      },
+      "call": {
+        "slot": "jobs",
+        "export": "crunch"
+      },
+      "expected": {
+        "duration": "long",
+        "affinity": "pinned"
+      }
+    },
+    {
+      "name": "a call-site intent wins alone and is not widened against either party",
+      "host": {
+        "xript": "0.8",
+        "name": "precedence-host",
+        "slots": [
+          {
+            "id": "jobs",
+            "accepts": [
+              "application/x-xript-hook"
+            ],
+            "execution": {
+              "duration": "unbounded"
+            }
+          }
+        ]
+      },
+      "mod": {
+        "xript": "0.8",
+        "name": "precedence-mod",
+        "version": "1.0.0",
+        "entry": {
+          "script": "main.js",
+          "exports": {
+            "crunch": {
+              "description": "Crunches.",
+              "execution": {
+                "duration": "long"
+              }
+            }
+          }
+        }
+      },
+      "call": {
+        "slot": "jobs",
+        "export": "crunch",
+        "callSite": {
+          "duration": "instant"
+        }
+      },
+      "expected": {
+        "duration": "instant",
+        "affinity": "any"
+      }
+    },
+    {
+      "name": "an export filling no declared slot widens against the host's manifest-wide default",
+      "host": {
+        "xript": "0.8",
+        "name": "precedence-host",
+        "execution": {
+          "duration": "brief",
+          "affinity": "pinned"
+        }
+      },
+      "mod": {
+        "xript": "0.8",
+        "name": "precedence-mod",
+        "version": "1.0.0",
+        "entry": {
+          "script": "main.js",
+          "exports": {
+            "crunch": {
+              "description": "Crunches.",
+              "execution": {
+                "duration": "long"
+              }
+            }
+          }
+        }
+      },
+      "call": {
+        "export": "crunch"
+      },
+      "expected": {
+        "duration": "long",
+        "affinity": "pinned"
+      }
+    },
+    {
+      "name": "an export the mod never declared falls to the mod's manifest-wide default",
+      "host": {
+        "xript": "0.8",
+        "name": "precedence-host"
+      },
+      "mod": {
+        "xript": "0.8",
+        "name": "precedence-mod",
+        "version": "1.0.0",
+        "execution": {
+          "duration": "unbounded"
+        },
+        "entry": {
+          "script": "main.js"
+        }
+      },
+      "call": {
+        "export": "auto"
+      },
+      "expected": {
+        "duration": "unbounded",
+        "affinity": "any"
+      }
+    },
+    {
+      "name": "two silent parties resolve to the schema defaults",
+      "host": {
+        "xript": "0.8",
+        "name": "precedence-host",
+        "slots": [
+          {
+            "id": "jobs",
+            "accepts": [
+              "application/x-xript-hook"
+            ]
+          }
+        ]
+      },
+      "mod": {
+        "xript": "0.8",
+        "name": "precedence-mod",
+        "version": "1.0.0",
+        "entry": {
+          "script": "main.js",
+          "exports": {
+            "crunch": {
+              "description": "Crunches."
+            }
+          }
+        }
+      },
+      "call": {
+        "slot": "jobs",
+        "export": "crunch"
+      },
+      "expected": {
+        "duration": "brief",
+        "affinity": "any"
+      }
+    }
+  ],
+  "lint": [
+    {
+      "name": "an async binding declaring instant is an info finding",
+      "host": {
+        "xript": "0.8",
+        "name": "lint-host",
+        "bindings": {
+          "cached": {
+            "description": "Cache hit.",
+            "async": true,
+            "execution": {
+              "duration": "instant"
+            }
+          }
+        }
+      },
+      "mods": [],
+      "expect": [
+        "execution-async-instant"
+      ]
+    },
+    {
+      "name": "a long binding warns that nothing can interrupt it",
+      "host": {
+        "xript": "0.8",
+        "name": "lint-host",
+        "bindings": {
+          "grind": {
+            "description": "Grinds.",
+            "execution": {
+              "duration": "long"
+            }
+          }
+        }
+      },
+      "mods": [],
+      "expect": [
+        "execution-long-binding-blocks"
+      ],
+      "forbid": [
+        "execution-long-no-limits"
+      ]
+    },
+    {
+      "name": "a long slot with no limits override warns",
+      "host": {
+        "xript": "0.8",
+        "name": "lint-host",
+        "slots": [
+          {
+            "id": "jobs",
+            "accepts": [
+              "application/x-xript-command"
+            ],
+            "description": "long-running jobs",
+            "execution": {
+              "duration": "long"
+            }
+          }
+        ]
+      },
+      "mods": [],
+      "expect": [
+        "execution-long-no-limits"
+      ]
+    },
+    {
+      "name": "a long slot declaring its own limits is not warned",
+      "host": {
+        "xript": "0.8",
+        "name": "lint-host",
+        "slots": [
+          {
+            "id": "jobs",
+            "accepts": [
+              "application/x-xript-command"
+            ],
+            "description": "long-running jobs",
+            "execution": {
+              "duration": "long"
+            },
+            "limits": {
+              "timeout_ms": 60000
+            }
+          }
+        ]
+      },
+      "mods": [],
+      "forbid": [
+        "execution-long-no-limits"
+      ]
+    },
+    {
+      "name": "an unbounded hook warns, because fan-out is on the firing path",
+      "host": {
+        "xript": "0.8",
+        "name": "lint-host",
+        "hooks": {
+          "onSave": {
+            "description": "Fires on save.",
+            "execution": {
+              "duration": "unbounded"
+            },
+            "limits": {
+              "timeout_ms": 60000
+            }
+          }
+        }
+      },
+      "mods": [],
+      "expect": [
+        "execution-unbounded-in-hook"
+      ]
+    },
+    {
+      "name": "a pinned binding with no capability and no params is an info finding",
+      "host": {
+        "xript": "0.8",
+        "name": "lint-host",
+        "bindings": {
+          "version": {
+            "description": "Reads the version.",
+            "execution": {
+              "affinity": "pinned"
+            }
+          }
+        }
+      },
+      "mods": [],
+      "expect": [
+        "execution-pinned-stateless"
+      ]
+    },
+    {
+      "name": "a networked binding with no execution is an info finding",
+      "host": {
+        "xript": "0.8",
+        "name": "lint-host",
+        "capabilities": {
+          "net": {
+            "description": "Network."
+          }
+        },
+        "bindings": {
+          "fetch": {
+            "description": "Fetches.",
+            "capability": "net.http"
+          }
+        }
+      },
+      "mods": [],
+      "expect": [
+        "execution-missing-on-networked"
+      ]
+    },
+    {
+      "name": "a mod export two or more duration steps above its host slot is an info finding",
+      "host": {
+        "xript": "0.8",
+        "name": "lint-host",
+        "slots": [
+          {
+            "id": "jobs",
+            "accepts": [
+              "application/x-xript-hook"
+            ],
+            "description": "Jobs.",
+            "capability": "jobs",
+            "execution": {
+              "duration": "instant"
+            }
+          }
+        ],
+        "capabilities": {
+          "jobs": {
+            "description": "Jobs."
+          }
+        }
+      },
+      "mods": [
+        {
+          "xript": "0.8",
+          "name": "slow-mod",
+          "version": "1.0.0",
+          "capabilities": [
+            "jobs"
+          ],
+          "fills": {
+            "jobs": [
+              {
+                "handler": "crunch"
+              }
+            ]
+          },
+          "entry": {
+            "script": "main.js",
+            "exports": {
+              "crunch": {
+                "description": "Crunches.",
+                "execution": {
+                  "duration": "unbounded"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "expect": [
+        "execution-intent-conflict"
+      ]
+    },
+    {
+      "name": "a one-step gap between host and mod is legal and silent",
+      "host": {
+        "xript": "0.8",
+        "name": "lint-host",
+        "slots": [
+          {
+            "id": "jobs",
+            "accepts": [
+              "application/x-xript-hook"
+            ],
+            "description": "Jobs.",
+            "capability": "jobs",
+            "execution": {
+              "duration": "brief"
+            }
+          }
+        ],
+        "capabilities": {
+          "jobs": {
+            "description": "Jobs."
+          }
+        }
+      },
+      "mods": [
+        {
+          "xript": "0.8",
+          "name": "ok-mod",
+          "version": "1.0.0",
+          "capabilities": [
+            "jobs"
+          ],
+          "fills": {
+            "jobs": [
+              {
+                "handler": "crunch"
+              }
+            ]
+          },
+          "entry": {
+            "script": "main.js",
+            "exports": {
+              "crunch": {
+                "description": "Crunches.",
+                "execution": {
+                  "duration": "long"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "forbid": [
+        "execution-intent-conflict"
+      ]
+    },
+    {
+      "name": "there is no reentrancy rule; reentrancy is a property of host code the linter never sees",
+      "host": {
+        "xript": "0.8",
+        "name": "lint-host",
+        "bindings": {
+          "grind": {
+            "description": "Grinds.",
+            "execution": {
+              "duration": "unbounded"
+            },
+            "limits": {
+              "timeout_ms": 60000
+            }
+          }
+        }
+      },
+      "mods": [],
+      "forbid": [
+        "execution-reentrant",
+        "execution-not-reentrant",
+        "reentrancy"
+      ]
+    }
+  ]
+}

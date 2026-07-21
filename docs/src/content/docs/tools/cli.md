@@ -107,14 +107,14 @@ import {
 } from "@xriptjs/validate";
 
 const result = validateManifest({
-  xript: "0.7",
+  xript: "0.8",
   name: "my-app",
   bindings: { greet: { description: "Greets." } },
   slots: [{ id: "sidebar", accepts: ["text/html"] }],
 });
 
 const modResult = await validateModManifest({
-  xript: "0.7",
+  xript: "0.8",
   name: "my-mod",
   version: "1.0.0",
   fills: {
@@ -169,7 +169,7 @@ xript typegen <manifest> --ambient -o xript.d.ts
 
 When the manifest declares `slots`, the generator produces additional types:
 
-- **`FragmentProxy`** — `toggle`, `addClass`, `removeClass`, `setText`, `setAttr`, `replaceChildren`
+- **`XriptFragmentProxy`** — `toggle`, `addClass`, `removeClass`, `setText`, `setAttr`, `replaceChildren`
 - **`hooks.fragment`** — typed lifecycle registration: `mount`, `unmount`, `update`, `suspend`, `resume`
 - **`XriptSlots`** — describes available slots with accepted formats, multiplicity, and styling modes
 
@@ -625,7 +625,7 @@ The result (load status, export return value, audit entries) is printed as JSON.
 
 ### Harnessed scenarios
 
-With `--harness` or `--steps`, `run` becomes a synthetic-host session: the `--app` manifest's declared bindings are stubbed from the [harness descriptor](/spec/harness/) (`returns` / `throws` / `sequence` / `script` / `record`), every binding call is journaled alongside capability audit events and console logs, and the [steps file](/schema/harness-steps/v0.7.json) drives a replayable scenario: load mods, invoke exports, emit events, fire hooks, resolve slots and roles, read the journal.
+With `--harness` or `--steps`, `run` becomes a synthetic-host session: the `--app` manifest's declared bindings are stubbed from the [harness descriptor](/spec/harness/) (`returns` / `throws` / `sequence` / `script` / `record`), every binding call is journaled alongside capability audit events and console logs, and the [steps file](/schema/harness-steps/v0.8.json) drives a replayable scenario: load mods, invoke exports, emit events, fire hooks, resolve slots and roles, read the journal.
 
 ```bash
 xript run --app host.json --harness harness.json --steps steps.json

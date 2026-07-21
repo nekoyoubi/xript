@@ -7,7 +7,9 @@ A slot is a named, typed plug-point the host declares; a mod fills it. After loa
 - `runtime.resolveSlot(slotId)` returns every `SlotContribution` filling that slot, ordered.
 - `runtime.resolveSlotSingle(slotId)` returns the highest-priority contribution, or `null`.
 
-A `SlotContribution` is `{ modName, fragmentId, slot, format, priority }`. The host reads it and mounts according to the slot's declared `accepts` type. A fragment-format fill gets rendered ([rendering fragments](/guidance/host-fragments/)), a role fill gets resolved ([resolving roles](/guidance/host-roles/)), an event fill gets fired ([firing hooks & events](/guidance/host-hooks/)). The `accepts` type is the whole contract for what the host does with the fill.
+A `SlotContribution` is `{ modName, fragmentId, slot, format, priority }`. The host reads it and mounts according to the slot's declared `accepts` type. A fragment-format fill gets rendered ([rendering fragments](/guidance/host-fragments/)), a role fill gets resolved ([resolving roles](/guidance/host-roles/)), an event fill gets fired ([firing hooks & events](/guidance/host-hooks/)), a command fill gets listed and invoked ([offering commands](/guidance/host-commands/)). The `accepts` type is the whole contract for what the host does with the fill.
+
+For a fragment-format slot, `accepts` names a **vocabulary**, not just a media type. HTML's is built in; any other media type the slot accepts must be declared in the manifest's `formats` block, or a fill of it fails to load. See [declaring a fragment format](/guidance/host-formats/).
 
 ## Honor multiple and priority
 

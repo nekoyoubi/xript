@@ -36,9 +36,10 @@ describe("scoreManifests", () => {
 
 	it("rolls up the headline as moddability capacity, not mod coverage", async () => {
 		const result = await scoreManifests(host, [mod]);
-		// host exposes 2 of the 5 surfaces (slots, capabilities); none of how many
-		// slots the mod fills affects this.
-		assert.equal(result.headline, 40);
+		// host exposes 2 of the 5 surfaces (slots, capabilities) and declares intent on
+		// none of its 2 slots, so the composite is 2/6; none of how many slots the mod
+		// fills affects this.
+		assert.equal(result.headline, 33);
 		assert.deepEqual(result.capacity.exposed.sort(), ["capabilities", "slots"]);
 		assert.deepEqual(result.capacity.absent.sort(), ["bindings", "events", "libraries"]);
 	});
@@ -89,12 +90,65 @@ describe("scoreManifests", () => {
 	it("gates on the min threshold and on integrity", async () => {
 		const above = await scoreManifests(host, [mod], { min: 60 });
 		assert.equal(above.gate.passed, false);
-		const below = await scoreManifests(host, [mod], { min: 40 });
+		const below = await scoreManifests(host, [mod], { min: 33 });
 		assert.equal(below.gate.passed, true);
+	});
+
+	it("scores declared-intent coverage over bindings, hooks and slots", async () => {
+		const intentHost = {
+			xript: "0.8",
+			name: "intent-host",
+			bindings: {
+				now: { description: "Ticks.", execution: { duration: "instant" } },
+				fetch: { description: "Fetches." },
+			},
+			slots: [{ id: "panel", accepts: ["text/html"], execution: { duration: "long" } }],
+		};
+		const result = await scoreManifests(intentHost, []);
+		assert.equal(result.intent.score, 2 / 3);
+		assert.deepEqual(result.intent.declared.sort(), ["bindings/now", "slots/panel"]);
+		assert.deepEqual(result.intent.undeclared, ["bindings/fetch"]);
+		assert.equal(result.intent.byDuration.long, 1);
+		assert.equal(result.signals["declared-intent"], 2 / 3);
+	});
+
+	it("does not carry the declared-intent signal when the host has no surface to declare it on", async () => {
+		const bare = { xript: "0.8", name: "bare-host", capabilities: { ui: { description: "UI." } } };
+		const result = await scoreManifests(bare, []);
+		assert.equal("declared-intent" in result.signals, false);
+		assert.equal(result.headline, 20);
 	});
 
 	it("carries a disclaimer about what it does not prove", async () => {
 		const result = await scoreManifests(host, [mod]);
 		assert.match(result.disclaimer, /does not prove/i);
+	});
+});
+
+describe("coverage over an empty surface", () => {
+	// An empty surface scores 1 vacuously — nothing is uncovered — which is right for a gate and
+	// misleading rendered as a full bar. `total` is what lets a presenter tell the two apart: a
+	// host declaring no slots was being told it had filled all of them.
+	it("reports a total of zero rather than only a vacuous score", async () => {
+		const result = await scoreManifests({ xript: "0.8", name: "bare", bindings: { log: { description: "L." } } }, []);
+		assert.equal(result.slots.total, 0);
+		assert.equal(result.capabilities.total, 0);
+		assert.equal(result.slots.score, 1, "the gate value stays vacuously true");
+	});
+
+	it("counts a host's own surface, and not what it inherited", async () => {
+		const host = {
+			xript: "0.8",
+			name: "app",
+			capabilities: { ui: { description: "UI." } },
+			slots: [
+				{ id: "a", accepts: ["text/html"], description: "A." },
+				{ id: "b", accepts: ["text/html"], description: "B." },
+			],
+		};
+		const result = await scoreManifests(host, []);
+		assert.equal(result.slots.total, 2);
+		assert.equal(result.capabilities.total, 1);
+		assert.equal(result.slots.score, 0, "no mods supplied, so nothing is filled");
 	});
 });

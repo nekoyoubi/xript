@@ -1,5 +1,6 @@
-import { resolve } from "node:path";
-import { generateDocsFromFile, writeDocsToDirectory, type DocgenOptions } from "@xriptjs/docgen";
+import { readFile } from "node:fs/promises";
+import { resolve, dirname } from "node:path";
+import { generateDocsFromFile, writeDocsToDirectory, resolveExtends, type DocgenOptions } from "@xriptjs/docgen";
 
 export async function run(args: string[]): Promise<void> {
 	if (args.includes("--help") || args.includes("-h")) {
@@ -33,8 +34,15 @@ export async function run(args: string[]): Promise<void> {
 		frontmatter = args[frontmatterIndex + 1];
 	}
 
+	const hostIndex = args.indexOf("--host");
+	const hostPath = hostIndex !== -1 ? args[hostIndex + 1] : undefined;
+	if (hostIndex !== -1 && !hostPath) {
+		console.error("Error: --host requires a manifest path.");
+		process.exit(1);
+	}
+
 	const flagIndices = new Set<number>();
-	for (const flag of ["--output", "-o", "--link-format", "--frontmatter"]) {
+	for (const flag of ["--output", "-o", "--link-format", "--frontmatter", "--host"]) {
 		const idx = args.indexOf(flag);
 		if (idx !== -1) {
 			flagIndices.add(idx);
@@ -54,6 +62,10 @@ export async function run(args: string[]): Promise<void> {
 		if (linkFormat === "no-extension") opts.linkFormat = "no-extension";
 		if (frontmatter) opts.frontmatter = frontmatter;
 		if (args.includes("--grant-shapes")) opts.grantShapes = true;
+		if (hostPath) {
+			const absolute = resolve(hostPath);
+			opts.host = await resolveExtends(JSON.parse(await readFile(absolute, "utf-8")), dirname(absolute));
+		}
 		const result = await generateDocsFromFile(manifestPath, opts);
 		const written = await writeDocsToDirectory(result, outputDir!, opts);
 		console.log(`\u2713 Generated ${written.length} documentation pages to ${resolve(outputDir!)}`);
@@ -77,5 +89,6 @@ function printHelp(): void {
 	console.log("  --link-format <f>  Link format: 'default' or 'no-extension'");
 	console.log("  --frontmatter <s>  YAML frontmatter to inject into generated files");
 	console.log("  --grant-shapes     Emit a capability grant shapes reference page");
+	console.log("  --host <manifest>  For a mod manifest: the host it fills, so command fills and their gates are exact");
 	console.log("  --help, -h         Show this help message");
 }

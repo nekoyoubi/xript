@@ -91,13 +91,238 @@ public static class ManifestResolver
             {
                 result[key] = MergeSlots(baseSlots, childSlots);
             }
+            else if (key == "formats" && childValue is JsonObject childFormats)
+            {
+                result[key] = MergeFormats(result[key] as JsonObject, childFormats);
+            }
+            else if (key == "vocabularies" && childValue is JsonObject childVocabularies)
+            {
+                result[key] = MergeVocabularies(result[key] as JsonObject, childVocabularies);
+            }
             else
             {
                 result[key] = childValue?.DeepClone();
             }
         }
 
+        if (!childObj.ContainsKey("formats") && result["formats"] is JsonObject baseFormats)
+            result["formats"] = MergeFormats(baseFormats, null);
+
+        if (!childObj.ContainsKey("vocabularies") && result["vocabularies"] is JsonObject baseVocabularies)
+            result["vocabularies"] = MergeVocabularies(baseVocabularies, null);
+
         return result;
+    }
+
+    /// <summary>
+    /// Merges the <c>formats</c> block across an <c>extends</c> chain. Three levels, each
+    /// collision-as-error unless the child marks itself <c>refines</c>: a format id, a node inside
+    /// a refining format, and a prop inside a refining node. Without this arm a child's
+    /// <c>formats</c> would fall into the catch-all and silently replace the base's vocabulary.
+    /// </summary>
+    private static JsonObject MergeFormats(JsonObject? baseFormats, JsonObject? childFormats)
+    {
+        var merged = new JsonObject();
+
+        foreach (var (id, format) in baseFormats ?? [])
+            merged[id] = format is JsonObject obj ? MergeFormat(new JsonObject(), obj, id) : format?.DeepClone();
+
+        foreach (var (id, format) in childFormats ?? [])
+        {
+            if (baseFormats?[id] is not JsonObject baseFormat)
+            {
+                merged[id] = format is JsonObject added ? MergeFormat(new JsonObject(), added, id) : format?.DeepClone();
+                continue;
+            }
+            if (format is not JsonObject childFormat || !Refines(childFormat))
+                throw new ManifestValidationException(
+                    [new($"/formats/{id}", $"format {id} conflicts with extended base")]);
+
+            merged[id] = MergeFormat(baseFormat, childFormat, id);
+        }
+
+        return merged;
+    }
+
+    /// <summary>
+    /// Merges one format declaration onto its base. <c>vocabularies</c> is absent-inherits,
+    /// present-replaces-wholesale: the array is ordered and the order is semantic, so there is
+    /// no defensible union order, and a silent union could re-inject <c>html</c> into a scope a
+    /// child deliberately closed. The asymmetry with <c>nodes</c>, which key-merges, is intentional.
+    ///
+    /// <c>schemes</c> follows the same rule for the same reason. A union would make narrowing
+    /// impossible -- a child could only ever widen its base's URI surface, and <c>[]</c> would
+    /// stop meaning deliberate closure.
+    /// </summary>
+    private static JsonObject MergeFormat(JsonObject baseFormat, JsonObject childFormat, string formatId)
+    {
+        var merged = new JsonObject();
+        foreach (var (key, value) in baseFormat)
+        {
+            if (key is "refines" or "nodes") continue;
+            merged[key] = value?.DeepClone();
+        }
+        foreach (var (key, value) in childFormat)
+        {
+            if (key is "refines" or "nodes") continue;
+            if (key == "vocabularies")
+            {
+                merged["vocabularies"] = value?.DeepClone();
+                continue;
+            }
+            if (key == "schemes")
+            {
+                merged["schemes"] = value?.DeepClone();
+                continue;
+            }
+            merged[key] = value?.DeepClone();
+        }
+
+        if (baseFormat.ContainsKey("nodes") || childFormat.ContainsKey("nodes"))
+        {
+            merged["nodes"] = MergeNodes(
+                baseFormat["nodes"] as JsonObject,
+                childFormat["nodes"] as JsonObject,
+                "format",
+                $"/formats/{formatId}");
+        }
+
+        return merged;
+    }
+
+    /// <summary>
+    /// Merges the <c>vocabularies</c> block across an <c>extends</c> chain. Three levels of
+    /// collision-as-error-unless-<c>refines</c>, identical to <c>formats</c>: a vocabulary id, a
+    /// node inside a refining vocabulary, and a prop inside a refining node.
+    /// </summary>
+    private static JsonObject MergeVocabularies(
+        JsonObject? baseVocabularies, JsonObject? childVocabularies)
+    {
+        var merged = new JsonObject();
+
+        foreach (var (id, vocabulary) in baseVocabularies ?? [])
+            merged[id] = vocabulary is JsonObject obj
+                ? MergeVocabulary(new JsonObject(), obj, id)
+                : vocabulary?.DeepClone();
+
+        foreach (var (id, vocabulary) in childVocabularies ?? [])
+        {
+            if (baseVocabularies?[id] is not JsonObject baseVocabulary)
+            {
+                merged[id] = vocabulary is JsonObject added
+                    ? MergeVocabulary(new JsonObject(), added, id)
+                    : vocabulary?.DeepClone();
+                continue;
+            }
+            if (vocabulary is not JsonObject childVocabulary || !Refines(childVocabulary))
+                throw new ManifestValidationException(
+                    [new($"/vocabularies/{id}", $"vocabulary {id} conflicts with extended base")]);
+
+            merged[id] = MergeVocabulary(baseVocabulary, childVocabulary, id);
+        }
+
+        return merged;
+    }
+
+    private static JsonObject MergeVocabulary(
+        JsonObject baseVocabulary, JsonObject childVocabulary, string vocabularyId)
+    {
+        var merged = new JsonObject();
+        foreach (var (key, value) in baseVocabulary)
+        {
+            if (key is "refines" or "nodes") continue;
+            merged[key] = value?.DeepClone();
+        }
+        foreach (var (key, value) in childVocabulary)
+        {
+            if (key is "refines" or "nodes") continue;
+            merged[key] = value?.DeepClone();
+        }
+
+        if (baseVocabulary.ContainsKey("nodes") || childVocabulary.ContainsKey("nodes"))
+        {
+            merged["nodes"] = MergeNodes(
+                baseVocabulary["nodes"] as JsonObject,
+                childVocabulary["nodes"] as JsonObject,
+                "vocabulary",
+                $"/vocabularies/{vocabularyId}");
+        }
+
+        return merged;
+    }
+
+    /// <summary>
+    /// Merges a <c>nodes</c> map, whether it hangs off a format's inline vocabulary or a named
+    /// one. <paramref name="owner"/> is the JSON pointer of the declaration the nodes belong to,
+    /// so a collision is reported against the surface the author actually wrote.
+    /// </summary>
+    private static JsonObject MergeNodes(
+        JsonObject? baseNodes, JsonObject? childNodes, string ownerLabel, string owner)
+    {
+        var merged = new JsonObject();
+
+        foreach (var (name, node) in baseNodes ?? [])
+            merged[name] = WithoutRefines(node);
+
+        foreach (var (name, node) in childNodes ?? [])
+        {
+            if (baseNodes?[name] is not JsonObject baseNode)
+            {
+                merged[name] = WithoutRefines(node);
+                continue;
+            }
+            if (node is not JsonObject childNode || !Refines(childNode))
+                throw new ManifestValidationException(
+                    [new($"{owner}/nodes/{name}", $"{ownerLabel} node {name} conflicts with extended base")]);
+
+            merged[name] = MergeNode(baseNode, childNode);
+        }
+
+        return merged;
+    }
+
+    /// <summary>
+    /// Merges a child node's props onto a base node's. A same-named prop is REPLACED wholesale
+    /// rather than deep-merged: a child widening a prop's type would otherwise silently inherit the
+    /// base's <c>sink</c> onto a value the sink can no longer handle.
+    /// </summary>
+    private static JsonObject MergeNode(JsonObject baseNode, JsonObject childNode)
+    {
+        var merged = new JsonObject();
+        foreach (var (key, value) in baseNode)
+        {
+            if (key is "refines" or "props") continue;
+            merged[key] = value?.DeepClone();
+        }
+        foreach (var (key, value) in childNode)
+        {
+            if (key is "refines" or "props") continue;
+            merged[key] = value?.DeepClone();
+        }
+
+        if (baseNode.ContainsKey("props") || childNode.ContainsKey("props"))
+        {
+            var props = new JsonObject();
+            foreach (var (name, prop) in baseNode["props"] as JsonObject ?? [])
+                props[name] = prop?.DeepClone();
+            foreach (var (name, prop) in childNode["props"] as JsonObject ?? [])
+                props[name] = prop?.DeepClone();
+            merged["props"] = props;
+        }
+
+        return merged;
+    }
+
+    private static JsonNode? WithoutRefines(JsonNode? node)
+    {
+        if (node is not JsonObject obj) return node?.DeepClone();
+        var copy = new JsonObject();
+        foreach (var (key, value) in obj)
+        {
+            if (key == "refines") continue;
+            copy[key] = value?.DeepClone();
+        }
+        return copy;
     }
 
     private static JsonObject MergeMap(string mapName, JsonObject baseMap, JsonObject childMap)

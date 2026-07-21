@@ -8,10 +8,17 @@ export interface SlotContribution {
 	priority: number;
 }
 
+/**
+ * The shared three-key slot-resolution order: priority descending, fill id ascending,
+ * owning mod name ascending. The third key is what makes the order total — two mods
+ * filling the same slot at the same index synthesize the same fill id, so without it the
+ * winner depended on the order the host loaded its mods in.
+ */
 function orderContributions(contributions: SlotContribution[]): SlotContribution[] {
 	return [...contributions].sort((a, b) => {
 		if (b.priority !== a.priority) return b.priority - a.priority;
-		return a.fragmentId < b.fragmentId ? -1 : a.fragmentId > b.fragmentId ? 1 : 0;
+		if (a.fragmentId !== b.fragmentId) return a.fragmentId < b.fragmentId ? -1 : 1;
+		return a.modName < b.modName ? -1 : a.modName > b.modName ? 1 : 0;
 	});
 }
 

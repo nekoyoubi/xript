@@ -36,6 +36,18 @@ test("applyOp setAttr sets the named attribute", () => {
 	assert.equal(root.querySelector(".bar").getAttribute("data-color"), "red");
 });
 
+test("applyOp setProp sets the named prop (the canonical op)", () => {
+	const root = makeRoot('<div class="bar">x</div>');
+	applyOp(root, { op: "setProp", selector: ".bar", prop: "data-color", value: "blue" });
+	assert.equal(root.querySelector(".bar").getAttribute("data-color"), "blue");
+});
+
+test("applyOp setAttr also reads the prop key it emits alongside attr", () => {
+	const root = makeRoot('<div class="bar">x</div>');
+	applyOp(root, { op: "setAttr", selector: ".bar", prop: "data-x", attr: "data-x", value: "1" });
+	assert.equal(root.querySelector(".bar").getAttribute("data-x"), "1");
+});
+
 test("applyOp toggle hides on falsy and shows on truthy", () => {
 	const root = makeRoot('<div class="c">x</div>');
 	applyOp(root, { op: "toggle", selector: ".c", value: false });

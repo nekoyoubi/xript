@@ -1,0 +1,91 @@
+{
+  "description": "Conformance corpus for rendering a `typeRef`. Every generator that turns a type reference into text asserts against this file, so the two cannot drift apart — and, more to the point, cannot drift together.",
+  "notes": [
+    "`typegen` and `docgen` are two resolvers of one grammar. When the array-of-union precedence bug shipped, both were wrong in the same way, so a test asserting only that they AGREE would have passed. Each case therefore pins the expected text explicitly.",
+    "`typescript` is what `typegen` emits and what `docgen` puts inside its fenced TypeScript signature. `markdown` is what `docgen` puts in a parameter or field table, where type names are backticked and pipes are escaped for the table.",
+    "An element type that is a union or an optional must be parenthesised before `[]`: `string | number[]` is a union with an array, not an array of a union. It compiles, which is why it went unnoticed."
+  ],
+  "cases": [
+    {
+      "name": "a primitive",
+      "ref": "string",
+      "typescript": "string",
+      "markdown": "`string`"
+    },
+    {
+      "name": "a custom type name",
+      "ref": "Player",
+      "typescript": "Player",
+      "markdown": "`Player`"
+    },
+    {
+      "name": "the array shorthand",
+      "ref": "Player[]",
+      "typescript": "Player[]",
+      "markdown": "`Player`[]"
+    },
+    {
+      "name": "the array object form",
+      "ref": {
+        "array": "Player"
+      },
+      "typescript": "Player[]",
+      "markdown": "`Player`[]"
+    },
+    {
+      "name": "a union",
+      "ref": {
+        "union": [
+          "string",
+          "number"
+        ]
+      },
+      "typescript": "string | number",
+      "markdown": "`string` \\| `number`"
+    },
+    {
+      "name": "an array of a union is parenthesised",
+      "ref": {
+        "array": {
+          "union": [
+            "string",
+            "number"
+          ]
+        }
+      },
+      "typescript": "(string | number)[]",
+      "markdown": "(`string` \\| `number`)[]"
+    },
+    {
+      "name": "an array of an optional is parenthesised",
+      "ref": {
+        "array": {
+          "optional": "Player"
+        }
+      },
+      "typescript": "(Player | undefined)[]",
+      "markdown": "(`Player` \\| `undefined`)[]"
+    },
+    {
+      "name": "a union of arrays keeps each element unparenthesised",
+      "ref": {
+        "union": [
+          {
+            "array": "string"
+          },
+          "number"
+        ]
+      },
+      "typescript": "string[] | number",
+      "markdown": "`string`[] \\| `number`"
+    },
+    {
+      "name": "a map",
+      "ref": {
+        "map": "Player"
+      },
+      "typescript": "Record<string, Player>",
+      "markdown": "Record<string, `Player`>"
+    }
+  ]
+}

@@ -5,6 +5,12 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+// The scaffold targets the version of the package that generated it, so these assert
+// consistency with that package rather than a literal that needs editing every release.
+const { createRequire } = await import("node:module");
+const SCAFFOLD_VERSION = createRequire(import.meta.url)("../package.json").version;
+const SPEC_LINE = SCAFFOLD_VERSION.split(".").slice(0, 2).join(".");
+
 describe("generateProjectFiles", () => {
 	it("generates tier 2 TypeScript project", () => {
 		const files = generateProjectFiles({ name: "my-app", tier: 2, language: "typescript" });
@@ -55,7 +61,7 @@ describe("generateProjectFiles", () => {
 	it("manifest includes $schema reference", () => {
 		const files = generateProjectFiles({ name: "test", tier: 2, language: "javascript" });
 		const manifest = JSON.parse(files["manifest.json"]);
-		assert.equal(manifest.$schema, "https://xript.dev/schema/manifest/v0.7.json");
+		assert.equal(manifest.$schema, `https://xript.dev/schema/manifest/v${SPEC_LINE}.json`);
 	});
 
 	it("manifest uses project name", () => {
@@ -199,7 +205,7 @@ describe("generateProjectFiles", () => {
 	it("tier 4 mod manifest targets sidebar slot", () => {
 		const files = generateProjectFiles({ name: "test", tier: 4, language: "javascript" });
 		const manifest = JSON.parse(files["mod-manifest.json"]);
-		assert.equal(manifest.xript, "0.7");
+		assert.equal(manifest.xript, SPEC_LINE);
 		assert.ok(manifest.fills);
 		assert.ok(Array.isArray(manifest.fills["sidebar.left"]));
 		assert.equal(manifest.fills["sidebar.left"][0].format, "text/html");
@@ -282,8 +288,30 @@ describe("generateModProjectFiles", () => {
 		const manifest = JSON.parse(files["mod-manifest.json"]);
 		assert.equal(typeof manifest.entry, "object");
 		assert.equal(manifest.entry.format, "module");
-		assert.equal(manifest.entry.script, "src/mod.ts");
+		// The manifest names the artifact a host loads, which for the TypeScript scaffold is
+		// the compiled module, not the source the author edits.
+		assert.equal(manifest.entry.script, "dist/mod.js");
 		assert.ok(manifest.entry.exports && Object.keys(manifest.entry.exports).length > 0);
+	});
+
+	it("a javascript mod names its source directly, having nothing to build", () => {
+		const files = generateModProjectFiles({ name: "my-mod", tier: 2, language: "javascript" });
+		const manifest = JSON.parse(files["mod-manifest.json"]);
+		assert.equal(manifest.entry.script, "src/mod.js");
+	});
+
+	it("the manifest entry and the demo steps name the same artifact", () => {
+		for (const language of ["typescript", "javascript"]) {
+			const files = generateModProjectFiles({ name: "my-mod", tier: 2, language });
+			const manifest = JSON.parse(files["mod-manifest.json"]);
+			const steps = JSON.parse(files["demo/steps.json"]);
+			const loaded = steps.steps.find((step) => step.action === "load-mod").sourcePath;
+			assert.equal(
+				loaded.replace(/^\.\.\//, ""),
+				manifest.entry.script,
+				`${language}: the demo loads a different file than the manifest declares`,
+			);
+		}
 	});
 
 	it("mod entry uses a top-level export wired to the example export name", () => {
@@ -317,8 +345,8 @@ describe("generateModProjectFiles", () => {
 	it("ambient types declare capability scope and reference types", () => {
 		const files = generateModProjectFiles({ name: "my-mod", tier: 2, language: "typescript" });
 		const ambient = files["src/xript-env.d.ts"];
-		assert.ok(ambient.includes("type Capability ="));
-		assert.ok(ambient.includes("type CapabilityRef ="));
+		assert.ok(ambient.includes("type XriptCapability ="));
+		assert.ok(ambient.includes("type XriptCapabilityRef ="));
 		assert.ok(ambient.includes("(string & {})"));
 	});
 
@@ -337,7 +365,7 @@ describe("generateModProjectFiles", () => {
 	it("mod manifest is valid JSON with required fields", () => {
 		const files = generateModProjectFiles({ name: "cool-mod", tier: 2, language: "javascript" });
 		const manifest = JSON.parse(files["mod-manifest.json"]);
-		assert.equal(manifest.xript, "0.7");
+		assert.equal(manifest.xript, SPEC_LINE);
 		assert.equal(manifest.name, "cool-mod");
 		assert.equal(manifest.version, "0.1.0");
 		assert.equal(manifest.title, "Cool Mod");
@@ -397,5 +425,35 @@ describe("writeProject (mod)", () => {
 		} finally {
 			await rm(dir, { recursive: true });
 		}
+	});
+});
+
+describe("a scaffolded typescript project type-checks", () => {
+	// Every one of these was a real error on a freshly scaffolded app: it did not compile.
+	it("imports the emitted module, not the .ts source", () => {
+		const files = generateProjectFiles({ name: "app", tier: 2, language: "typescript" });
+		const demo = files["src/demo.ts"];
+		assert.ok(!demo.includes('"./host.ts"'), "a .ts specifier needs allowImportingTsExtensions");
+		assert.ok(demo.includes('"./host.js"'));
+	});
+
+	it("narrows a caught error rather than reading .message off unknown", () => {
+		for (const tier of [2, 3, 4]) {
+			const files = generateProjectFiles({ name: "app", tier, language: "typescript" });
+			for (const [path, body] of Object.entries(files)) {
+				if (!path.endsWith(".ts")) continue;
+				assert.ok(
+					!/\$\{e\.message\}/.test(body),
+					`${path} (tier ${tier}) reads .message off a catch binding, which is \`unknown\` under strict`,
+				);
+			}
+		}
+	});
+
+	it("depends on @types/node, having imported node: builtins", () => {
+		const files = generateProjectFiles({ name: "app", tier: 2, language: "typescript" });
+		const pkg = JSON.parse(files["package.json"]);
+		const usesNodeBuiltin = Object.entries(files).some(([p, b]) => p.endsWith(".ts") && b.includes('"node:'));
+		if (usesNodeBuiltin) assert.ok(pkg.devDependencies["@types/node"], "node: imports need @types/node");
 	});
 });

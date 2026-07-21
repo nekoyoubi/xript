@@ -11,7 +11,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use serde_json::json;
 
-use xript_ratatui::{render_json_fragment, logo_text};
+use xript_ratatui::{logo_text, render_fragment};
 
 fn load_file(base: &Path, relative: &str) -> String {
     std::fs::read_to_string(base.join(relative)).unwrap_or_default()
@@ -56,6 +56,7 @@ fn main() -> io::Result<()> {
             },
             capabilities: vec!["ui-mount".to_string()],
             console: xript_runtime::ConsoleHandler::default(),
+            ..Default::default()
         },
     ).expect("failed to create runtime");
 
@@ -63,12 +64,10 @@ fn main() -> io::Result<()> {
         &mod_manifest_json,
         fragment_sources.clone(),
         &["ui-mount".to_string()].into_iter().collect(),
+        None,
     ).expect("failed to load mod");
 
     let fragment = mod_instance.fragments.first().expect("mod has no fragments");
-    let fragment_json: serde_json::Value = serde_json::from_str(
-        &fragment_sources.get("fragments/panel.json").expect("missing fragment source"),
-    ).expect("invalid fragment JSON");
 
     for log_msg in logs.lock().unwrap().iter() {
         eprintln!("[mod] {}", log_msg);
@@ -85,10 +84,14 @@ fn main() -> io::Result<()> {
     let mut last_tick = Instant::now();
 
     loop {
-        let mut bindings = HashMap::new();
-        bindings.insert("name".to_string(), json!("Hero"));
-        bindings.insert("health".to_string(), json!(health));
-        bindings.insert("maxHealth".to_string(), json!(max_health));
+        // The one call. What comes back is bound, sanitized, interpolation-resolved,
+        // and visibility-evaluated -- a `xript-tree/1` fragment. The renderer is
+        // handed that and nothing else; it never sees this data object.
+        let rendered = fragment
+            .get_content(&json!({
+                "player": { "name": "Hero", "health": health, "maxHealth": max_health }
+            }))
+            .to_rendered();
 
         terminal.draw(|frame| {
             use ratatui::style::{Style, Color};
@@ -124,7 +127,7 @@ fn main() -> io::Result<()> {
                 height: 5.min(area.height.saturating_sub(16)),
             };
 
-            render_json_fragment(frame, centered, &fragment_json, &bindings);
+            render_fragment(frame, centered, &rendered);
         })?;
 
         let timeout = tick_rate

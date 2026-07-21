@@ -1,18 +1,183 @@
 {
-  "xript": "0.3",
-  "name": "xript-wiz",
-  "version": "0.1.0",
-  "title": "xript Wizard",
-  "description": "Interactive TUI wizard for the xript toolchain.",
-  "bindings": {
-    "log": {
-      "description": "Log to the status bar.",
-      "params": [{ "name": "message", "type": "string" }]
-    }
-  },
-  "slots": [
-    { "id": "header", "accepts": ["application/x-ratatui+json"], "style": "inherit" },
-    { "id": "main", "accepts": ["application/x-ratatui+json"], "style": "isolated" },
-    { "id": "status", "accepts": ["application/x-ratatui+json"], "style": "inherit" }
-  ]
+	"xript": "0.3",
+	"name": "xript-wiz",
+	"version": "0.1.0",
+	"title": "xript Wizard",
+	"description": "Interactive TUI wizard for the xript toolchain.",
+	"bindings": {
+		"log": {
+			"description": "Log to the status bar.",
+			"params": [
+				{
+					"name": "message",
+					"type": "string"
+				}
+			]
+		}
+	},
+	"formats": {
+		"application/x-ratatui+json": {
+			"description": "Ratatui widget tree. Node names are Ratatui struct names.",
+			"syntax": "j5ml",
+			"nodes": {
+				"Block": {
+					"props": {
+						"title": {
+							"type": "string"
+						},
+						"borders": {
+							"type": "string",
+							"enum": [
+								"NONE",
+								"ALL",
+								"TOP",
+								"BOTTOM",
+								"LEFT",
+								"RIGHT"
+							]
+						},
+						"border_type": {
+							"type": "string",
+							"enum": [
+								"Plain",
+								"Rounded",
+								"Double",
+								"Thick"
+							]
+						},
+						"border_style": {
+							"type": "object"
+						}
+					}
+				},
+				"Layout": {
+					"props": {
+						"direction": {
+							"type": "string",
+							"enum": [
+								"Horizontal",
+								"Vertical"
+							]
+						},
+						"constraints": {
+							"type": "array",
+							"items": {
+								"type": "string"
+							}
+						}
+					}
+				},
+				"Paragraph": {
+					"props": {
+						"alignment": {
+							"type": "string",
+							"enum": [
+								"Left",
+								"Center",
+								"Right"
+							]
+						},
+						"style": {
+							"type": "object"
+						}
+					}
+				},
+				"Line": {
+					"props": {
+						"style": {
+							"type": "object"
+						}
+					}
+				},
+				"Span": {
+					"children": "text",
+					"props": {
+						"style": {
+							"type": "object"
+						}
+					}
+				},
+				"Gauge": {
+					"children": "none",
+					"bindTo": "ratio",
+					"props": {
+						"ratio": {
+							"type": "number",
+							"minimum": 0,
+							"maximum": 1
+						},
+						"ratio_bind": {
+							"type": "object"
+						},
+						"gauge_style": {
+							"type": "object"
+						},
+						"label": {
+							"type": "string"
+						},
+						"style": {
+							"type": "object"
+						}
+					}
+				},
+				"List": {
+					"props": {
+						"style": {
+							"type": "object"
+						}
+					}
+				},
+				"Table": {
+					"props": {
+						"header": {
+							"type": "array"
+						},
+						"widths": {
+							"type": "array"
+						},
+						"style": {
+							"type": "object"
+						}
+					}
+				},
+				"Sparkline": {
+					"children": "none",
+					"props": {
+						"data": {
+							"type": "array",
+							"items": {
+								"type": "number"
+							}
+						},
+						"style": {
+							"type": "object"
+						}
+					}
+				}
+			}
+		}
+	},
+	"slots": [
+		{
+			"id": "header",
+			"accepts": [
+				"application/x-ratatui+json"
+			],
+			"style": "inherit"
+		},
+		{
+			"id": "main",
+			"accepts": [
+				"application/x-ratatui+json"
+			],
+			"style": "isolated"
+		},
+		{
+			"id": "status",
+			"accepts": [
+				"application/x-ratatui+json"
+			],
+			"style": "inherit"
+		}
+	]
 }

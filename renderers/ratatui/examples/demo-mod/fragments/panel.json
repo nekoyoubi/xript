@@ -53,11 +53,7 @@
 		[
 			"Gauge",
 			{
-				"data-bind": "health",
-				"ratio_bind": {
-					"numerator": "health",
-					"denominator": "maxHealth"
-				},
+				"data-bind": "health / maxHealth",
 				"gauge_style": {
 					"fg": "Green"
 				}

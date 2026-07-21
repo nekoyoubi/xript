@@ -1,0 +1,195 @@
+{
+  "description": "Conformance corpus for per-slot execution limits. Every runtime asserts against this file, so the rule that decides which budget governs a call into a slot's fills cannot drift between the four implementations.",
+  "notes": [
+    "This corpus pins budget *resolution*, which is a pure function of the manifest, the slot and the embedder's ceiling. It deliberately does not pin budget *enforcement*: that is wall-clock behaviour, it is proved per runtime by timing tests, and a shared corpus asserting it would be flaky rather than normative.",
+    "A slot's `limits.timeout_ms` replaces the manifest's for calls into that slot's fills. Fields left out inherit the manifest's `limits`.",
+    "A slot may widen as well as tighten. The host declares both the manifest budget and the slot's, so neither direction is an escalation.",
+    "The embedder's hard limits clamp the result in both directions' favour: a manifest can never buy itself more budget than the host embedding the runtime allowed.",
+    "`slotExecutionLimits` carries `timeout_ms` alone. `memory_mb` and `max_stack_depth` are properties of a runtime at the moment it is created in all four engines, so a per-slot value for either could not be enforced without standing up a separate runtime. That path is `execution.affinity` plus a pool worker with its own limits.",
+    "Where no budget is declared anywhere, the resolved value is the schema default of 5000ms."
+  ],
+  "defaultTimeoutMs": 5000,
+  "schemaBlock": {
+    "description": "Per-slot execution limits, overriding the manifest's `limits` field by field for calls into this slot's fills.",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "timeout_ms": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Maximum execution time in milliseconds for a call into a fill of this slot. Replaces the manifest's `timeout_ms` for these calls; may raise it as well as lower it."
+      }
+    }
+  },
+  "resolve": [
+    {
+      "name": "a slot declaring no limits inherits the manifest budget",
+      "manifest": {
+        "xript": "0.8",
+        "name": "corpus-host",
+        "limits": { "timeout_ms": 2000 },
+        "slots": [
+          { "id": "plain", "accepts": ["application/x-xript-command"], "description": "no limits of its own" }
+        ]
+      },
+      "hardLimits": null,
+      "slot": "plain",
+      "expected": 2000
+    },
+    {
+      "name": "a slot tightens below the manifest budget",
+      "manifest": {
+        "xript": "0.8",
+        "name": "corpus-host",
+        "limits": { "timeout_ms": 10000 },
+        "slots": [
+          {
+            "id": "tight",
+            "accepts": ["application/x-xript-command"],
+            "description": "handles untrusted input",
+            "limits": { "timeout_ms": 50 }
+          }
+        ]
+      },
+      "hardLimits": null,
+      "slot": "tight",
+      "expected": 50
+    },
+    {
+      "name": "a slot widens past the manifest budget",
+      "manifest": {
+        "xript": "0.8",
+        "name": "corpus-host",
+        "limits": { "timeout_ms": 50 },
+        "slots": [
+          {
+            "id": "wide",
+            "accepts": ["application/x-xript-command"],
+            "description": "fills here legitimately run long",
+            "limits": { "timeout_ms": 30000 }
+          }
+        ]
+      },
+      "hardLimits": null,
+      "slot": "wide",
+      "expected": 30000
+    },
+    {
+      "name": "the embedder's ceiling clamps a widening slot",
+      "manifest": {
+        "xript": "0.8",
+        "name": "corpus-host",
+        "limits": { "timeout_ms": 50 },
+        "slots": [
+          {
+            "id": "wide",
+            "accepts": ["application/x-xript-command"],
+            "description": "asks for more than the host allowed",
+            "limits": { "timeout_ms": 30000 }
+          }
+        ]
+      },
+      "hardLimits": { "timeout_ms": 1000 },
+      "slot": "wide",
+      "expected": 1000
+    },
+    {
+      "name": "the embedder's ceiling does not raise a slot that asks for less",
+      "manifest": {
+        "xript": "0.8",
+        "name": "corpus-host",
+        "limits": { "timeout_ms": 10000 },
+        "slots": [
+          {
+            "id": "tight",
+            "accepts": ["application/x-xript-command"],
+            "description": "asks for less than the ceiling",
+            "limits": { "timeout_ms": 250 }
+          }
+        ]
+      },
+      "hardLimits": { "timeout_ms": 5000 },
+      "slot": "tight",
+      "expected": 250
+    },
+    {
+      "name": "the embedder's ceiling clamps an inheriting slot through the manifest",
+      "manifest": {
+        "xript": "0.8",
+        "name": "corpus-host",
+        "limits": { "timeout_ms": 20000 },
+        "slots": [
+          { "id": "plain", "accepts": ["application/x-xript-command"], "description": "inherits a budget above the ceiling" }
+        ]
+      },
+      "hardLimits": { "timeout_ms": 750 },
+      "slot": "plain",
+      "expected": 750
+    },
+    {
+      "name": "with no budget declared anywhere the schema default applies",
+      "manifest": {
+        "xript": "0.8",
+        "name": "corpus-host",
+        "slots": [
+          { "id": "plain", "accepts": ["application/x-xript-command"], "description": "nothing declared" }
+        ]
+      },
+      "hardLimits": null,
+      "slot": "plain",
+      "expected": 5000
+    },
+    {
+      "name": "a slot's limits do not leak to a neighbouring slot",
+      "manifest": {
+        "xript": "0.8",
+        "name": "corpus-host",
+        "limits": { "timeout_ms": 3000 },
+        "slots": [
+          {
+            "id": "bounded",
+            "accepts": ["application/x-xript-command"],
+            "description": "carries its own",
+            "limits": { "timeout_ms": 90 }
+          },
+          { "id": "neighbour", "accepts": ["application/x-xript-command"], "description": "carries none" }
+        ]
+      },
+      "hardLimits": null,
+      "slot": "neighbour",
+      "expected": 3000
+    },
+    {
+      "name": "an unknown slot id falls back to the manifest budget",
+      "manifest": {
+        "xript": "0.8",
+        "name": "corpus-host",
+        "limits": { "timeout_ms": 1500 },
+        "slots": [
+          { "id": "known", "accepts": ["application/x-xript-command"], "description": "the only slot" }
+        ]
+      },
+      "hardLimits": null,
+      "slot": "absent",
+      "expected": 1500
+    },
+    {
+      "name": "a slot on a manifest declaring no limits still widens from the default",
+      "manifest": {
+        "xript": "0.8",
+        "name": "corpus-host",
+        "slots": [
+          {
+            "id": "wide",
+            "accepts": ["application/x-xript-command"],
+            "description": "raises the default",
+            "limits": { "timeout_ms": 12000 }
+          }
+        ]
+      },
+      "hardLimits": null,
+      "slot": "wide",
+      "expected": 12000
+    }
+  ]
+}

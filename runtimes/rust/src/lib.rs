@@ -1,11 +1,14 @@
 pub mod cap_match;
 pub mod capability;
+pub mod commands;
 pub mod debug;
 mod error;
 pub mod fragment;
 pub mod handle;
 mod manifest;
 pub mod module;
+pub mod pending;
+pub mod pool;
 mod sandbox;
 
 pub use capability::{
@@ -17,20 +20,62 @@ pub use debug::{
     StackFrame, StopReason, StoppedEvent, Variable, DEBUG_THREAD_ID,
 };
 pub use cap_match::{granted_satisfies, satisfies};
+pub use commands::{
+    classify_fill, is_valid_command_id, merge_command_args, resolve_command, resolve_commands,
+    resolve_commands_all, CommandDefect, CommandDefectCode, CommandFill, FillKind,
+    ResolvedCommand, COMMAND_SLOT_ACCEPT,
+};
 pub use error::{Result, ValidationIssue, XriptError};
-pub use fragment::{FragmentInstance, FragmentResult, ModInstance};
+pub use fragment::{
+    FragmentCondition, FragmentInstance, FragmentOptions, FragmentResult, ModInstance,
+    NormalizedFills,
+};
+pub use fragment::ops::{finalize_ops, to_contract_ops, FragmentOp, NodeRef};
+pub use xript_tree::{
+    apply_ops, node_at, parse_node_ref, path_reference, resolve_target, ContentType,
+    RenderedFragment, CONTRACT_VERSION,
+};
+pub use fragment::profiles::{
+    any_vocabulary_declares, resolve_format_profile, speaks_html, ChildrenConstraint, FormatProfile,
+    FormatProfileError, FormatProfileErrorCode, FragmentSyntax, NodeDefinition, PropDefinition,
+    ResolvedVocabulary, Sink,
+};
+pub use fragment::rules::{
+    default_uri_scheme_set, is_prohibited_uri_scheme, is_valid_uri_scheme_name, sanitize_uri,
+    SchemeSet, DEFAULT_URI_SCHEMES, PROHIBITED_URI_SCHEMES,
+};
+pub use fragment::sanitize::{sanitize_fragment, FragmentContentType, SanitizedFragment};
+pub use fragment::tree::{
+    node_to_j5ml, tree_to_html, tree_to_j5ml, tree_to_jsml, FragmentElement, FragmentNode,
+    FragmentTree, Props,
+};
+pub use fragment::vocabulary::{
+    sanitize_tree, DiagnosticCode, DiagnosticSeverity, FragmentDiagnostic, VocabularyOptions,
+};
 pub use manifest::{
     is_role_identifier, resolve_extends, Binding, Capability, Contributions, EntryBlock, EventDefinition,
-    ExportDecl, Extends, FieldDefinition, FragmentBinding, FragmentDeclaration, FragmentEvent,
+    ExecutionIntent, ExportDecl, Extends, FieldDefinition, FragmentBinding, FragmentDeclaration,
+    FragmentEvent,
     FragmentHandler, FunctionBinding,
-    HookDef, LibraryDef, Limits, Manifest, ModManifest, NamespaceBinding, Parameter, ProviderRole, Slot,
-    TypeDefinition,
+    HookDef, IntentAffinity, IntentDuration, LibraryDef, Limits, Manifest, ModManifest,
+    NamespaceBinding, Parameter, ProviderRole, ResolvedIntent, Slot,
+    TypeDefinition, HOOK_SLOT_ACCEPT, ROLE_SLOT_ACCEPT,
 };
-pub use handle::XriptHandle;
+pub use handle::{
+    BlockingHandle, CallInfo, ShutdownReport, WorkerHealth, WorkerState, XriptHandle,
+};
+pub use pool::{
+    CallDescriptor, CallKind, HealthConfig, HookDispatch, IntentRouter, Lane, ModPlacement,
+    PoolConfig, PoolMod, PoolRouter, PoolShutdownReport, PoolStats, PoolView, Route, Saturation,
+    WedgePolicy, WedgedWorker, WorkerId, WorkerRef, XriptPool,
+};
+pub use pending::{CallToken, DropPolicy, Pending};
 pub use sandbox::{
-    AsyncHostFn, AuditEvent, AuditSink, CancellationToken, ConsoleHandler, ExecutionResult,
+    AsyncHostFn, AuditDecision, AuditEvent, AuditSink, CancellationToken, ConsoleHandler, ExecutionResult,
     HardLimits, HostBindings, HostFn, HostNamespaceMember, LogSeverity, NamespaceBuilder,
-    RoleResolution, RuntimeOptions, SlotContribution, XriptRuntime,
+    resolve_role_all_from, resolve_role_from, resolve_slot_from, CallTokenScope, RoleResolution,
+    RuntimeOptions, RuntimeProbe, SharedMods, SlotContribution, TaggedResult, HandlerIndex,
+    XriptRuntime,
 };
 
 pub fn create_runtime(manifest_json: &str, options: RuntimeOptions) -> Result<XriptRuntime> {
@@ -81,7 +126,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         );
         assert!(rt.is_ok());
@@ -100,7 +149,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         );
         assert!(result.is_err());
@@ -123,7 +176,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         );
         assert!(result.is_err());
@@ -142,7 +199,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -165,7 +226,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -187,7 +252,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -212,7 +281,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -234,7 +307,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -256,7 +333,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -278,7 +359,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -300,7 +385,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -335,7 +424,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -360,7 +453,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -382,7 +479,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         );
         assert!(result.is_err());
@@ -401,7 +502,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -448,7 +553,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -485,7 +594,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -529,7 +642,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -574,7 +691,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -596,7 +717,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -627,7 +752,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -664,7 +793,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -882,7 +1015,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -926,7 +1063,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -970,7 +1111,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -1024,7 +1169,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -1060,7 +1209,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -1132,7 +1285,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -1186,7 +1343,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -1237,7 +1398,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -1286,12 +1451,16 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
 
-        let result = handle.execute("2 + 2").unwrap();
+        let result = handle.execute("2 + 2").wait().unwrap();
         assert_eq!(result.value, serde_json::json!(4));
     }
 
@@ -1308,12 +1477,16 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
 
-        assert_eq!(handle.manifest_name().unwrap(), "test-app");
+        assert_eq!(handle.manifest_name(), "test-app");
     }
 
     #[test]
@@ -1329,12 +1502,16 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
 
-        let result = std::thread::spawn(move || handle.execute("1 + 1"))
+        let result = std::thread::spawn(move || handle.execute("1 + 1").wait())
             .join()
             .unwrap()
             .unwrap();
@@ -1355,12 +1532,16 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
 
-        let result = handle.execute("throw new Error('boom')");
+        let result = handle.execute("throw new Error('boom')").wait();
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), XriptError::Script(_)));
     }
@@ -1386,7 +1567,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -1407,6 +1592,7 @@ mod tests {
                 &std::collections::HashSet::new(),
                 None,
             )
+            .wait()
             .unwrap();
 
         assert_eq!(mod_instance.name, "test-mod");
@@ -1446,7 +1632,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -1485,7 +1675,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -1542,7 +1736,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -1614,7 +1812,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -1664,7 +1866,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -1705,7 +1911,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -1783,6 +1993,62 @@ mod tests {
     }
 
     #[test]
+    fn budget_collision_under_a_pending_promise_reports_the_budget() {
+        let rt = create_runtime(
+            r#"{ "xript": "0.1", "name": "t", "limits": { "timeout_ms": 50 } }"#,
+            opts(),
+        )
+        .unwrap();
+        let result = rt.execute("(async () => { await Promise.resolve(); while(true) {} })()");
+        assert!(
+            matches!(result, Err(XriptError::ExecutionLimit { ref limit }) if limit == "timeout_ms"),
+            "a budget that expires while a promise is outstanding must report the budget, \
+             not blame the promise; got {result:?}"
+        );
+    }
+
+    #[test]
+    fn cancellation_under_a_pending_promise_reports_the_cancellation() {
+        let token = CancellationToken::new();
+        let mut o = opts();
+        o.cancellation = Some(token.clone());
+        let rt = create_runtime(
+            r#"{ "xript": "0.1", "name": "t", "limits": { "timeout_ms": 10000 } }"#,
+            o,
+        )
+        .unwrap();
+        // Cancelling before `execute` short-circuits at the entry gate and never
+        // reaches the outstanding-promise path this test exists to cover.
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            token.cancel();
+        });
+        let result = rt.execute("(async () => { await Promise.resolve(); while(true) {} })()");
+        canceller.join().unwrap();
+        assert!(
+            matches!(result, Err(XriptError::Cancelled)),
+            "a cancel that lands while a promise is outstanding must report the cancel; got {result:?}"
+        );
+    }
+
+    #[test]
+    fn a_genuinely_unsettled_promise_says_so() {
+        let rt = create_runtime(
+            r#"{ "xript": "0.1", "name": "t", "limits": { "timeout_ms": 5000 } }"#,
+            opts(),
+        )
+        .unwrap();
+        let result = rt.execute("new Promise(() => {})");
+        let Err(XriptError::Script(message)) = result else {
+            panic!("expected a script error for a promise that never settles, got {result:?}");
+        };
+        assert!(
+            message.contains("never settled"),
+            "unhelpful message for an unsettled promise: {message}"
+        );
+    }
+
+    #[test]
     fn audit_fires_for_allowed_invocations() {
         use std::sync::mpsc;
         let manifest = r#"{
@@ -1839,6 +2105,124 @@ mod tests {
         let _ = rt.execute("try { gated() } catch(e) {}");
         let events: Vec<AuditEvent> = rx.try_iter().collect();
         assert!(events.is_empty());
+    }
+
+    const AUDIT_HOOK_HOST: &str = r#"{
+        "xript": "0.7",
+        "name": "audit-host",
+        "capabilities": { "persistence": { "description": "storage" } },
+        "slots": [
+            { "id": "on-save", "accepts": ["application/x-xript-hook"], "description": "save event" }
+        ]
+    }"#;
+
+    fn audit_hook_runtime(
+        capabilities: Vec<String>,
+    ) -> (XriptRuntime, std::sync::mpsc::Receiver<AuditEvent>) {
+        let (tx, rx) = std::sync::mpsc::channel::<AuditEvent>();
+        let options = RuntimeOptions {
+            capabilities,
+            ..RuntimeOptions::default()
+        }
+        .with_audit_channel(tx);
+        (create_runtime(AUDIT_HOOK_HOST, options).unwrap(), rx)
+    }
+
+    fn load_gated_hook_mod(rt: &XriptRuntime, name: &str) {
+        let mod_json = format!(
+            r#"{{
+                "xript": "0.7",
+                "name": "{name}",
+                "version": "1.0.0",
+                "entry": {{
+                    "script": "mod.js",
+                    "exports": {{ "onSave": {{ "description": "h", "capability": "persistence.disk" }} }}
+                }},
+                "fills": {{ "on-save": [{{ "handler": "onSave" }}] }}
+            }}"#
+        );
+        rt.load_mod(
+            &mod_json,
+            HashMap::new(),
+            &std::collections::HashSet::new(),
+            Some(r#"xript.exports.register("onSave", function() { return "saved"; });"#),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn audit_reports_a_capability_denied_hook_fill() {
+        let (rt, rx) = audit_hook_runtime(vec![]);
+        load_gated_hook_mod(&rt, "gated-mod");
+
+        let results = rt.fire_hook("on-save", &[]).unwrap();
+        assert_eq!(results, vec![serde_json::Value::Null]);
+
+        let denials: Vec<AuditEvent> = rx
+            .try_iter()
+            .filter(|e| e.decision == AuditDecision::Denied)
+            .collect();
+        assert_eq!(denials.len(), 1);
+        assert_eq!(denials[0].mod_name.as_deref(), Some("gated-mod"));
+        assert_eq!(denials[0].binding, "onSave");
+        assert_eq!(denials[0].hook.as_deref(), Some("on-save"));
+        assert_eq!(denials[0].capability.as_deref(), Some("persistence.disk"));
+        assert!(denials[0].at_ms > 0.0);
+    }
+
+    #[test]
+    fn audit_reports_a_denied_hook_fill_once_per_mod_handler_hook() {
+        let (rt, rx) = audit_hook_runtime(vec![]);
+        load_gated_hook_mod(&rt, "gated-mod");
+
+        for _ in 0..25 {
+            rt.fire_hook("on-save", &[]).unwrap();
+        }
+
+        let denials = rx
+            .try_iter()
+            .filter(|e| e.decision == AuditDecision::Denied)
+            .count();
+        assert_eq!(denials, 1);
+    }
+
+    #[test]
+    fn audit_stays_silent_when_a_hook_handler_throws_on_its_own() {
+        let (rt, rx) = audit_hook_runtime(vec![]);
+        let mod_json = r#"{
+            "xript": "0.7",
+            "name": "throwing-mod",
+            "version": "1.0.0",
+            "entry": { "script": "mod.js", "exports": { "onSave": { "description": "h" } } },
+            "fills": { "on-save": [{ "handler": "onSave" }] }
+        }"#;
+        rt.load_mod(
+            mod_json,
+            HashMap::new(),
+            &std::collections::HashSet::new(),
+            Some(r#"xript.exports.register("onSave", function() { throw new Error("mod bug"); });"#),
+        )
+        .unwrap();
+
+        let results = rt.fire_hook("on-save", &[]).unwrap();
+        assert_eq!(results, vec![serde_json::Value::Null]);
+        assert!(
+            rx.try_iter()
+                .all(|e| e.decision != AuditDecision::Denied)
+        );
+    }
+
+    #[test]
+    fn audit_stays_silent_when_the_grant_subsumes_the_export_capability() {
+        let (rt, rx) = audit_hook_runtime(vec!["persistence".into()]);
+        load_gated_hook_mod(&rt, "gated-mod");
+
+        let results = rt.fire_hook("on-save", &[]).unwrap();
+        assert_eq!(results, vec![serde_json::json!("saved")]);
+        assert!(
+            rx.try_iter()
+                .all(|e| e.decision != AuditDecision::Denied)
+        );
     }
 
     #[test]
@@ -2278,7 +2662,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences,
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap()
@@ -2317,7 +2705,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_role_first_installed_wins() {
+    fn resolve_role_winner_is_mod_name_ascending() {
         let rt = role_runtime(HashMap::new());
         load_role_mod(&rt, &clip_mod("clip-a", "a_query"));
         load_role_mod(&rt, &clip_mod("clip-b", "b_query"));
@@ -2349,7 +2737,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_role_all_returns_load_order() {
+    fn resolve_role_all_returns_mod_name_order() {
         let rt = role_runtime(HashMap::new());
         load_role_mod(&rt, &clip_mod("clip-a", "a_query"));
         load_role_mod(&rt, &clip_mod("clip-b", "b_query"));
@@ -2462,7 +2850,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         );
         assert!(rt.is_ok());
@@ -2580,7 +2972,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: Some(opts),
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap()
@@ -2599,7 +2995,11 @@ mod tests {
                 hard_limits: None,
                 libraries: HashMap::new(),
                 role_preferences: HashMap::new(),
+                command_preferences: HashMap::new(),
                 debug: None,
+                strict_html_vocabulary: false,
+                strict_bindings: false,
+                on_fragment_diagnostic: None,
             },
         )
         .unwrap();
@@ -3115,12 +3515,224 @@ mod tests {
         .unwrap();
         handle
             .execute("globalThis.__ready = false; events.on('ready', function() { globalThis.__ready = true; });")
+            .wait()
             .unwrap();
-        let results = handle.emit("ready", &[]).unwrap();
+        let results = handle.emit("ready", &[]).wait().unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(
-            handle.execute("globalThis.__ready").unwrap().value,
+            handle.execute("globalThis.__ready").wait().unwrap().value,
             serde_json::json!(true)
+        );
+    }
+
+    fn interrupt_frame(deadline: std::time::Instant) -> sandbox::InterruptFrame {
+        sandbox::InterruptFrame {
+            deadline,
+            token: None,
+            call_token: None,
+            debug_clock: None,
+            interrupted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    #[test]
+    fn inner_interrupt_frame_does_not_disarm_the_outer_one() {
+        let rt = create_runtime(
+            r#"{ "xript": "0.1", "name": "t", "limits": { "timeout_ms": 5000 } }"#,
+            RuntimeOptions::default(),
+        )
+        .unwrap();
+
+        assert_eq!(rt.interrupt_depth(), 0);
+        assert!(!rt.interrupt_armed());
+
+        let far_future = std::time::Instant::now() + std::time::Duration::from_secs(3600);
+        let outer = rt.push_interrupt_frame(interrupt_frame(far_future));
+        assert_eq!(rt.interrupt_depth(), 1);
+
+        {
+            let _inner = rt.push_interrupt_frame(interrupt_frame(far_future));
+            assert_eq!(rt.interrupt_depth(), 2);
+            assert!(rt.interrupt_armed());
+        }
+
+        assert_eq!(rt.interrupt_depth(), 1);
+        assert!(rt.interrupt_armed());
+
+        drop(outer);
+        assert_eq!(rt.interrupt_depth(), 0);
+        assert!(!rt.interrupt_armed());
+    }
+
+    #[test]
+    fn interrupt_frame_is_popped_when_a_region_unwinds() {
+        let rt = create_runtime(
+            r#"{ "xript": "0.1", "name": "t", "limits": { "timeout_ms": 5000 } }"#,
+            RuntimeOptions::default(),
+        )
+        .unwrap();
+
+        let far_future = std::time::Instant::now() + std::time::Duration::from_secs(3600);
+        let outer = rt.push_interrupt_frame(interrupt_frame(far_future));
+
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _inner = rt.push_interrupt_frame(interrupt_frame(far_future));
+            assert_eq!(rt.interrupt_depth(), 2);
+            panic!("region blew up");
+        }));
+
+        assert!(unwound.is_err());
+        assert_eq!(rt.interrupt_depth(), 1);
+        assert!(rt.interrupt_armed());
+        drop(outer);
+        assert_eq!(rt.interrupt_depth(), 0);
+    }
+
+    #[test]
+    fn an_expired_frame_on_one_thread_does_not_interrupt_another() {
+        let rt = Arc::new(
+            create_runtime(
+                r#"{ "xript": "0.1", "name": "t", "limits": { "timeout_ms": 5000 } }"#,
+                RuntimeOptions::default(),
+            )
+            .unwrap(),
+        );
+
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let holder = {
+            let rt = rt.clone();
+            std::thread::spawn(move || {
+                let expired = std::time::Instant::now() - std::time::Duration::from_secs(1);
+                let _guard = rt.push_interrupt_frame(interrupt_frame(expired));
+                held_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+            })
+        };
+
+        held_rx.recv().unwrap();
+        let result = rt.execute("let n = 0; for (let i = 0; i < 2000000; i++) n++; n;");
+        release_tx.send(()).unwrap();
+        holder.join().unwrap();
+
+        assert!(
+            matches!(result, Ok(ref r) if r.value == serde_json::json!(2000000)),
+            "an expired frame owned by another thread must not govern this one; got {result:?}"
+        );
+    }
+
+    #[test]
+    fn interrupt_depth_is_scoped_to_the_calling_thread() {
+        let rt = Arc::new(
+            create_runtime(
+                r#"{ "xript": "0.1", "name": "t", "limits": { "timeout_ms": 5000 } }"#,
+                RuntimeOptions::default(),
+            )
+            .unwrap(),
+        );
+
+        let far_future = std::time::Instant::now() + std::time::Duration::from_secs(3600);
+        let _mine = rt.push_interrupt_frame(interrupt_frame(far_future));
+        assert_eq!(rt.interrupt_depth(), 1);
+
+        let (pushed_tx, pushed_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let worker = {
+            let rt = rt.clone();
+            std::thread::spawn(move || {
+                let far_future =
+                    std::time::Instant::now() + std::time::Duration::from_secs(3600);
+                let _a = rt.push_interrupt_frame(interrupt_frame(far_future));
+                let _b = rt.push_interrupt_frame(interrupt_frame(far_future));
+                let depth = rt.interrupt_depth();
+                pushed_tx.send(depth).unwrap();
+                release_rx.recv().unwrap();
+            })
+        };
+
+        assert_eq!(pushed_rx.recv().unwrap(), 2, "the worker sees only its own two frames");
+        assert_eq!(rt.interrupt_depth(), 1, "this thread still sees only its own frame");
+
+        release_tx.send(()).unwrap();
+        worker.join().unwrap();
+        assert_eq!(rt.interrupt_depth(), 1);
+    }
+
+    #[test]
+    fn a_frame_popped_on_one_thread_leaves_another_threads_frame_alone() {
+        let rt = Arc::new(
+            create_runtime(
+                r#"{ "xript": "0.1", "name": "t", "limits": { "timeout_ms": 5000 } }"#,
+                RuntimeOptions::default(),
+            )
+            .unwrap(),
+        );
+
+        let expired = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        let mine = rt.push_interrupt_frame(interrupt_frame(expired));
+
+        let (pushed_tx, pushed_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let worker = {
+            let rt = rt.clone();
+            std::thread::spawn(move || {
+                let far_future =
+                    std::time::Instant::now() + std::time::Duration::from_secs(3600);
+                let guard = rt.push_interrupt_frame(interrupt_frame(far_future));
+                pushed_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                let result = rt.execute("let n = 0; for (let i = 0; i < 2000000; i++) n++; n;");
+                drop(guard);
+                result
+            })
+        };
+
+        pushed_rx.recv().unwrap();
+        drop(mine);
+        release_tx.send(()).unwrap();
+
+        let result = worker.join().unwrap();
+        assert!(
+            matches!(result, Ok(ref r) if r.value == serde_json::json!(2000000)),
+            "the other thread's expired frame must not govern this thread; got {result:?}"
+        );
+    }
+
+    #[test]
+    fn tightest_interrupt_frame_governs_the_deadline() {
+        let rt = create_runtime(
+            r#"{ "xript": "0.1", "name": "t", "limits": { "timeout_ms": 5000 } }"#,
+            RuntimeOptions::default(),
+        )
+        .unwrap();
+
+        let _outer = rt.push_interrupt_frame(interrupt_frame(
+            std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        ));
+
+        let inner_frame = interrupt_frame(
+            std::time::Instant::now() + std::time::Duration::from_millis(50),
+        );
+        let inner_interrupted = inner_frame.interrupted.clone();
+        let inner = rt.push_interrupt_frame(inner_frame);
+
+        let started = std::time::Instant::now();
+        let result = rt.execute("let n = 0; const t = Date.now(); while (Date.now() - t < 10000) n++; n;");
+        drop(inner);
+
+        assert!(
+            inner_interrupted.load(std::sync::atomic::Ordering::Relaxed),
+            "the 50 ms frame should have fired, not the 3600 s or 5000 ms ones"
+        );
+        assert!(
+            matches!(result, Err(XriptError::ExecutionLimit { ref limit }) if limit == "timeout_ms"),
+            "expected a timeout_ms execution limit, got {result:?}"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "the tightest deadline should govern; took {:?}",
+            started.elapsed()
         );
     }
 }

@@ -1,0 +1,7 @@
+["Panel", { "heading": "Session", "collapsible": true },
+	["Link", { "href": "https://xript.dev" }, "docs"],
+	["Progress", { "value": 72, "tone": "ok" }],
+	["Panel", { "heading": "Nested" },
+		["Link", { "href": "https://xript.dev/changelog" }, "changelog"]
+	]
+]

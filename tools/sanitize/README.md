@@ -61,7 +61,7 @@ Validates and sanitizes a fragment. Supports `text/html` and `application/jsml+j
 
 ### `sanitizeJsml(nodes): JsmlSanitizeResult`
 
-Sanitizes JSML (JsonML) nodes directly. Returns the sanitized tree, its HTML conversion, and stripped element/attribute reports.
+Sanitizes JSML (J5ML) nodes directly. Returns the sanitized tree, its HTML conversion, and stripped element/attribute reports.
 
 ### `jsmlToHtml(nodes): string`
 
@@ -89,7 +89,7 @@ interface FragmentValidationResult {
 - Strips event handler attributes (`onclick`, `onload`, etc.)
 - Sanitizes `href` and `src` URIs (blocks `javascript:` and `data:` schemes)
 - Sanitizes inline styles (blocks `expression()`, `url()`, and other injection vectors)
-- Handles both HTML and JSML (JsonML) fragment formats
+- Handles both HTML and JSML (J5ML) fragment formats
 - No DOM, no parser dependencies; works in any JavaScript environment
 
 ## Documentation

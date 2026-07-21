@@ -60,11 +60,22 @@ export interface StepResult {
 export interface HarnessStep {
 	action: "load-mod" | "invoke" | "emit" | "fire-hook" | "execute" | "resolve-slot" | "resolve-role" | "journal";
 	manifest?: unknown;
-	source?: string;
+	/** Canonical: inline entry-script source. */
 	sourceText?: string;
+	/** Canonical: entry-script path, resolved relative to the steps file. */
+	sourcePath?: string;
+	/** Canonical: inline fill sources, keyed by the path the manifest names. */
+	sourceTexts?: Record<string, string>;
+	/** Canonical: fill-source paths, keyed by the path the manifest names. */
+	sourcePaths?: Record<string, string>;
+	/** @deprecated Use `sourcePath` (a path) or `sourceText` (inline). Read as a path. */
+	source?: string;
+	/** @deprecated Use `sourcePaths` (paths) or `sourceTexts` (inline). Read as paths. */
 	sources?: Record<string, string>;
 	entry?: string;
 	export?: string;
+	/** @deprecated Use `export`. */
+	exportName?: string;
 	args?: unknown[];
 	event?: string;
 	payload?: unknown;
@@ -76,6 +87,9 @@ export interface HarnessStep {
 	role?: string;
 	clear?: boolean;
 }
+
+/** Receives a deprecation notice as a harnessed scenario is normalized to the canonical vocabulary. */
+export type StepWarn = (message: string) => void;
 
 export interface HarnessSession {
 	readonly summary: HarnessSummary;
@@ -300,11 +314,15 @@ export async function createHarnessSession(input: { appManifest: unknown; harnes
 	};
 }
 
-export async function runSteps(session: HarnessSession, steps: HarnessStep[], options: { baseDir?: string } = {}): Promise<StepResult[]> {
+export async function runSteps(
+	session: HarnessSession,
+	steps: HarnessStep[],
+	options: { baseDir?: string; warn?: StepWarn } = {},
+): Promise<StepResult[]> {
 	const results: StepResult[] = [];
 	for (const step of steps) {
 		try {
-			results.push({ action: step.action, ok: true, result: await runSessionStep(session, step, options.baseDir) });
+			results.push({ action: step.action, ok: true, result: await runSessionStep(session, step, options.baseDir, options.warn) });
 		} catch (error) {
 			results.push({ action: step.action, ok: false, error: error instanceof Error ? error.message : String(error) });
 		}
@@ -312,22 +330,58 @@ export async function runSteps(session: HarnessSession, steps: HarnessStep[], op
 	return results;
 }
 
-export async function runSessionStep(session: HarnessSession, step: HarnessStep, baseDir?: string): Promise<unknown> {
+/**
+ * Resolves the entry-script source from a step's canonical keys (`sourceText` inline / `sourcePath`
+ * path) or the deprecated `source` (read as a path, matching the historical steps-file meaning).
+ */
+async function resolveEntrySource(step: HarnessStep, baseDir: string | undefined, warn: StepWarn | undefined): Promise<string> {
+	if (step.sourceText !== undefined) return step.sourceText;
+	if (step.sourcePath !== undefined) return readFile(resolveAgainst(step.sourcePath, baseDir), "utf-8");
+	if (step.source !== undefined) {
+		warn?.("`source` is deprecated; use `sourcePath` for a path or `sourceText` for inline content");
+		return readFile(resolveAgainst(step.source, baseDir), "utf-8");
+	}
+	throw new Error("load-mod requires sourceText or sourcePath");
+}
+
+/**
+ * Resolves the fill-source map from canonical keys (`sourceTexts` inline / `sourcePaths` paths) and
+ * the deprecated `sources` (read as paths). Inline entries win over a same-key path.
+ */
+async function resolveFillSources(step: HarnessStep, baseDir: string | undefined, warn: StepWarn | undefined): Promise<Record<string, string>> {
+	const out: Record<string, string> = {};
+	for (const [key, path] of Object.entries(step.sourcePaths ?? {})) out[key] = await readFile(resolveAgainst(path, baseDir), "utf-8");
+	if (step.sources) {
+		warn?.("`sources` is deprecated; use `sourcePaths` for path values or `sourceTexts` for inline content");
+		for (const [key, path] of Object.entries(step.sources)) out[key] = await readFile(resolveAgainst(path, baseDir), "utf-8");
+	}
+	for (const [key, text] of Object.entries(step.sourceTexts ?? {})) out[key] = text;
+	return out;
+}
+
+function resolveExport(step: HarnessStep, warn: StepWarn | undefined): string | undefined {
+	if (step.export !== undefined) return step.export;
+	if (step.exportName !== undefined) {
+		warn?.("`exportName` is deprecated; use `export`");
+		return step.exportName;
+	}
+	return undefined;
+}
+
+export async function runSessionStep(session: HarnessSession, step: HarnessStep, baseDir?: string, warn?: StepWarn): Promise<unknown> {
 	switch (step.action) {
 		case "load-mod": {
 			const manifest = typeof step.manifest === "string" ? JSON.parse(await readFile(resolveAgainst(step.manifest, baseDir), "utf-8")) : step.manifest;
 			if (manifest === undefined) throw new Error("load-mod requires a manifest");
-			const source = step.sourceText ?? (step.source ? await readFile(resolveAgainst(step.source, baseDir), "utf-8") : undefined);
-			if (source === undefined) throw new Error("load-mod requires source or sourceText");
-			const sources: Record<string, string> = {};
-			for (const [key, path] of Object.entries(step.sources ?? {})) {
-				sources[key] = await readFile(resolveAgainst(path, baseDir), "utf-8");
-			}
+			const source = await resolveEntrySource(step, baseDir, warn);
+			const sources = await resolveFillSources(step, baseDir, warn);
 			return session.loadMod(manifest, source, { entry: step.entry, sources });
 		}
-		case "invoke":
-			if (!step.export) throw new Error("invoke requires an export name");
-			return session.invoke(step.export, step.args);
+		case "invoke": {
+			const exportName = resolveExport(step, warn);
+			if (!exportName) throw new Error("invoke requires an export name");
+			return session.invoke(exportName, step.args);
+		}
 		case "emit":
 			if (!step.event) throw new Error("emit requires an event id");
 			return session.emit(step.event, step.payload);

@@ -1,0 +1,2138 @@
+{
+	"$comment": "XEG conformance corpus. Every xript runtime and fragment renderer runs this file. Semantics here are normative and are deliberately not 'whatever JavaScript does' — see spec/expressions.md.",
+	"defaultBindings": {
+		"hp": 35,
+		"maxHp": 100,
+		"name": "Hero",
+		"alive": true,
+		"dead": false,
+		"nothing": null,
+		"effects": [
+			"burn",
+			"slow"
+		],
+		"empty": [],
+		"zero": 0,
+		"blank": "",
+		"score": 7,
+		"label": "  padded  ",
+		"player": {
+			"name": "Hero",
+			"stats": {
+				"str": 12,
+				"dex": 9
+			}
+		}
+	},
+	"cases": [
+		{
+			"id": "literal-int",
+			"expression": "42",
+			"expect": 42
+		},
+		{
+			"id": "literal-float",
+			"expression": "3.5",
+			"expect": 3.5
+		},
+		{
+			"id": "literal-leading-dot",
+			"expression": ".5",
+			"expect": 0.5
+		},
+		{
+			"id": "literal-exponent",
+			"expression": "2e3",
+			"expect": 2000
+		},
+		{
+			"id": "literal-negative",
+			"expression": "-7",
+			"expect": -7
+		},
+		{
+			"id": "literal-true",
+			"expression": "true",
+			"expect": true
+		},
+		{
+			"id": "literal-false",
+			"expression": "false",
+			"expect": false
+		},
+		{
+			"id": "literal-null",
+			"expression": "null",
+			"expect": null
+		},
+		{
+			"id": "literal-string-double",
+			"expression": "\"hi\"",
+			"expect": "hi"
+		},
+		{
+			"id": "literal-string-single",
+			"expression": "'hi'",
+			"expect": "hi"
+		},
+		{
+			"id": "literal-string-empty",
+			"expression": "''",
+			"expect": ""
+		},
+		{
+			"id": "literal-string-escape-newline",
+			"expression": "'a\\nb'",
+			"expect": "a\nb"
+		},
+		{
+			"id": "literal-string-escape-quote",
+			"expression": "'a\\'b'",
+			"expect": "a'b"
+		},
+		{
+			"id": "literal-string-escape-backslash",
+			"expression": "'a\\\\b'",
+			"expect": "a\\b"
+		},
+		{
+			"id": "literal-string-unicode",
+			"expression": "'\\u0041'",
+			"expect": "A"
+		},
+		{
+			"id": "literal-string-brace",
+			"expression": "'{{'",
+			"expect": "{{"
+		},
+		{
+			"id": "name-number",
+			"expression": "hp",
+			"expect": 35
+		},
+		{
+			"id": "name-string",
+			"expression": "name",
+			"expect": "Hero"
+		},
+		{
+			"id": "name-bool",
+			"expression": "alive",
+			"expect": true
+		},
+		{
+			"id": "name-null",
+			"expression": "nothing",
+			"expect": null
+		},
+		{
+			"id": "name-array",
+			"expression": "effects",
+			"expect": [
+				"burn",
+				"slow"
+			]
+		},
+		{
+			"id": "name-object",
+			"expression": "player",
+			"expect": {
+				"name": "Hero",
+				"stats": {
+					"str": 12,
+					"dex": 9
+				}
+			}
+		},
+		{
+			"id": "name-undeclared-is-null",
+			"expression": "missingBinding",
+			"expect": null
+		},
+		{
+			"id": "name-undeclared-host-global-is-null",
+			"expression": "globalThisLike",
+			"expect": null
+		},
+		{
+			"id": "name-process-is-not-a-host-global",
+			"expression": "process",
+			"expect": null
+		},
+		{
+			"id": "name-window-is-not-a-host-global",
+			"expression": "window",
+			"expect": null
+		},
+		{
+			"id": "name-document-is-not-a-host-global",
+			"expression": "document",
+			"expect": null
+		},
+		{
+			"id": "name-fetch-is-not-a-host-global",
+			"expression": "fetch",
+			"expect": null
+		},
+		{
+			"id": "name-member-of-unknown-is-null",
+			"expression": "process.env",
+			"expect": null
+		},
+		{
+			"id": "name-deep-member-of-unknown-is-null",
+			"expression": "process.env.SECRET",
+			"expect": null
+		},
+		{
+			"id": "member-object",
+			"expression": "player.name",
+			"expect": "Hero"
+		},
+		{
+			"id": "member-nested",
+			"expression": "player.stats.str",
+			"expect": 12
+		},
+		{
+			"id": "member-missing",
+			"expression": "player.missing",
+			"expect": null
+		},
+		{
+			"id": "member-of-null",
+			"expression": "nothing.anything",
+			"expect": null
+		},
+		{
+			"id": "member-of-null-deep",
+			"expression": "nothing.a.b.c",
+			"expect": null
+		},
+		{
+			"id": "member-of-number",
+			"expression": "hp.value",
+			"expect": null
+		},
+		{
+			"id": "member-of-number-tostring-is-not-callable",
+			"expression": "hp.toString",
+			"expect": null
+		},
+		{
+			"id": "member-array-length",
+			"expression": "effects.length",
+			"expect": 2
+		},
+		{
+			"id": "member-string-length",
+			"expression": "name.length",
+			"expect": 4
+		},
+		{
+			"id": "member-prototype-is-unreachable",
+			"expression": "player.__proto__",
+			"expect": null
+		},
+		{
+			"id": "member-constructor-is-unreachable",
+			"expression": "player.constructor",
+			"expect": null
+		},
+		{
+			"id": "member-prototype-key-is-unreachable",
+			"expression": "player.prototype",
+			"expect": null
+		},
+		{
+			"id": "index-array-first",
+			"expression": "effects[0]",
+			"expect": "burn"
+		},
+		{
+			"id": "index-array-last",
+			"expression": "effects[1]",
+			"expect": "slow"
+		},
+		{
+			"id": "index-array-negative",
+			"expression": "effects[-1]",
+			"expect": "slow"
+		},
+		{
+			"id": "index-array-out-of-range",
+			"expression": "effects[9]",
+			"expect": null
+		},
+		{
+			"id": "index-object-key",
+			"expression": "player[\"name\"]",
+			"expect": "Hero"
+		},
+		{
+			"id": "index-object-missing-key",
+			"expression": "player[\"nope\"]",
+			"expect": null
+		},
+		{
+			"id": "index-computed",
+			"expression": "effects[zero]",
+			"expect": "burn"
+		},
+		{
+			"id": "index-of-null",
+			"expression": "nothing[0]",
+			"expect": null
+		},
+		{
+			"id": "index-string-char",
+			"expression": "name[0]",
+			"expect": "H"
+		},
+		{
+			"id": "index-empty-array",
+			"expression": "empty[0]",
+			"expect": null
+		},
+		{
+			"id": "unary-not-true",
+			"expression": "!alive",
+			"expect": false
+		},
+		{
+			"id": "unary-not-false",
+			"expression": "!dead",
+			"expect": true
+		},
+		{
+			"id": "unary-not-null",
+			"expression": "!nothing",
+			"expect": true
+		},
+		{
+			"id": "unary-not-zero",
+			"expression": "!zero",
+			"expect": true
+		},
+		{
+			"id": "unary-not-blank",
+			"expression": "!blank",
+			"expect": true
+		},
+		{
+			"id": "unary-not-array",
+			"expression": "!effects",
+			"expect": false
+		},
+		{
+			"id": "unary-not-empty-array-is-truthy",
+			"expression": "!empty",
+			"expect": false
+		},
+		{
+			"id": "unary-double-not",
+			"expression": "!!hp",
+			"expect": true
+		},
+		{
+			"id": "unary-negate",
+			"expression": "-hp",
+			"expect": -35
+		},
+		{
+			"id": "unary-negate-string-is-null",
+			"expression": "-name",
+			"expect": null
+		},
+		{
+			"id": "unary-plus",
+			"expression": "+hp",
+			"expect": 35
+		},
+		{
+			"id": "unary-plus-string-is-null",
+			"expression": "+'12'",
+			"expect": null
+		},
+		{
+			"id": "unary-negate-null-is-null",
+			"expression": "-nothing",
+			"expect": null
+		},
+		{
+			"id": "add-numbers",
+			"expression": "hp + 5",
+			"expect": 40
+		},
+		{
+			"id": "add-string-concat-right",
+			"expression": "name + '!'",
+			"expect": "Hero!"
+		},
+		{
+			"id": "add-string-concat-left",
+			"expression": "'HP: ' + hp",
+			"expect": "HP: 35"
+		},
+		{
+			"id": "add-number-to-string",
+			"expression": "hp + name",
+			"expect": "35Hero"
+		},
+		{
+			"id": "add-bool-to-string",
+			"expression": "'v=' + alive",
+			"expect": "v=true"
+		},
+		{
+			"id": "add-null-to-string",
+			"expression": "'x' + nothing",
+			"expect": "x"
+		},
+		{
+			"id": "add-null-to-number-is-null",
+			"expression": "nothing + 1",
+			"expect": null
+		},
+		{
+			"id": "add-bool-to-number-is-null",
+			"expression": "alive + 1",
+			"expect": null
+		},
+		{
+			"id": "add-array-to-number-is-null",
+			"expression": "effects + 1",
+			"expect": null
+		},
+		{
+			"id": "add-array-to-string-is-null",
+			"expression": "effects + ''",
+			"expect": null
+		},
+		{
+			"id": "add-object-to-string-is-null",
+			"expression": "player + ''",
+			"expect": null
+		},
+		{
+			"id": "sub",
+			"expression": "hp - 5",
+			"expect": 30
+		},
+		{
+			"id": "sub-string-is-null",
+			"expression": "name - 1",
+			"expect": null
+		},
+		{
+			"id": "mul",
+			"expression": "hp * 2",
+			"expect": 70
+		},
+		{
+			"id": "div",
+			"expression": "hp / 5",
+			"expect": 7
+		},
+		{
+			"id": "div-by-zero-is-null",
+			"expression": "hp / 0",
+			"expect": null
+		},
+		{
+			"id": "div-by-zero-binding-is-null",
+			"expression": "hp / zero",
+			"expect": null
+		},
+		{
+			"id": "div-zero-by-zero-is-null",
+			"expression": "0 / 0",
+			"expect": null
+		},
+		{
+			"id": "mod",
+			"expression": "7 % 3",
+			"expect": 1
+		},
+		{
+			"id": "mod-by-zero-is-null",
+			"expression": "7 % 0",
+			"expect": null
+		},
+		{
+			"id": "precedence-mul-before-add",
+			"expression": "1 + 2 * 3",
+			"expect": 7
+		},
+		{
+			"id": "precedence-parens",
+			"expression": "(1 + 2) * 3",
+			"expect": 9
+		},
+		{
+			"id": "precedence-unary-before-mul",
+			"expression": "-2 * 3",
+			"expect": -6
+		},
+		{
+			"id": "percentage",
+			"expression": "round(hp / maxHp * 100)",
+			"expect": 35
+		},
+		{
+			"id": "chained-arithmetic",
+			"expression": "hp * 2 - maxHp / 4",
+			"expect": 45
+		},
+		{
+			"id": "lt-true",
+			"expression": "hp < 50",
+			"expect": true
+		},
+		{
+			"id": "lt-false",
+			"expression": "hp < 10",
+			"expect": false
+		},
+		{
+			"id": "lte-boundary",
+			"expression": "hp <= 35",
+			"expect": true
+		},
+		{
+			"id": "gt-true",
+			"expression": "hp > 10",
+			"expect": true
+		},
+		{
+			"id": "gte-boundary",
+			"expression": "hp >= 35",
+			"expect": true
+		},
+		{
+			"id": "lt-strings",
+			"expression": "'a' < 'b'",
+			"expect": true
+		},
+		{
+			"id": "gt-strings",
+			"expression": "'b' > 'a'",
+			"expect": true
+		},
+		{
+			"id": "lt-mixed-types-is-false",
+			"expression": "hp < '50'",
+			"expect": false
+		},
+		{
+			"id": "gt-mixed-types-is-false",
+			"expression": "name > 1",
+			"expect": false
+		},
+		{
+			"id": "lt-null-is-false",
+			"expression": "nothing < 1",
+			"expect": false
+		},
+		{
+			"id": "gt-null-is-false",
+			"expression": "nothing > -1",
+			"expect": false
+		},
+		{
+			"id": "lte-null-is-false",
+			"expression": "nothing <= 0",
+			"expect": false
+		},
+		{
+			"id": "lt-bool-is-false",
+			"expression": "alive < 2",
+			"expect": false
+		},
+		{
+			"id": "ratio-comparison",
+			"expression": "hp / maxHp < 0.5",
+			"expect": true
+		},
+		{
+			"id": "ratio-comparison-false",
+			"expression": "hp / maxHp < 0.2",
+			"expect": false
+		},
+		{
+			"id": "eq-strict-numbers",
+			"expression": "hp === 35",
+			"expect": true
+		},
+		{
+			"id": "eq-loose-is-strict",
+			"expression": "hp == 35",
+			"expect": true
+		},
+		{
+			"id": "eq-loose-string-number-is-false",
+			"expression": "hp == '35'",
+			"expect": false
+		},
+		{
+			"id": "eq-strict-string-number-is-false",
+			"expression": "hp === '35'",
+			"expect": false
+		},
+		{
+			"id": "neq-loose",
+			"expression": "hp != 36",
+			"expect": true
+		},
+		{
+			"id": "neq-strict",
+			"expression": "hp !== 36",
+			"expect": true
+		},
+		{
+			"id": "eq-null",
+			"expression": "nothing == null",
+			"expect": true
+		},
+		{
+			"id": "eq-null-to-zero-is-false",
+			"expression": "nothing == 0",
+			"expect": false
+		},
+		{
+			"id": "eq-null-to-blank-is-false",
+			"expression": "nothing == blank",
+			"expect": false
+		},
+		{
+			"id": "eq-bool",
+			"expression": "alive === true",
+			"expect": true
+		},
+		{
+			"id": "eq-bool-to-number-is-false",
+			"expression": "alive == 1",
+			"expect": false
+		},
+		{
+			"id": "eq-strings",
+			"expression": "name == 'Hero'",
+			"expect": true
+		},
+		{
+			"id": "eq-arrays-is-false",
+			"expression": "effects == effects",
+			"expect": false
+		},
+		{
+			"id": "neq-arrays-is-true",
+			"expression": "effects != effects",
+			"expect": true
+		},
+		{
+			"id": "eq-objects-is-false",
+			"expression": "player == player",
+			"expect": false
+		},
+		{
+			"id": "and-both-true",
+			"expression": "alive && hp < 50",
+			"expect": true
+		},
+		{
+			"id": "and-short-circuits-to-falsy-operand",
+			"expression": "dead && hp",
+			"expect": false
+		},
+		{
+			"id": "and-returns-right-operand",
+			"expression": "alive && hp",
+			"expect": 35
+		},
+		{
+			"id": "or-returns-left-truthy",
+			"expression": "hp || 99",
+			"expect": 35
+		},
+		{
+			"id": "or-returns-right-when-falsy",
+			"expression": "zero || 99",
+			"expect": 99
+		},
+		{
+			"id": "or-null-left",
+			"expression": "nothing || 'fallback'",
+			"expect": "fallback"
+		},
+		{
+			"id": "nullish-null-left",
+			"expression": "nothing ?? 5",
+			"expect": 5
+		},
+		{
+			"id": "nullish-false-left-is-kept",
+			"expression": "dead ?? 5",
+			"expect": false
+		},
+		{
+			"id": "nullish-zero-left-is-kept",
+			"expression": "zero ?? 5",
+			"expect": 0
+		},
+		{
+			"id": "nullish-blank-left-is-kept",
+			"expression": "blank ?? 'x'",
+			"expect": ""
+		},
+		{
+			"id": "nullish-chain",
+			"expression": "nothing ?? missingBinding ?? hp",
+			"expect": 35
+		},
+		{
+			"id": "and-binds-tighter-than-or",
+			"expression": "false || true && true",
+			"expect": true
+		},
+		{
+			"id": "relational-binds-tighter-than-equality",
+			"expression": "1 < 2 == true",
+			"expect": true
+		},
+		{
+			"id": "not-with-and",
+			"expression": "!dead && alive",
+			"expect": true
+		},
+		{
+			"id": "silent-false-regression-guard",
+			"expression": "alive && hp < 50",
+			"expect": true
+		},
+		{
+			"id": "silent-false-regression-guard-negative",
+			"expression": "dead || hp > 90",
+			"expect": false
+		},
+		{
+			"id": "ternary-true",
+			"expression": "alive ? 'up' : 'down'",
+			"expect": "up"
+		},
+		{
+			"id": "ternary-false",
+			"expression": "dead ? 'up' : 'down'",
+			"expect": "down"
+		},
+		{
+			"id": "ternary-numeric-test",
+			"expression": "hp ? 'has' : 'none'",
+			"expect": "has"
+		},
+		{
+			"id": "ternary-zero-test",
+			"expression": "zero ? 'has' : 'none'",
+			"expect": "none"
+		},
+		{
+			"id": "ternary-nested-right-assoc",
+			"expression": "hp <= 0 ? 'down' : hp / maxHp < 0.2 ? 'critical' : 'fine'",
+			"expect": "fine"
+		},
+		{
+			"id": "ternary-nested-picks-critical",
+			"expression": "hp <= 0 ? 'down' : hp / maxHp < 0.5 ? 'critical' : 'fine'",
+			"expect": "critical"
+		},
+		{
+			"id": "ternary-in-arithmetic",
+			"expression": "(alive ? 2 : 1) * hp",
+			"expect": 70
+		},
+		{
+			"id": "ternary-null-branch",
+			"expression": "dead ? hp : null",
+			"expect": null
+		},
+		{
+			"id": "abs-negative",
+			"expression": "abs(-3)",
+			"expect": 3
+		},
+		{
+			"id": "abs-positive",
+			"expression": "abs(3)",
+			"expect": 3
+		},
+		{
+			"id": "abs-string-is-null",
+			"expression": "abs(name)",
+			"expect": null
+		},
+		{
+			"id": "abs-null-is-null",
+			"expression": "abs(nothing)",
+			"expect": null
+		},
+		{
+			"id": "round-half-up",
+			"expression": "round(2.5)",
+			"expect": 3
+		},
+		{
+			"id": "round-down",
+			"expression": "round(2.4)",
+			"expect": 2
+		},
+		{
+			"id": "floor",
+			"expression": "floor(2.9)",
+			"expect": 2
+		},
+		{
+			"id": "ceil",
+			"expression": "ceil(2.1)",
+			"expect": 3
+		},
+		{
+			"id": "min-two",
+			"expression": "min(1, 2)",
+			"expect": 1
+		},
+		{
+			"id": "min-variadic",
+			"expression": "min(5, 3, 9, 1)",
+			"expect": 1
+		},
+		{
+			"id": "min-with-binding",
+			"expression": "min(hp, 10)",
+			"expect": 10
+		},
+		{
+			"id": "min-non-numeric-is-null",
+			"expression": "min(hp, name)",
+			"expect": null
+		},
+		{
+			"id": "max-two",
+			"expression": "max(1, 2)",
+			"expect": 2
+		},
+		{
+			"id": "max-variadic",
+			"expression": "max(5, 3, 9, 1)",
+			"expect": 9
+		},
+		{
+			"id": "clamp-inside",
+			"expression": "clamp(5, 0, 10)",
+			"expect": 5
+		},
+		{
+			"id": "clamp-low",
+			"expression": "clamp(-5, 0, 10)",
+			"expect": 0
+		},
+		{
+			"id": "clamp-high",
+			"expression": "clamp(50, 0, 10)",
+			"expect": 10
+		},
+		{
+			"id": "clamp-inverted-bounds-is-null",
+			"expression": "clamp(5, 10, 0)",
+			"expect": null
+		},
+		{
+			"id": "fixed-two-places",
+			"expression": "fixed(3.14159, 2)",
+			"expect": "3.14"
+		},
+		{
+			"id": "fixed-zero-places",
+			"expression": "fixed(3.7, 0)",
+			"expect": "4"
+		},
+		{
+			"id": "fixed-percentage",
+			"expression": "fixed(hp / maxHp * 100, 1)",
+			"expect": "35.0"
+		},
+		{
+			"id": "fixed-non-integer-digits-is-null",
+			"expression": "fixed(1, 1.5)",
+			"expect": null
+		},
+		{
+			"id": "fixed-negative-digits-is-null",
+			"expression": "fixed(1, -1)",
+			"expect": null
+		},
+		{
+			"id": "upper",
+			"expression": "upper(name)",
+			"expect": "HERO"
+		},
+		{
+			"id": "lower",
+			"expression": "lower(name)",
+			"expect": "hero"
+		},
+		{
+			"id": "upper-number-is-null",
+			"expression": "upper(hp)",
+			"expect": null
+		},
+		{
+			"id": "trim",
+			"expression": "trim(label)",
+			"expect": "padded"
+		},
+		{
+			"id": "pad-default-space",
+			"expression": "pad('7', 3)",
+			"expect": "  7"
+		},
+		{
+			"id": "pad-with-char",
+			"expression": "pad('7', 3, '0')",
+			"expect": "007"
+		},
+		{
+			"id": "pad-already-long-enough",
+			"expression": "pad('1234', 3, '0')",
+			"expect": "1234"
+		},
+		{
+			"id": "pad-multichar-fill",
+			"expression": "pad('x', 5, 'ab')",
+			"expect": "ababx"
+		},
+		{
+			"id": "slice-from",
+			"expression": "slice(name, 1)",
+			"expect": "ero"
+		},
+		{
+			"id": "slice-range",
+			"expression": "slice(name, 0, 2)",
+			"expect": "He"
+		},
+		{
+			"id": "slice-negative",
+			"expression": "slice(name, -2)",
+			"expect": "ro"
+		},
+		{
+			"id": "slice-non-string-is-null",
+			"expression": "slice(hp, 0)",
+			"expect": null
+		},
+		{
+			"id": "len-array",
+			"expression": "len(effects)",
+			"expect": 2
+		},
+		{
+			"id": "len-empty-array",
+			"expression": "len(empty)",
+			"expect": 0
+		},
+		{
+			"id": "len-string",
+			"expression": "len(name)",
+			"expect": 4
+		},
+		{
+			"id": "len-object",
+			"expression": "len(player)",
+			"expect": 2
+		},
+		{
+			"id": "len-number-is-null",
+			"expression": "len(hp)",
+			"expect": null
+		},
+		{
+			"id": "len-null-is-null",
+			"expression": "len(nothing)",
+			"expect": null
+		},
+		{
+			"id": "has-array-element",
+			"expression": "has(effects, 'burn')",
+			"expect": true
+		},
+		{
+			"id": "has-array-missing",
+			"expression": "has(effects, 'freeze')",
+			"expect": false
+		},
+		{
+			"id": "has-object-key",
+			"expression": "has(player, 'name')",
+			"expect": true
+		},
+		{
+			"id": "has-object-missing-key",
+			"expression": "has(player, 'nope')",
+			"expect": false
+		},
+		{
+			"id": "has-object-inherited-key-is-false",
+			"expression": "has(player, 'toString')",
+			"expect": false
+		},
+		{
+			"id": "has-string-substring",
+			"expression": "has(name, 'er')",
+			"expect": true
+		},
+		{
+			"id": "has-string-missing-substring",
+			"expression": "has(name, 'zz')",
+			"expect": false
+		},
+		{
+			"id": "join-default-sep",
+			"expression": "join(effects)",
+			"expect": "burn,slow"
+		},
+		{
+			"id": "join-custom-sep",
+			"expression": "join(effects, ' | ')",
+			"expect": "burn | slow"
+		},
+		{
+			"id": "join-empty",
+			"expression": "join(empty, ',')",
+			"expect": ""
+		},
+		{
+			"id": "join-non-array-is-null",
+			"expression": "join(name, ',')",
+			"expect": null
+		},
+		{
+			"id": "at-index",
+			"expression": "at(effects, 0)",
+			"expect": "burn"
+		},
+		{
+			"id": "at-negative",
+			"expression": "at(effects, -1)",
+			"expect": "slow"
+		},
+		{
+			"id": "at-out-of-range",
+			"expression": "at(effects, 9)",
+			"expect": null
+		},
+		{
+			"id": "at-string",
+			"expression": "at(name, 1)",
+			"expect": "e"
+		},
+		{
+			"id": "at-non-integer-is-null",
+			"expression": "at(effects, 0.5)",
+			"expect": null
+		},
+		{
+			"id": "str-number",
+			"expression": "str(hp)",
+			"expect": "35"
+		},
+		{
+			"id": "str-bool",
+			"expression": "str(alive)",
+			"expect": "true"
+		},
+		{
+			"id": "str-null-is-empty",
+			"expression": "str(nothing)",
+			"expect": ""
+		},
+		{
+			"id": "str-string",
+			"expression": "str(name)",
+			"expect": "Hero"
+		},
+		{
+			"id": "str-array",
+			"expression": "str(effects)",
+			"expect": "burn,slow"
+		},
+		{
+			"id": "str-object",
+			"expression": "str(player)",
+			"expect": "[object Object]"
+		},
+		{
+			"id": "num-string",
+			"expression": "num('12.5')",
+			"expect": 12.5
+		},
+		{
+			"id": "num-string-with-space",
+			"expression": "num(' 7 ')",
+			"expect": 7
+		},
+		{
+			"id": "num-non-numeric-string-is-null",
+			"expression": "num('abc')",
+			"expect": null
+		},
+		{
+			"id": "num-empty-string-is-null",
+			"expression": "num('')",
+			"expect": null
+		},
+		{
+			"id": "num-bool-true",
+			"expression": "num(true)",
+			"expect": 1
+		},
+		{
+			"id": "num-bool-false",
+			"expression": "num(false)",
+			"expect": 0
+		},
+		{
+			"id": "num-null-is-null",
+			"expression": "num(nothing)",
+			"expect": null
+		},
+		{
+			"id": "num-array-is-null",
+			"expression": "num(effects)",
+			"expect": null
+		},
+		{
+			"id": "bool-truthy-number",
+			"expression": "bool(hp)",
+			"expect": true
+		},
+		{
+			"id": "bool-zero",
+			"expression": "bool(zero)",
+			"expect": false
+		},
+		{
+			"id": "bool-blank",
+			"expression": "bool(blank)",
+			"expect": false
+		},
+		{
+			"id": "bool-null",
+			"expression": "bool(nothing)",
+			"expect": false
+		},
+		{
+			"id": "bool-array",
+			"expression": "bool(effects)",
+			"expect": true
+		},
+		{
+			"id": "bool-empty-array-is-truthy",
+			"expression": "bool(empty)",
+			"expect": true
+		},
+		{
+			"id": "nested-builtins",
+			"expression": "clamp(round(hp / maxHp * 100), 0, 90)",
+			"expect": 35
+		},
+		{
+			"id": "builtin-of-ternary",
+			"expression": "upper(alive ? name : 'none')",
+			"expect": "HERO"
+		},
+		{
+			"id": "ternary-of-builtin",
+			"expression": "len(effects) > 1 ? 'many' : 'one'",
+			"expect": "many"
+		},
+		{
+			"id": "concat-with-builtin",
+			"expression": "'lvl ' + fixed(hp / 10, 1)",
+			"expect": "lvl 3.5"
+		},
+		{
+			"id": "member-in-arithmetic",
+			"expression": "player.stats.str * 2",
+			"expect": 24
+		},
+		{
+			"id": "index-in-comparison",
+			"expression": "effects[0] == 'burn'",
+			"expect": true
+		},
+		{
+			"id": "deep-guarded-access",
+			"expression": "player.stats ? player.stats.dex : 0",
+			"expect": 9
+		},
+		{
+			"id": "guarded-missing-branch",
+			"expression": "player.gear ? player.gear.head : 'none'",
+			"expect": "none"
+		},
+		{
+			"id": "whitespace-is-insignificant",
+			"expression": "  hp   <   50  ",
+			"expect": true
+		},
+		{
+			"id": "newline-is-insignificant",
+			"expression": "hp\n<\n50",
+			"expect": true
+		},
+		{
+			"id": "string-binding-numeric-compare-is-false",
+			"expression": "v < 5",
+			"bindings": {
+				"v": "3"
+			},
+			"expect": false
+		},
+		{
+			"id": "bool-binding-in-condition",
+			"expression": "v",
+			"bindings": {
+				"v": true
+			},
+			"expect": true
+		},
+		{
+			"id": "nested-array-index",
+			"expression": "grid[1][0]",
+			"bindings": {
+				"grid": [
+					[
+						1,
+						2
+					],
+					[
+						3,
+						4
+					]
+				]
+			},
+			"expect": 3
+		},
+		{
+			"id": "array-of-objects",
+			"expression": "rows[0].id",
+			"bindings": {
+				"rows": [
+					{
+						"id": "a"
+					},
+					{
+						"id": "b"
+					}
+				]
+			},
+			"expect": "a"
+		},
+		{
+			"id": "len-of-nested",
+			"expression": "len(rows[0])",
+			"bindings": {
+				"rows": [
+					{
+						"id": "a"
+					}
+				]
+			},
+			"expect": 1
+		},
+		{
+			"id": "negative-number-binding",
+			"expression": "v < 0",
+			"bindings": {
+				"v": -3
+			},
+			"expect": true
+		},
+		{
+			"id": "float-precision",
+			"expression": "fixed(v, 2)",
+			"bindings": {
+				"v": 0.1
+			},
+			"expect": "0.10"
+		},
+		{
+			"id": "large-number",
+			"expression": "v > 1000000",
+			"bindings": {
+				"v": 2000000
+			},
+			"expect": true
+		},
+		{
+			"id": "string-with-markup-is-just-a-string",
+			"expression": "len(v)",
+			"bindings": {
+				"v": "<script>x()</script>"
+			},
+			"expect": 20
+		},
+		{
+			"id": "string-with-markup-compares-equal",
+			"expression": "v == '<b>hi</b>'",
+			"bindings": {
+				"v": "<b>hi</b>"
+			},
+			"expect": true
+		}
+	],
+	"rejects": [
+		{
+			"id": "reject-assignment",
+			"expression": "hp = 1",
+			"reason": "assignment is not in the grammar"
+		},
+		{
+			"id": "reject-compound-assignment",
+			"expression": "hp += 1",
+			"reason": "assignment is not in the grammar"
+		},
+		{
+			"id": "reject-increment",
+			"expression": "hp++",
+			"reason": "increment is not in the grammar"
+		},
+		{
+			"id": "reject-decrement",
+			"expression": "--hp",
+			"reason": "decrement is not in the grammar"
+		},
+		{
+			"id": "reject-sequence",
+			"expression": "hp, name",
+			"reason": "the comma operator is not in the grammar"
+		},
+		{
+			"id": "reject-statement-separator",
+			"expression": "hp; drop()",
+			"reason": "statements are not in the grammar"
+		},
+		{
+			"id": "reject-arrow",
+			"expression": "(x) => x",
+			"reason": "arrow functions are not in the grammar"
+		},
+		{
+			"id": "reject-iife",
+			"expression": "(() => 1)()",
+			"reason": "arrow functions are not in the grammar"
+		},
+		{
+			"id": "reject-function-keyword",
+			"expression": "function () { return 1 }",
+			"reason": "'function' is refused by name"
+		},
+		{
+			"id": "reject-new",
+			"expression": "new Date()",
+			"reason": "'new' is refused by name"
+		},
+		{
+			"id": "reject-typeof",
+			"expression": "typeof hp",
+			"reason": "'typeof' is refused by name"
+		},
+		{
+			"id": "reject-instanceof",
+			"expression": "hp instanceof Object",
+			"reason": "'instanceof' is refused by name"
+		},
+		{
+			"id": "reject-in",
+			"expression": "'a' in player",
+			"reason": "'in' is refused by name"
+		},
+		{
+			"id": "reject-delete",
+			"expression": "delete player.name",
+			"reason": "'delete' is refused by name"
+		},
+		{
+			"id": "reject-void",
+			"expression": "void 0",
+			"reason": "'void' is refused by name"
+		},
+		{
+			"id": "reject-this",
+			"expression": "this",
+			"reason": "'this' is refused by name"
+		},
+		{
+			"id": "reject-globalthis",
+			"expression": "globalThis",
+			"reason": "'globalThis' is refused by name"
+		},
+		{
+			"id": "reject-eval",
+			"expression": "eval('1')",
+			"reason": "'eval' is refused by name"
+		},
+		{
+			"id": "reject-arguments",
+			"expression": "arguments",
+			"reason": "'arguments' is refused by name"
+		},
+		{
+			"id": "reject-import",
+			"expression": "import('x')",
+			"reason": "'import' is refused by name"
+		},
+		{
+			"id": "reject-await",
+			"expression": "await x",
+			"reason": "'await' is refused by name"
+		},
+		{
+			"id": "reject-class",
+			"expression": "class X {}",
+			"reason": "'class' is refused by name"
+		},
+		{
+			"id": "reject-method-call",
+			"expression": "hp.toString()",
+			"reason": "a binding value is not callable"
+		},
+		{
+			"id": "reject-array-method-call",
+			"expression": "effects.map(x)",
+			"reason": "a binding value is not callable"
+		},
+		{
+			"id": "reject-constructor-call",
+			"expression": "player.constructor()",
+			"reason": "a binding value is not callable"
+		},
+		{
+			"id": "reject-binding-call",
+			"expression": "hp()",
+			"reason": "'hp' is not a builtin"
+		},
+		{
+			"id": "reject-fetch-call",
+			"expression": "fetch('https://x')",
+			"reason": "'fetch' is not a builtin"
+		},
+		{
+			"id": "reject-require-call",
+			"expression": "require('fs')",
+			"reason": "'require' is not a builtin"
+		},
+		{
+			"id": "reject-settimeout-call",
+			"expression": "setTimeout(x, 0)",
+			"reason": "'setTimeout' is not a builtin"
+		},
+		{
+			"id": "reject-process-call",
+			"expression": "process.exit()",
+			"reason": "a binding value is not callable"
+		},
+		{
+			"id": "reject-call-result-call",
+			"expression": "str(hp)()",
+			"reason": "a builtin result is not callable"
+		},
+		{
+			"id": "reject-template-literal",
+			"expression": "`hp is ${hp}`",
+			"reason": "template literals are not in the grammar"
+		},
+		{
+			"id": "reject-regex-literal",
+			"expression": "/x/.test(name)",
+			"reason": "regex literals are not in the grammar"
+		},
+		{
+			"id": "reject-object-literal",
+			"expression": "{ a: 1 }",
+			"reason": "object literals are not in the grammar"
+		},
+		{
+			"id": "reject-array-literal",
+			"expression": "[1, 2]",
+			"reason": "array literals are not in the grammar"
+		},
+		{
+			"id": "reject-block",
+			"expression": "{ hp }",
+			"reason": "blocks are not in the grammar"
+		},
+		{
+			"id": "reject-bitwise-and",
+			"expression": "hp & 1",
+			"reason": "bitwise operators are not in the grammar"
+		},
+		{
+			"id": "reject-bitwise-or",
+			"expression": "hp | 1",
+			"reason": "bitwise operators are not in the grammar"
+		},
+		{
+			"id": "reject-bitwise-xor",
+			"expression": "hp ^ 1",
+			"reason": "bitwise operators are not in the grammar"
+		},
+		{
+			"id": "reject-bitwise-not",
+			"expression": "~hp",
+			"reason": "bitwise operators are not in the grammar"
+		},
+		{
+			"id": "reject-shift",
+			"expression": "hp << 1",
+			"reason": "bitwise operators are not in the grammar"
+		},
+		{
+			"id": "reject-optional-chain",
+			"expression": "player?.name",
+			"reason": "optional chaining is not in the grammar"
+		},
+		{
+			"id": "reject-optional-call",
+			"expression": "str?.(hp)",
+			"reason": "optional chaining is not in the grammar"
+		},
+		{
+			"id": "reject-spread",
+			"expression": "min(...effects)",
+			"reason": "spread is not in the grammar"
+		},
+		{
+			"id": "reject-exponent-operator",
+			"expression": "hp ** 2",
+			"reason": "the exponent operator is not in the grammar"
+		},
+		{
+			"id": "reject-handlebars-if",
+			"expression": "#if alive",
+			"reason": "block helpers do not exist"
+		},
+		{
+			"id": "reject-handlebars-each",
+			"expression": "#each effects",
+			"reason": "block helpers do not exist"
+		},
+		{
+			"id": "reject-empty",
+			"expression": "",
+			"reason": "an empty expression is not a member of the grammar"
+		},
+		{
+			"id": "reject-whitespace-only",
+			"expression": "   ",
+			"reason": "an empty expression is not a member of the grammar"
+		},
+		{
+			"id": "reject-dangling-operator",
+			"expression": "hp +",
+			"reason": "unexpected end of expression"
+		},
+		{
+			"id": "reject-dangling-ternary",
+			"expression": "alive ? 1",
+			"reason": "expected ':'"
+		},
+		{
+			"id": "reject-unclosed-paren",
+			"expression": "(hp",
+			"reason": "expected ')'"
+		},
+		{
+			"id": "reject-unclosed-bracket",
+			"expression": "effects[0",
+			"reason": "expected ']'"
+		},
+		{
+			"id": "reject-unbalanced-close-paren",
+			"expression": "hp)",
+			"reason": "unexpected token ')'"
+		},
+		{
+			"id": "reject-unterminated-string",
+			"expression": "'abc",
+			"reason": "unterminated string literal"
+		},
+		{
+			"id": "reject-builtin-too-few-args",
+			"expression": "round()",
+			"reason": "'round' takes 1 argument"
+		},
+		{
+			"id": "reject-builtin-too-many-args",
+			"expression": "round(1, 2)",
+			"reason": "'round' takes 1 argument"
+		},
+		{
+			"id": "reject-clamp-arity",
+			"expression": "clamp(1, 2)",
+			"reason": "'clamp' takes 3 arguments"
+		},
+		{
+			"id": "reject-property-name-missing",
+			"expression": "player.",
+			"reason": "expected a property name after '.'"
+		},
+		{
+			"id": "reject-numeric-property-name",
+			"expression": "player.1",
+			"reason": "expected a property name after '.'"
+		},
+		{
+			"id": "reject-double-dot",
+			"expression": "player..name",
+			"reason": "expected a property name after '.'"
+		},
+		{
+			"id": "reject-stray-hash",
+			"expression": "hp # 1",
+			"reason": "block helpers do not exist"
+		},
+		{
+			"id": "reject-stray-at",
+			"expression": "hp @ 1",
+			"reason": "unexpected character '@'"
+		},
+		{
+			"id": "reject-stray-backslash",
+			"expression": "hp \\ 1",
+			"reason": "unexpected character '\\'"
+		},
+		{
+			"id": "reject-node-limit",
+			"expression": "1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1",
+			"reason": "exceeds the node limit"
+		}
+	],
+	"interpolation": [
+		{
+			"id": "interp-no-sites",
+			"text": "Health is fine.",
+			"segments": null
+		},
+		{
+			"id": "interp-single-site",
+			"text": "{{ hp }}",
+			"segments": [
+				{
+					"kind": "expr",
+					"source": "hp"
+				}
+			]
+		},
+		{
+			"id": "interp-surrounded",
+			"text": "Health: {{ hp }}/{{ maxHp }} left",
+			"segments": [
+				{
+					"kind": "literal",
+					"value": "Health: "
+				},
+				{
+					"kind": "expr",
+					"source": "hp"
+				},
+				{
+					"kind": "literal",
+					"value": "/"
+				},
+				{
+					"kind": "expr",
+					"source": "maxHp"
+				},
+				{
+					"kind": "literal",
+					"value": " left"
+				}
+			]
+		},
+		{
+			"id": "interp-body-is-trimmed",
+			"text": "{{    hp   }}",
+			"segments": [
+				{
+					"kind": "expr",
+					"source": "hp"
+				}
+			]
+		},
+		{
+			"id": "interp-no-inner-whitespace",
+			"text": "{{hp}}",
+			"segments": [
+				{
+					"kind": "expr",
+					"source": "hp"
+				}
+			]
+		},
+		{
+			"id": "interp-expression-body",
+			"text": "{{ round(hp / maxHp * 100) }}%",
+			"segments": [
+				{
+					"kind": "expr",
+					"source": "round(hp / maxHp * 100)"
+				},
+				{
+					"kind": "literal",
+					"value": "%"
+				}
+			]
+		},
+		{
+			"id": "interp-ternary-body",
+			"text": "{{ hp <= 0 ? 'down' : 'up' }}",
+			"segments": [
+				{
+					"kind": "expr",
+					"source": "hp <= 0 ? 'down' : 'up'"
+				}
+			]
+		},
+		{
+			"id": "interp-escape-emits-literal-delimiter",
+			"text": "Write \\{{ hp }} to interpolate.",
+			"segments": [
+				{
+					"kind": "literal",
+					"value": "Write {{ hp }} to interpolate."
+				}
+			]
+		},
+		{
+			"id": "interp-escape-then-real-site",
+			"text": "\\{{ hp }} renders {{ hp }}",
+			"segments": [
+				{
+					"kind": "literal",
+					"value": "{{ hp }} renders "
+				},
+				{
+					"kind": "expr",
+					"source": "hp"
+				}
+			]
+		},
+		{
+			"id": "interp-unclosed-open-is-literal",
+			"text": "Handlebars uses {{ as an opener.",
+			"segments": null
+		},
+		{
+			"id": "interp-unclosed-after-a-real-site",
+			"text": "{{ hp }} then a bare {{ opener",
+			"segments": [
+				{
+					"kind": "expr",
+					"source": "hp"
+				},
+				{
+					"kind": "literal",
+					"value": " then a bare {{ opener"
+				}
+			]
+		},
+		{
+			"id": "interp-close-without-open-is-literal",
+			"text": "closing }} on its own",
+			"segments": null
+		},
+		{
+			"id": "interp-single-braces-are-never-special",
+			"text": "const style = { margin: 0 };",
+			"segments": null
+		},
+		{
+			"id": "interp-json-sample-survives",
+			"text": "{\"a\": {\"b\": 1}}",
+			"segments": null
+		},
+		{
+			"id": "interp-backslash-elsewhere-is-literal",
+			"text": "C:\\Users\\home and a \\n escape",
+			"segments": null
+		},
+		{
+			"id": "interp-backslash-before-site-is-the-escape",
+			"text": "path\\{{ hp }}",
+			"segments": [
+				{
+					"kind": "literal",
+					"value": "path{{ hp }}"
+				}
+			]
+		},
+		{
+			"id": "interp-double-backslash-then-site",
+			"text": "path\\\\{{ hp }}",
+			"segments": [
+				{
+					"kind": "literal",
+					"value": "path\\{{ hp }}"
+				}
+			]
+		},
+		{
+			"id": "interp-adjacent-sites",
+			"text": "{{ hp }}{{ maxHp }}",
+			"segments": [
+				{
+					"kind": "expr",
+					"source": "hp"
+				},
+				{
+					"kind": "expr",
+					"source": "maxHp"
+				}
+			]
+		},
+		{
+			"id": "interp-site-closes-at-first-close",
+			"text": "{{ hp }} }}",
+			"segments": [
+				{
+					"kind": "expr",
+					"source": "hp"
+				},
+				{
+					"kind": "literal",
+					"value": " }}"
+				}
+			]
+		},
+		{
+			"id": "interp-empty-site-is-an-error",
+			"text": "{{ }}",
+			"invalid": true
+		},
+		{
+			"id": "interp-unparseable-site-is-an-error",
+			"text": "{{ hp = 1 }}",
+			"invalid": true
+		},
+		{
+			"id": "interp-block-helper-is-an-error",
+			"text": "{{#if alive}}yes{{/if}}",
+			"invalid": true
+		},
+		{
+			"id": "interp-method-call-site-is-an-error",
+			"text": "{{ hp.toString() }}",
+			"invalid": true
+		},
+		{
+			"id": "interp-nested-open-is-an-error",
+			"text": "{{ hp {{ maxHp }} }}",
+			"invalid": true
+		}
+	],
+	"safety": [
+		{
+			"id": "safety-value-cannot-become-markup",
+			"text": "{{ evil }}",
+			"bindings": {
+				"evil": "<script>alert(1)</script>"
+			},
+			"rendered": "<script>alert(1)</script>",
+			"html": "&lt;script&gt;alert(1)&lt;/script&gt;",
+			"note": "A naive string substitution into the source before parsing would emit a live <script>. Segmentation runs in the sanitizer, so the value lands in a leaf that has no children and no props."
+		},
+		{
+			"id": "safety-value-cannot-close-its-own-node",
+			"text": "{{ evil }}",
+			"bindings": {
+				"evil": "</p><script>alert(1)</script><p>"
+			},
+			"rendered": "</p><script>alert(1)</script><p>",
+			"html": "&lt;/p&gt;&lt;script&gt;alert(1)&lt;/script&gt;&lt;p&gt;",
+			"note": "The value tries to escape its text node by closing the enclosing element. It cannot: the tree is already built."
+		},
+		{
+			"id": "safety-split-payload-across-two-sites",
+			"text": "{{ a }}{{ b }}",
+			"bindings": {
+				"a": "<img src=x onerror=",
+				"b": "alert(1)>"
+			},
+			"rendered": "<img src=x onerror=alert(1)>",
+			"html": "&lt;img src=x onerror=alert(1)&gt;",
+			"note": "Each half is innocent and the join is not. Concatenation happens over resolved segment text, never over source markup."
+		},
+		{
+			"id": "safety-value-containing-a-site-is-not-re-interpolated",
+			"text": "{{ nested }}",
+			"bindings": {
+				"nested": "{{ secret }}",
+				"secret": "leaked"
+			},
+			"rendered": "{{ secret }}",
+			"html": "{{ secret }}",
+			"note": "A re-scanning implementation would resolve the inner site. There is no path from a binding value back into the tokenizer."
+		},
+		{
+			"id": "safety-value-containing-an-escape-is-literal",
+			"text": "{{ nested }}",
+			"bindings": {
+				"nested": "\\{{ hp }}",
+				"hp": 1
+			},
+			"rendered": "\\{{ hp }}",
+			"html": "\\{{ hp }}",
+			"note": "Escape processing is a property of the source text, not of resolved values."
+		},
+		{
+			"id": "safety-value-containing-an-entity-is-not-decoded",
+			"text": "{{ evil }}",
+			"bindings": {
+				"evil": "&lt;script&gt;"
+			},
+			"rendered": "&lt;script&gt;",
+			"html": "&amp;lt;script&amp;gt;",
+			"note": "Entity decoding happens in the tokenizer, before segmentation. A value that looks like an entity stays text."
+		},
+		{
+			"id": "safety-null-renders-empty",
+			"text": "[{{ nothing }}]",
+			"bindings": {
+				"nothing": null
+			},
+			"rendered": "[]",
+			"html": "[]"
+		},
+		{
+			"id": "safety-undeclared-renders-empty",
+			"text": "[{{ undeclared }}]",
+			"bindings": {},
+			"rendered": "[]",
+			"html": "[]"
+		},
+		{
+			"id": "safety-object-does-not-leak-structure",
+			"text": "{{ player }}",
+			"bindings": {
+				"player": {
+					"secret": "s"
+				}
+			},
+			"rendered": "[object Object]",
+			"html": "[object Object]"
+		},
+		{
+			"id": "safety-literal-delimiter-in-prose-survives-unchanged",
+			"text": "Handlebars uses {{ as an opener; xript borrowed it.",
+			"bindings": {
+				"hp": 1
+			},
+			"rendered": "Handlebars uses {{ as an opener; xript borrowed it.",
+			"html": "Handlebars uses {{ as an opener; xript borrowed it.",
+			"note": "An unclosed opener is prose. An implementation that errored here would be unusable in documentation fragments."
+		},
+		{
+			"id": "safety-escaped-delimiter-in-prose-survives-unchanged",
+			"text": "Write \\{{ hp }} to interpolate a binding.",
+			"bindings": {
+				"hp": 1
+			},
+			"rendered": "Write {{ hp }} to interpolate a binding.",
+			"html": "Write {{ hp }} to interpolate a binding."
+		},
+		{
+			"id": "safety-windows-path-survives-unchanged",
+			"text": "Open C:\\Users\\home\\notes.txt now.",
+			"bindings": {},
+			"rendered": "Open C:\\Users\\home\\notes.txt now.",
+			"html": "Open C:\\Users\\home\\notes.txt now."
+		}
+	],
+	"attributes": [
+		{
+			"id": "attr-interpolation-is-not-a-site",
+			"format": "text/html",
+			"source": "<a href=\"{{ target }}\">go</a>",
+			"bindings": {
+				"target": "javascript:alert(1)"
+			},
+			"expectedHtml": "<a href=\"{{ target }}\">go</a>",
+			"note": "Attribute values are never segmented. The delimiter stays literal and the binding never reaches the URI sink."
+		},
+		{
+			"id": "attr-split-scheme-is-not-a-site",
+			"format": "text/html",
+			"source": "<a href=\"{{ scheme }}:{{ rest }}\">go</a>",
+			"bindings": {
+				"scheme": "javascript",
+				"rest": "alert(1)"
+			},
+			"expectedHtml": "<a href=\"{{ scheme }}:{{ rest }}\">go</a>",
+			"note": "Neither half is substituted, so the sink never sees an assembled value it cannot judge."
+		},
+		{
+			"id": "attr-literal-scheme-prefix-is-not-a-site",
+			"format": "text/html",
+			"source": "<a href=\"javascript:{{ payload }}\">go</a>",
+			"bindings": {
+				"payload": "alert(1)"
+			},
+			"expectedHtml": "<a>go</a>",
+			"note": "The URI sink rejects the whole value on its own merits, exactly as it does today."
+		},
+		{
+			"id": "attr-style-slot-is-not-a-site",
+			"format": "text/html",
+			"source": "<div style=\"width:{{ w }}px\">x</div>",
+			"bindings": {
+				"w": "1px; background: url(javascript:alert(1))"
+			},
+			"expectedHtml": "<div style=\"width:{{ w }}px\">x</div>",
+			"note": "CSS injection through a value slot is not available, because the slot does not exist."
+		},
+		{
+			"id": "attr-text-child-still-interpolates",
+			"format": "text/html",
+			"source": "<p>hp is {{ hp }}</p>",
+			"bindings": {
+				"hp": 35
+			},
+			"expectedHtml": "<p>hp is 35</p>",
+			"note": "Text nodes are the only interpolation position, and they still work under the same parse."
+		},
+		{
+			"id": "attr-data-bind-carries-the-whole-computed-value",
+			"format": "text/html",
+			"source": "<a data-bind=\"url\">link</a>",
+			"bindings": {
+				"url": "https://example.com/a"
+			},
+			"expectedHtml": "<a data-bind=\"url\">https://example.com/a</a>",
+			"note": "The wholesale surface for a computed value is data-bind through the node's bindTo prop: one expression, one complete value, one sink call."
+		}
+	],
+	"conditions": [
+		{
+			"id": "cond-two-nodes-same-expression-are-distinct-entries",
+			"format": "text/html",
+			"source": "<p data-if=\"alive\">a</p><p data-if=\"alive\">b</p>",
+			"bindings": {
+				"alive": true
+			},
+			"expected": [
+				{
+					"path": [
+						0
+					],
+					"expression": "alive",
+					"visible": true
+				},
+				{
+					"path": [
+						1
+					],
+					"expression": "alive",
+					"visible": true
+				}
+			],
+			"note": "The legacy visibility map is keyed by expression text and collides here. The conditions array is keyed by tree position."
+		},
+		{
+			"id": "cond-nested-node-path",
+			"format": "text/html",
+			"source": "<div><span data-if=\"hp < 50\">low</span></div>",
+			"bindings": {
+				"hp": 35
+			},
+			"expected": [
+				{
+					"path": [
+						0,
+						0
+					],
+					"expression": "hp < 50",
+					"visible": true
+				}
+			]
+		},
+		{
+			"id": "cond-compound-expression-no-longer-silently-false",
+			"format": "text/html",
+			"source": "<p data-if=\"alive && hp < 50\">warn</p>",
+			"bindings": {
+				"alive": true,
+				"hp": 35
+			},
+			"expected": [
+				{
+					"path": [
+						0
+					],
+					"expression": "alive && hp < 50",
+					"visible": true
+				}
+			],
+			"note": "This is the five-way-drift case: the Rust regex ladder and the ratatui comparison helper both returned false here."
+		},
+		{
+			"id": "cond-unparseable-expression-is-false",
+			"format": "text/html",
+			"source": "<p data-if=\"hp = 1\">x</p>",
+			"bindings": {
+				"hp": 35
+			},
+			"expected": [
+				{
+					"path": [
+						0
+					],
+					"expression": "hp = 1",
+					"visible": false
+				}
+			]
+		}
+	],
+	"bind": [
+		{
+			"id": "bind-bare-name-is-writable",
+			"expression": "hp",
+			"kind": "name"
+		},
+		{
+			"id": "bind-member-is-read-only",
+			"expression": "player.name",
+			"kind": "expression"
+		},
+		{
+			"id": "bind-arithmetic-is-read-only",
+			"expression": "round(hp / maxHp * 100)",
+			"kind": "expression"
+		},
+		{
+			"id": "bind-parenthesized-name-is-read-only",
+			"expression": "(hp)",
+			"kind": "name",
+			"note": "Parentheses are not an AST node; the classification follows the expression, not its spelling."
+		},
+		{
+			"id": "bind-ternary-is-read-only",
+			"expression": "alive ? name : 'none'",
+			"kind": "expression"
+		},
+		{
+			"id": "bind-index-is-read-only",
+			"expression": "effects[0]",
+			"kind": "expression"
+		}
+	]
+}

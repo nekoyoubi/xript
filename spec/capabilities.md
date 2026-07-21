@@ -164,7 +164,37 @@ Mode is a lattice and scope is a tree; flattening mode into the scope tree (e.g.
 
 A capability scope node **MUST NOT** be more privileged than any of its dotted ancestors. Formally: for every grant `g` a host issues, and for every capability `c` that `g` subsumes by prefix (`c == g.scope` or `c.startsWith(g.scope + ".")`), the access `g` confers on `c` MUST be one the host considers acceptable for the entire subtree rooted at `g.scope`. A child scope MUST NOT name an escalation that its parent would not also grant; if a sub-scope needs to confer strictly MORE than its parent (e.g. a privileged `run.command.shell`), the host MUST re-root that authority under a SEPARATE top-level scope rather than nest it where a broad parent grant would silently sweep it in (re-rooting beats hoisting). The mode axis composes monotonically with this: a `write:` grant on a scope MUST be treated as conferring at least the `read:` authority on every node in that subtree, never less.
 
+**A worked example: a destructive command.** An editor exposes `editor.text` for ordinary document edits and wants one contributed action, "strip all formatting", to require more than that. Writing it as `editor.text.destructive` looks like a narrowing and is the opposite: every mod already holding `write:editor.text` subsumes it by prefix, so the scope denies nothing. Re-rooted as a separate top-level `editor-destructive`, granting `write:editor.text` gets the host every ordinary text command and no destructive one, and the two scopes are granted independently because they are independent authorities. The scope lands on the **export** that performs the action (`entry.exports.stripFormatting.capability`), so every command naming that export inherits it and no manifest label can claim otherwise. See [commands.md](./commands.md#capability-gating) for the surface this shape exists to serve.
+
 **This invariant CANNOT be statically enforced.** The match predicate is purely structural — it knows that `run` subsumes `run.command`, but it cannot know whether `run.command` is semantically a narrowing of `run` or an escalation smuggled under a benign-looking name. No runtime gate, no schema pattern, and no tooling check can verify that a host's scope tree is monotonic, because monotonicity is a property of what each scope MEANS to the host, not of the strings. It therefore becomes a PER-HOST AUDIT DISCIPLINE: when a host author adds a child scope, they MUST verify by inspection that no ancestor grant would confer authority over the child that the child's name understates. `xript lint` MAY surface candidate violations heuristically (e.g. flag child segments named `admin`/`shell`/`exec`/`root`/`sudo`/`all` whose parent is broadly granted) as warnings, but a clean lint is NOT a proof of monotonicity and MUST NOT be represented as one.
+
+### Runtime-configured scopes
+
+Some of what a host gates does not exist when the manifest is written. Filesystem roots the user picks, connected accounts, opened projects: the host knows the *shape* of the authority ahead of time and the *instances* only at run time.
+
+The scope tree already handles this, because prefix subsumption is structural and consults no declaration. A host declares the parent and grants a child it never wrote down:
+
+```json
+{
+  "capabilities": {
+    "fs.workspace": {
+      "description": "A configured workspace root.",
+      "instances": {
+        "description": "One child per workspace the user has configured.",
+        "example": "fs.workspace.my-project"
+      }
+    }
+  }
+}
+```
+
+The host then grants `write:fs.workspace.my-project` for a root the manifest could never have named, and every rule in [the match predicate](#the-match-predicate) applies unchanged: the grant satisfies a require on that exact scope, denies one on a *sibling* instance, and a grant on the parent `fs.workspace` still sweeps the whole subtree. Nothing about matching is special-cased for dynamic children — there is nothing to special-case.
+
+What `instances` adds is **discoverability, not enforcement**. Without it a mod author reading the manifest sees `fs.workspace` and cannot tell whether `fs.workspace.my-project` is a meaningful thing to request or a scope they invented; and the generated docs describe only the static half of the surface. Declaring it says the children are real, says what one of them corresponds to, and gives tooling something to show. It resolves nothing and validates nothing: `example` is illustrative, and no runtime reads this block.
+
+It also flips a lint. A mod requesting a scope strictly below a declared node that does **not** declare `instances` is naming something the host never modelled, which `xript lint` reports as `dynamic-scope-undeclared`. Declaring `instances` on the parent is the statement that makes such a request intentional, and silences it.
+
+**The monotonic-privilege invariant applies to the whole subtree.** Granting a parent scope sweeps every instance under it, present and future — including ones created after the grant was issued. A host that wants per-instance authority must grant per instance and never hand out the parent; a host that grants the parent has granted every workspace the user will ever configure. That is the correct reading of subsumption and it is worth stating plainly, because "grant the parent, it's just one workspace today" is exactly how a broad grant is issued by accident.
 
 ## Capability Discovery
 
@@ -178,13 +208,27 @@ A modder writing a script should be able to look at the generated types or docs 
 
 ## Observability
 
-Hosts may observe capability-gated activity through an opt-in **audit channel** on the runtime options. When set, the runtime emits one audit event *before* each allowed host-binding invocation, carrying the binding's qualified name, the capability it required (or none if the binding declares no capability), and a wall-clock timestamp in epoch milliseconds:
+Hosts may observe capability-gated activity through an opt-in **audit channel** on the runtime options. The channel carries **capability decisions**: the binding or export the decision concerns, the capability it required (or none if none is declared), a wall-clock timestamp in epoch milliseconds, and a `decision` naming which kind of decision it was.
+
+When set, the runtime emits one `invoke` event *before* each allowed host-binding invocation:
 
 ```jsonc
-{ "binding": "app.setClipboard", "capability": "clipboard-write", "at": 1730000000000 }
+{ "binding": "app.setClipboard", "capability": "clipboard-write", "at": 1730000000000, "decision": "invoke" }
 ```
 
-The channel reports **allowed** invocations only. A denied (ungranted-capability) call throws before invocation and is already observable as the thrown capability-denied error; it is not double-reported as an audit event. Emission is fire-and-forget: a full or dropped channel never breaks script execution. Omitting the channel disables auditing with zero overhead. This is a host-side observation seam (mechanism only); grant policy and UX stay host-side per the default-deny philosophy.
+A denied host-binding call is **not** reported. It throws before invocation and is already observable as the thrown capability-denied error; double-reporting it would add nothing.
+
+A denied **hook fill** is reported, because nothing else surfaces it. A mod fills a hook slot by naming one of its own exports, and hook dispatch swallows per-handler failures so that one bad mod cannot break a hook for every other mod. That swallowing is deliberate, but it means a fill naming an export the mod has no right to reach is otherwise indistinguishable from a handler that legitimately returned nothing. The runtime therefore emits a `denied` event carrying the owning mod and the hook alongside the refused export:
+
+```jsonc
+{ "binding": "onSave", "capability": "persistence.disk", "at": 1730000000000, "decision": "denied", "mod": "gated-mod", "hook": "on-save" }
+```
+
+This is checked at fire time, not load time. A fill may name an export owned by a mod that has not loaded yet, so a strict load-time check would report false denials that depend only on load order.
+
+A denied hook fill is reported **once per `(mod, handler, hook)`** for the lifetime of the runtime. A hook firing sixty times a second reports its denial once, not sixty times a second. A handler that throws for its own reasons is **not** reported: that is the mod's bug, not a capability decision, and conflating the two would make the channel useless for auditing.
+
+The `decision`, `mod`, and `hook` fields are additive. A consumer reading only `binding`, `capability`, and `at` keeps working. Emission is fire-and-forget: a full, dropped, or throwing channel never breaks script execution or hook dispatch. Omitting the channel disables auditing with zero overhead. This is a host-side observation seam (mechanism only); grant policy and UX stay host-side per the default-deny philosophy.
 
 ## Host Runtime Options
 

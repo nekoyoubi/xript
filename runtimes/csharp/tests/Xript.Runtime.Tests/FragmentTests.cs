@@ -310,7 +310,7 @@ public class FragmentTests
     {
         var input = "<div data-if=\"health < 50\" class=\"warning\">low!</div>";
         var result = FragmentProcessor.SanitizeHtml(input);
-        Assert.Equal(input, result);
+        Assert.Equal("<div data-if=\"health &lt; 50\" class=\"warning\">low!</div>", result);
     }
 
     [Fact]
@@ -752,7 +752,8 @@ public class FragmentTests
         Assert.Equal(".health-value", ops[0].Selector);
         Assert.Equal("addClass", ops[1].Op);
         Assert.Equal(".health-bar", ops[1].Selector);
-        Assert.Equal("danger", ops[1].Value?.ToString());
+        Assert.Equal("danger", PropValue.Stringify(ops[1].Value!));
+        Assert.Equal(".health-bar", Assert.IsType<NodeRef.Selector>(ops[1].Target).Value);
     }
 
     [Fact]

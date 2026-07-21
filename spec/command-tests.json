@@ -1,0 +1,544 @@
+{
+	"$comment": "Shared conformance corpus for the 'application/x-xript-command' slot kind. Every runtime replays it so the four implementations agree on branch ordering, fill normalization, bound-argument merging, and resolution order. Errors are matched by 'code', not by message text, so a runtime may word its diagnostic idiomatically.",
+	"commandAccept": "application/x-xript-command",
+	"roleAccept": "application/x-xript-role",
+	"hookAccept": "application/x-xript-hook",
+	"branchOrder": [
+		{
+			"description": "a role accept claims the fill even when the slot also accepts commands (role is checked first)",
+			"accepts": ["application/x-xript-command", "application/x-xript-role"],
+			"fill": { "fns": { "query": "runQuery" } },
+			"expected": "role"
+		},
+		{
+			"description": "a hook accept claims the fill ahead of a command accept (hook is checked second)",
+			"accepts": ["application/x-xript-command", "application/x-xript-hook"],
+			"fill": { "handler": "onSave" },
+			"expected": "hook"
+		},
+		{
+			"description": "a command accept claims the fill ahead of the fragment sniff",
+			"accepts": ["application/x-xript-command"],
+			"fill": { "id": "wrap.double", "handler": "wrapSelection" },
+			"expected": "command"
+		},
+		{
+			"description": "a command accept claims a fill that would otherwise sniff as a fragment",
+			"accepts": ["application/x-xript-command", "text/html"],
+			"fill": { "id": "render.badge", "handler": "renderBadge", "format": "text/html", "source": "<b>hi</b>" },
+			"expected": "command"
+		},
+		{
+			"description": "a format+source fill on a non-reserved slot still sniffs as a fragment",
+			"accepts": ["text/html"],
+			"fill": { "format": "text/html", "source": "<b>hi</b>" },
+			"expected": "fragment"
+		},
+		{
+			"description": "an opaque fill on a non-reserved slot is still a data fill",
+			"accepts": ["application/json"],
+			"fill": { "id": "wrap.double", "handler": "wrapSelection" },
+			"expected": "data"
+		},
+		{
+			"description": "command fills leave dataFills: the same fill on a command slot is no longer data (v0.8.0 behaviour change)",
+			"accepts": ["application/x-xript-command"],
+			"fill": { "id": "wrap.double", "handler": "wrapSelection" },
+			"expected": "command",
+			"priorKind": "data"
+		}
+	],
+	"normalize": [
+		{
+			"description": "minimal fill: title defaults to id, keywords empty, args empty, priority 0, exposed true",
+			"mod": "quote-tools",
+			"slot": "palette.commands",
+			"fills": [{ "id": "wrap.double", "handler": "wrapSelection" }],
+			"expected": {
+				"ok": true,
+				"commands": [
+					{
+						"mod": "quote-tools",
+						"slot": "palette.commands",
+						"id": "wrap.double",
+						"qualifiedId": "quote-tools:wrap.double",
+						"title": "wrap.double",
+						"handler": "wrapSelection",
+						"keywords": [],
+						"args": {},
+						"priority": 0,
+						"exposed": true
+					}
+				]
+			}
+		},
+		{
+			"description": "full fill: every optional key is carried through verbatim",
+			"mod": "quote-tools",
+			"slot": "palette.commands",
+			"fills": [
+				{
+					"id": "wrap.custom",
+					"handler": "wrapSelection",
+					"title": "Wrap in…",
+					"description": "Wrap the selection in a delimiter pair",
+					"icon": "quote",
+					"group": "text",
+					"keywords": ["surround", "quote"],
+					"args": { "open": "\"" },
+					"input": {
+						"type": "object",
+						"properties": { "open": { "type": "string" }, "close": { "type": "string" } },
+						"required": ["open", "close"]
+					},
+					"output": { "type": "object", "properties": { "changed": { "type": "boolean" } } },
+					"priority": -10,
+					"exposed": false
+				}
+			],
+			"expected": {
+				"ok": true,
+				"commands": [
+					{
+						"mod": "quote-tools",
+						"slot": "palette.commands",
+						"id": "wrap.custom",
+						"qualifiedId": "quote-tools:wrap.custom",
+						"title": "Wrap in…",
+						"description": "Wrap the selection in a delimiter pair",
+						"icon": "quote",
+						"group": "text",
+						"keywords": ["surround", "quote"],
+						"handler": "wrapSelection",
+						"args": { "open": "\"" },
+						"input": {
+							"type": "object",
+							"properties": { "open": { "type": "string" }, "close": { "type": "string" } },
+							"required": ["open", "close"]
+						},
+						"output": { "type": "object", "properties": { "changed": { "type": "boolean" } } },
+						"priority": -10,
+						"exposed": false
+					}
+				]
+			}
+		},
+		{
+			"description": "two fills may name the same handler; parameterized variants are the point of bound args",
+			"mod": "quote-tools",
+			"slot": "palette.commands",
+			"fills": [
+				{ "id": "wrap.double", "handler": "wrapSelection", "args": { "open": "\"", "close": "\"" } },
+				{ "id": "wrap.paren", "handler": "wrapSelection", "args": { "open": "(", "close": ")" } }
+			],
+			"expected": {
+				"ok": true,
+				"commands": [
+					{
+						"mod": "quote-tools",
+						"slot": "palette.commands",
+						"id": "wrap.double",
+						"qualifiedId": "quote-tools:wrap.double",
+						"title": "wrap.double",
+						"handler": "wrapSelection",
+						"keywords": [],
+						"args": { "open": "\"", "close": "\"" },
+						"priority": 0,
+						"exposed": true
+					},
+					{
+						"mod": "quote-tools",
+						"slot": "palette.commands",
+						"id": "wrap.paren",
+						"qualifiedId": "quote-tools:wrap.paren",
+						"title": "wrap.paren",
+						"handler": "wrapSelection",
+						"keywords": [],
+						"args": { "open": "(", "close": ")" },
+						"priority": 0,
+						"exposed": true
+					}
+				]
+			}
+		},
+		{
+			"description": "missing handler is a fill-time error",
+			"mod": "quote-tools",
+			"slot": "palette.commands",
+			"fills": [{ "id": "wrap.double" }],
+			"expected": { "ok": false, "error": { "code": "command-missing-handler", "fill": 0 } }
+		},
+		{
+			"description": "empty-string handler is a fill-time error",
+			"mod": "quote-tools",
+			"slot": "palette.commands",
+			"fills": [{ "id": "wrap.double", "handler": "" }],
+			"expected": { "ok": false, "error": { "code": "command-missing-handler", "fill": 0 } }
+		},
+		{
+			"description": "non-string handler is a fill-time error",
+			"mod": "quote-tools",
+			"slot": "palette.commands",
+			"fills": [{ "id": "wrap.double", "handler": 42 }],
+			"expected": { "ok": false, "error": { "code": "command-missing-handler", "fill": 0 } }
+		},
+		{
+			"description": "missing id is a fill-time error — a command must name itself, unlike a fragment fill",
+			"mod": "quote-tools",
+			"slot": "palette.commands",
+			"fills": [{ "handler": "wrapSelection" }],
+			"expected": { "ok": false, "error": { "code": "command-invalid-id", "fill": 0 } }
+		},
+		{
+			"description": "an uppercase id fails ^[a-z][a-z0-9.-]*$",
+			"mod": "quote-tools",
+			"slot": "palette.commands",
+			"fills": [{ "id": "Wrap.Double", "handler": "wrapSelection" }],
+			"expected": { "ok": false, "error": { "code": "command-invalid-id", "fill": 0 } }
+		},
+		{
+			"description": "an id starting with a digit fails the pattern",
+			"mod": "quote-tools",
+			"slot": "palette.commands",
+			"fills": [{ "id": "1wrap", "handler": "wrapSelection" }],
+			"expected": { "ok": false, "error": { "code": "command-invalid-id", "fill": 0 } }
+		},
+		{
+			"description": "an id carrying an underscore fails the pattern",
+			"mod": "quote-tools",
+			"slot": "palette.commands",
+			"fills": [{ "id": "wrap_double", "handler": "wrapSelection" }],
+			"expected": { "ok": false, "error": { "code": "command-invalid-id", "fill": 0 } }
+		},
+		{
+			"description": "a hyphenated dotted id is legal",
+			"mod": "quote-tools",
+			"slot": "palette.commands",
+			"fills": [{ "id": "wrap.double-quote", "handler": "wrapSelection" }],
+			"expected": {
+				"ok": true,
+				"commands": [
+					{
+						"mod": "quote-tools",
+						"slot": "palette.commands",
+						"id": "wrap.double-quote",
+						"qualifiedId": "quote-tools:wrap.double-quote",
+						"title": "wrap.double-quote",
+						"handler": "wrapSelection",
+						"keywords": [],
+						"args": {},
+						"priority": 0,
+						"exposed": true
+					}
+				]
+			}
+		},
+		{
+			"description": "a repeated id within the same (mod, slot) is a fill-time error",
+			"mod": "quote-tools",
+			"slot": "palette.commands",
+			"fills": [
+				{ "id": "wrap.double", "handler": "wrapSelection" },
+				{ "id": "wrap.double", "handler": "wrapOther" }
+			],
+			"expected": { "ok": false, "error": { "code": "command-duplicate-id", "fill": 1, "id": "wrap.double" } }
+		},
+		{
+			"description": "non-object args is a fill-time error",
+			"mod": "quote-tools",
+			"slot": "palette.commands",
+			"fills": [{ "id": "wrap.double", "handler": "wrapSelection", "args": ["open", "close"] }],
+			"expected": { "ok": false, "error": { "code": "command-args-not-object", "fill": 0 } }
+		},
+		{
+			"description": "a bound key absent from a CLOSED input is a fill-time error",
+			"mod": "quote-tools",
+			"slot": "palette.commands",
+			"fills": [
+				{
+					"id": "wrap.double",
+					"handler": "wrapSelection",
+					"args": { "open": "\"", "delimiter": "\"" },
+					"input": {
+						"type": "object",
+						"properties": { "open": { "type": "string" }, "close": { "type": "string" } },
+						"additionalProperties": false
+					}
+				}
+			],
+			"expected": { "ok": false, "error": { "code": "command-unbound-arg", "fill": 0, "arg": "delimiter" } }
+		},
+		{
+			"description": "a bound key absent from an OPEN input is legal — omission means open, not invalid",
+			"mod": "quote-tools",
+			"slot": "palette.commands",
+			"fills": [
+				{
+					"id": "wrap.double",
+					"handler": "wrapSelection",
+					"args": { "open": "\"", "delimiter": "\"" },
+					"input": {
+						"type": "object",
+						"properties": { "open": { "type": "string" } }
+					}
+				}
+			],
+			"expected": {
+				"ok": true,
+				"commands": [
+					{
+						"mod": "quote-tools",
+						"slot": "palette.commands",
+						"id": "wrap.double",
+						"qualifiedId": "quote-tools:wrap.double",
+						"title": "wrap.double",
+						"handler": "wrapSelection",
+						"keywords": [],
+						"args": { "open": "\"", "delimiter": "\"" },
+						"input": { "type": "object", "properties": { "open": { "type": "string" } } },
+						"priority": 0,
+						"exposed": true
+					}
+				]
+			}
+		},
+		{
+			"description": "a per-fill 'capability' is REJECTED, never ignored — per-action authority lives on the export it names",
+			"mod": "quote-tools",
+			"slot": "palette.commands",
+			"fills": [
+				{ "id": "strip.formatting", "handler": "stripFormatting", "capability": "write:editor-destructive" }
+			],
+			"expected": {
+				"ok": false,
+				"error": { "code": "command-fill-capability", "fill": 0, "id": "strip.formatting", "handler": "stripFormatting" }
+			}
+		},
+		{
+			"description": "a null 'capability' is still the rejected key — presence is what is refused",
+			"mod": "quote-tools",
+			"slot": "palette.commands",
+			"fills": [{ "id": "wrap.double", "handler": "wrapSelection", "capability": null }],
+			"expected": { "ok": false, "error": { "code": "command-fill-capability", "fill": 0, "id": "wrap.double" } }
+		}
+	],
+	"boundArgs": [
+		{
+			"description": "no bound args, no call args: the handler still receives an object",
+			"args": {},
+			"callArgs": null,
+			"expected": {}
+		},
+		{
+			"description": "bound args alone become the effective object",
+			"args": { "open": "(", "close": ")" },
+			"callArgs": null,
+			"expected": { "open": "(", "close": ")" }
+		},
+		{
+			"description": "call args alone become the effective object",
+			"args": {},
+			"callArgs": { "open": "[" },
+			"expected": { "open": "[" }
+		},
+		{
+			"description": "call-time wins on a conflicting key, and it is neither an error nor a warning",
+			"args": { "open": "(", "close": ")" },
+			"callArgs": { "open": "[" },
+			"expected": { "open": "[", "close": ")" }
+		},
+		{
+			"description": "the merge is shallow: a nested object from the caller replaces the bound one outright",
+			"args": { "opts": { "a": 1 } },
+			"callArgs": { "opts": { "b": 2 } },
+			"expected": { "opts": { "b": 2 } }
+		},
+		{
+			"description": "an explicit null from the caller overrides a bound value",
+			"args": { "open": "(" },
+			"callArgs": { "open": null },
+			"expected": { "open": null }
+		},
+		{
+			"description": "disjoint keys union",
+			"args": { "open": "(" },
+			"callArgs": { "close": ")" },
+			"expected": { "open": "(", "close": ")" }
+		}
+	],
+	"resolution": [
+		{
+			"description": "priority descending is the first key",
+			"slots": [{ "id": "palette.commands", "accepts": ["application/x-xript-command"], "multiple": true }],
+			"mods": [
+				{
+					"name": "alpha",
+					"fills": {
+						"palette.commands": [
+							{ "id": "b.low", "handler": "run", "priority": -5 },
+							{ "id": "a.high", "handler": "run", "priority": 10 }
+						]
+					}
+				}
+			],
+			"expected": { "order": ["alpha:a.high", "alpha:b.low"], "collides": [] }
+		},
+		{
+			"description": "fill id ascending is the second key, within equal priority",
+			"slots": [{ "id": "palette.commands", "accepts": ["application/x-xript-command"], "multiple": true }],
+			"mods": [
+				{
+					"name": "alpha",
+					"fills": {
+						"palette.commands": [
+							{ "id": "zeta", "handler": "run" },
+							{ "id": "alpha", "handler": "run" }
+						]
+					}
+				}
+			],
+			"expected": { "order": ["alpha:alpha", "alpha:zeta"], "collides": [] }
+		},
+		{
+			"description": "owning mod name ascending is the third key, and it makes a colliding id total",
+			"slots": [{ "id": "palette.commands", "accepts": ["application/x-xript-command"], "multiple": true }],
+			"mods": [
+				{ "name": "zeta-tools", "fills": { "palette.commands": [{ "id": "wrap", "handler": "run" }] } },
+				{ "name": "alpha-tools", "fills": { "palette.commands": [{ "id": "wrap", "handler": "run" }] } }
+			],
+			"expected": {
+				"order": ["alpha-tools:wrap", "zeta-tools:wrap"],
+				"collides": ["alpha-tools:wrap", "zeta-tools:wrap"]
+			}
+		},
+		{
+			"description": "resolution order does not depend on mod load order — the same set loaded reversed resolves identically",
+			"slots": [{ "id": "palette.commands", "accepts": ["application/x-xript-command"], "multiple": true }],
+			"mods": [
+				{ "name": "alpha-tools", "fills": { "palette.commands": [{ "id": "wrap", "handler": "run" }] } },
+				{ "name": "zeta-tools", "fills": { "palette.commands": [{ "id": "wrap", "handler": "run" }] } }
+			],
+			"expected": {
+				"order": ["alpha-tools:wrap", "zeta-tools:wrap"],
+				"collides": ["alpha-tools:wrap", "zeta-tools:wrap"]
+			}
+		},
+		{
+			"description": "priority outranks mod name: a later-named mod with higher priority still leads",
+			"slots": [{ "id": "palette.commands", "accepts": ["application/x-xript-command"], "multiple": true }],
+			"mods": [
+				{ "name": "alpha-tools", "fills": { "palette.commands": [{ "id": "wrap", "handler": "run" }] } },
+				{ "name": "zeta-tools", "fills": { "palette.commands": [{ "id": "wrap", "handler": "run", "priority": 1 }] } }
+			],
+			"expected": {
+				"order": ["zeta-tools:wrap", "alpha-tools:wrap"],
+				"collides": ["zeta-tools:wrap", "alpha-tools:wrap"]
+			}
+		},
+		{
+			"description": "distinct ids across mods do not collide",
+			"slots": [{ "id": "palette.commands", "accepts": ["application/x-xript-command"], "multiple": true }],
+			"mods": [
+				{ "name": "alpha-tools", "fills": { "palette.commands": [{ "id": "wrap", "handler": "run" }] } },
+				{ "name": "zeta-tools", "fills": { "palette.commands": [{ "id": "strip", "handler": "run" }] } }
+			],
+			"expected": { "order": ["zeta-tools:strip", "alpha-tools:wrap"], "collides": [] }
+		},
+		{
+			"description": "multiple:false resolves to exactly ONE command across all mods, same as every other slot kind",
+			"slots": [{ "id": "palette.commands", "accepts": ["application/x-xript-command"] }],
+			"mods": [
+				{
+					"name": "alpha-tools",
+					"fills": {
+						"palette.commands": [
+							{ "id": "wrap", "handler": "run" },
+							{ "id": "strip", "handler": "run" }
+						]
+					}
+				},
+				{ "name": "zeta-tools", "fills": { "palette.commands": [{ "id": "align", "handler": "run" }] } }
+			],
+			"expected": { "order": ["zeta-tools:align"], "collides": [] }
+		},
+		{
+			"description": "exposed:false still resolves and still runs — it is a discoverability hint, never an authority gate",
+			"slots": [{ "id": "palette.commands", "accepts": ["application/x-xript-command"], "multiple": true }],
+			"mods": [
+				{
+					"name": "alpha-tools",
+					"fills": {
+						"palette.commands": [
+							{ "id": "hidden", "handler": "run", "exposed": false },
+							{ "id": "shown", "handler": "run" }
+						]
+					}
+				}
+			],
+			"expected": { "order": ["alpha-tools:hidden", "alpha-tools:shown"], "collides": [] }
+		},
+		{
+			"description": "a bare-id lookup takes the §4.2 winner when two mods declare the id",
+			"slots": [{ "id": "palette.commands", "accepts": ["application/x-xript-command"], "multiple": true }],
+			"mods": [
+				{ "name": "zeta-tools", "fills": { "palette.commands": [{ "id": "wrap", "handler": "run" }] } },
+				{ "name": "alpha-tools", "fills": { "palette.commands": [{ "id": "wrap", "handler": "run" }] } }
+			],
+			"lookup": "wrap",
+			"expected": { "order": ["alpha-tools:wrap", "zeta-tools:wrap"], "collides": ["alpha-tools:wrap", "zeta-tools:wrap"], "resolved": "alpha-tools:wrap" }
+		},
+		{
+			"description": "a preference overrides the winner for a bare-id lookup, the way role preferences do",
+			"slots": [{ "id": "palette.commands", "accepts": ["application/x-xript-command"], "multiple": true }],
+			"mods": [
+				{ "name": "zeta-tools", "fills": { "palette.commands": [{ "id": "wrap", "handler": "run" }] } },
+				{ "name": "alpha-tools", "fills": { "palette.commands": [{ "id": "wrap", "handler": "run" }] } }
+			],
+			"lookup": "wrap",
+			"preferences": { "wrap": "zeta-tools" },
+			"expected": { "order": ["alpha-tools:wrap", "zeta-tools:wrap"], "collides": ["alpha-tools:wrap", "zeta-tools:wrap"], "resolved": "zeta-tools:wrap" }
+		},
+		{
+			"description": "a qualified-id lookup is total and ignores preferences",
+			"slots": [{ "id": "palette.commands", "accepts": ["application/x-xript-command"], "multiple": true }],
+			"mods": [
+				{ "name": "zeta-tools", "fills": { "palette.commands": [{ "id": "wrap", "handler": "run" }] } },
+				{ "name": "alpha-tools", "fills": { "palette.commands": [{ "id": "wrap", "handler": "run" }] } }
+			],
+			"lookup": "zeta-tools:wrap",
+			"preferences": { "wrap": "alpha-tools" },
+			"expected": { "order": ["alpha-tools:wrap", "zeta-tools:wrap"], "collides": ["alpha-tools:wrap", "zeta-tools:wrap"], "resolved": "zeta-tools:wrap" }
+		},
+		{
+			"description": "an unknown lookup resolves to nothing rather than guessing",
+			"slots": [{ "id": "palette.commands", "accepts": ["application/x-xript-command"], "multiple": true }],
+			"mods": [{ "name": "alpha-tools", "fills": { "palette.commands": [{ "id": "wrap", "handler": "run" }] } }],
+			"lookup": "nope",
+			"expected": { "order": ["alpha-tools:wrap"], "collides": [], "resolved": null }
+		},
+		{
+			"description": "a mod without the slot's capability contributes no commands — the slot gate is layer one",
+			"slots": [
+				{
+					"id": "palette.commands",
+					"accepts": ["application/x-xript-command"],
+					"capability": "write:editor.text",
+					"multiple": true
+				}
+			],
+			"mods": [
+				{
+					"name": "alpha-tools",
+					"capabilities": [],
+					"fills": { "palette.commands": [{ "id": "wrap", "handler": "run" }] }
+				},
+				{
+					"name": "zeta-tools",
+					"capabilities": ["write:editor"],
+					"fills": { "palette.commands": [{ "id": "strip", "handler": "run" }] }
+				}
+			],
+			"expected": { "order": ["zeta-tools:strip"], "collides": [] }
+		}
+	]
+}

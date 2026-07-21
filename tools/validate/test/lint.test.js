@@ -316,3 +316,198 @@ describe("library lint checks", () => {
 		assert.match(finding.message, /library "doc-lib"/);
 	});
 });
+
+describe("runtime-configured capability scopes", () => {
+	const modRequesting = (cap) => ({
+		xript: "0.8",
+		name: "ws-mod",
+		version: "1.0.0",
+		capabilities: [cap],
+		entry: { script: "m.js", format: "script", exports: {} },
+	});
+	const hostDeclaring = (instances) => ({
+		xript: "0.8",
+		name: "fs-host",
+		capabilities: {
+			fs: { description: "Filesystem." },
+			"fs.workspace": { description: "A configured workspace root.", ...(instances ? { instances } : {}) },
+		},
+	});
+
+	// The matcher already accepts a descendant of a declared scope, which is what makes
+	// runtime roots work at all. Without `instances` the host never said children exist.
+	it("warns when a mod names a scope below a node that never claims runtime children", () => {
+		const { findings } = lintManifests(hostDeclaring(null), [modRequesting("write:fs.workspace.proj-a")]);
+		const codes = findings.map((f) => f.code);
+		assert.ok(codes.includes("dynamic-scope-undeclared"), `got ${codes.join(", ")}`);
+		assert.ok(!codes.includes("undeclared-capability"), "a subsumed scope is not undeclared");
+	});
+
+	it("falls silent once the parent declares instances", () => {
+		const host = hostDeclaring({ description: "One per configured workspace.", example: "fs.workspace.proj-a" });
+		const { findings } = lintManifests(host, [modRequesting("write:fs.workspace.proj-a")]);
+		assert.ok(!findings.map((f) => f.code).includes("dynamic-scope-undeclared"));
+	});
+
+	it("says nothing about a scope the host declares outright", () => {
+		const { findings } = lintManifests(hostDeclaring(null), [modRequesting("write:fs.workspace")]);
+		assert.ok(!findings.map((f) => f.code).includes("dynamic-scope-undeclared"));
+	});
+
+	it("still errors on a root the host does not declare at all", () => {
+		const { findings } = lintManifests(hostDeclaring(null), [modRequesting("write:nowhere.proj-a")]);
+		const codes = findings.map((f) => f.code);
+		assert.ok(codes.includes("undeclared-capability"));
+		assert.ok(!codes.includes("dynamic-scope-undeclared"), "an undeclared root is reported once, as undeclared");
+	});
+});
+
+describe("undeclared capability gates outside slots", () => {
+	// Only slots, libraries and mod requests were checked, so a host could gate a binding, a
+	// nested namespace member, a hook or an event on a scope it never declared — an
+	// undiscoverable gate that appears in no generated doc — and both validate and lint passed.
+	const host = {
+		xript: "0.8",
+		name: "gate-host",
+		capabilities: { known: { description: "Declared." } },
+		bindings: {
+			ok: { description: "Declared gate.", capability: "known" },
+			bad: { description: "Undeclared gate.", capability: "ghost" },
+			ns: { description: "Namespace.", members: { deep: { description: "Nested.", capability: "phantom" } } },
+		},
+		hooks: { onSave: { description: "Fires.", capability: "spectre" } },
+		events: [{ id: "thing.happened", description: "Event.", capability: "wraith" }],
+	};
+
+	it("reports every surface that gates on a scope the host does not declare", () => {
+		const { findings } = lintManifests(host, []);
+		const reported = findings.filter((f) => f.code === "undeclared-capability").map((f) => f.message);
+		for (const needle of ['binding "bad"', 'binding "ns.deep"', 'hook "onSave"', 'event "thing.happened"']) {
+			assert.ok(reported.some((m) => m.includes(needle)), `${needle} went unreported: ${reported.join(" | ")}`);
+		}
+	});
+
+	it("says nothing about a gate the host does declare", () => {
+		const { findings } = lintManifests(host, []);
+		assert.ok(!findings.some((f) => f.code === "undeclared-capability" && f.message.includes('"ok"')));
+	});
+
+	it("accepts a gate subsumed by a declared parent scope", () => {
+		const nested = {
+			xript: "0.8",
+			name: "gate-host",
+			capabilities: { fs: { description: "Filesystem." } },
+			bindings: { read: { description: "Reads.", capability: "read:fs.workspace" } },
+		};
+		const { findings } = lintManifests(nested, []);
+		assert.ok(!findings.some((f) => f.code === "undeclared-capability"));
+	});
+});
+
+describe("undeclared type references", () => {
+	// A `typeRef` string is just a string to the schema, so a reference to a type nobody declared
+	// validated clean and then emitted a `.d.ts` that would not compile: typegen passes an
+	// unknown name through verbatim.
+	const host = {
+		xript: "0.8",
+		name: "typed-host",
+		types: {
+			Player: { description: "A player.", fields: { name: { type: "string", description: "N." } } },
+			Bad: { description: "Refers onward.", fields: { who: { type: "Nobody", description: "W." } } },
+		},
+		bindings: {
+			ok: { description: "Declared.", params: [], returns: "Player" },
+			okArray: { description: "Array shorthand of a declared type.", params: [], returns: "Player[]" },
+			bad: { description: "Undeclared.", params: [], returns: "NoSuchType" },
+			ns: { description: "Namespace.", members: { deep: { description: "Nested.", params: [{ name: "p", type: "AlsoMissing" }] } } },
+		},
+		hooks: { onSave: { description: "Fires.", params: [{ name: "doc", type: "GhostDoc" }] } },
+		events: [{ id: "app.ready", description: "Ready.", payload: "PhantomPayload" }],
+	};
+
+	it("reports every reference to a type the manifest does not declare", () => {
+		const reported = lintManifests(host, []).findings
+			.filter((f) => f.code === "undeclared-type")
+			.map((f) => f.message);
+		for (const needle of ["NoSuchType", "AlsoMissing", "GhostDoc", "PhantomPayload", "Nobody"]) {
+			assert.ok(reported.some((m) => m.includes(needle)), `${needle} unreported: ${reported.join(" | ")}`);
+		}
+	});
+
+	it("accepts primitives, declared types, and an array shorthand of one", () => {
+		const reported = lintManifests(host, []).findings
+			.filter((f) => f.code === "undeclared-type")
+			.map((f) => f.message);
+		for (const clean of ['"ok" return', '"okArray" return', 'field "name"']) {
+			assert.ok(!reported.some((m) => m.includes(clean)), `false positive on ${clean}`);
+		}
+	});
+
+	it("resolves through the object array and union forms", () => {
+		const nested = {
+			xript: "0.8",
+			name: "h",
+			types: { Player: { description: "P.", fields: {} } },
+			bindings: {
+				a: { description: "Array of declared.", params: [], returns: { array: "Player" } },
+				b: { description: "Union with a ghost.", params: [], returns: { union: ["Player", "Spectre"] } },
+			},
+		};
+		const reported = lintManifests(nested, []).findings
+			.filter((f) => f.code === "undeclared-type")
+			.map((f) => f.message);
+		assert.equal(reported.length, 1, `expected only Spectre: ${reported.join(" | ")}`);
+		assert.ok(reported[0].includes("Spectre"));
+	});
+});
+
+describe("reserved xript identifier namespace", () => {
+	// typegen emits its own types and globals under the `xript`/`Xript` prefix. A host type or
+	// binding sharing that prefix collides with generated output in the emitted `.d.ts`. Reserving
+	// the prefix (not a fixed list) keeps every current and future generated name collision-safe.
+	it("reports a host type or binding in the reserved namespace, any case", () => {
+		const host = {
+			xript: "0.8",
+			name: "colliding",
+			types: {
+				XriptSlots: { description: "Shadows the generated slot map.", fields: {} },
+				xriptState: { description: "Lowercase still collides with the globals.", fields: {} },
+				Fine: { description: "Clear of the namespace.", fields: {} },
+			},
+			bindings: {
+				XriptEventId: { description: "Shadows the generated event-id union.", params: [] },
+				log: { description: "Clear of the namespace.", params: [] },
+			},
+			slots: [{ id: "xript-anything", accepts: ["text/html"] }],
+		};
+		const reported = lintManifests(host, []).findings.filter((f) => f.code === "reserved-identifier");
+		const messages = reported.map((f) => f.message);
+		for (const needle of ['type "XriptSlots"', 'type "xriptState"', 'binding "XriptEventId"']) {
+			assert.ok(messages.some((m) => m.includes(needle)), `${needle} unreported: ${messages.join(" | ")}`);
+		}
+		assert.ok(reported.every((f) => f.severity === "error"));
+		assert.ok(!messages.some((m) => m.includes('"Fine"') || m.includes('"log"')), "false positive outside the namespace");
+		// A slot id is a string literal in the emitted union, never an identifier, so it is not reserved.
+		assert.ok(!messages.some((m) => m.includes("xript-anything")), "slot ids are not identifiers and must not be reserved");
+	});
+
+	// A record type "Foo" makes typegen emit a `FooAccessor` interface alongside it. A host that
+	// also declares a type literally named "FooAccessor" produces a duplicate identifier. This is
+	// the host's own two names colliding, so it is surfaced rather than forbidden by suffix.
+	it("reports a type whose name collides with a generated record accessor", () => {
+		const host = {
+			xript: "0.8",
+			name: "accessor-clash",
+			types: {
+				Player: { description: "A record.", fields: { name: { type: "string" } } },
+				PlayerAccessor: { description: "Collides with the generated accessor for Player.", fields: { extra: { type: "string" } } },
+				Enum: { description: "An enum, no accessor generated.", values: ["a", "b"] },
+				EnumAccessor: { description: "No collision — Enum generates no accessor.", fields: { ok: { type: "string" } } },
+			},
+		};
+		const reported = lintManifests(host, []).findings.filter((f) => f.code === "generated-accessor-collision");
+		assert.equal(reported.length, 1, `expected only PlayerAccessor: ${reported.map((f) => f.message).join(" | ")}`);
+		assert.ok(reported[0].message.includes("PlayerAccessor"));
+		assert.equal(reported[0].severity, "error");
+	});
+});

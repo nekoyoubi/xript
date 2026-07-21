@@ -7,14 +7,15 @@
 		"sync-guidance": "node scripts/sync-guidance.mjs",
 		"dev": "npm run sync-guidance && astro dev",
 		"build": "npm run sync-guidance && astro build",
-		"preview": "astro preview"
+		"preview": "astro preview",
+		"check-schema-aliases": "node scripts/check-schema-aliases.mjs"
 	},
 	"dependencies": {
 		"@astrojs/starlight": "0.37.6",
 		"@fontsource-variable/inter": "^5.2.8",
 		"@fontsource/jetbrains-mono": "^5.2.8",
-		"@xriptjs/runtime": "^0.7.0",
-		"@xriptjs/sanitize": "^0.7.0",
+		"@xriptjs/runtime": "^0.8.0",
+		"@xriptjs/sanitize": "^0.8.0",
 		"astro": "5.17.2",
 		"codejar": "^4.3.0",
 		"zod": "3.24.4"

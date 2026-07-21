@@ -1,6 +1,6 @@
-import { writeFile } from "node:fs/promises";
-import { resolve, basename } from "node:path";
-import { generateTypesFromFile } from "@xriptjs/typegen";
+import { readFile, writeFile } from "node:fs/promises";
+import { resolve, basename, dirname } from "node:path";
+import { generateTypesFromFile, resolveExtends } from "@xriptjs/typegen";
 
 export async function run(args: string[]): Promise<void> {
 	if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
@@ -10,7 +10,15 @@ export async function run(args: string[]): Promise<void> {
 
 	const includeGrantShapes = args.includes("--include-grant-shapes");
 	const ambient = args.includes("--ambient");
-	const rest = args.filter((a) => a !== "--include-grant-shapes" && a !== "--ambient");
+	const intent = args.includes("--intent");
+	const hostIndex = args.indexOf("--host");
+	const hostPath = hostIndex !== -1 ? args[hostIndex + 1] : undefined;
+	if (hostIndex !== -1 && !hostPath) {
+		console.error("Error: --host requires a manifest path.");
+		process.exit(1);
+	}
+	const hostArgs = new Set(hostIndex === -1 ? [] : [hostIndex, hostIndex + 1]);
+	const rest = args.filter((a, i) => a !== "--include-grant-shapes" && a !== "--ambient" && a !== "--intent" && !hostArgs.has(i));
 
 	const outputIndex = rest.findIndex((a) => a === "--output" || a === "-o");
 	let outputPath: string | undefined;
@@ -34,7 +42,13 @@ export async function run(args: string[]): Promise<void> {
 	}
 
 	try {
-		const { content } = await generateTypesFromFile(manifestPath, { includeGrantShapes, ambient });
+		const host = hostPath ? await loadManifest(hostPath) : undefined;
+		const { content } = await generateTypesFromFile(manifestPath, {
+			includeGrantShapes,
+			ambient,
+			intent,
+			...(host !== undefined ? { host } : {}),
+		});
 
 		if (outputPath) {
 			const absoluteOutput = resolve(outputPath);
@@ -51,6 +65,11 @@ export async function run(args: string[]): Promise<void> {
 	}
 }
 
+async function loadManifest(path: string): Promise<unknown> {
+	const absolute = resolve(path);
+	return resolveExtends(JSON.parse(await readFile(absolute, "utf-8")), dirname(absolute));
+}
+
 function printHelp(): void {
 	console.log("Usage: xript typegen <manifest.json> [--output <file.d.ts>]");
 	console.log("");
@@ -59,6 +78,8 @@ function printHelp(): void {
 	console.log("Options:");
 	console.log("  --output, -o            Output file path (default: stdout)");
 	console.log("  --ambient               Emit an ambient .d.ts declaring the in-sandbox xript surface for mod authors");
+	console.log("  --intent                Emit the execution routing table a host routes on (implied by --ambient)");
+	console.log("  --host <manifest.json>  For a mod manifest: the host it fills, so slot kinds (commands) are exact");
 	console.log("  --include-grant-shapes  Emit CapabilityPrompt, InstallDescriptor, DiscoveryResult interfaces");
 	console.log("  --help, -h              Show this help message");
 }

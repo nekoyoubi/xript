@@ -177,12 +177,76 @@ Slots refine by the same shape. A child slot redeclaring a base slot `id` is per
 
 If the base slot's payload was `{ "type": "object", "required": ["id"], "properties": { "id": { "type": "string" } } }`, the resolved slot keeps `type` and the base `id` property, takes the child's `required` array wholesale, and gains the `author` property; the schema merges by the same per-key rules as any other object.
 
+### Fragment Formats and Vocabularies
+
+A node vocabulary and a fragment format are separate surfaces: `vocabularies` declares nodes and their props, and `formats` names a `syntax` plus the vocabularies in scope. Both merge, and each level has its own `refines` gate. The node and prop levels are shared machinery — a node declared inline on a format and a node declared in a top-level vocabulary merge by identical rules, differing only in the path a collision error names.
+
+| Level | Collision without `refines` | With `refines: true` |
+|-------|-----------------------------|----------------------|
+| Vocabulary id (`/vocabularies/<id>`) | resolution error | `description` is child-wins; `nodes` key-merges |
+| Format id (`/formats/<id>`) | resolution error | `description` / `syntax` are child-wins; `nodes` key-merges; `vocabularies` and `schemes` replace wholesale when present |
+| Node name | resolution error | `description` / `children` / `bindTo` are child-wins; `props` key-merges |
+| Prop name | — | the child's prop schema **replaces** the base's wholesale |
+
+A format's two arrays, `vocabularies` and `schemes`, are the members that follow neither the child-wins scalar rule nor the key-merge rule:
+
+> **Absent inherits. Present replaces wholesale. `[]` means deliberate closure.**
+>
+> A child format that carries no `vocabularies` key inherits the base's array unchanged. A child that carries one replaces the base's array entirely — never a union, never a merge, never a prepend or append. An empty array is a present value, not an absent one: it closes the scope to the format's inline `nodes` alone.
+>
+> `schemes` — the URI schemes the format's `uri` and `image-uri` sinks admit — reads identically. Absent inherits the base's set, or the default `["http", "https", "mailto", "data"]` when no base declared one. Present replaces it. `[]` closes the format to absolute URLs.
+
+`vocabularies` is ordered and the order is semantic — the first vocabulary in scope that claims a node name wins — so there is no defensible union: prepending and appending resolve differently, and either would silently re-inject a vocabulary a child deliberately closed out. That is the exact class of silent clobber `refines` exists to prevent.
+
+`schemes` is unordered, and arrives at the same rule by a different road: a union makes narrowing impossible to express. A child declaring `["https"]` against a base permitting four schemes means to tighten, and a union would quietly hand back the other three. So both arrays replace, and a child that wants the base's list plus one entry restates the list, the same way a child widening a prop restates its `sink`.
+
+```json
+{
+  "extends": "./base.json",
+  "name": "consuming-host",
+  "formats": {
+    "application/x-panel+json": {
+      "refines": true,
+      "nodes": {
+        "Badge": { "props": { "tone": { "type": "string", "enum": ["info", "warn"] } } },
+        "Link": {
+          "refines": true,
+          "props": { "target": { "type": "string" } }
+        }
+      }
+    }
+  }
+}
+```
+
+`Badge` is new, so it needs no marker. `Link` already exists in the base, so it needs `refines: true`, and it gains `target` while keeping the base's `href` untouched.
+
+A top-level vocabulary refines the same way, and every format that brings it into scope sees the refinement:
+
+```json
+{
+  "extends": "./base.json",
+  "name": "consuming-host",
+  "vocabularies": {
+    "acme.components": {
+      "refines": true,
+      "nodes": {
+        "Badge": { "props": { "tone": { "type": "string", "enum": ["info", "warn"] } } }
+      }
+    }
+  }
+}
+```
+
+A prop is the one level that **replaces rather than merges**, and that is deliberate. Deep-merging two JSON Schemas produces subtly wrong constraints: a leftover `enum` narrowing a widened `type`, a `minimum` outliving a change to `string`. Worse, a child that widens `Link.href` from a string to an object would silently inherit the base's `sink: "uri"` onto a prop that is no longer a string. Replacing wholesale forces the child to restate the safety annotation, at exactly the moment it should be thinking about it. Refining a prop means rewriting it.
+
 ## Collisions
 
 A concrete-name collision that is **not** opted into is a hard guard against accidents:
 
 - A child redeclaring a **concrete** base type name **without** `refines: true` is a resolution error.
 - A child redeclaring a base **slot** `id` **without** `refines: true` is a resolution error.
+- A child redeclaring a base **format** media type, a base **vocabulary** id, or a base **node** name within a refined format or vocabulary, **without** `refines: true` is a resolution error.
 - A child redeclaring a base `binding`, `capability`, or `hook` name is a resolution error; these maps are collision-as-error throughout, and fill and refine are type and slot concerns.
 - A cross-base collision (two bases in an `extends` array declaring the same concrete name) is a resolution error.
 

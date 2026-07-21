@@ -29,7 +29,7 @@ The manifest is minimal:
 
 ```json
 {
-  "xript": "0.7",
+  "xript": "0.8",
   "name": "calculator"
 }
 ```
@@ -54,7 +54,7 @@ The manifest adds bindings, capabilities, and custom types:
 
 ```json
 {
-  "xript": "0.7",
+  "xript": "0.8",
   "name": "task-manager",
   "version": "1.0.0",
   "bindings": {
@@ -140,7 +140,7 @@ Mods declare themselves in a [mod manifest](/spec/mod-manifest/) and contribute 
 
 ```json
 {
-  "xript": "0.7",
+  "xript": "0.8",
   "name": "health-panel",
   "version": "1.0.0",
   "capabilities": ["ui-mount"],

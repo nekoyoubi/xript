@@ -41,25 +41,25 @@ describe("sanitizeHTMLDetailed", () => {
 
 describe("validateFragment", () => {
 	it("returns valid for clean fragment", () => {
-		const result = validateFragment('<div data-bind="health">0</div>');
+		const result = validateFragment('<div data-bind="health">0</div>', "text/html", null, null);
 		assert.equal(result.valid, true);
 		assert.equal(result.errors.length, 0);
 	});
 
 	it("returns invalid for dangerous fragment", () => {
-		const result = validateFragment('<script>alert("xss")</script><p>text</p>');
+		const result = validateFragment('<script>alert("xss")</script><p>text</p>', "text/html", null, null);
 		assert.equal(result.valid, false);
 		assert.ok(result.errors.length > 0);
 		assert.ok(result.errors[0].message.includes("script"));
 	});
 
 	it("returns sanitized content", () => {
-		const result = validateFragment('<div onclick="evil()">text</div>');
+		const result = validateFragment('<div onclick="evil()">text</div>', "text/html", null, null);
 		assert.equal(result.sanitized, "<div>text</div>");
 	});
 
 	it("rejects unsupported formats", () => {
-		const result = validateFragment("<div>text</div>", "text/xml");
+		const result = validateFragment("<div>text</div>", "text/xml", null, null);
 		assert.equal(result.valid, false);
 		assert.ok(result.errors[0].message.includes("unsupported"));
 	});
@@ -71,9 +71,30 @@ describe("edge cases", () => {
 		assert.equal(result, "<p>safe</p>");
 	});
 
-	it("handles unclosed tags gracefully", () => {
+	it("closes an unclosed tag rather than emitting unbalanced markup", () => {
 		const result = sanitizeHTML("<p>unclosed");
-		assert.equal(result, "<p>unclosed");
+		assert.equal(result, "<p>unclosed</p>");
+	});
+
+	it("never emits unbalanced markup when a stripped element is left unclosed", () => {
+		assert.equal(
+			sanitizeHTML('<svg><animate onbegin="alert(1)"></svg><p>after</p>'),
+			"<svg></svg><p>after</p>",
+		);
+		assert.equal(sanitizeHTML("<div><form></div><p>after</p>"), "<div></div><p>after</p>");
+	});
+
+	it("lets a raw-text element read to end of input, as the parser does", () => {
+		// `iframe` and `script` are raw-text elements: a `</div>` inside one is text,
+		// not a close tag, so the trailing content is genuinely theirs to swallow.
+		assert.equal(sanitizeHTML("<div><iframe></div><p>after</p>"), "<div></div>");
+		assert.equal(sanitizeHTML("<div><script></div><p>after</p>"), "<div></div>");
+	});
+
+	it("round-trips character references without double-escaping them", () => {
+		assert.equal(sanitizeHTML("<p>&amp; &lt; &gt;</p>"), "<p>&amp; &lt; &gt;</p>");
+		assert.equal(sanitizeHTML("<p>&#38; &#x26;</p>"), "<p>&amp; &amp;</p>");
+		assert.equal(sanitizeHTML("<p>&lt;script&gt;</p>"), "<p>&lt;script&gt;</p>");
 	});
 
 	it("handles self-closing syntax on non-void elements", () => {
@@ -147,8 +168,7 @@ describe("JSML", () => {
 		const result = jsmlToHtml([
 			["div", { "data-bind": "health", "data-if": "health < 50" }, "0"],
 		]);
-		assert.ok(result.includes('data-bind="health"'));
-		assert.ok(result.includes('data-if="health < 50"'));
+		assert.equal(result, '<div data-bind="health" data-if="health &lt; 50">0</div>');
 	});
 
 	it("sanitizes dangerous elements from JSML", async () => {
@@ -182,6 +202,8 @@ describe("JSML", () => {
 		const result = validateFragment(
 			JSON.stringify(["div", { "data-bind": "health" }, "0"]),
 			"application/jsml+json",
+			null,
+			null,
 		);
 		assert.equal(result.valid, true);
 	});
@@ -190,6 +212,8 @@ describe("JSML", () => {
 		const result = validateFragment(
 			JSON.stringify(["script", "alert('xss')"]),
 			"application/jsml+json",
+			null,
+			null,
 		);
 		assert.equal(result.valid, false);
 		assert.ok(result.errors[0].message.includes("script"));

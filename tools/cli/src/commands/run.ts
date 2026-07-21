@@ -82,7 +82,15 @@ async function runHarnessed(args: string[], harnessPath: string | undefined, ste
 
 			if (stepsPath) {
 				const { steps, baseDir } = await loadStepsFile(stepsPath);
-				const results = await runSteps(session, steps, { baseDir });
+				const seen = new Set<string>();
+				const results = await runSteps(session, steps, {
+					baseDir,
+					warn: (message) => {
+						if (seen.has(message)) return;
+						seen.add(message);
+						console.error(`deprecated: ${message}`);
+					},
+				});
 				output.steps = results;
 				failed = results.some((step) => !step.ok);
 			}
@@ -119,6 +127,8 @@ function printHelp(): void {
 	console.log("xript run --app <host.json> --harness <harness.json> --steps <steps.json> — run a harnessed scenario");
 	console.log("");
 	console.log("Loads a mod into the QuickJS WASM sandbox and optionally invokes an export.");
+	console.log("The bare form supplies no host binding implementations, so a mod that calls a");
+	console.log("declared binding at load or on invoke fails with \"not implemented by the app\".");
 	console.log("With --harness or --steps, the host's declared bindings are stubbed from the");
 	console.log("harness descriptor (spec/harness.schema.json), every call is journaled, and the");
 	console.log("steps file (spec/harness-steps.schema.json) drives the scenario. The exit code");

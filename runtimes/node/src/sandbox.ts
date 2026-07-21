@@ -1,10 +1,11 @@
 import vm from "node:vm";
-import { BindingError, CapabilityDeniedError, ExecutionLimitError, CancellationError, InvokeError, ModEntryError, ImportDeniedError, ModuleUnsupportedError, LibraryUnavailableError, LibraryRegistrationError } from "./errors.js";
+import { AmbiguousExportError, BindingError, CapabilityDeniedError, ExecutionLimitError, CancellationError, InvokeError, ModEntryError, ImportDeniedError, ModuleUnsupportedError, LibraryUnavailableError, LibraryRegistrationError } from "./errors.js";
 import { findImportSpecifier, findImportSpecifiers, detectCommonJS } from "./module-support.js";
 import type { DebugOptions, DebugSession } from "./debug-types.js";
 import { createDebugController } from "./debug-session.js";
 import { instrumentSource } from "./debug-instrument.js";
 import { grantedSatisfies } from "./capabilities.js";
+import type { NodeRef } from "./fragment.js";
 
 interface Manifest {
 	xript: string;
@@ -104,7 +105,18 @@ interface ExecutionLimits {
 	max_stack_depth?: number;
 }
 
-export type HostFunction = (...args: unknown[]) => unknown;
+/**
+ * A function a host supplies for a declared binding.
+ *
+ * Parameters are `any[]` rather than `unknown[]` on purpose. Under `strictFunctionTypes`
+ * parameters are contravariant, so an idiomatic typed binding — `(message: string) => void` —
+ * is *not* assignable to `(...args: unknown[]) => unknown`, and every host writing typed
+ * bindings had to widen them to `unknown` and narrow again inside. The scaffolded app hit this
+ * on its own generated code. `any[]` accepts both shapes and still rejects a non-function;
+ * arguments arrive as JSON-derived values whatever the signature claims, so the stricter type
+ * was never enforcing anything a host could rely on.
+ */
+export type HostFunction = (...args: any[]) => unknown;
 export interface HostNamespace {
 	[key: string]: HostFunction | HostNamespace;
 }
@@ -122,10 +134,18 @@ export interface ConsoleHandler {
 	onLog?: (severity: LogSeverity, ...args: unknown[]) => void;
 }
 
+export type AuditDecision = "invoke" | "denied";
+
 export interface AuditEvent {
 	binding: string;
 	capability: string | null;
 	at: number;
+	/** `"invoke"` for an allowed host-binding call, `"denied"` for a refused capability decision. */
+	decision?: AuditDecision;
+	/** Mod that owns the refused export. Present only on denial records. */
+	mod?: string;
+	/** Hook whose fill was refused. Present only on denial records for hook fills. */
+	hook?: string;
 }
 
 export interface HardLimits {
@@ -161,6 +181,31 @@ export interface SandboxOptions {
 export interface ExecutionResult {
 	value: unknown;
 	duration_ms: number;
+}
+
+/**
+ * Every binding the manifest declares that the host did not supply, fully qualified and sorted.
+ * A declared-but-unsupplied binding installs as a stub that throws only when a mod calls it, so
+ * without this the manifest and the host's wiring could disagree indefinitely.
+ */
+export function missingBindingNames(
+	bindings: Record<string, Binding> | undefined,
+	hostBindings: Record<string, unknown> | undefined,
+	prefix = "",
+): string[] {
+	if (!bindings) return [];
+	const missing: string[] = [];
+	for (const [name, binding] of Object.entries(bindings)) {
+		const qualified = prefix ? `${prefix}.${name}` : name;
+		const supplied = hostBindings?.[name];
+		if (isNamespace(binding)) {
+			const nested = typeof supplied === "object" && supplied !== null ? (supplied as Record<string, unknown>) : undefined;
+			missing.push(...missingBindingNames(binding.members, nested, qualified));
+		} else if (typeof supplied !== "function") {
+			missing.push(qualified);
+		}
+	}
+	return missing.sort();
 }
 
 function isNamespace(binding: Binding): binding is NamespaceBinding {
@@ -202,7 +247,7 @@ function emitAudit(
 ): void {
 	if (!audit) return;
 	try {
-		audit({ binding, capability, at: Date.now() });
+		audit({ binding, capability, at: Date.now(), decision: "invoke" });
 	} catch {
 		// fire-and-forget: emit failures never break script execution
 	}
@@ -368,11 +413,39 @@ export interface FireHookOptions {
 	data?: unknown;
 }
 
+export type FragmentOpName =
+	| "toggle"
+	| "setText"
+	| "replaceChildren"
+	| "setProp"
+	| "setAttr"
+	| "addClass"
+	| "removeClass";
+
+/**
+ * A command buffer entry. `selector` is the raw target string the mod passed and is always
+ * populated: for an HTML-vocabulary fragment it is a working CSS selector, exactly as it
+ * always was. `target` is that string parsed into a node reference, which resolves in any
+ * vocabulary when it is an id.
+ */
 export interface FragmentOp {
-	op: "toggle" | "addClass" | "removeClass" | "setText" | "setAttr" | "replaceChildren";
+	op: FragmentOpName;
 	selector: string;
-	value?: unknown;
+	target: NodeRef;
+	/** `setProp` / `setAttr`. */
+	prop?: string;
+	/** @deprecated Alias of `prop`, populated only for `setAttr`. */
 	attr?: string;
+	value?: unknown;
+}
+
+/** An op as it leaves the sandbox, before the host-side pass parses and sanitizes it. */
+export interface RawFragmentOp {
+	op: FragmentOpName;
+	selector: string;
+	prop?: string;
+	attr?: string;
+	value?: unknown;
 }
 
 type HookHandlerEntry = { fn: (...args: unknown[]) => unknown };
@@ -564,23 +637,26 @@ function fireFragmentHookFromRegistry(
 	fragmentId: string,
 	lifecycle: string,
 	bindings?: Record<string, unknown>,
-): FragmentOp[] {
+): RawFragmentOp[] {
 	const registryKey = `fragment:${lifecycle}:${fragmentId}`;
 	const entries = fragmentRegistry.handlers.get(registryKey);
 	if (!entries || entries.length === 0) return [];
 
-	const allOps: FragmentOp[] = [];
+	const allOps: RawFragmentOp[] = [];
 	for (const entry of entries) {
-		const ops: FragmentOp[] = [];
+		const ops: RawFragmentOp[] = [];
 		const fragmentProxy = {
-			toggle(selector: string, condition: unknown) { ops.push({ op: "toggle", selector, value: !!condition }); },
-			addClass(selector: string, className: string) { ops.push({ op: "addClass", selector, value: className }); },
-			removeClass(selector: string, className: string) { ops.push({ op: "removeClass", selector, value: className }); },
-			setText(selector: string, text: string) { ops.push({ op: "setText", selector, value: text }); },
-			setAttr(selector: string, attr: string, value: unknown) { ops.push({ op: "setAttr", selector, attr, value }); },
-			replaceChildren(selector: string, html: unknown) {
-				const content = Array.isArray(html) ? html.join("") : html;
-				ops.push({ op: "replaceChildren", selector, value: content });
+			toggle(target: string, condition: unknown) { ops.push({ op: "toggle", selector: target, value: !!condition }); },
+			addClass(target: string, className: string) { ops.push({ op: "addClass", selector: target, value: className }); },
+			removeClass(target: string, className: string) { ops.push({ op: "removeClass", selector: target, value: className }); },
+			setText(target: string, text: string) { ops.push({ op: "setText", selector: target, value: text }); },
+			setProp(target: string, prop: string, value: unknown) { ops.push({ op: "setProp", selector: target, prop, value }); },
+			setAttr(target: string, attr: string, value: unknown) { ops.push({ op: "setAttr", selector: target, attr, prop: attr, value }); },
+			replaceChildren(target: string, content: unknown) {
+				const value = Array.isArray(content) && content.every((c) => typeof c === "string")
+					? content.join("")
+					: content;
+				ops.push({ op: "replaceChildren", selector: target, value });
 			},
 		};
 		try {
@@ -593,6 +669,12 @@ function fireFragmentHookFromRegistry(
 	return allOps;
 }
 
+/**
+ * The schema default deadline, applied where neither a slot nor the manifest
+ * declares one. Pinned by `spec/slot-limit-tests.json`.
+ */
+export const DEFAULT_TIMEOUT_MS = 5000;
+
 function clampLimit(requested: number | undefined, hard: number | undefined): number | undefined {
 	if (requested === undefined) return hard;
 	if (hard === undefined) return requested;
@@ -604,11 +686,26 @@ export interface SandboxResult {
 	executeAsync: (code: string) => Promise<ExecutionResult>;
 	debugExecute: (code: string) => Promise<ExecutionResult>;
 	evaluateModule: (modName: string, code: string) => Promise<string[]>;
-	invokeExport: (name: string, args: unknown[]) => unknown;
-	invokeExportAsync: (name: string, args: unknown[]) => Promise<unknown>;
+	/**
+	 * `timeoutOverrideMs` stands in for the manifest-wide budget for this one
+	 * call — a slot's `limits.timeout_ms` arrives here, clamped to the
+	 * embedder's ceiling.
+	 */
+	invokeExport: (name: string, args: unknown[], owner?: string, timeoutOverrideMs?: number) => unknown;
+	invokeExportAsync: (
+		name: string,
+		args: unknown[],
+		owner?: string,
+		timeoutOverrideMs?: number,
+	) => Promise<unknown>;
+	/**
+	 * Scopes every subsequent `xript.exports.register` / module harvest to the named
+	 * mod's own export namespace. Pass `null` to return to the host bucket.
+	 */
+	setExportOwner: (owner: string | null) => void;
 	fireHook: (hookName: string, options?: FireHookOptions) => unknown[];
 	emit: (eventId: string, payload?: unknown) => unknown[];
-	fireFragmentHook: (fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>) => FragmentOp[];
+	fireFragmentHook: (fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>) => RawFragmentOp[];
 	debugSession: () => DebugSession | null;
 }
 
@@ -675,7 +772,31 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 	const hookRegistry = createHandlerRegistry();
 	const fragmentRegistry = createHandlerRegistry();
 	const eventRegistry = createHandlerRegistry();
-	const exportRegistry = new Map<string, HostFunction>();
+	const exportRegistry = new Map<string, Map<string, HostFunction>>([["", new Map()]]);
+	let exportOwner = "";
+
+	function ownerBucket(owner: string): Map<string, HostFunction> {
+		const existing = exportRegistry.get(owner);
+		if (existing) return existing;
+		const created = new Map<string, HostFunction>();
+		exportRegistry.set(owner, created);
+		return created;
+	}
+
+	function resolveExport(name: string, owner: string | undefined): HostFunction | undefined {
+		if (owner !== undefined) return exportRegistry.get(owner)?.get(name);
+		const owners: string[] = [];
+		for (const [candidate, bucket] of exportRegistry) {
+			if (bucket.has(name)) owners.push(candidate);
+		}
+		if (owners.length > 1) throw new AmbiguousExportError(name, owners);
+		return owners.length === 1 ? exportRegistry.get(owners[0])!.get(name) : undefined;
+	}
+
+	function setExportOwner(owner: string | null): void {
+		exportOwner = owner ?? "";
+		ownerBucket(exportOwner);
+	}
 
 	const sandboxGlobals = buildSandboxGlobal(options);
 	sandboxGlobals.hooks = buildHooksGlobal(manifest, grantedCapabilities, hookRegistry, fragmentRegistry);
@@ -695,7 +816,7 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 			if (typeof fn !== "function") {
 				throw new TypeError("xript.exports.register: fn must be a function");
 			}
-			exportRegistry.set(name, fn as HostFunction);
+			ownerBucket(exportOwner).set(name, fn as HostFunction);
 		},
 	});
 	sandboxGlobals.xript = Object.freeze({ exports: exportsApi });
@@ -763,25 +884,66 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 		}
 	}
 
-	function invokeExport(name: string, args: unknown[]): unknown {
+	/**
+	 * The budget governing one call. An override (a slot's `limits.timeout_ms`)
+	 * replaces the manifest's and is clamped to the embedder's ceiling rather
+	 * than trusted, so a slot may widen only as far as the host allows.
+	 */
+	function callTimeoutMs(overrideMs?: number): number {
+		if (overrideMs === undefined) return timeoutMs;
+		return clampLimit(overrideMs, hard.timeout_ms) ?? timeoutMs;
+	}
+
+	const invokeScript = new vm.Script("__xript_call_fn.apply(undefined, __xript_call_args)", {
+		filename: "xript-invoke.js",
+	});
+
+	/**
+	 * Calls an export through `runInContext` rather than reaching into the
+	 * context and calling the function handle directly. The direct call ran
+	 * outside any deadline, so a handler could spin forever no matter what
+	 * `limits` said; `vm`'s timeout only applies to code it is running. As with
+	 * `execute`, the deadline bounds synchronous work — an `await` that never
+	 * settles is not something `vm` can interrupt.
+	 */
+	function callWithBudget(fn: HostFunction, args: unknown[], budgetMs: number): unknown {
+		const globals = sandboxGlobals as unknown as Record<string, unknown>;
+		globals.__xript_call_fn = fn;
+		globals.__xript_call_args = args;
+		try {
+			return invokeScript.runInContext(context, { timeout: budgetMs });
+		} finally {
+			delete globals.__xript_call_fn;
+			delete globals.__xript_call_args;
+		}
+	}
+
+	function invokeExport(name: string, args: unknown[], owner?: string, timeoutOverrideMs?: number): unknown {
 		if (cancellation?.cancelled) throw new CancellationError();
-		const fn = exportRegistry.get(name);
+		const fn = resolveExport(name, owner);
 		if (!fn) throw new InvokeError(name, `export ${name} not found`);
 		try {
-			return fn(...args);
+			return callWithBudget(fn, args, callTimeoutMs(timeoutOverrideMs));
 		} catch (e) {
+			if (isTimeoutError(e)) return wrapTimeoutError(e);
 			const message = e instanceof Error ? e.message : String(e);
 			throw new InvokeError(name, message);
 		}
 	}
 
-	async function invokeExportAsync(name: string, args: unknown[]): Promise<unknown> {
+	async function invokeExportAsync(
+		name: string,
+		args: unknown[],
+		owner?: string,
+		timeoutOverrideMs?: number,
+	): Promise<unknown> {
 		if (cancellation?.cancelled) throw new CancellationError();
-		const fn = exportRegistry.get(name);
+		const fn = resolveExport(name, owner);
 		if (!fn) throw new InvokeError(name, `export ${name} not found`);
 		try {
-			return await fn(...args);
+			return await callWithBudget(fn, args, callTimeoutMs(timeoutOverrideMs));
 		} catch (e) {
+			if (isTimeoutError(e)) return wrapTimeoutError(e);
 			const message = e instanceof Error ? e.message : String(e);
 			throw new InvokeError(name, message);
 		}
@@ -848,8 +1010,9 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 			if (name === "default") continue;
 			const value = namespace[name];
 			if (typeof value !== "function") continue;
-			if (exportRegistry.has(name)) continue;
-			exportRegistry.set(name, value as HostFunction);
+			const bucket = ownerBucket(exportOwner);
+			if (bucket.has(name)) continue;
+			bucket.set(name, value as HostFunction);
 			harvested.push(name);
 		}
 		return harvested;
@@ -863,7 +1026,7 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 		return emitFromRegistry(eventRegistry, manifest, eventId, payload);
 	}
 
-	function fireFragmentHook(fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>): FragmentOp[] {
+	function fireFragmentHook(fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>): RawFragmentOp[] {
 		return fireFragmentHookFromRegistry(fragmentRegistry, fragmentId, lifecycle, bindings);
 	}
 
@@ -871,5 +1034,5 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 		return debugController ? debugController.session : null;
 	}
 
-	return { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, fireHook, emit, fireFragmentHook, debugSession };
+	return { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, setExportOwner, fireHook, emit, fireFragmentHook, debugSession };
 }

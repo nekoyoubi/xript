@@ -117,6 +117,192 @@ function mergeSlots(base: unknown, child: unknown): unknown[] {
 	return out;
 }
 
+function withoutRefines(value: unknown): unknown {
+	if (!isObject(value)) return value;
+	const copy: Json = { ...value };
+	delete copy.refines;
+	return copy;
+}
+
+/**
+ * Merges a child node's props onto a base node's. A same-named prop is REPLACED wholesale
+ * rather than deep-merged: deep-merging two JSON Schemas leaves stale constraints behind, and
+ * a child widening a prop's type would silently inherit the base's `sink` onto a value the
+ * sink can no longer handle. Replacing forces the child to restate the safety annotation.
+ */
+function mergeProps(base: unknown, child: unknown): Json {
+	const baseProps = isObject(base) ? base : {};
+	const childProps = isObject(child) ? child : {};
+	return { ...baseProps, ...childProps };
+}
+
+function mergeNode(baseNode: Json, childNode: Json): Json {
+	const merged: Json = { ...baseNode };
+	for (const [key, value] of Object.entries(childNode)) {
+		if (key === "refines") continue;
+		if (key === "props") continue;
+		merged[key] = value;
+	}
+	if ("props" in baseNode || "props" in childNode) {
+		merged.props = mergeProps(baseNode.props, childNode.props);
+	}
+	delete merged.refines;
+	return merged;
+}
+
+/**
+ * Merges a `nodes` map, whether it hangs off a format's inline vocabulary or a named
+ * one. `owner` is the JSON pointer of the declaration the nodes belong to, so a
+ * collision is reported against the surface the author actually wrote.
+ */
+function mergeNodes(base: unknown, child: unknown, ownerLabel: string, owner: string): Json {
+	const baseNodes = isObject(base) ? base : {};
+	const childNodes = isObject(child) ? child : {};
+	const merged: Json = {};
+	for (const [name, node] of Object.entries(baseNodes)) merged[name] = withoutRefines(node);
+
+	for (const [name, node] of Object.entries(childNodes)) {
+		if (!(name in baseNodes)) {
+			merged[name] = withoutRefines(node);
+			continue;
+		}
+		if (!isObject(node) || node.refines !== true) {
+			throw new ManifestResolutionError(
+				`${ownerLabel} node "${name}" conflicts with extended base`,
+				`${owner}/nodes/${name}`,
+			);
+		}
+		merged[name] = mergeNode(baseNodes[name] as Json, node);
+	}
+	return merged;
+}
+
+/**
+ * Merges one format declaration onto its base. `vocabularies` is absent-inherits,
+ * present-replaces-wholesale: the array is ordered and the order is semantic, so there is
+ * no defensible union order, and a silent union could re-inject `html` into a scope a
+ * child deliberately closed. The asymmetry with `nodes`, which key-merges, is intentional.
+ *
+ * `schemes` follows the same rule for the same reason. A union would make narrowing
+ * impossible — a child could only ever widen its base's URI surface, and `[]` would stop
+ * meaning deliberate closure.
+ */
+function mergeFormat(baseFormat: Json, childFormat: Json, formatId: string): Json {
+	const merged: Json = { ...baseFormat };
+	for (const [key, value] of Object.entries(childFormat)) {
+		if (key === "refines") continue;
+		if (key === "nodes") continue;
+		if (key === "vocabularies") {
+			merged.vocabularies = value;
+			continue;
+		}
+		if (key === "schemes") {
+			merged.schemes = value;
+			continue;
+		}
+		merged[key] = value;
+	}
+	if ("nodes" in baseFormat || "nodes" in childFormat) {
+		merged.nodes = mergeNodes(baseFormat.nodes, childFormat.nodes, "format", `/formats/${formatId}`);
+	}
+	delete merged.refines;
+	return merged;
+}
+
+/**
+ * Merges the `formats` block across an `extends` chain. Three levels, each collision-as-error
+ * unless the child marks itself `refines`: a format id, a node inside a refining format, and a
+ * prop inside a refining node (which replaces its base wholesale). Without this arm a child's
+ * `formats` would replace the base's entire vocabulary silently.
+ */
+function mergeFormats(base: unknown, child: unknown): Json {
+	const baseFormats = isObject(base) ? base : {};
+	const childFormats = isObject(child) ? child : {};
+	const merged: Json = {};
+
+	for (const [id, format] of Object.entries(baseFormats)) {
+		merged[id] = isObject(format) ? mergeFormat({}, format, id) : format;
+	}
+
+	for (const [id, format] of Object.entries(childFormats)) {
+		if (!(id in baseFormats)) {
+			merged[id] = isObject(format) ? mergeFormat({}, format, id) : format;
+			continue;
+		}
+		if (!isObject(format) || format.refines !== true) {
+			throw new ManifestResolutionError(
+				`format "${id}" conflicts with extended base`,
+				`/formats/${id}`,
+			);
+		}
+		merged[id] = mergeFormat(baseFormats[id] as Json, format, id);
+	}
+
+	return merged;
+}
+
+function mergeVocabulary(baseVocabulary: Json, childVocabulary: Json, vocabularyId: string): Json {
+	const merged: Json = { ...baseVocabulary };
+	for (const [key, value] of Object.entries(childVocabulary)) {
+		if (key === "refines") continue;
+		if (key === "nodes") continue;
+		merged[key] = value;
+	}
+	if ("nodes" in baseVocabulary || "nodes" in childVocabulary) {
+		merged.nodes = mergeNodes(
+			baseVocabulary.nodes,
+			childVocabulary.nodes,
+			"vocabulary",
+			`/vocabularies/${vocabularyId}`,
+		);
+	}
+	delete merged.refines;
+	return merged;
+}
+
+/**
+ * Merges the `vocabularies` block across an `extends` chain. Three levels of
+ * collision-as-error-unless-`refines`, identical to `formats`: a vocabulary id, a node
+ * inside a refining vocabulary, and a prop inside a refining node.
+ */
+function mergeVocabularies(base: unknown, child: unknown): Json {
+	const baseVocabularies = isObject(base) ? base : {};
+	const childVocabularies = isObject(child) ? child : {};
+	const merged: Json = {};
+
+	for (const [id, vocabulary] of Object.entries(baseVocabularies)) {
+		merged[id] = isObject(vocabulary) ? mergeVocabulary({}, vocabulary, id) : vocabulary;
+	}
+
+	for (const [id, vocabulary] of Object.entries(childVocabularies)) {
+		if (!(id in baseVocabularies)) {
+			merged[id] = isObject(vocabulary) ? mergeVocabulary({}, vocabulary, id) : vocabulary;
+			continue;
+		}
+		if (!isObject(vocabulary) || vocabulary.refines !== true) {
+			throw new ManifestResolutionError(
+				`vocabulary "${id}" conflicts with extended base`,
+				`/vocabularies/${id}`,
+			);
+		}
+		merged[id] = mergeVocabulary(baseVocabularies[id] as Json, vocabulary, id);
+	}
+
+	return merged;
+}
+
+/**
+ * Merges an `execution` block across an `extends` chain, per-property with the child winning
+ * each property it states. Unlike a type or a slot id, a colliding `execution` is never an
+ * error and needs no `refines` marker: intent is a routing hint rather than a contract, so a
+ * child may move `duration` in either direction — narrowing semantics do not apply.
+ */
+function mergeExecution(base: unknown, child: unknown): unknown {
+	if (!isObject(base)) return child ?? base;
+	if (!isObject(child)) return base;
+	return { ...base, ...child };
+}
+
 function mergeManifests(base: Json, child: Json): Json {
 	const result: Json = { ...base };
 
@@ -134,11 +320,26 @@ function mergeManifests(base: Json, child: Json): Json {
 		result.slots = mergeSlots(base.slots, child.slots);
 	}
 
+	if ("formats" in base || "formats" in child) {
+		result.formats = mergeFormats(base.formats, child.formats);
+	}
+
+	if ("vocabularies" in base || "vocabularies" in child) {
+		result.vocabularies = mergeVocabularies(base.vocabularies, child.vocabularies);
+	}
+
+	if ("execution" in base || "execution" in child) {
+		result.execution = mergeExecution(base.execution, child.execution);
+	}
+
 	for (const [key, value] of Object.entries(child)) {
 		if (key === "extends") continue;
+		if (key === "execution") continue;
 		if ((SCALAR_KEYS as readonly string[]).includes(key)) continue;
 		if ((MAP_KEYS as readonly string[]).includes(key)) continue;
 		if (key === "slots") continue;
+		if (key === "formats") continue;
+		if (key === "vocabularies") continue;
 		result[key] = value;
 	}
 
@@ -210,6 +411,8 @@ export interface Provenance {
 	inheritedSlots: string[];
 	inheritedCapabilities: string[];
 	inheritedAbstractTypes: string[];
+	inheritedFormats: string[];
+	inheritedVocabularies: string[];
 }
 
 function localSlotIds(manifest: Json): Set<string> {
@@ -221,6 +424,16 @@ function localSlotIds(manifest: Json): Set<string> {
 		}
 	}
 	return ids;
+}
+
+function localFormatIds(manifest: Json): Set<string> {
+	const formats = manifest.formats;
+	return isObject(formats) ? new Set(Object.keys(formats)) : new Set<string>();
+}
+
+function localVocabularyIds(manifest: Json): Set<string> {
+	const vocabularies = manifest.vocabularies;
+	return isObject(vocabularies) ? new Set(Object.keys(vocabularies)) : new Set<string>();
 }
 
 function localCapabilityNames(manifest: Json): Set<string> {
@@ -255,20 +468,38 @@ function abstractTypeNames(manifest: Json): Set<string> {
  */
 export async function resolveProvenance(manifest: unknown, baseDir: string): Promise<Provenance> {
 	if (!isObject(manifest)) {
-		return { resolved: manifest, inheritedSlots: [], inheritedCapabilities: [], inheritedAbstractTypes: [] };
+		return {
+			resolved: manifest,
+			inheritedSlots: [],
+			inheritedCapabilities: [],
+			inheritedAbstractTypes: [],
+			inheritedFormats: [],
+			inheritedVocabularies: [],
+		};
 	}
 	const localSlots = localSlotIds(manifest);
 	const localCaps = localCapabilityNames(manifest);
 	const localTypes = localTypeNames(manifest);
+	const localFormats = localFormatIds(manifest);
+	const localVocabularies = localVocabularyIds(manifest);
 	const resolved = await resolveWithChain(manifest, baseDir, []);
 
 	const inheritedSlots = [...localSlotIds(resolved)].filter((id) => !localSlots.has(id));
 	const inheritedCapabilities = [...localCapabilityNames(resolved)].filter((name) => !localCaps.has(name));
+	const inheritedFormats = [...localFormatIds(resolved)].filter((id) => !localFormats.has(id));
+	const inheritedVocabularies = [...localVocabularyIds(resolved)].filter((id) => !localVocabularies.has(id));
 
 	const resolvedAbstract = abstractTypeNames(resolved);
 	const inheritedAbstractTypes = [...localTypeNames(resolved)].filter(
 		(name) => !localTypes.has(name) && resolvedAbstract.has(name),
 	);
 
-	return { resolved, inheritedSlots, inheritedCapabilities, inheritedAbstractTypes };
+	return {
+		resolved,
+		inheritedSlots,
+		inheritedCapabilities,
+		inheritedAbstractTypes,
+		inheritedFormats,
+		inheritedVocabularies,
+	};
 }

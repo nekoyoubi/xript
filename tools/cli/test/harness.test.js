@@ -193,6 +193,59 @@ describe("harness session — events, hooks, and steps", () => {
 			session.dispose();
 		}
 	});
+
+	it("runs a canonical scenario with the parallel source vocabulary and warns for none of it", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "xript-canon-"));
+		try {
+			await writeFile(join(dir, "entry.js"), MOD_SOURCE);
+			const session = await createHarnessSession({ appManifest: HOST, harness: { bindings: { "fs.read": { returns: "canon" } } } });
+			const warnings = [];
+			try {
+				const results = await runSteps(
+					session,
+					[
+						{ action: "load-mod", manifest: MOD, sourcePath: "entry.js" },
+						{ action: "invoke", export: "probe", args: ["c.txt"] },
+					],
+					{ baseDir: dir, warn: (m) => warnings.push(m) },
+				);
+				assert.ok(results[0].ok, JSON.stringify(results[0]));
+				assert.equal(results[1].result, "canon");
+				assert.deepEqual(warnings, [], "canonical fields must not warn");
+			} finally {
+				session.dispose();
+			}
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("accepts the deprecated source/sources/exportName and warns once each", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "xript-legacy-"));
+		try {
+			await writeFile(join(dir, "entry.js"), MOD_SOURCE);
+			const session = await createHarnessSession({ appManifest: HOST, harness: { bindings: { "fs.read": { returns: "legacy" } } } });
+			const warnings = [];
+			try {
+				const results = await runSteps(
+					session,
+					[
+						{ action: "load-mod", manifest: MOD, source: "entry.js" },
+						{ action: "invoke", exportName: "probe", args: ["l.txt"] },
+					],
+					{ baseDir: dir, warn: (m) => warnings.push(m) },
+				);
+				assert.ok(results[0].ok, JSON.stringify(results[0]));
+				assert.equal(results[1].result, "legacy");
+				assert.ok(warnings.some((m) => m.includes("`source`")), "expected a source deprecation");
+				assert.ok(warnings.some((m) => m.includes("`exportName`")), "expected an exportName deprecation");
+			} finally {
+				session.dispose();
+			}
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
 });
 
 describe("cli run — harnessed batch mode", () => {
@@ -207,13 +260,13 @@ describe("cli run — harnessed batch mode", () => {
 				join(dir, "steps.json"),
 				JSON.stringify({
 					steps: [
-						{ action: "load-mod", manifest: "./mod.json", source: "./mod.js" },
+						{ action: "load-mod", manifest: "./mod.json", sourcePath: "./mod.js" },
 						{ action: "invoke", export: "probe", args: ["cli.txt"] },
 						{ action: "emit", event: "tick" },
 					],
 				}),
 			);
-			const { stdout } = await execFileAsync("node", [
+			const { stdout, stderr } = await execFileAsync("node", [
 				cliPath,
 				"run",
 				"--app",
@@ -228,6 +281,28 @@ describe("cli run — harnessed batch mode", () => {
 			assert.equal(output.steps.length, 3);
 			assert.equal(output.steps[1].result, "batch content");
 			assert.ok(output.journal.some((entry) => entry.kind === "binding" && entry.binding === "fs.read"));
+			assert.ok(!stderr.includes("deprecated"), "canonical steps must not warn");
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("prints a deprecation to stderr for a legacy steps file, keeping stdout clean JSON", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "xript-harness-legacy-cli-"));
+		try {
+			await writeFile(join(dir, "host.json"), JSON.stringify(HOST));
+			await writeFile(join(dir, "harness.json"), JSON.stringify({ bindings: { "fs.read": { returns: "batch content" } } }));
+			await writeFile(join(dir, "mod.json"), JSON.stringify(MOD));
+			await writeFile(join(dir, "mod.js"), MOD_SOURCE);
+			await writeFile(
+				join(dir, "steps.json"),
+				JSON.stringify({ steps: [{ action: "load-mod", manifest: "./mod.json", source: "./mod.js" }, { action: "invoke", exportName: "probe", args: ["x"] }] }),
+			);
+			const { stdout, stderr } = await execFileAsync("node", [cliPath, "run", "--app", join(dir, "host.json"), "--harness", join(dir, "harness.json"), "--steps", join(dir, "steps.json")], { encoding: "utf-8" });
+			assert.match(stderr, /deprecated: `source`/);
+			assert.match(stderr, /deprecated: `exportName`/);
+			const output = JSON.parse(stdout);
+			assert.equal(output.steps[1].result, "batch content");
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}

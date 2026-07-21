@@ -7,11 +7,15 @@ A role is a named set of functions a mod promises to provide — a transcriber, 
 - `runtime.resolveRole(role)` returns the active `RoleResolution`, or `null` when no mod provides it.
 - `runtime.resolveRoleAll(role)` returns every provider, for when the host wants to fan out rather than pick one.
 
-A `RoleResolution` is `{ addon, role, fns }`, where `fns` maps each role-function name to the provider mod's export name. The host calls them through `runtime.invokeExport(fns[name], args)` — it never assumes a global of that name exists.
+A `RoleResolution` is `{ addon, role, fns }`, where `fns` maps each role-function name to the provider mod's export name. The host calls them through `runtime.invokeModExport(addon, fns[name], args)` — it never assumes a global of that name exists.
+
+Pass the `addon` explicitly. Export names are scoped to the mod that declared them, so two providers of the same role naturally both export `transcribe` without shadowing each other. `invokeExport(name, args)` still resolves a name only one mod owns; when two do, it throws `AmbiguousExportError` naming both mods rather than guessing. The resolution already knows the owner, so hand it over.
 
 ## Picking among providers
 
-When more than one mod provides a role, the host chooses. Set `rolePreferences` on `createRuntime` (`{ "transcriber": "my-whisper-addon" }`) to prefer a named provider per role; `resolveRole` honors it, falling back to the highest-priority provider otherwise. Use `resolveRoleAll` when every provider should run.
+When more than one mod provides a role, the host chooses. Set `rolePreferences` on `createRuntime` (`{ "transcriber": "my-whisper-addon" }`) to prefer a named provider per role; `resolveRole` honors it, falling back to the first provider by mod name otherwise. Use `resolveRoleAll` when every provider should run.
+
+The fallback is a stable tiebreak, not a ranking. A role fill carries no `priority` and no fill id, so the shared slot comparator collapses here to its last key, owning mod name. It used to be load order, which meant the winner changed when the host reordered its mod array; if the host has an actual opinion about which provider wins, that opinion belongs in `rolePreferences` rather than in the order it happens to load.
 
 ## Roles grant nothing on their own
 
@@ -28,5 +32,6 @@ Do not collapse per-mod isolation into one shared runtime just to call `runtime.
 ## Common mistakes
 
 - **Assuming a provider exists.** `resolveRole` returns `null` when nothing provides the role. Handle absence; do not call into a null resolution.
-- **Calling role functions by their role name.** Call the *export* name from `fns`, through `invokeExport`. The role name is a label, not a global.
+- **Calling role functions by their role name.** Call the *export* name from `fns`, through `invokeModExport`. The role name is a label, not a global.
+- **Dropping the provider on the floor.** `invokeExport(fns[name])` discards the `addon` the resolution just worked out. With two providers loaded that is an ambiguity error; with one it happens to work. Always carry the owner through.
 - **Treating a role as a grant.** A provider's functions are still gated by the capabilities its mod was granted.

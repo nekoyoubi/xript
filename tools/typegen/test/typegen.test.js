@@ -118,6 +118,21 @@ describe("generateTypes", () => {
 		assert.ok(result.includes("function getHealth(): number;"));
 	});
 
+	it("does not render a literal `undefined` for a namespace with no description", () => {
+		const manifest = {
+			xript: "0.1",
+			name: "test",
+			bindings: {
+				player: {
+					members: { getHealth: { description: "Returns health.", returns: "number" } },
+				},
+			},
+		};
+		const result = generateTypes(manifest);
+		assert.ok(!/\*\s*undefined\s*$/m.test(result), "leaked a literal `undefined` into a JSDoc block");
+		assert.ok(result.includes("declare namespace player {"));
+	});
+
 	it("generates async return types wrapped in Promise", () => {
 		const manifest = {
 			xript: "0.1",
@@ -473,7 +488,7 @@ describe("generateTypes", () => {
 		assert.ok(result.includes("function unmount(fragmentId: string"));
 	});
 
-	it("generates FragmentProxy interface when slots exist", () => {
+	it("generates XriptFragmentProxy interface when slots exist", () => {
 		const manifest = {
 			xript: "0.3",
 			name: "proxied",
@@ -482,9 +497,19 @@ describe("generateTypes", () => {
 			],
 		};
 		const result = generateTypes(manifest);
-		assert.ok(result.includes("FragmentProxy"));
+		assert.ok(result.includes("XriptFragmentProxy"));
 		assert.ok(result.includes("toggle(selector: string"));
 		assert.ok(result.includes("replaceChildren(selector: string"));
+		assert.ok(result.includes("setProp(selector: string"), "must offer the canonical setProp op");
+	});
+
+	it("offers setProp as canonical and marks setAttr deprecated in the fragment proxy", () => {
+		const result = generateTypes({ xript: "0.8", name: "p", slots: [{ id: "s", accepts: ["text/html"] }] });
+		const setPropAt = result.indexOf("setProp(");
+		const setAttrAt = result.indexOf("setAttr(");
+		assert.ok(setPropAt !== -1 && setAttrAt !== -1, "both ops present");
+		assert.ok(setPropAt < setAttrAt, "setProp (canonical) listed before setAttr (deprecated)");
+		assert.match(result, /@deprecated[^\n]*setProp[\s\S]*?setAttr\(/, "setAttr carries a deprecation pointing at setProp");
 	});
 
 	it("includes fragment API alongside regular hooks", () => {
@@ -598,5 +623,45 @@ describe("event-typed slot hook folding", () => {
 		});
 		assert.ok(result.includes("explicit"));
 		assert.equal(result.match(/function onStart\(/g).length, 1);
+	});
+});
+
+describe("generateAmbientTypes for a mod", () => {
+	const host = {
+		xript: "0.8",
+		name: "amb-host",
+		bindings: { log: { description: "Logs.", params: [{ name: "message", type: "string" }] } },
+		hooks: { onSave: { description: "Fires on save." } },
+		events: [{ id: "app.ready", description: "App is ready." }],
+		slots: [{ id: "sidebar.left", accepts: ["text/html"], description: "Sidebar." }],
+	};
+	const mod = {
+		xript: "0.8",
+		name: "amb-mod",
+		version: "1.0.0",
+		entry: { script: "dist/mod.js", format: "module", exports: { go: { description: "Goes." } } },
+		fills: { "sidebar.left": [{ id: "panel", format: "text/html", source: "p.html" }] },
+	};
+
+	// A mod declares no bindings, hooks or events — they are surfaces the host installs. Reading
+	// them off the mod produced an ambient file with none of them, which failed to compile
+	// against the very scaffold that recommended generating it.
+	it("takes the in-sandbox environment from the host, not the mod", async () => {
+		const { generateAmbientTypes } = await import("../dist/index.js");
+		const result = generateAmbientTypes(mod, { host });
+		assert.match(result, /function log\(/, "host bindings must reach a mod's ambient types");
+		assert.match(result, /namespace hooks/, "host hooks must reach a mod's ambient types");
+		assert.match(result, /namespace events/, "host events must reach a mod's ambient types");
+	});
+
+	it("still describes only itself when no host is supplied", async () => {
+		const { generateAmbientTypes } = await import("../dist/index.js");
+		const result = generateAmbientTypes(mod);
+		assert.doesNotMatch(result, /function log\(/);
+	});
+
+	it("leaves a host manifest's own ambient output alone", async () => {
+		const { generateAmbientTypes } = await import("../dist/index.js");
+		assert.equal(generateAmbientTypes(host), generateAmbientTypes(host, {}));
 	});
 });

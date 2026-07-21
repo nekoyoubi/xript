@@ -20,6 +20,139 @@ pub struct Manifest {
     pub types: Option<HashMap<String, TypeDefinition>>,
     pub events: Option<Vec<EventDefinition>>,
     pub libraries: Option<HashMap<String, LibraryDef>>,
+    /// Host-declared fragment formats, keyed by media type. Held as raw JSON
+    /// because a node's props are JSON Schema bodies the runtime only reads two
+    /// keywords out of; `xript validate` owns the rest.
+    pub formats: Option<serde_json::Value>,
+    /// Host-declared node vocabularies, keyed by vocabulary id. A vocabulary
+    /// declares nodes and their props and nothing about how they are authored,
+    /// so any number of formats may bring the same one into scope.
+    pub vocabularies: Option<serde_json::Value>,
+    /// The manifest-wide default every unannotated surface inherits.
+    pub execution: Option<ExecutionIntent>,
+}
+
+/// How long a host should expect a surface to take. Totally ordered; `widen`
+/// takes the maximum.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum IntentDuration {
+    /// Microseconds, no I/O. Safe anywhere, including a render pass.
+    Instant,
+    /// Completes within the ambient `limits` budget.
+    #[default]
+    Brief,
+    /// May legitimately exceed the ambient budget; route it off the
+    /// interactive lane.
+    Long,
+    /// Networked, streaming, or user-gated; no meaningful upper bound.
+    Unbounded,
+}
+
+impl IntentDuration {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            IntentDuration::Instant => "instant",
+            IntentDuration::Brief => "brief",
+            IntentDuration::Long => "long",
+            IntentDuration::Unbounded => "unbounded",
+        }
+    }
+}
+
+/// Where a surface may run. Totally ordered by restrictiveness; `widen` takes
+/// the maximum.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum IntentAffinity {
+    /// Stateless with respect to the sandbox; any runtime may serve it.
+    #[default]
+    Any,
+    /// Must land on the runtime where the calling mod's state lives.
+    Pinned,
+    /// Wants a runtime nobody else is using.
+    Isolated,
+}
+
+impl IntentAffinity {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            IntentAffinity::Any => "any",
+            IntentAffinity::Pinned => "pinned",
+            IntentAffinity::Isolated => "isolated",
+        }
+    }
+}
+
+/// A declared execution intent, as written in a manifest. Both axes are
+/// optional so an omitted axis can fall to the schema default rather than to
+/// the manifest-wide one — inheritance is per-surface, not per-axis.
+///
+/// Advisory throughout: nothing is enforced, no capability is consulted, and a
+/// `duration: instant` binding that takes ten seconds is a manifest bug rather
+/// than a security failure. Enforcement lives in `limits`, and `limits` only
+/// bounds script execution — see `spec/execution.md`.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default, Hash)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionIntent {
+    pub duration: Option<IntentDuration>,
+    pub affinity: Option<IntentAffinity>,
+}
+
+impl ExecutionIntent {
+    pub fn new(duration: IntentDuration, affinity: IntentAffinity) -> Self {
+        Self {
+            duration: Some(duration),
+            affinity: Some(affinity),
+        }
+    }
+
+    /// Fills both axes from the schema defaults.
+    pub fn resolved(&self) -> ResolvedIntent {
+        ResolvedIntent {
+            duration: self.duration.unwrap_or_default(),
+            affinity: self.affinity.unwrap_or_default(),
+        }
+    }
+
+    /// Per-axis refinement, base then child, as `extends` resolves it. A child
+    /// may move an axis in either direction and never errors: this is a
+    /// routing hint, not a type.
+    pub fn refine(base: Option<Self>, child: Option<Self>) -> Option<Self> {
+        match (base, child) {
+            (None, c) => c,
+            (b, None) => b,
+            (Some(b), Some(c)) => Some(Self {
+                duration: c.duration.or(b.duration),
+                affinity: c.affinity.or(b.affinity),
+            }),
+        }
+    }
+}
+
+/// An intent with both axes settled. What a router actually reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub struct ResolvedIntent {
+    pub duration: IntentDuration,
+    pub affinity: IntentAffinity,
+}
+
+impl ResolvedIntent {
+    /// The pairwise maximum on each lattice. Neither party can weaken the
+    /// other: under-routing a long call freezes a UI, over-routing a brief one
+    /// costs a thread hop.
+    pub fn widen(a: Self, b: Self) -> Self {
+        Self {
+            duration: a.duration.max(b.duration),
+            affinity: a.affinity.max(b.affinity),
+        }
+    }
+}
+
+impl From<ExecutionIntent> for ResolvedIntent {
+    fn from(value: ExecutionIntent) -> Self {
+        value.resolved()
+    }
 }
 
 /// An approved importable library: the host vouches that the registered
@@ -93,19 +226,131 @@ pub struct Slot {
     pub capability: Option<String>,
     pub multiple: Option<bool>,
     pub style: Option<String>,
+    /// The cost a host should assume when driving fills of this slot.
+    pub execution: Option<ExecutionIntent>,
+    /// Enforced limits for calls into this slot's fills, overriding the
+    /// manifest's `limits` field by field. The counterpart to `execution`:
+    /// that one is advisory routing, this one is enforcement.
+    pub limits: Option<SlotLimits>,
 }
+
+/// Per-slot execution limits. Carries only `timeout_ms` on purpose: memory and
+/// stack ceilings are fixed when a runtime is created, so a per-slot value for
+/// either could not be enforced without standing up a separate runtime. That
+/// path is `execution.affinity` plus a pool worker with its own limits.
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+pub struct SlotLimits {
+    pub timeout_ms: Option<u64>,
+}
+
+/// The accept type that marks a slot as a provider-role slot.
+pub const ROLE_SLOT_ACCEPT: &str = "application/x-xript-role";
 
 /// The accept type that marks a slot as an event-typed hook slot.
 pub const HOOK_SLOT_ACCEPT: &str = "application/x-xript-hook";
 
+/// The accept type that marks a slot as a command slot: its fills are named,
+/// invocable actions backed by mod exports.
+pub const COMMAND_SLOT_ACCEPT: &str = "application/x-xript-command";
+
 impl Slot {
+    /// Whether this slot is a provider-role slot.
+    pub fn is_role_slot(&self) -> bool {
+        self.accepts.iter().any(|a| a == ROLE_SLOT_ACCEPT)
+    }
+
     /// Whether this slot is an event-typed hook slot the host fires.
     pub fn is_hook_slot(&self) -> bool {
         self.accepts.iter().any(|a| a == HOOK_SLOT_ACCEPT)
     }
+
+    /// Whether this slot is a command slot the host invokes by name.
+    pub fn is_command_slot(&self) -> bool {
+        self.accepts.iter().any(|a| a == COMMAND_SLOT_ACCEPT)
+    }
 }
 
 impl Manifest {
+    /// The resolved execution intent of one surface, addressed as
+    /// `bindings/<dotted.name>`, `hooks/<id>` or `slots/<id>`.
+    ///
+    /// Resolution is the surface's own `execution`, else the manifest-wide
+    /// default, else the schema defaults. A surface that declares one axis
+    /// takes the *schema* default on the other, never the manifest-wide one:
+    /// declaring is a statement about this surface, not a partial inheritance.
+    /// An unknown path falls to the manifest default rather than failing.
+    pub fn execution_of(&self, path: &str) -> ResolvedIntent {
+        let declared = self.declared_execution(path);
+        match declared {
+            Some(intent) => intent.resolved(),
+            None => self.execution.unwrap_or_default().resolved(),
+        }
+    }
+
+    /// The `execution` written at `path`, without any inheritance applied.
+    pub fn declared_execution(&self, path: &str) -> Option<ExecutionIntent> {
+        let (kind, id) = path.split_once('/')?;
+        match kind {
+            "bindings" => self.binding_at(id).and_then(|b| match b {
+                Binding::Function(f) => f.execution,
+                Binding::Namespace(_) => None,
+            }),
+            "hooks" => self.hooks.as_ref()?.get(id).and_then(|h| h.execution),
+            "slots" => self
+                .slots
+                .as_ref()?
+                .iter()
+                .find(|s| s.id == id)
+                .and_then(|s| s.execution),
+            _ => None,
+        }
+    }
+
+    /// Walks a dotted binding name through nested namespaces.
+    fn binding_at(&self, dotted: &str) -> Option<&Binding> {
+        let mut segments = dotted.split('.');
+        let mut current = self.bindings.as_ref()?.get(segments.next()?)?;
+        for segment in segments {
+            match current {
+                Binding::Namespace(ns) => current = ns.members.get(segment)?,
+                Binding::Function(_) => return None,
+            }
+        }
+        Some(current)
+    }
+
+    /// The timeout that governs a call into a fill of `slot_id`: the slot's own
+    /// `limits.timeout_ms` when it declares one, otherwise `None` to mean "use
+    /// the manifest-wide budget". A slot may raise the budget as well as lower
+    /// it; the host declares both, so neither direction is an escalation. The
+    /// embedder's hard limits clamp the result downstream either way.
+    pub fn slot_timeout_ms(&self, slot_id: &str) -> Option<u64> {
+        self.slots
+            .as_ref()?
+            .iter()
+            .find(|slot| slot.id == slot_id)?
+            .limits
+            .as_ref()?
+            .timeout_ms
+    }
+
+    /// The deadline that governs a call into a fill of `slot_id`: the slot's own
+    /// `limits.timeout_ms` where it declares one, the manifest's otherwise, the
+    /// schema default of 5000ms where neither does, clamped by the embedder's
+    /// ceiling. Held to `spec/slot-limit-tests.json` by every runtime.
+    pub fn effective_slot_timeout_ms(&self, slot_id: &str, hard_timeout_ms: Option<u64>) -> u64 {
+        let base = self
+            .limits
+            .as_ref()
+            .and_then(|limits| limits.timeout_ms)
+            .unwrap_or(DEFAULT_TIMEOUT_MS);
+        let requested = self.slot_timeout_ms(slot_id).unwrap_or(base);
+        match hard_timeout_ms {
+            Some(hard) => requested.min(hard),
+            None => requested,
+        }
+    }
+
     /// The effective hook map the runtime dispatches: the explicit `hooks`
     /// section plus a synthesized phaseless `HookDef` for every event-typed
     /// slot. An explicit `hooks` entry wins over a same-id slot — slots never
@@ -126,6 +371,7 @@ impl Manifest {
                         capability: slot.capability.clone(),
                         r#async: None,
                         deprecated: None,
+                        execution: slot.execution,
                     },
                 );
             }
@@ -147,6 +393,8 @@ pub struct ModManifest {
     pub entry: Option<serde_json::Value>,
     pub fragments: Option<Vec<FragmentDeclaration>>,
     pub contributions: Option<Contributions>,
+    /// The mod-wide default every unannotated export inherits.
+    pub execution: Option<ExecutionIntent>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -186,9 +434,43 @@ pub struct ExportDecl {
     pub capability: Option<String>,
     #[serde(default)]
     pub streaming: Option<bool>,
+    /// The cost of invoking this export, as the mod's author claims it.
+    pub execution: Option<ExecutionIntent>,
 }
 
 impl ModManifest {
+    /// The resolved execution intent of one export, addressed as
+    /// `exports/<name>`. Same rule as the host side: the export's own claim,
+    /// else the mod-wide default, else the schema defaults.
+    pub fn execution_of(&self, path: &str) -> ResolvedIntent {
+        match self.declared_execution(path) {
+            Some(intent) => intent.resolved(),
+            None => self.execution.unwrap_or_default().resolved(),
+        }
+    }
+
+    /// The `execution` written at `path`, without any inheritance applied.
+    pub fn declared_execution(&self, path: &str) -> Option<ExecutionIntent> {
+        let (kind, name) = path.split_once('/')?;
+        if kind != "exports" {
+            return None;
+        }
+        self.entry_block()?.exports.get(name)?.execution
+    }
+
+    /// The widen over every declared export and the mod-wide default: what the
+    /// pool places a mod's home worker on.
+    pub fn aggregate_execution(&self) -> ResolvedIntent {
+        let mut aggregate = self.execution.unwrap_or_default().resolved();
+        if let Some(entry) = self.entry_block() {
+            for name in entry.exports.keys() {
+                aggregate =
+                    ResolvedIntent::widen(aggregate, self.execution_of(&format!("exports/{name}")));
+            }
+        }
+        aggregate
+    }
+
     /// Parses the `entry` field into a normalized `EntryBlock` whether it is a
     /// bare script string, an array of scripts, or the richer object form with
     /// declared exports. Returns `None` when no entry is declared.
@@ -229,6 +511,10 @@ pub struct FragmentDeclaration {
     /// back-compat; `handlers` wins when both are present.
     pub events: Option<Vec<FragmentHandler>>,
     pub priority: Option<i32>,
+    /// Turns on `{{ expr }}` interpolation for this fill's text nodes. Off by default:
+    /// a fragment published before the mode existed may carry `{{` in prose or a code
+    /// sample, and its meaning must not change.
+    pub interpolate: Option<bool>,
 }
 
 impl FragmentDeclaration {
@@ -243,6 +529,10 @@ impl FragmentDeclaration {
 pub struct FragmentBinding {
     pub name: String,
     pub path: String,
+    /// Optional value type, so tooling can type-check the expressions that read this
+    /// binding. Not consulted at runtime.
+    #[serde(default)]
+    pub r#type: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -269,6 +559,8 @@ pub struct FunctionBinding {
     pub r#async: Option<bool>,
     pub capability: Option<String>,
     pub deprecated: Option<String>,
+    /// The cost of calling this host function.
+    pub execution: Option<ExecutionIntent>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -294,6 +586,8 @@ pub struct HookDef {
     pub capability: Option<String>,
     pub r#async: Option<bool>,
     pub deprecated: Option<String>,
+    /// The cost of firing this hook, handler fan-out included.
+    pub execution: Option<ExecutionIntent>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -301,6 +595,10 @@ pub struct Capability {
     pub description: String,
     pub risk: Option<String>,
 }
+
+/// The schema default deadline, applied where neither a slot nor the manifest
+/// declares one. Pinned by `spec/slot-limit-tests.json`.
+pub const DEFAULT_TIMEOUT_MS: u64 = 5000;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Limits {
@@ -459,6 +757,8 @@ pub fn validate_mod_against_app(
     mod_manifest: &ModManifest,
     slots: &[Slot],
     granted_capabilities: &std::collections::HashSet<String>,
+    formats: Option<&serde_json::Value>,
+    vocabularies: Option<&serde_json::Value>,
 ) -> Vec<ValidationIssue> {
     let mut issues = Vec::new();
     let slot_map: HashMap<&str, &Slot> = slots.iter().map(|s| (s.id.as_str(), s)).collect();
@@ -483,6 +783,25 @@ pub fn validate_mod_against_app(
                                 frag.slot, frag.format
                             ),
                         });
+                    } else {
+                        match crate::fragment::profiles::resolve_format_profile(
+                            &frag.format,
+                            formats,
+                            vocabularies,
+                        ) {
+                            Err(err) => issues.push(ValidationIssue {
+                                path: format!("{}/format", prefix),
+                                message: err.message,
+                            }),
+                            Ok(None) => issues.push(ValidationIssue {
+                                path: format!("{}/format", prefix),
+                                message: format!(
+                                    "unknown fragment format '{}' — declare it in the host manifest's 'formats' block",
+                                    frag.format
+                                ),
+                            }),
+                            Ok(Some(_)) => {}
+                        }
                     }
 
                     if let Some(ref cap) = slot.capability {
@@ -515,9 +834,12 @@ const SCALAR_FIELDS: &[&str] = &["name", "version", "title", "description", "xri
 /// child replaces the abstract stub), and a child redeclaring a concrete base
 /// type with `refines: true` deep-merges onto it; any other duplicate id is an
 /// error. `slots` append (deduped by id), with a child slot allowed to refine a
-/// base slot id via `refines: true` and other duplicates erroring. Scalar fields
-/// take the child's value. Resolution is transitive with cycle detection. The
-/// returned value no longer carries an `extends` field.
+/// base slot id via `refines: true` and other duplicates erroring. `formats`
+/// key-merge at three levels: a format id, a node inside a refining format, and a
+/// prop inside a refining node (which replaces its base wholesale); a duplicate
+/// without `refines: true` is an error at each level. Scalar fields take the
+/// child's value. Resolution is transitive with cycle detection. The returned
+/// value no longer carries an `extends` field.
 pub fn resolve_extends(
     manifest: &serde_json::Value,
     base_dir: &std::path::Path,
@@ -616,6 +938,16 @@ pub fn merge_manifests(
         out.insert("slots".to_string(), merged_slots);
     }
 
+    if let Some(merged_formats) = merge_formats(base_obj.get("formats"), child_obj.get("formats"))? {
+        out.insert("formats".to_string(), merged_formats);
+    }
+
+    if let Some(merged_vocabularies) =
+        merge_vocabularies(base_obj.get("vocabularies"), child_obj.get("vocabularies"))?
+    {
+        out.insert("vocabularies".to_string(), merged_vocabularies);
+    }
+
     for field in SCALAR_FIELDS {
         if let Some(v) = child_obj.get(*field) {
             out.insert(field.to_string(), v.clone());
@@ -626,6 +958,8 @@ pub fn merge_manifests(
         if MERGE_MAPS.contains(&k.as_str())
             || SCALAR_FIELDS.contains(&k.as_str())
             || k == "slots"
+            || k == "formats"
+            || k == "vocabularies"
             || k == "extends"
         {
             continue;
@@ -716,6 +1050,251 @@ fn merge_id_maps(
             Ok(Some(serde_json::Value::Object(out)))
         }
     }
+}
+
+fn without_refines(value: &serde_json::Value) -> serde_json::Value {
+    match value.as_object() {
+        Some(obj) => {
+            let mut out = obj.clone();
+            out.remove("refines");
+            serde_json::Value::Object(out)
+        }
+        None => value.clone(),
+    }
+}
+
+/// Merges a child node's props onto a base node's. A same-named prop is REPLACED wholesale
+/// rather than deep-merged: a child widening a prop's type would otherwise silently inherit
+/// the base's `sink` onto a value the sink can no longer handle.
+fn merge_node(base: &serde_json::Value, child: &serde_json::Value) -> serde_json::Value {
+    let base_obj = base.as_object().cloned().unwrap_or_default();
+    let child_obj = child.as_object().cloned().unwrap_or_default();
+    let mut out = base_obj.clone();
+
+    for (k, v) in &child_obj {
+        if k == "refines" || k == "props" {
+            continue;
+        }
+        out.insert(k.clone(), v.clone());
+    }
+
+    if base_obj.contains_key("props") || child_obj.contains_key("props") {
+        let mut props = base_obj
+            .get("props")
+            .and_then(|p| p.as_object())
+            .cloned()
+            .unwrap_or_default();
+        if let Some(child_props) = child_obj.get("props").and_then(|p| p.as_object()) {
+            for (k, v) in child_props {
+                props.insert(k.clone(), v.clone());
+            }
+        }
+        out.insert("props".to_string(), serde_json::Value::Object(props));
+    }
+
+    out.remove("refines");
+    serde_json::Value::Object(out)
+}
+
+/// Merges a `nodes` block for whichever surface owns it. `owner_label` names that
+/// surface in the collision message and `owner_pointer` locates it, so a format's
+/// inline nodes and a named vocabulary's nodes go through one merge rather than two.
+fn merge_nodes(
+    base: Option<&serde_json::Value>,
+    child: Option<&serde_json::Value>,
+    owner_label: &str,
+    owner_pointer: &str,
+) -> crate::error::Result<serde_json::Value> {
+    let base_map = base.and_then(|v| v.as_object()).cloned().unwrap_or_default();
+    let child_map = child.and_then(|v| v.as_object()).cloned().unwrap_or_default();
+    let mut out = serde_json::Map::new();
+
+    for (name, node) in &base_map {
+        out.insert(name.clone(), without_refines(node));
+    }
+
+    for (name, node) in &child_map {
+        match base_map.get(name) {
+            None => {
+                out.insert(name.clone(), without_refines(node));
+            }
+            Some(base_node) => {
+                if !is_refining(node) {
+                    return Err(XriptError::ManifestValidation {
+                        issues: vec![ValidationIssue {
+                            path: format!("{}/nodes/{}", owner_pointer, name),
+                            message: format!(
+                                "{} node \"{}\" conflicts with extended base",
+                                owner_label, name
+                            ),
+                        }],
+                    });
+                }
+                out.insert(name.clone(), merge_node(base_node, node));
+            }
+        }
+    }
+
+    Ok(serde_json::Value::Object(out))
+}
+
+fn merge_format(
+    base: &serde_json::Value,
+    child: &serde_json::Value,
+    format_id: &str,
+) -> crate::error::Result<serde_json::Value> {
+    let base_obj = base.as_object().cloned().unwrap_or_default();
+    let child_obj = child.as_object().cloned().unwrap_or_default();
+    let mut out = base_obj.clone();
+
+    for (k, v) in &child_obj {
+        if k == "refines" || k == "nodes" {
+            continue;
+        }
+        // `vocabularies` and `schemes` are both absent-inherits,
+        // present-replaces-wholesale, with `[]` meaning deliberate closure. A union
+        // could re-inject `html` into a scope a child deliberately closed, and it
+        // would make a scheme set impossible to narrow: a child could only ever
+        // widen its base's URI surface. Both fall through to the same wholesale
+        // insert every other key gets; the asymmetry is with `nodes`, which
+        // key-merges below.
+        if k == "vocabularies" || k == "schemes" {
+            out.insert(k.clone(), v.clone());
+            continue;
+        }
+        out.insert(k.clone(), v.clone());
+    }
+
+    if base_obj.contains_key("nodes") || child_obj.contains_key("nodes") {
+        let nodes = merge_nodes(
+            base_obj.get("nodes"),
+            child_obj.get("nodes"),
+            "format",
+            &format!("/formats/{}", format_id),
+        )?;
+        out.insert("nodes".to_string(), nodes);
+    }
+
+    out.remove("refines");
+    Ok(serde_json::Value::Object(out))
+}
+
+/// Merges a refining child vocabulary onto a base one: `description` is child-wins
+/// and `nodes` key-merges, with an un-opted node collision erroring.
+fn merge_vocabulary(
+    base: &serde_json::Value,
+    child: &serde_json::Value,
+    vocabulary_id: &str,
+) -> crate::error::Result<serde_json::Value> {
+    let base_obj = base.as_object().cloned().unwrap_or_default();
+    let child_obj = child.as_object().cloned().unwrap_or_default();
+    let mut out = base_obj.clone();
+
+    for (k, v) in &child_obj {
+        if k == "refines" || k == "nodes" {
+            continue;
+        }
+        out.insert(k.clone(), v.clone());
+    }
+
+    if base_obj.contains_key("nodes") || child_obj.contains_key("nodes") {
+        let nodes = merge_nodes(
+            base_obj.get("nodes"),
+            child_obj.get("nodes"),
+            "vocabulary",
+            &format!("/vocabularies/{}", vocabulary_id),
+        )?;
+        out.insert("nodes".to_string(), nodes);
+    }
+
+    out.remove("refines");
+    Ok(serde_json::Value::Object(out))
+}
+
+/// Merges the `vocabularies` block across an `extends` chain. Three levels, each
+/// collision-as-error unless the child marks itself `refines`: a vocabulary id, a
+/// node inside a refining vocabulary, and a prop inside a refining node. Identical
+/// in shape to `merge_formats`, because a vocabulary is the same kind of surface.
+fn merge_vocabularies(
+    base: Option<&serde_json::Value>,
+    child: Option<&serde_json::Value>,
+) -> crate::error::Result<Option<serde_json::Value>> {
+    if base.is_none() && child.is_none() {
+        return Ok(None);
+    }
+
+    let base_map = base.and_then(|v| v.as_object()).cloned().unwrap_or_default();
+    let child_map = child.and_then(|v| v.as_object()).cloned().unwrap_or_default();
+    let mut out = serde_json::Map::new();
+
+    let empty = serde_json::Value::Object(serde_json::Map::new());
+    for (id, vocabulary) in &base_map {
+        out.insert(id.clone(), merge_vocabulary(&empty, vocabulary, id)?);
+    }
+
+    for (id, vocabulary) in &child_map {
+        match base_map.get(id) {
+            None => {
+                out.insert(id.clone(), merge_vocabulary(&empty, vocabulary, id)?);
+            }
+            Some(base_vocabulary) => {
+                if !is_refining(vocabulary) {
+                    return Err(XriptError::ManifestValidation {
+                        issues: vec![ValidationIssue {
+                            path: format!("/vocabularies/{}", id),
+                            message: format!("vocabulary {} conflicts with extended base", id),
+                        }],
+                    });
+                }
+                out.insert(id.clone(), merge_vocabulary(base_vocabulary, vocabulary, id)?);
+            }
+        }
+    }
+
+    Ok(Some(serde_json::Value::Object(out)))
+}
+
+/// Merges the `formats` block across an `extends` chain. Three levels, each collision-as-error
+/// unless the child marks itself `refines`: a format id, a node inside a refining format, and a
+/// prop inside a refining node. Without this arm a child's `formats` would fall into the
+/// catch-all and silently replace the base's entire vocabulary.
+fn merge_formats(
+    base: Option<&serde_json::Value>,
+    child: Option<&serde_json::Value>,
+) -> crate::error::Result<Option<serde_json::Value>> {
+    if base.is_none() && child.is_none() {
+        return Ok(None);
+    }
+
+    let base_map = base.and_then(|v| v.as_object()).cloned().unwrap_or_default();
+    let child_map = child.and_then(|v| v.as_object()).cloned().unwrap_or_default();
+    let mut out = serde_json::Map::new();
+
+    let empty = serde_json::Value::Object(serde_json::Map::new());
+    for (id, format) in &base_map {
+        out.insert(id.clone(), merge_format(&empty, format, id)?);
+    }
+
+    for (id, format) in &child_map {
+        match base_map.get(id) {
+            None => {
+                out.insert(id.clone(), merge_format(&empty, format, id)?);
+            }
+            Some(base_format) => {
+                if !is_refining(format) {
+                    return Err(XriptError::ManifestValidation {
+                        issues: vec![ValidationIssue {
+                            path: format!("/formats/{}", id),
+                            message: format!("format {} conflicts with extended base", id),
+                        }],
+                    });
+                }
+                out.insert(id.clone(), merge_format(base_format, format, id)?);
+            }
+        }
+    }
+
+    Ok(Some(serde_json::Value::Object(out)))
 }
 
 fn merge_slots(

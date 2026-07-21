@@ -46,6 +46,16 @@ export async function run(args: string[]): Promise<void> {
 	}
 }
 
+/**
+ * A coverage line. An empty surface scores 1 vacuously — nothing is uncovered — which is right
+ * for a gate and reads as an achievement when drawn as a full bar and "100%". A host declaring
+ * no slots at all was being told it had filled all of them.
+ */
+function coverage(metric: { score: number; total: number }, label: string, empty: string): string {
+	if (metric.total === 0) return `${" ".repeat(20)} n/a — this host declares ${empty}`;
+	return `${bar(metric.score)} ${Math.round(metric.score * 100)}% ${label}`;
+}
+
 function bar(score: number): string {
 	const filled = Math.round(score * 20);
 	return `${"█".repeat(filled)}${"░".repeat(20 - filled)}`;
@@ -61,12 +71,32 @@ function printReport(result: ScoreResult): void {
 	if (result.capacity.absent.length) console.log(`    not exposed: ${result.capacity.absent.join(", ")}`);
 	console.log("");
 	console.log(`  mod coverage (informational — not part of the score)`);
-	console.log(`    slots        ${bar(result.slots.score)} ${Math.round(result.slots.score * 100)}% of own non-reserved slots filled`);
+	console.log(`    slots        ${coverage(result.slots, "of own non-reserved slots filled", "no slots of its own")}`);
 	if (result.slots.unused.length) console.log(`      unfilled: ${result.slots.unused.join(", ")}`);
-	console.log(`    capabilities ${bar(result.capabilities.score)} ${Math.round(result.capabilities.score * 100)}% of own non-reserved capabilities referenced`);
+	console.log(
+		`    capabilities ${coverage(result.capabilities, "of own non-reserved capabilities referenced", "no capabilities of its own")}`,
+	);
 	if (result.capabilities.unused.length) console.log(`      unreferenced: ${result.capabilities.unused.join(", ")}`);
+	printCommandSurface(result);
 	if (result.gate) console.log(`\n  gate (--min ${result.gate.min}): ${result.gate.passed ? "pass" : "fail"}`);
 	console.log(`\n${result.disclaimer}`);
+}
+
+/**
+ * Command slots, reported beside the headline rather than in it. A command slot is a slot, already
+ * counted by the slot surface; counting it again would double-count and would move the denominator
+ * of every host that shipped before the kind existed.
+ */
+function printCommandSurface(result: ScoreResult): void {
+	const commands = result.commands;
+	if (!commands || commands.slots.length === 0) return;
+	console.log("");
+	console.log(`  command slots (informational — a command slot is a slot, already counted)`);
+	console.log(`    declared: ${commands.slots.join(", ")}`);
+	if (commands.gated.length) console.log(`      gated: ${commands.gated.join(", ")}`);
+	if (commands.constrained.length) console.log(`      payload-constrained: ${commands.constrained.join(", ")}`);
+	if (commands.singular.length) console.log(`      singular (resolve to one command): ${commands.singular.join(", ")}`);
+	if (commands.unreachable.length) console.log(`      unreachable: ${commands.unreachable.join(", ")}`);
 }
 
 function printHelp(): void {

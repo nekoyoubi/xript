@@ -132,6 +132,211 @@ function mergeSlots(
 	return merged;
 }
 
+function withoutRefines(value: unknown): unknown {
+	if (!isObject(value)) return value;
+	const copy = { ...value };
+	delete copy.refines;
+	return copy;
+}
+
+/**
+ * Merges a child node's props onto a base node's. A same-named prop is REPLACED wholesale
+ * rather than deep-merged: a child widening a prop's type would otherwise silently inherit the
+ * base's `sink` onto a value the sink can no longer handle.
+ */
+function mergeProps(base: unknown, child: unknown): Record<string, unknown> {
+	return { ...(isObject(base) ? base : {}), ...(isObject(child) ? child : {}) };
+}
+
+function mergeNode(
+	baseNode: Record<string, unknown>,
+	childNode: Record<string, unknown>,
+): Record<string, unknown> {
+	const merged: Record<string, unknown> = { ...baseNode };
+	for (const [key, value] of Object.entries(childNode)) {
+		if (key === "refines" || key === "props") continue;
+		merged[key] = value;
+	}
+	if ("props" in baseNode || "props" in childNode) {
+		merged.props = mergeProps(baseNode.props, childNode.props);
+	}
+	delete merged.refines;
+	return merged;
+}
+
+/**
+ * Merges a `nodes` map, whether it hangs off a format's inline vocabulary or a named one.
+ * `owner` is the JSON pointer of the declaration the nodes belong to, so a collision is
+ * reported against the surface the author actually wrote.
+ */
+function mergeNodes(
+	base: unknown,
+	child: unknown,
+	ownerLabel: string,
+	owner: string,
+	conflicts: Array<{ path: string; message: string }>,
+): Record<string, unknown> {
+	const baseNodes = isObject(base) ? base : {};
+	const childNodes = isObject(child) ? child : {};
+	const merged: Record<string, unknown> = {};
+	for (const [name, node] of Object.entries(baseNodes)) merged[name] = withoutRefines(node);
+
+	for (const [name, node] of Object.entries(childNodes)) {
+		if (!Object.prototype.hasOwnProperty.call(baseNodes, name)) {
+			merged[name] = withoutRefines(node);
+			continue;
+		}
+		if (!isObject(node) || node.refines !== true) {
+			conflicts.push({
+				path: `${owner}/nodes/${name}`,
+				message: `${ownerLabel} node '${name}' conflicts with extended base`,
+			});
+			continue;
+		}
+		merged[name] = mergeNode(baseNodes[name] as Record<string, unknown>, node);
+	}
+	return merged;
+}
+
+/**
+ * Merges one format declaration onto its base. `vocabularies` is absent-inherits,
+ * present-replaces-wholesale: the array is ordered and the order is semantic, so there is no
+ * defensible union order, and a silent union could re-inject `html` into a scope a child
+ * deliberately closed. The asymmetry with `nodes`, which key-merges, is intentional.
+ *
+ * `schemes` follows the same rule for the same reason. A union would make narrowing
+ * impossible — a child could only ever widen its base's URI surface, and `[]` would stop
+ * meaning deliberate closure.
+ */
+function mergeFormat(
+	baseFormat: Record<string, unknown>,
+	childFormat: Record<string, unknown>,
+	formatId: string,
+	conflicts: Array<{ path: string; message: string }>,
+): Record<string, unknown> {
+	const merged: Record<string, unknown> = { ...baseFormat };
+	for (const [key, value] of Object.entries(childFormat)) {
+		if (key === "refines" || key === "nodes") continue;
+		if (key === "vocabularies") {
+			merged.vocabularies = value;
+			continue;
+		}
+		if (key === "schemes") {
+			merged.schemes = value;
+			continue;
+		}
+		merged[key] = value;
+	}
+	if ("nodes" in baseFormat || "nodes" in childFormat) {
+		merged.nodes = mergeNodes(
+			baseFormat.nodes,
+			childFormat.nodes,
+			"format",
+			`/formats/${formatId}`,
+			conflicts,
+		);
+	}
+	delete merged.refines;
+	return merged;
+}
+
+/**
+ * Merges the `formats` block across an `extends` chain. Three levels, each collision-as-error
+ * unless the child marks itself `refines`: a format id, a node inside a refining format, and a
+ * prop inside a refining node. Without this arm a child's `formats` would silently replace the
+ * base's entire vocabulary.
+ */
+function mergeFormats(
+	base: unknown,
+	child: unknown,
+	conflicts: Array<{ path: string; message: string }>,
+): Record<string, unknown> {
+	const baseFormats = isObject(base) ? base : {};
+	const childFormats = isObject(child) ? child : {};
+	const merged: Record<string, unknown> = {};
+
+	for (const [id, format] of Object.entries(baseFormats)) {
+		merged[id] = isObject(format) ? mergeFormat({}, format, id, conflicts) : format;
+	}
+
+	for (const [id, format] of Object.entries(childFormats)) {
+		if (!Object.prototype.hasOwnProperty.call(baseFormats, id)) {
+			merged[id] = isObject(format) ? mergeFormat({}, format, id, conflicts) : format;
+			continue;
+		}
+		if (!isObject(format) || format.refines !== true) {
+			conflicts.push({
+				path: `/formats/${id}`,
+				message: `format '${id}' conflicts with extended base`,
+			});
+			continue;
+		}
+		merged[id] = mergeFormat(baseFormats[id] as Record<string, unknown>, format, id, conflicts);
+	}
+
+	return merged;
+}
+
+function mergeVocabulary(
+	baseVocabulary: Record<string, unknown>,
+	childVocabulary: Record<string, unknown>,
+	vocabularyId: string,
+	conflicts: Array<{ path: string; message: string }>,
+): Record<string, unknown> {
+	const merged: Record<string, unknown> = { ...baseVocabulary };
+	for (const [key, value] of Object.entries(childVocabulary)) {
+		if (key === "refines" || key === "nodes") continue;
+		merged[key] = value;
+	}
+	if ("nodes" in baseVocabulary || "nodes" in childVocabulary) {
+		merged.nodes = mergeNodes(
+			baseVocabulary.nodes,
+			childVocabulary.nodes,
+			"vocabulary",
+			`/vocabularies/${vocabularyId}`,
+			conflicts,
+		);
+	}
+	delete merged.refines;
+	return merged;
+}
+
+/**
+ * Merges the `vocabularies` block across an `extends` chain. Three levels of
+ * collision-as-error-unless-`refines`, identical to `formats`: a vocabulary id, a node inside
+ * a refining vocabulary, and a prop inside a refining node.
+ */
+function mergeVocabularies(
+	base: unknown,
+	child: unknown,
+	conflicts: Array<{ path: string; message: string }>,
+): Record<string, unknown> {
+	const baseVocabularies = isObject(base) ? base : {};
+	const childVocabularies = isObject(child) ? child : {};
+	const merged: Record<string, unknown> = {};
+
+	for (const [id, vocabulary] of Object.entries(baseVocabularies)) {
+		merged[id] = isObject(vocabulary) ? mergeVocabulary({}, vocabulary, id, conflicts) : vocabulary;
+	}
+
+	for (const [id, vocabulary] of Object.entries(childVocabularies)) {
+		if (!Object.prototype.hasOwnProperty.call(baseVocabularies, id)) {
+			merged[id] = isObject(vocabulary) ? mergeVocabulary({}, vocabulary, id, conflicts) : vocabulary;
+			continue;
+		}
+		if (!isObject(vocabulary) || vocabulary.refines !== true) {
+			conflicts.push({
+				path: `/vocabularies/${id}`,
+				message: `vocabulary '${id}' conflicts with extended base`,
+			});
+			continue;
+		}
+		merged[id] = mergeVocabulary(baseVocabularies[id] as Record<string, unknown>, vocabulary, id, conflicts);
+	}
+
+	return merged;
+}
+
 function mergeManifests(
 	base: Record<string, unknown>,
 	child: Record<string, unknown>,
@@ -162,6 +367,14 @@ function mergeManifests(
 		);
 	}
 
+	if (isObject(base.formats) || isObject(child.formats)) {
+		result.formats = mergeFormats(base.formats, child.formats, conflicts);
+	}
+
+	if (isObject(base.vocabularies) || isObject(child.vocabularies)) {
+		result.vocabularies = mergeVocabularies(base.vocabularies, child.vocabularies, conflicts);
+	}
+
 	for (const key of SCALAR_KEYS) {
 		if (child[key] !== undefined) result[key] = child[key];
 	}
@@ -170,6 +383,8 @@ function mergeManifests(
 		if (key === "extends") continue;
 		if ((MAP_KEYS as readonly string[]).includes(key)) continue;
 		if (key === "slots") continue;
+		if (key === "formats") continue;
+		if (key === "vocabularies") continue;
 		if ((SCALAR_KEYS as readonly string[]).includes(key)) continue;
 		result[key] = value;
 	}

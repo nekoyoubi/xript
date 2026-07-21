@@ -39,6 +39,14 @@ describe("content loader", () => {
 		assert.ok(ids.includes("host-roles"));
 		assert.ok(ids.includes("host-hooks"));
 		assert.ok(ids.includes("host-safety"));
+		assert.ok(ids.includes("host-formats"));
+	});
+
+	it("carries the fragment-vocabulary doctrine", async () => {
+		const loaded = await loadGuidanceTopic("host-formats");
+		assert.ok(loaded);
+		assert.match(loaded.body, /sink/i);
+		assert.match(loaded.body, /where a value lands/i);
 	});
 
 	it("loads a guidance topic body", async () => {
@@ -55,6 +63,37 @@ describe("content loader", () => {
 		const loaded = await loadSpecResource("manifest");
 		assert.ok(loaded);
 		assert.ok(loaded.body.length > 0);
+	});
+
+	it("serves the fragment-formats spec resource", async () => {
+		const loaded = await loadSpecResource("fragment-formats");
+		assert.ok(loaded);
+		assert.match(loaded.body, /vocabulary/i);
+	});
+
+	it("serves the expressions and renderers spec pages", async () => {
+		for (const id of ["expressions", "renderers"]) {
+			const loaded = await loadSpecResource(id);
+			assert.ok(loaded, `spec resource "${id}" is not served`);
+			assert.ok(loaded.body.length > 0);
+		}
+	});
+
+	it("serves every spec markdown page — none left orphaned from the resource catalog", async () => {
+		const { readdir } = await import("node:fs/promises");
+		const { fileURLToPath } = await import("node:url");
+		const { dirname, resolve } = await import("node:path");
+		const here = dirname(fileURLToPath(import.meta.url));
+		const specDir = resolve(here, "../../../spec");
+		const pages = (await readdir(specDir))
+			.filter((name) => name.endsWith(".md") && name !== "README.md")
+			.map((name) => name.replace(/\.md$/, ""));
+		const missing = [];
+		for (const id of pages) {
+			const loaded = await loadSpecResource(id);
+			if (!loaded) missing.push(id);
+		}
+		assert.deepEqual(missing, [], `spec pages present on disk but not served as xript://spec resources: ${missing.join(", ")}`);
 	});
 });
 
@@ -82,7 +121,9 @@ describe("mcp server surface", () => {
 		const { resources } = await client.listResources();
 		const uris = resources.map((resource) => resource.uri);
 		assert.ok(uris.includes("xript://spec/manifest"));
+		assert.ok(uris.includes("xript://spec/fragment-formats"));
 		assert.ok(uris.includes("xript://guidance/surfaces"));
+		assert.ok(uris.includes("xript://guidance/host-formats"));
 	});
 
 	it("registers advisory prompts", async () => {
@@ -314,13 +355,13 @@ describe("mcp harnessed host sessions", () => {
 
 		const modLoad = await client.callTool({
 			name: "xript_host_step",
-			arguments: { hostId, action: "load-mod", manifest: JSON.stringify(MOD), source: MOD_SOURCE },
+			arguments: { hostId, action: "load-mod", manifest: JSON.stringify(MOD), sourceText: MOD_SOURCE },
 		});
 		assert.notEqual(modLoad.isError, true, textOf(modLoad));
 
 		const invoked = await client.callTool({
 			name: "xript_host_step",
-			arguments: { hostId, action: "invoke", exportName: "probe", args: ["mcp.txt"] },
+			arguments: { hostId, action: "invoke", export: "probe", args: ["mcp.txt"] },
 		});
 		assert.notEqual(invoked.isError, true, textOf(invoked));
 		assert.equal(JSON.parse(textOf(invoked)), "session content");
@@ -340,6 +381,34 @@ describe("mcp harnessed host sessions", () => {
 
 		const gone = await client.callTool({ name: "xript_host_journal", arguments: { hostId } });
 		assert.equal(gone.isError, true);
+	});
+
+	it("still accepts the deprecated field names and says so", async () => {
+		const { client } = await connectedClient();
+		const loaded = await client.callTool({
+			name: "xript_host_load",
+			arguments: { manifest: JSON.stringify(HOST), harness: JSON.stringify({ bindings: { "fs.read": { returns: "legacy content" } } }) },
+		});
+		const { hostId } = JSON.parse(textOf(loaded));
+
+		const modLoad = await client.callTool({
+			name: "xript_host_step",
+			arguments: { hostId, action: "load-mod", manifest: JSON.stringify(MOD), source: MOD_SOURCE },
+		});
+		assert.notEqual(modLoad.isError, true, textOf(modLoad));
+		assert.match(textOf(modLoad), /deprecated:.*`source`/);
+
+		const invoked = await client.callTool({
+			name: "xript_host_step",
+			arguments: { hostId, action: "invoke", exportName: "probe", args: ["x"] },
+		});
+		assert.notEqual(invoked.isError, true, textOf(invoked));
+		assert.match(textOf(invoked), /deprecated:.*`exportName`/);
+		// the JSON result is the last content block, after the deprecation note
+		const parts = invoked.content.map((p) => p.text);
+		assert.equal(JSON.parse(parts[parts.length - 1]), "legacy content");
+
+		await client.callTool({ name: "xript_host_unload", arguments: { hostId } });
 	});
 
 	it("errors cleanly on an unknown session id", async () => {

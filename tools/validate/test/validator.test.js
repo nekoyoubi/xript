@@ -95,6 +95,76 @@ describe("validateManifest", () => {
 		assert.ok(extraError, "should report unexpected top-level property");
 	});
 
+	it("rejects a binding name that is not a JavaScript identifier", async () => {
+		// A kebab binding name would parse as subtraction in a script and breaks typegen's output;
+		// the spec says binding and member names are identifiers, so the schema enforces it.
+		const kebab = await validateManifest({
+			xript: "0.8", name: "app", version: "1.0.0",
+			bindings: { "foo-bar": { description: "d", returns: "string" } },
+		});
+		assert.equal(kebab.valid, false, "a kebab top-level binding name should be rejected");
+		assert.ok(kebab.errors.find((e) => e.keyword === "pattern"), "should report a pattern mismatch");
+
+		const nestedKebab = await validateManifest({
+			xript: "0.8", name: "app", version: "1.0.0",
+			bindings: { ns: { description: "d", members: { "get-x": { description: "d" } } } },
+		});
+		assert.equal(nestedKebab.valid, false, "a kebab namespace member name should be rejected");
+
+		const ok = await validateManifest({
+			xript: "0.8", name: "app", version: "1.0.0",
+			bindings: { fooBar: { description: "d", returns: "string" }, ns: { description: "d", members: { getX: { description: "d" } } } },
+		});
+		assert.equal(ok.valid, true, "camelCase binding and member names stay valid");
+
+		// type names become generated interface/type names, so they are identifiers too
+		const kebabType = await validateManifest({
+			xript: "0.8", name: "app", version: "1.0.0",
+			types: { "foo-bar": { description: "d", fields: {} } },
+		});
+		assert.equal(kebabType.valid, false, "a kebab type name should be rejected");
+	});
+
+	describe("a failed oneOf reports only the branch that nearly matched", () => {
+		const namespaceMissingDescription = {
+			xript: "0.8",
+			name: "t",
+			capabilities: { a: { description: "A" } },
+			bindings: { ns: { members: { go: { description: "Go", capability: "a" } } } },
+		};
+
+		it("does not tell the author that `members` is unexpected on a namespace", async () => {
+			const result = await validateManifest(namespaceMissingDescription);
+			assert.equal(result.valid, false);
+			const misleading = result.errors.find(
+				(e) => e.keyword === "additionalProperties" && e.message.includes("members"),
+			);
+			assert.equal(misleading, undefined, "reported the namespace's own `members` as unexpected");
+		});
+
+		it("reports the one real problem, once", async () => {
+			const result = await validateManifest(namespaceMissingDescription);
+			const atPath = result.errors.filter((e) => e.path === "/bindings/ns");
+			assert.equal(atPath.length, 1, `expected a single finding, got ${JSON.stringify(atPath)}`);
+			assert.equal(atPath[0].message, 'missing required property "description"');
+		});
+
+		it("drops the bare oneOf meta-error", async () => {
+			const result = await validateManifest(namespaceMissingDescription);
+			assert.equal(result.errors.find((e) => e.keyword === "oneOf"), undefined);
+		});
+
+		it("still reports something when no branch is close", async () => {
+			const result = await validateManifest({
+				xript: "0.8",
+				name: "t",
+				bindings: { ns: 42 },
+			});
+			assert.equal(result.valid, false);
+			assert.ok(result.errors.length > 0, "a wholly wrong binding must still report");
+		});
+	});
+
 	it("rejects a binding without a description", async () => {
 		const result = await validateManifest({
 			xript: "0.1",
@@ -153,6 +223,15 @@ describe("validateManifestFile", () => {
 });
 
 describe("validateModManifest", () => {
+	it("rejects an export name that is not a JavaScript identifier", async () => {
+		// A module-mode named export cannot be a kebab name, and the host invokes exports by name.
+		const result = await validateModManifest({
+			xript: "0.8", name: "m", version: "1.0.0",
+			entry: { script: "x.js", exports: { "do-thing": { description: "d" } } },
+		});
+		assert.equal(result.valid, false, "a kebab export name should be rejected");
+	});
+
 	it("accepts a valid mod manifest", async () => {
 		const result = await validateModManifest({
 			xript: "0.3",
@@ -473,5 +552,35 @@ describe("crossValidate — capability subsumption", () => {
 			capabilities: ["net"],
 		});
 		assert.equal(result.valid, false);
+	});
+});
+
+describe("unknown top-level properties", () => {
+	it("names the offending property instead of reporting a bare closure failure", async () => {
+		const result = await validateManifest({
+			xript: "0.8",
+			name: "stray",
+			version: "1.0.0",
+			commands: { doThing: { description: "nowhere to live" } },
+		});
+		assert.equal(result.valid, false);
+		const messages = result.errors.map((e) => e.message);
+		assert.ok(
+			messages.some((m) => m.includes('unexpected property "commands"')),
+			`expected the key to be named, got ${JSON.stringify(messages)}`,
+		);
+	});
+
+	it("names every offending property, not just the first", async () => {
+		const result = await validateManifest({
+			xript: "0.8",
+			name: "stray",
+			version: "1.0.0",
+			alpha: {},
+			beta: {},
+		});
+		assert.equal(result.valid, false);
+		const messages = result.errors.map((e) => e.message).join(" ");
+		assert.ok(messages.includes('"alpha"') && messages.includes('"beta"'), messages);
 	});
 });

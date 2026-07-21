@@ -54,10 +54,12 @@ const runtime = await xript.createRuntime(manifest, {
 | `hostBindings` | `HostBindings` | (required) | Map of binding names to host functions |
 | `capabilities` | `string[]` | `[]` | List of capabilities granted to this script |
 | `console` | `ConsoleHandler` | no-op functions | Console output routing (`log`/`info`/`warn`/`error`/`debug`/`trace`, or a single `onLog(severity, ...args)`) |
-| `audit` | `(event: AuditEvent) => void` | none | Fire-and-forget hook called on every allowed binding invocation with `{ binding, capability, at }` |
+| `audit` | `(event: AuditEvent) => void` | none | Fire-and-forget capability-decision channel with `{ binding, capability, at, decision, mod, hook }` |
 | `hardLimits` | `HardLimits` | manifest `limits` | Host-side `timeout_ms` / `memory_mb` / `max_stack_depth` caps, applied on top of the manifest's `limits` |
 | `cancellation` | `CancellationToken` | none | Cooperative cancellation token; cancelling interrupts in-flight execution and surfaces a `CancellationError` |
 | `rolePreferences` | `Record<string, string>` | none | Per-role provider preference (`role` → mod name) consulted by `resolveRole` |
+| `commandPreferences` | `Record<string, string>` | none | Per-command or per-slot preference (`command id` or `slot id` → mod name) consulted by `resolveCommand` |
+| `validateInput` | `CommandInputValidator` | none | Opt-in argument checking at command invoke; the runtime bundles no JSON Schema validator, so a host that wants full `input` validation passes its own predicate |
 | `debug` | `DebugOptions` | none | Enables the DAP-shaped debug session reachable via `debugExecute` / `debugSession` |
 
 ### Host Bindings
@@ -191,6 +193,25 @@ const all = runtime.resolveRoleAll("formatter");      // every provider, for bui
 
 Declaring a role grants nothing on its own; the named functions stay gated by their own capabilities.
 
+Candidates come back ordered by owning mod name, and `rolePreferences` outranks that order. Resolution used to return whichever provider was loaded first, so reordering the host's mod array silently changed the winner; it no longer does.
+
+## Resolving and Invoking Commands
+
+A command-typed slot (`accepts: ["application/x-xript-command"]`) collects named, invocable actions. The host lists them and invokes the one the user picked:
+
+```javascript
+const palette = runtime.resolveCommands("palette.commands");    // ordered ResolvedCommand[]
+const every = runtime.resolveCommandsAll("palette.commands");   // ignoring slot cardinality
+const one = runtime.resolveCommand("wrap.double");              // bare id or "mod:id", or null
+
+const result = runtime.invokeCommand(one, { close: ")" });
+const async = await runtime.invokeCommandAsync(one, { close: ")" });
+```
+
+Ordering is `priority` descending, then command `id`, then owning mod name, so it does not depend on load order. A `multiple: false` command slot resolves to exactly one command across all mods, the same way it resolves to one fragment.
+
+`invokeCommand` merges the fill's bound `args` under the caller's arguments (shallow, caller wins) and routes through the addressed, per-mod export path, so it re-checks the handler's export capability at call time and can never be ambiguous about which mod's export it means. A throwing handler propagates its error, unlike a hook handler. Command fills are delivered on `mod.commandFills`; before v0.8.0 they arrived untyped in `mod.dataFills[slotId]`.
+
 ## Cleanup
 
 When you're done with a runtime, call `dispose()` to free the underlying WASM resources:
@@ -308,7 +329,22 @@ const result = runtime.execute("greet('World')");
 runtime.dispose();
 ```
 
-Bundle with any standard bundler (Vite, webpack, esbuild, Rollup). The WASM binary is loaded automatically by `quickjs-emscripten`.
+Bundle with any standard bundler (Vite, webpack, esbuild, Rollup). The WASM binary is loaded automatically from `@jitl/quickjs-wasmfile-release-sync`.
+
+### Choosing a WASM build
+
+The runtime defaults to the release builds: `@jitl/quickjs-wasmfile-release-sync` for `initXript()` and `@jitl/quickjs-wasmfile-release-asyncify` for `initXriptAsync()`. Each lives in its own module, so a host that only ever calls `initXript()` never pulls the asyncify build into its sync bundle.
+
+Pass `variant` to override. The main reason to do so is a `singlefile-*` build, which inlines the WASM as base64 rather than resolving a separate `.wasm` asset — useful when shipping into a bundler configuration you do not control:
+
+```javascript
+import { initXript } from "@xriptjs/runtime";
+import RELEASE_SYNC_SINGLEFILE from "@jitl/quickjs-singlefile-browser-release-sync";
+
+const xript = await initXript({ variant: RELEASE_SYNC_SINGLEFILE });
+```
+
+Install any variant you name; only the two release builds ship as dependencies.
 
 ## Loading Mods
 

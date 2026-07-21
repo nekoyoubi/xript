@@ -209,6 +209,8 @@ When a hook handler throws an error, the runtime:
 
 One handler's error does not prevent other handlers from running. The `fireHook` return value includes results from successful handlers; failed handlers contribute `undefined`.
 
+**Commands do the opposite, deliberately.** Swallowing an error is right for a fire-and-forget lifecycle notification and wrong for a user-triggered action, so a failing command handler propagates its error to the caller rather than contributing `undefined`. See [commands.md](./commands.md#invocation).
+
 ### Error Types
 
 | Error | When Thrown |
@@ -223,9 +225,9 @@ Filtering and scoping are the host's responsibility, not the hook system's. Inst
 ```json
 {
   "hooks": {
-    "save": { "description": "Any save operation.", "phases": ["pre", "on", "post", "error"] },
+    "save": { "description": "Any save operation.", "phases": ["pre", "post", "done", "error"] },
     "autosave": { "description": "Automatic background saves.", "phases": ["pre", "post", "done"] },
-    "manualSave": { "description": "Player-initiated saves.", "phases": ["pre", "on", "post", "error"] }
+    "manualSave": { "description": "Player-initiated saves.", "phases": ["pre", "post", "done", "error"] }
   }
 }
 ```

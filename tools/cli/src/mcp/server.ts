@@ -22,7 +22,7 @@ function buildTimestamp(): string {
 
 export async function createServer(version: string): Promise<McpServer> {
 	const server = new McpServer({ name: SERVER_NAME, version });
-	registerTools(server, { name: SERVER_NAME, version, builtAt: buildTimestamp() });
+	await registerTools(server, { name: SERVER_NAME, version, builtAt: buildTimestamp() });
 	await registerResources(server);
 	registerPrompts(server);
 	return server;

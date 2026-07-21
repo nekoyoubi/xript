@@ -49,6 +49,26 @@ export class InvokeError extends Error {
 	}
 }
 
+/**
+ * Thrown when a bare export name is invoked but more than one loaded mod owns
+ * that name. Mods each get their own export namespace, so the runtime refuses
+ * to guess: call `invokeModExport(mod, name, args)` to name the owner.
+ */
+export class AmbiguousExportError extends Error {
+	public readonly export: string;
+	public readonly mods: string[];
+
+	constructor(exportName: string, mods: string[]) {
+		super(
+			`export "${exportName}" is provided by more than one mod (${mods.map((m) => `"${m}"`).join(", ")}); ` +
+			`call invokeModExport(mod, "${exportName}", args) to name the owner`,
+		);
+		this.name = "AmbiguousExportError";
+		this.export = exportName;
+		this.mods = mods;
+	}
+}
+
 export class ManifestValidationError extends Error {
 	public readonly issues: Array<{ path: string; message: string }>;
 
@@ -125,5 +145,39 @@ export class LibraryRegistrationError extends Error {
 		super(`library "${specifier}" failed registration: ${reason}`);
 		this.name = "LibraryRegistrationError";
 		this.specifier = specifier;
+	}
+}
+
+/**
+ * Thrown when a host-supplied validator rejects a command's effective arguments. The
+ * runtimes ship no JSON Schema validator of their own — a host that wants full `input`
+ * checking at invoke passes one in.
+ */
+export class CommandInputError extends Error {
+	public readonly command: string;
+	public readonly errors: string[];
+
+	constructor(qualifiedId: string, errors: string[]) {
+		super(`command "${qualifiedId}" was called with invalid arguments:\n${errors.map((e) => `  ${e}`).join("\n")}`);
+		this.name = "CommandInputError";
+		this.command = qualifiedId;
+		this.errors = errors;
+	}
+}
+
+/**
+ * Raised at runtime construction under `strictBindings` when the manifest declares bindings the
+ * host did not supply.
+ */
+export class MissingBindingsError extends Error {
+	public readonly missing: string[];
+
+	constructor(missing: string[]) {
+		super(
+			`the manifest declares ${missing.length} binding${missing.length === 1 ? "" : "s"} the host did not supply: ${missing.join(", ")}. ` +
+				"Supply them, remove them from the manifest, or construct the runtime without `strictBindings` to install them as stubs that throw when called.",
+		);
+		this.name = "MissingBindingsError";
+		this.missing = missing;
 	}
 }

@@ -50,10 +50,12 @@ const runtime = await createRuntimeFromFile("./manifest.json", {
 | `hostBindings` | `HostBindings` | (required) | Map of binding names to host functions |
 | `capabilities` | `string[]` | `[]` | List of capabilities granted to this script |
 | `console` | `ConsoleHandler` | no-op functions | Console output routing (severity-aware) |
-| `audit` | `(event: AuditEvent) => void` | none | Per-capability audit channel; fired on every allowed binding invocation |
+| `audit` | `(event: AuditEvent) => void` | none | Per-capability audit channel; fired on every allowed binding invocation and on every capability-denied hook fill |
 | `hardLimits` | `HardLimits` | none | Hard caps for memory, CPU time, and stack depth |
 | `cancellation` | `CancellationToken` | none | Host-driven cooperative cancellation |
 | `rolePreferences` | `Record<string, string>` | none | Preferred provider per role for `resolveRole` |
+| `commandPreferences` | `Record<string, string>` | none | Preferred mod per command id or slot id for `resolveCommand` |
+| `validateInput` | `CommandInputValidator` | none | Opt-in argument checking at command invoke; the runtime bundles no JSON Schema validator, so a host wanting full `input` validation passes its own predicate |
 | `debug` | `DebugOptions` | none | Attaches a DAP-shaped debug session to the runtime |
 
 ### Audit channel
@@ -70,7 +72,7 @@ const runtime = createRuntime(manifest, {
 });
 ```
 
-Each `AuditEvent` carries `binding` (the invoked name), `capability` (the gating capability, or `null` if the binding is ungated), and `at` (a `Date.now()` timestamp).
+Each `AuditEvent` carries `binding` (the invoked name), `capability` (the gating capability, or `null` if the binding is ungated), `at` (a `Date.now()` timestamp), and `decision` (`"invoke"` or `"denied"`). A `"denied"` event also carries `mod` and `hook`, naming the mod whose hook fill was refused.
 
 ### Cooperative cancellation
 
@@ -199,14 +201,25 @@ const all = runtime.resolveSlot("main-panel");        // SlotContribution[]
 const one = runtime.resolveSlotSingle("toolbar-icon"); // SlotContribution | null
 ```
 
-Provider roles let mods supply named functions a host looks up by logical role rather than by hardcoded global. A mod fills a role-typed slot; the host resolves it (first-installed wins, overridable via `rolePreferences`):
+Provider roles let mods supply named functions a host looks up by logical role rather than by hardcoded global. A mod fills a role-typed slot; the host resolves it (candidates ordered by mod name, overridable via `rolePreferences`):
 
 ```javascript
 const provider = runtime.resolveRole("transcriber");   // RoleResolution | null
 const providers = runtime.resolveRoleAll("transcriber"); // RoleResolution[]
 ```
 
-Declaring a role grants nothing; the named functions stay gated by their own capabilities.
+Declaring a role grants nothing; the named functions stay gated by their own capabilities. Resolution used to return whichever provider was loaded first, so reordering the host's mod array silently changed the winner; it no longer does.
+
+Command-typed slots collect named, invocable actions, resolved and invoked the same way:
+
+```javascript
+const palette = runtime.resolveCommands("palette.commands");    // ordered ResolvedCommand[]
+const one = runtime.resolveCommand("wrap.double");              // bare id or "mod:id", or null
+const result = runtime.invokeCommand(one, { close: ")" });
+const async = await runtime.invokeCommandAsync(one, { close: ")" });
+```
+
+Ordering is `priority` descending, then command `id`, then owning mod name, so it does not depend on load order, and a `multiple: false` command slot resolves to exactly one command across all mods. `invokeCommand` merges the fill's bound `args` under the caller's (shallow, caller wins) and routes through the addressed per-mod export path, re-checking the handler's export capability at call time. A throwing handler propagates its error, unlike a hook handler. Command fills arrive on `mod.commandFills`; before v0.8.0 they arrived untyped in `mod.dataFills[slotId]`.
 
 ## Fragment Lifecycle Hooks
 

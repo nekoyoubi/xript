@@ -1,3 +1,23 @@
+import { createRequire } from "node:module";
+
+/**
+ * The version a fresh scaffold targets, read from this package rather than written down.
+ * The release script syncs every package's version but never touched these templates, so a
+ * hand-edit was the only thing keeping `xript init` from scaffolding the previous release's
+ * manifests forever.
+ */
+const PACKAGE_VERSION: string = createRequire(import.meta.url)("../package.json").version;
+
+/** The `major.minor` line a manifest and a schema URL name, e.g. `0.8`. */
+const SPEC_LINE: string = PACKAGE_VERSION.split(".").slice(0, 2).join(".");
+
+/** The caret range a scaffold pins its xript dependencies to. */
+const DEP_RANGE = `^${PACKAGE_VERSION}`;
+
+function schemaUrl(kind: "manifest" | "mod-manifest" | "harness-steps"): string {
+	return `https://xript.dev/schema/${kind}/v${SPEC_LINE}.json`;
+}
+
 export interface ProjectFiles {
 	[relativePath: string]: string;
 }
@@ -62,8 +82,8 @@ export function generateModProjectFiles(options: TemplateOptions): ProjectFiles 
 
 function generateManifest(options: TemplateOptions): string {
 	const manifest: Record<string, unknown> = {
-		$schema: "https://xript.dev/schema/manifest/v0.7.json",
-		xript: "0.7",
+		$schema: schemaUrl("manifest"),
+		xript: SPEC_LINE,
 		name: options.name,
 		version: "0.1.0",
 		title: titleCase(options.name),
@@ -167,11 +187,14 @@ function generatePackageJson(options: TemplateOptions): string {
 	};
 
 	pkg.dependencies = {
-		"@xriptjs/runtime": "^0.7.0",
+		"@xriptjs/runtime": DEP_RANGE,
 	};
 
 	if (options.language === "typescript") {
 		pkg.devDependencies = {
+			// The host reads its manifest with `node:fs/promises`, which does not resolve
+			// without these; a freshly scaffolded app failed to type-check for want of them.
+			"@types/node": "^22.0.0",
 			tsx: "^4.0.0",
 			typescript: "^5.0.0",
 		};
@@ -228,7 +251,9 @@ function generateModAmbientTypes(options: TemplateOptions): string {
 	return [
 		"// Hand-authored stub mirroring `npx xript typegen --ambient`.",
 		"// Regenerate from the real host + mod manifests with:",
-		"//   npx xript typegen --ambient mod-manifest.json -o src/xript-env.d.ts",
+		"//   npx xript typegen --ambient --host demo/host-manifest.json mod-manifest.json -o src/xript-env.d.ts",
+		"// The host is required: `log`, `hooks` and `events` are surfaces the host installs, and a",
+		"// mod manifest does not declare them.",
 		"// Declares the in-sandbox surface a mod author sees. Do not edit manually.",
 		"",
 		"declare global {",
@@ -275,13 +300,13 @@ function generateModAmbientTypes(options: TemplateOptions): string {
 		"\t/**",
 		"\t * A capability scope declared by the host. Scope-only — no `read:`/`write:` mode prefix.",
 		"\t */",
-		"\ttype Capability = \"modify-state\";",
+		"\ttype XriptCapability = \"modify-state\";",
 		"",
 		"\t/**",
 		"\t * A capability reference: a declared scope, optionally carrying a `read:`/`write:` mode prefix.",
 		"\t * A bare scope means `write:` (the top of the mode lattice).",
 		"\t */",
-		"\ttype CapabilityRef = (\"modify-state\" | \"read:modify-state\" | \"write:modify-state\") | (string & {});",
+		"\ttype XriptCapabilityRef = (\"modify-state\" | \"read:modify-state\" | \"write:modify-state\") | (string & {});",
 		"",
 		"\t/**",
 		"\t * The in-sandbox xript global. Exposes the imperative export-registration surface.",
@@ -337,7 +362,7 @@ function generateTier2Host(options: TemplateOptions): string {
 function generateTier2Demo(options: TemplateOptions): string {
 	const lines: string[] = [];
 
-	lines.push(`import { createRuntime } from "./host.${options.language === "typescript" ? "ts" : "js"}";`);
+	lines.push(`import { createRuntime } from "./host.js";`);
 	lines.push(``);
 	lines.push(`const runtime = createRuntime();`);
 	lines.push(``);
@@ -357,7 +382,7 @@ function generateTier2Demo(options: TemplateOptions): string {
 	lines.push(`\t\t\tconsole.log(\`  \${script}  =>  \${JSON.stringify(result.value)}\`);`);
 	lines.push(`\t\t}`);
 	lines.push(`\t} catch (e) {`);
-	lines.push(`\t\tconsole.log(\`  \${script}  =>  ERROR: \${e.message}\`);`);
+	lines.push(`\t\tconsole.log(\`  \${script}  =>  ERROR: \${e instanceof Error ? e.message : String(e)}\`);`);
 	lines.push(`\t}`);
 	lines.push(`}`);
 	lines.push(``);
@@ -412,7 +437,7 @@ function generateTier3Host(options: TemplateOptions): string {
 function generateTier3Demo(options: TemplateOptions): string {
 	const lines: string[] = [];
 
-	lines.push(`import { createRuntime } from "./host.${options.language === "typescript" ? "ts" : "js"}";`);
+	lines.push(`import { createRuntime } from "./host.js";`);
 	lines.push(``);
 	lines.push(`console.log("=== ${titleCase(options.name)} Demo ===\\n");`);
 	lines.push(``);
@@ -436,7 +461,7 @@ function generateTier3Demo(options: TemplateOptions): string {
 	lines.push(`try {`);
 	lines.push(`\truntime.execute(script);`);
 	lines.push(`} catch (e) {`);
-	lines.push(`\tconsole.error(\`Script error: \${e.message}\`);`);
+	lines.push(`\tconsole.error(\`Script error: \${e instanceof Error ? e.message : String(e)}\`);`);
 	lines.push(`}`);
 	lines.push(``);
 	lines.push(`console.log("\\n=== Demo complete ===");`);
@@ -450,7 +475,7 @@ function generateTier3Demo(options: TemplateOptions): string {
 function generateTier4Demo(options: TemplateOptions): string {
 	const lines: string[] = [];
 
-	lines.push(`import { createRuntime } from "./host.${options.language === "typescript" ? "ts" : "js"}";`);
+	lines.push(`import { createRuntime } from "./host.js";`);
 	lines.push(`import { readFile } from "node:fs/promises";`);
 	lines.push(``);
 	lines.push(`console.log("=== ${titleCase(options.name)} Demo ===\\n");`);
@@ -481,8 +506,8 @@ function generateTier4Demo(options: TemplateOptions): string {
 
 function generateTier4ModManifest(options: TemplateOptions): string {
 	const manifest: Record<string, unknown> = {
-		$schema: "https://xript.dev/schema/mod-manifest/v0.7.json",
-		xript: "0.7",
+		$schema: schemaUrl("mod-manifest"),
+		xript: SPEC_LINE,
 		name: `${options.name}-panel`,
 		version: "0.1.0",
 		title: `${titleCase(options.name)} Panel`,
@@ -521,11 +546,14 @@ function exampleExportName(name: string): string {
 
 function generateModManifest(options: TemplateOptions): string {
 	const family = familyFromName(options.name);
-	const ext = options.language === "typescript" ? "ts" : "js";
 	const exportName = exampleExportName(options.name);
+	// `entry.script` names the artifact a host loads, not the file the author edits. The
+	// TypeScript scaffold compiles `src/**` to `dist/`, so the loadable module is `dist/mod.js`;
+	// naming `src/mod.ts` here handed every host a TypeScript file it cannot evaluate.
+	const entryScript = options.language === "typescript" ? "dist/mod.js" : "src/mod.js";
 	const manifest: Record<string, unknown> = {
-		$schema: "https://xript.dev/schema/mod-manifest/v0.7.json",
-		xript: "0.7",
+		$schema: schemaUrl("mod-manifest"),
+		xript: SPEC_LINE,
 		name: options.name,
 		version: "0.1.0",
 		title: titleCase(options.name),
@@ -533,7 +561,7 @@ function generateModManifest(options: TemplateOptions): string {
 		...(family ? { family } : {}),
 		capabilities: ["modify-state"],
 		entry: {
-			script: `src/mod.${ext}`,
+			script: entryScript,
 			format: "module",
 			exports: {
 				[exportName]: {
@@ -575,7 +603,7 @@ function generateModPackageJson(options: TemplateOptions): string {
 			demo: "npm run build && xript run --app demo/host-manifest.json --steps demo/steps.json",
 		};
 		pkg.devDependencies = {
-			"@xriptjs/cli": "^0.7.0",
+			"@xriptjs/cli": DEP_RANGE,
 			typescript: "^5.0.0",
 		};
 	} else {
@@ -583,7 +611,7 @@ function generateModPackageJson(options: TemplateOptions): string {
 			demo: "xript run --app demo/host-manifest.json --steps demo/steps.json",
 		};
 		pkg.devDependencies = {
-			"@xriptjs/cli": "^0.7.0",
+			"@xriptjs/cli": DEP_RANGE,
 		};
 	}
 
@@ -592,8 +620,8 @@ function generateModPackageJson(options: TemplateOptions): string {
 
 function generateModDemoHostManifest(options: TemplateOptions): string {
 	const manifest = {
-		$schema: "https://xript.dev/schema/manifest/v0.7.json",
-		xript: "0.7",
+		$schema: schemaUrl("manifest"),
+		xript: SPEC_LINE,
 		name: `${options.name}-demo-host`,
 		version: "0.1.0",
 		description: "A synthetic host for exercising this mod without a real application. Its bindings are stubbed by the harness; replace it with your target host's real manifest when you have one.",
@@ -633,13 +661,13 @@ function generateModDemoSteps(options: TemplateOptions): string {
 	const entry = options.language === "typescript" ? "../dist/mod.js" : "../src/mod.js";
 	const exportName = exampleExportName(options.name);
 	const steps = {
-		$schema: "https://xript.dev/schema/harness-steps/v0.7.json",
+		$schema: schemaUrl("harness-steps"),
 		steps: [
 			{
 				action: "load-mod",
 				manifest: "../mod-manifest.json",
-				source: entry,
-				sources: { "fragments/panel.html": "../fragments/panel.html" },
+				sourcePath: entry,
+				sourcePaths: { "fragments/panel.html": "../fragments/panel.html" },
 			},
 			{ action: "invoke", export: exportName, args: ["online"] },
 			{ action: "emit", event: "app.status-changed", payload: "ready" },

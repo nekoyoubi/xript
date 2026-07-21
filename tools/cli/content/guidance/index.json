@@ -9,7 +9,7 @@
 		{
 			"id": "surfaces",
 			"title": "Choosing an extensibility surface",
-			"summary": "Two surfaces — bindings you call and slots you fill — plus capability and command, and how to pick.",
+			"summary": "Two surfaces — bindings you call and slots you fill — the slot kinds you will meet, and how to pick.",
 			"file": "surfaces.md"
 		},
 		{
@@ -45,8 +45,14 @@
 		{
 			"id": "host-fragments",
 			"title": "Rendering fragments",
-			"summary": "The inert-output seam — load the mod, render fireFragmentHook's ops, and never call the processor directly.",
+			"summary": "The inert-output seam — mount the tree or the html, apply the command buffer, and never call the processor directly.",
 			"file": "host-fragments.md"
+		},
+		{
+			"id": "host-formats",
+			"title": "Declaring a fragment format",
+			"summary": "The node vocabulary a host declares, the sink model that decides what gets sanitized, and why default-deny lands differently on HTML.",
+			"file": "host-formats.md"
 		},
 		{
 			"id": "host-capabilities",
@@ -71,6 +77,12 @@
 			"title": "Firing hooks & events",
 			"summary": "fireHook and event-typed slots, and how they differ from the host's events catalog.",
 			"file": "host-hooks.md"
+		},
+		{
+			"id": "host-commands",
+			"title": "Offering commands",
+			"summary": "Command slots: declaring one, resolving and invoking the fills, and why per-action authority lives on the export.",
+			"file": "host-commands.md"
 		},
 		{
 			"id": "host-safety",

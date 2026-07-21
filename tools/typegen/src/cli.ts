@@ -14,6 +14,7 @@ if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
 	console.log("Options:");
 	console.log("  --output, -o            Output file path (default: stdout)");
 	console.log("  --ambient               Emit an ambient .d.ts declaring the in-sandbox xript surface for mod authors");
+	console.log("  --intent                Emit the execution routing table a host routes on (implied by --ambient)");
 	console.log("  --include-grant-shapes  Emit CapabilityPrompt, InstallDescriptor, DiscoveryResult interfaces");
 	console.log("  --help, -h              Show this help message");
 	process.exit(args.length === 0 ? 1 : 0);
@@ -21,7 +22,8 @@ if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
 
 const includeGrantShapes = args.includes("--include-grant-shapes");
 const ambient = args.includes("--ambient");
-const positional = args.filter((a) => a !== "--include-grant-shapes" && a !== "--ambient");
+const intent = args.includes("--intent");
+const positional = args.filter((a) => a !== "--include-grant-shapes" && a !== "--ambient" && a !== "--intent");
 
 const outputIndex = positional.findIndex((a) => a === "--output" || a === "-o");
 let outputPath: string | undefined;
@@ -45,7 +47,7 @@ if (!manifestPath) {
 }
 
 try {
-	const { content } = await generateTypesFromFile(manifestPath, { includeGrantShapes, ambient });
+	const { content } = await generateTypesFromFile(manifestPath, { includeGrantShapes, ambient, intent });
 
 	if (outputPath) {
 		const absoluteOutput = resolve(outputPath);

@@ -1,0 +1,24 @@
+[package]
+name = "xript-tree"
+version = "0.8.0"
+edition = "2021"
+description = "The xript tree contract (xript-tree/1) — the engine-free node, condition, diagnostic, and op shapes a fragment renderer consumes."
+license = "MIT"
+repository = "https://github.com/nekoyoubi/xript"
+readme = "README.md"
+keywords = ["xript", "fragment", "renderer", "tree", "contract"]
+categories = ["gui", "rendering"]
+
+[dependencies]
+xript-expr = { version = "0.8.0", path = "../xript-expr" }
+serde_json = "1"
+
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "packed"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.release]
+strip = "debuginfo"

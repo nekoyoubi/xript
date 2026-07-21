@@ -25,10 +25,12 @@ const SECTIONS = [
 		slugs: [
 			"guidance/hosting",
 			"guidance/host-fragments",
+			"guidance/host-formats",
 			"guidance/host-capabilities",
 			"guidance/host-slots",
 			"guidance/host-roles",
 			"guidance/host-hooks",
+			"guidance/host-commands",
 			"guidance/host-safety",
 		],
 	},
@@ -45,9 +47,12 @@ const SECTIONS = [
 			"spec/mod-manifest",
 			"spec/fragments",
 			"spec/fragment-formats",
+			"spec/renderers",
+			"spec/expressions",
 			"spec/capabilities",
 			"spec/bindings",
 			"spec/hooks",
+			"spec/commands",
 			"spec/modules",
 			"spec/harness",
 			"spec/debugging",
@@ -57,7 +62,7 @@ const SECTIONS = [
 	},
 	{ title: "Runtimes", slugs: ["runtimes/overview", "runtimes/js-wasm", "runtimes/node", "runtimes/rust", "runtimes/csharp"] },
 	{ title: "Tools", slugs: ["tools/cli", "tools/mcp", "tools/score", "tools/lint", "tools/wiz", "tools/fragment-workbench"] },
-	{ title: "Examples", slugs: ["examples/expression-evaluator", "examples/plugin-system", "examples/game-mod-system", "examples/ui-dashboard"] },
+	{ title: "Examples", slugs: ["examples/expression-evaluator", "examples/plugin-system", "examples/game-mod-system", "examples/ui-dashboard", "examples/fragment-vocabulary"] },
 	{ title: "Demos", slugs: ["demos/expression-playground", "demos/plugin-workshop", "demos/dungeon-modding", "demos/fragment-builder"] },
 ];
 
@@ -135,14 +140,14 @@ export function llmsTxt() {
 
 				const orphans = [...pages.keys()].filter((slug) => !placed.has(slug));
 				if (orphans.length) {
-					logger.warn(`llms-txt: ${orphans.length} page(s) not in any section, appended: ${orphans.join(", ")}`);
-					indexLines.push(`## Other`, "");
-					for (const slug of orphans) {
-						const page = pages.get(slug);
-						indexLines.push(`- [${page.title}](${url(slug)})${page.description ? `: ${page.description}` : ""}`);
-						fullParts.push("", "----------------------------------------", "", `# ${page.title}`, `Source: ${url(slug)}`, "", page.body, "");
-					}
-					indexLines.push("");
+					// A warning in a long build log is the same as no check: `spec/renderers` and
+					// `spec/expressions` sat unsectioned from the day they shipped. An orphan means
+					// llms.txt is structurally wrong, and the person adding the page is the one who
+					// knows where it belongs.
+					throw new Error(
+						`llms-txt: ${orphans.length} page(s) are in no section: ${orphans.join(", ")}. ` +
+							"Add each to a SECTIONS entry in docs/integrations/llms-txt.mjs.",
+					);
 				}
 
 				await writeFile(new URL("./llms.txt", dir), `${indexLines.join("\n").replace(/\n{3,}/g, "\n\n").trim()}\n`, "utf-8");

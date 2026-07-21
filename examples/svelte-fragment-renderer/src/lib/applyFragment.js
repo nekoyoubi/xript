@@ -16,9 +16,10 @@
  * @property {Record<string, boolean>} visibility  Keyed by `data-if` expression.
  *
  * @typedef {Object} FragmentOp
- * @property {"toggle"|"addClass"|"removeClass"|"setText"|"setAttr"|"replaceChildren"} op
+ * @property {"toggle"|"addClass"|"removeClass"|"setText"|"setProp"|"setAttr"|"replaceChildren"} op
  * @property {string} selector
  * @property {unknown} [value]
+ * @property {string} [prop]
  * @property {string} [attr]
  *
  * @typedef {Object} FragmentHandlerDeclaration
@@ -78,9 +79,19 @@ export function applyOp(root, op) {
 			case "setText":
 				el.textContent = stringifyValue(op.value);
 				break;
+			case "setProp":
+				// `setProp` is the canonical op; a prop on an HTML node is an attribute.
+				if (typeof op.prop === "string") {
+					el.setAttribute(op.prop, stringifyValue(op.value));
+				}
+				break;
 			case "setAttr":
-				if (typeof op.attr === "string") {
-					el.setAttribute(op.attr, stringifyValue(op.value));
+				// Deprecated alias of `setProp`; emits `prop` alongside `attr`, so read either.
+				{
+					const name = typeof op.prop === "string" ? op.prop : op.attr;
+					if (typeof name === "string") {
+						el.setAttribute(name, stringifyValue(op.value));
+					}
 				}
 				break;
 			case "replaceChildren":

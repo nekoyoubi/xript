@@ -50,14 +50,37 @@ impl CancellationToken {
     }
 }
 
-/// A single host-binding-invocation audit record. `at_ms` is wall-clock
+/// Whether an audit record describes an allowed invocation or a refusal on
+/// capability grounds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AuditDecision {
+    #[default]
+    Invoke,
+    Denied,
+}
+
+/// A single capability-decision audit record. `at_ms` is wall-clock
 /// epoch-milliseconds for cross-runtime identity. `capability` is `None` when
-/// the binding declares no gating capability.
-#[derive(Debug, Clone)]
+/// the binding declares no gating capability. `mod_name` and `hook` are set
+/// only on [`AuditDecision::Denied`] records raised for a mod's hook fill.
+///
+/// Under a pool, `worker` names the runtime that raised the record and `seq`
+/// is that worker's own monotonic counter. Audit order is **total per worker
+/// and only partial across the pool**: `at_ms` is wall-clock, so a host that
+/// wants a stable order should sort by `(worker, seq)` and accept that the
+/// true cross-worker interleaving is not recoverable. Both are `None`/`0` for
+/// a runtime that is not pooled.
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct AuditEvent {
     pub binding: String,
     pub capability: Option<String>,
     pub at_ms: f64,
+    pub decision: AuditDecision,
+    pub mod_name: Option<String>,
+    pub hook: Option<String>,
+    pub worker: Option<usize>,
+    pub seq: u64,
 }
 
 /// An opt-in sink invoked once per allowed host-binding invocation, before the
@@ -115,6 +138,80 @@ enum HostBinding {
         functions: HashMap<String, HostFn>,
     },
     NestedNamespace(HashMap<String, HostNamespaceMember>),
+}
+
+impl HostBindings {
+    /// Whether a top-level name is supplied at all, and (for a namespace) whether
+    /// a member path beneath it resolves to something callable.
+    fn supplies(&self, path: &[String]) -> bool {
+        let Some((head, rest)) = path.split_first() else {
+            return false;
+        };
+        let Some(binding) = self.bindings.get(head) else {
+            return false;
+        };
+        match binding {
+            HostBinding::Function(_) | HostBinding::AsyncFunction(_) => rest.is_empty(),
+            HostBinding::Namespace(members) => rest.len() == 1 && members.contains_key(&rest[0]),
+            HostBinding::AsyncNamespace(members) => rest.len() == 1 && members.contains_key(&rest[0]),
+            HostBinding::MixedNamespace { functions, .. } => {
+                rest.len() == 1 && functions.contains_key(&rest[0])
+            }
+            HostBinding::NestedNamespace(members) => nested_supplies(members, rest),
+        }
+    }
+}
+
+/// Every binding the manifest declares that `host_bindings` does not supply, fully
+/// qualified and sorted.
+///
+/// A declared-but-unsupplied binding still installs — as a stub that throws when a mod
+/// calls it — so the manifest and the host's actual wiring could disagree indefinitely
+/// with nothing to catch it. A mod author reads the manifest, ships against a binding
+/// that is documented and absent, and the failure lands on a user.
+pub fn missing_binding_names(
+    manifest: &crate::manifest::Manifest,
+    host_bindings: &HostBindings,
+) -> Vec<String> {
+    let mut missing = Vec::new();
+    if let Some(bindings) = manifest.bindings.as_ref() {
+        collect_missing(bindings, host_bindings, &mut Vec::new(), &mut missing);
+    }
+    missing.sort();
+    missing
+}
+
+fn collect_missing(
+    bindings: &HashMap<String, Binding>,
+    host: &HostBindings,
+    path: &mut Vec<String>,
+    out: &mut Vec<String>,
+) {
+    for (name, binding) in bindings {
+        path.push(name.clone());
+        match binding {
+            Binding::Namespace(ns) => collect_missing(&ns.members, host, path, out),
+            _ => {
+                if !host.supplies(path) {
+                    out.push(path.join("."));
+                }
+            }
+        }
+        path.pop();
+    }
+}
+
+fn nested_supplies(members: &HashMap<String, HostNamespaceMember>, path: &[String]) -> bool {
+    let Some((head, rest)) = path.split_first() else {
+        return false;
+    };
+    match members.get(head) {
+        Some(HostNamespaceMember::Function(_)) | Some(HostNamespaceMember::AsyncFunction(_)) => {
+            rest.is_empty()
+        }
+        Some(HostNamespaceMember::Namespace(inner)) => nested_supplies(inner, rest),
+        _ => false,
+    }
 }
 
 impl HostBindings {
@@ -334,8 +431,29 @@ pub struct RuntimeOptions {
     pub audit: Option<AuditSink>,
     pub hard_limits: Option<HardLimits>,
     pub role_preferences: HashMap<String, String>,
+    /// Preferred owning mod for a bare command id, or for every command in a
+    /// slot, keyed by command id or slot id.
+    pub command_preferences: HashMap<String, String>,
     pub debug: Option<crate::debug::DebugOptions>,
+    /// Promotes an unknown node under the built-in HTML vocabulary from a
+    /// warning to an error, refusing the fragment instead of dropping the tag.
+    pub strict_html_vocabulary: bool,
+    /// Refuse to construct the runtime when the manifest declares a binding the
+    /// host did not supply, instead of installing a stub that throws only once a
+    /// mod calls it.
+    ///
+    /// Off by default: a host may under-supply deliberately. The missing set is
+    /// available from `missing_bindings()` either way.
+    pub strict_bindings: bool,
+    /// Called for every vocabulary diagnostic a loaded fragment produces and for
+    /// every diagnostic raised while finalizing a fragment's command buffer.
+    pub on_fragment_diagnostic: Option<FragmentDiagnosticSink>,
 }
+
+/// Receives a fragment diagnostic along with the id of the fragment that raised
+/// it.
+pub type FragmentDiagnosticSink =
+    Arc<dyn Fn(&str, &crate::fragment::vocabulary::FragmentDiagnostic) + Send + Sync>;
 
 impl RuntimeOptions {
     /// Wraps an `mpsc::Sender<AuditEvent>` in an [`AuditSink`] so a host can use
@@ -471,19 +589,334 @@ impl Loader for LibraryLoader {
     }
 }
 
+/// One live execution region's interrupt state. Frames stack, and the
+/// tightest deadline across every live frame governs, so nesting can only
+/// narrow an execution budget, never extend an outer region's.
+pub(crate) struct InterruptFrame {
+    pub(crate) deadline: Instant,
+    pub(crate) token: Option<CancellationToken>,
+    /// The per-call token scoped to the thread when the frame was pushed.
+    /// Populated by [`XriptRuntime::push_interrupt_frame`], never by hand.
+    pub(crate) call_token: Option<crate::pending::CallToken>,
+    pub(crate) debug_clock: Option<Arc<std::sync::atomic::AtomicU64>>,
+    pub(crate) interrupted: Arc<AtomicBool>,
+    pub(crate) cancelled: Arc<AtomicBool>,
+}
+
+/// Interrupt frames are keyed by the thread that pushed them. QuickJS calls
+/// the interrupt handler on whichever thread is running bytecode, so a thread
+/// must only ever observe its own frames: `XriptRuntime` is `Send + Sync`, and
+/// a shared runtime executed from two threads would otherwise let one thread's
+/// deadline govern (or its guard pop) the other's live region.
+type InterruptFrames = Arc<std::sync::Mutex<HashMap<std::thread::ThreadId, Vec<InterruptFrame>>>>;
+
+/// Recovers the frame map even if a prior holder panicked. The map carries no
+/// invariant a panic could break, and treating poisoning as fatal would leave
+/// the handler permanently disarmed for the rest of the runtime's life.
+fn lock_frames(
+    frames: &InterruptFrames,
+) -> std::sync::MutexGuard<'_, HashMap<std::thread::ThreadId, Vec<InterruptFrame>>> {
+    frames.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Pops the frame it pushed when dropped, including on unwind, so a panic
+/// inside an execution region cannot leave an armed handler behind. The pop is
+/// scoped to the pushing thread's own stack.
+pub(crate) struct InterruptGuard {
+    frames: InterruptFrames,
+    thread: std::thread::ThreadId,
+}
+
+impl Drop for InterruptGuard {
+    fn drop(&mut self) {
+        let mut frames = lock_frames(&self.frames);
+        if let Some(stack) = frames.get_mut(&self.thread) {
+            stack.pop();
+            if stack.is_empty() {
+                frames.remove(&self.thread);
+            }
+        }
+    }
+}
+
+/// Reads the shared mod table, recovering it if a prior holder panicked. The
+/// table carries no invariant a panic could break, and a poisoned lock would
+/// otherwise make every later slot and role read fail.
+fn read_mods(mods: &SharedMods) -> std::sync::RwLockReadGuard<'_, Vec<crate::fragment::ModInstance>> {
+    mods.read().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// The fragment contributions filling `slot_id`, ordered by priority descending
+/// then fragment id ascending, truncated to one unless the slot declares
+/// `multiple`. Free-standing because it reads only the manifest and the mod
+/// table, so it can run on any thread rather than on the runtime's.
+pub fn resolve_slot_from(
+    manifest: &Manifest,
+    mods: &SharedMods,
+    slot_id: &str,
+) -> Vec<SlotContribution> {
+    let multiple = manifest
+        .slots
+        .as_ref()
+        .and_then(|slots| slots.iter().find(|s| s.id == slot_id))
+        .and_then(|s| s.multiple)
+        .unwrap_or(false);
+
+    let mods = read_mods(mods);
+    let mut contributions: Vec<SlotContribution> = Vec::new();
+    for m in mods.iter() {
+        for frag in &m.fragments {
+            if frag.slot == slot_id {
+                contributions.push(SlotContribution {
+                    mod_name: m.name.clone(),
+                    fragment_id: frag.id.clone(),
+                    slot: frag.slot.clone(),
+                    format: frag.format.clone(),
+                    priority: frag.priority,
+                });
+            }
+        }
+    }
+
+    contributions.sort_by(|a, b| {
+        b.priority
+            .cmp(&a.priority)
+            .then_with(|| a.fragment_id.cmp(&b.fragment_id))
+    });
+
+    if !multiple {
+        contributions.truncate(1);
+    }
+    contributions
+}
+
+/// Every loaded mod providing `role`, ordered by owning mod name ascending.
+pub fn resolve_role_all_from(mods: &SharedMods, role: &str) -> Vec<RoleResolution> {
+    let mods = read_mods(mods);
+    let mut out = Vec::new();
+    for m in mods.iter() {
+        for provided in &m.provides {
+            if provided.role == role {
+                out.push(RoleResolution {
+                    addon: m.name.clone(),
+                    role: provided.role.clone(),
+                    fns: provided.fns.clone(),
+                });
+            }
+        }
+    }
+    out.sort_by(|a, b| a.addon.cmp(&b.addon));
+    out
+}
+
+/// The winning provider for `role`: `role_preferences` when it names a loaded
+/// candidate, otherwise the first of the deterministic ordering.
+pub fn resolve_role_from(
+    mods: &SharedMods,
+    role_preferences: &HashMap<String, String>,
+    role: &str,
+) -> Option<RoleResolution> {
+    let candidates = resolve_role_all_from(mods, role);
+    if candidates.is_empty() {
+        return None;
+    }
+    if let Some(preferred) = role_preferences.get(role)
+        && let Some(hit) = candidates.iter().find(|c| &c.addon == preferred)
+    {
+        return Some(hit.clone());
+    }
+    candidates.into_iter().next()
+}
+
+/// The loaded-mod table, shared between a runtime and whoever spawned it.
+///
+/// An `RwLock` rather than a `Mutex`, and the write lock is taken only to push
+/// a fully-built [`ModInstance`](crate::fragment::ModInstance) — never across a
+/// mod's entry evaluation. The window a concurrent slot or role read can block
+/// on is therefore a vector push, not a mod load, which is the whole point of
+/// answering those reads off the runtime thread.
+pub type SharedMods = Arc<std::sync::RwLock<Vec<crate::fragment::ModInstance>>>;
+
+// The per-call cancellation token governing the calling thread, if any. A
+// `CallToken` is scoped to one command rather than to the runtime, so it is
+// carried on the thread that dispatches the command rather than threaded
+// through every runtime method. Every interrupt frame pushed inside the scope
+// picks it up, which covers execution, mod loading, exports, hooks and events
+// alike.
+thread_local! {
+    static CURRENT_CALL_TOKEN: std::cell::RefCell<Option<crate::pending::CallToken>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Restores the previously scoped call token when dropped, so nesting is safe.
+pub struct CallTokenScope {
+    previous: Option<crate::pending::CallToken>,
+}
+
+impl CallTokenScope {
+    /// Scopes `token` to the calling thread for the guard's lifetime.
+    pub fn enter(token: crate::pending::CallToken) -> Self {
+        let previous =
+            CURRENT_CALL_TOKEN.with(|slot| slot.borrow_mut().replace(token));
+        Self { previous }
+    }
+}
+
+impl Drop for CallTokenScope {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        CURRENT_CALL_TOKEN.with(|slot| *slot.borrow_mut() = previous);
+    }
+}
+
+fn current_call_token() -> Option<crate::pending::CallToken> {
+    CURRENT_CALL_TOKEN.with(|slot| slot.borrow().clone())
+}
+
+/// True when the calling thread's scoped call token has been tripped.
+pub(crate) fn call_cancelled() -> bool {
+    current_call_token()
+        .map(|token| token.is_cancelled())
+        .unwrap_or(false)
+}
+
+/// One handler's result, tagged with who registered it.
+///
+/// `index` is the handler's position within its own mod's handlers for that
+/// hook or event. Together with the mod's pool-wide load sequence this is what
+/// lets segments returned by several workers be merged back into the order a
+/// single runtime would have produced.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TaggedResult {
+    pub mod_id: String,
+    pub index: u32,
+    pub value: serde_json::Value,
+}
+
+/// The hook and event ids one mod's handlers answer to.
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+pub struct HandlerIndex {
+    #[serde(default)]
+    pub hooks: Vec<String>,
+    #[serde(default)]
+    pub events: Vec<String>,
+}
+
+/// Per-runtime instrumentation a supervisor can read from another thread
+/// without touching the interpreter.
+///
+/// The two fields answer the only question that distinguishes a slow call from
+/// a wedged one. `heartbeat` is bumped by the interrupt handler, which QuickJS
+/// calls **only while bytecode runs** — a script grinding for a minute advances
+/// it, a thread parked inside a blocking host binding does not. `binding` names
+/// what that thread is inside, if anything, so a stalled heartbeat can be
+/// reported with the culprit rather than as a mystery.
+///
+/// Neither field changes call semantics and neither takes a lock on the hot
+/// path: one relaxed increment per interrupt tick, one relaxed swap on binding
+/// entry and one on exit.
+pub struct RuntimeProbe {
+    heartbeat: std::sync::atomic::AtomicU64,
+    current: std::sync::atomic::AtomicUsize,
+    names: std::sync::RwLock<Vec<String>>,
+}
+
+const NO_BINDING: usize = usize::MAX;
+
+impl Default for RuntimeProbe {
+    fn default() -> Self {
+        Self {
+            heartbeat: std::sync::atomic::AtomicU64::new(0),
+            current: std::sync::atomic::AtomicUsize::new(NO_BINDING),
+            names: std::sync::RwLock::new(Vec::new()),
+        }
+    }
+}
+
+impl RuntimeProbe {
+    /// Monotonic tick count. Advances only while the interpreter is running
+    /// bytecode.
+    pub fn heartbeat(&self) -> u64 {
+        self.heartbeat.load(Ordering::Relaxed)
+    }
+
+    /// The host binding the runtime thread is inside right now, if any.
+    pub fn current_binding(&self) -> Option<String> {
+        let index = self.current.load(Ordering::Relaxed);
+        if index == NO_BINDING {
+            return None;
+        }
+        self.names
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(index)
+            .cloned()
+    }
+
+    /// Interns a binding name at registration and returns its index.
+    fn intern(&self, name: &str) -> usize {
+        let mut names = self.names.write().unwrap_or_else(|p| p.into_inner());
+        if let Some(existing) = names.iter().position(|n| n == name) {
+            return existing;
+        }
+        names.push(name.to_string());
+        names.len() - 1
+    }
+}
+
+/// Marks a binding entered for the guard's lifetime, restoring whatever was
+/// current before. Nesting (a binding whose callback re-enters script that
+/// calls a second binding) restores rather than clears.
+struct BindingScope {
+    probe: Arc<RuntimeProbe>,
+    previous: usize,
+}
+
+impl BindingScope {
+    fn enter(probe: &Arc<RuntimeProbe>, index: usize) -> Self {
+        let previous = probe.current.swap(index, Ordering::Relaxed);
+        Self {
+            probe: probe.clone(),
+            previous,
+        }
+    }
+}
+
+impl Drop for BindingScope {
+    fn drop(&mut self) {
+        self.probe.current.store(self.previous, Ordering::Relaxed);
+    }
+}
+
 pub struct XriptRuntime {
+    // Owns the QuickJS runtime and the interrupt handler installed on it for
+    // the lifetime of the sandbox; dropped only with the sandbox itself.
+    #[allow(dead_code)]
     rt: Runtime,
     ctx: Context,
-    manifest: Manifest,
+    manifest: Arc<Manifest>,
+    interrupt_frames: InterruptFrames,
     cancellation: Option<CancellationToken>,
     effective_timeout_ms: u64,
-    loaded_mods: std::sync::Mutex<Vec<crate::fragment::ModInstance>>,
-    export_caps: std::sync::Mutex<HashMap<String, Option<String>>>,
+    /// The embedder's ceiling, kept so a per-slot override can be clamped to it
+    /// rather than trusted. Without it a manifest could widen past the host.
+    hard_timeout_ms: Option<u64>,
+    missing_bindings: Vec<String>,
+    loaded_mods: SharedMods,
+    export_caps: std::sync::Mutex<HashMap<String, HashMap<String, Option<String>>>>,
+    export_owners: std::sync::Mutex<HashMap<String, Vec<String>>>,
     granted: HashSet<String>,
     role_preferences: HashMap<String, String>,
+    command_preferences: HashMap<String, String>,
     library_registry: Arc<LibraryRegistry>,
     hook_fills: std::sync::Mutex<Vec<crate::fragment::HookFillDecl>>,
+    command_fills: std::sync::Mutex<Vec<crate::commands::CommandFill>>,
+    audit: Option<AuditSink>,
+    reported_hook_fill_denials: std::sync::Mutex<HashSet<(String, String, String)>>,
     debug: Option<crate::debug::DebugSession>,
+    strict_html_vocabulary: bool,
+    on_fragment_diagnostic: Option<FragmentDiagnosticSink>,
+    probe: Arc<RuntimeProbe>,
 }
 
 impl std::fmt::Debug for XriptRuntime {
@@ -514,6 +947,40 @@ fn effective_stack(manifest: Option<usize>, hard: Option<usize>) -> Option<usize
 
 impl XriptRuntime {
     pub fn new(manifest: Manifest, options: RuntimeOptions) -> Result<Self> {
+        Self::with_shared(
+            Arc::new(manifest),
+            Arc::new(std::sync::RwLock::new(Vec::new())),
+            options,
+        )
+    }
+
+    /// Builds a runtime over manifest and loaded-mod state the caller already
+    /// holds. [`XriptHandle`](crate::handle::XriptHandle) uses this so it can
+    /// answer manifest and slot/role reads on the caller's own thread instead
+    /// of queueing them behind whatever the runtime thread is doing.
+    pub fn with_shared(
+        manifest: Arc<Manifest>,
+        loaded_mods: SharedMods,
+        options: RuntimeOptions,
+    ) -> Result<Self> {
+        Self::with_shared_probe(
+            manifest,
+            loaded_mods,
+            Arc::new(RuntimeProbe::default()),
+            options,
+        )
+    }
+
+    /// [`with_shared`](Self::with_shared) over a probe the caller already
+    /// holds, so a supervisor can read the heartbeat and the current binding
+    /// even while the runtime thread is wedged and even before construction
+    /// finishes.
+    pub fn with_shared_probe(
+        manifest: Arc<Manifest>,
+        loaded_mods: SharedMods,
+        probe: Arc<RuntimeProbe>,
+        options: RuntimeOptions,
+    ) -> Result<Self> {
         crate::manifest::validate_structure(&manifest)?;
 
         let rt = Runtime::new().map_err(|e| XriptError::Engine(e.to_string()))?;
@@ -571,6 +1038,13 @@ impl XriptRuntime {
             },
         );
 
+        let missing_bindings = missing_binding_names(&manifest, &options.host_bindings);
+        if options.strict_bindings && !missing_bindings.is_empty() {
+            return Err(XriptError::MissingBindings {
+                missing: missing_bindings.clone(),
+            });
+        }
+
         let manifest_mem = manifest.limits.as_ref().and_then(|l| l.memory_mb);
         let manifest_stack = manifest.limits.as_ref().and_then(|l| l.max_stack_depth);
         let hard = options.hard_limits.clone().unwrap_or_default();
@@ -584,7 +1058,7 @@ impl XriptRuntime {
 
         let manifest_timeout = manifest.limits.as_ref().and_then(|l| l.timeout_ms);
         let effective_timeout_ms =
-            effective_limit(manifest_timeout, hard.timeout_ms).unwrap_or(5000);
+            effective_limit(manifest_timeout, hard.timeout_ms).unwrap_or(crate::manifest::DEFAULT_TIMEOUT_MS);
 
         let ctx = Context::full(&rt).map_err(|e| XriptError::Engine(e.to_string()))?;
 
@@ -592,15 +1066,20 @@ impl XriptRuntime {
         let audit = options.audit.clone();
         let cancellation = options.cancellation.clone();
         let role_preferences = options.role_preferences;
+        let command_preferences = options.command_preferences;
+        let strict_html_vocabulary = options.strict_html_vocabulary;
+        let on_fragment_diagnostic = options.on_fragment_diagnostic.clone();
 
         let debug = options
             .debug
             .map(crate::debug::DebugSession::new);
 
+
+
         ctx.with(|ctx| -> Result<()> {
             remove_dangerous_globals(&ctx)?;
             register_console(&ctx, options.console)?;
-            register_bindings(&ctx, &manifest, options.host_bindings, &granted, &audit)?;
+            register_bindings(&ctx, &manifest, options.host_bindings, &granted, &audit, &probe)?;
             register_hooks(&ctx, &manifest, &granted)?;
             register_events(&ctx, &manifest, &granted)?;
             register_fragment_hooks(&ctx)?;
@@ -611,57 +1090,159 @@ impl XriptRuntime {
             Ok(())
         })?;
 
+        let interrupt_frames: InterruptFrames = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let handler_frames = interrupt_frames.clone();
+        let handler_probe = probe.clone();
+        rt.set_interrupt_handler(Some(Box::new(move || {
+            // Bumped before any early return: the tick is the signal that
+            // bytecode is running at all, which is what tells a slow call
+            // apart from a wedged one.
+            handler_probe
+                .heartbeat
+                .fetch_add(1, Ordering::Relaxed);
+            let frames = lock_frames(&handler_frames);
+            let Some(stack) = frames.get(&std::thread::current().id()) else {
+                return false;
+            };
+            if stack.is_empty() {
+                return false;
+            }
+            if stack.iter().any(|f| {
+                f.token.as_ref().map(|t| t.is_cancelled()).unwrap_or(false)
+                    || f.call_token
+                        .as_ref()
+                        .map(|t| t.is_cancelled())
+                        .unwrap_or(false)
+            }) {
+                for frame in stack.iter() {
+                    frame.cancelled.store(true, Ordering::Relaxed);
+                }
+                return true;
+            }
+            let now = Instant::now();
+            let expired = stack.iter().any(|frame| {
+                let paused = frame
+                    .debug_clock
+                    .as_ref()
+                    .map(|c| Duration::from_millis(c.load(Ordering::Relaxed)))
+                    .unwrap_or_default();
+                now >= frame.deadline + paused
+            });
+            if expired {
+                for frame in stack.iter() {
+                    frame.interrupted.store(true, Ordering::Relaxed);
+                }
+                true
+            } else {
+                false
+            }
+        }) as Box<dyn FnMut() -> bool + Send>));
+
         Ok(Self {
             rt,
             ctx,
             manifest,
+            interrupt_frames,
             cancellation,
             effective_timeout_ms,
-            loaded_mods: std::sync::Mutex::new(Vec::new()),
+            hard_timeout_ms: hard.timeout_ms,
+            missing_bindings,
+            loaded_mods,
             export_caps: std::sync::Mutex::new(HashMap::new()),
+            export_owners: std::sync::Mutex::new(HashMap::new()),
             granted,
             role_preferences,
+            command_preferences,
             library_registry,
             hook_fills: std::sync::Mutex::new(Vec::new()),
+            command_fills: std::sync::Mutex::new(Vec::new()),
+            audit,
+            reported_hook_fill_denials: std::sync::Mutex::new(HashSet::new()),
             debug,
+            strict_html_vocabulary,
+            on_fragment_diagnostic,
+            probe,
         })
     }
 
+    /// Pushes an interrupt frame onto the calling thread's stack and returns a
+    /// guard that pops it on drop. Nesting is safe at any depth: an outer
+    /// region stays armed for the remainder of its execution regardless of how
+    /// many inner regions come and go. Frames are per-thread, so a shared
+    /// runtime driven from several threads keeps each thread's deadline and
+    /// cancellation to itself.
+    pub(crate) fn push_interrupt_frame(&self, mut frame: InterruptFrame) -> InterruptGuard {
+        let thread = std::thread::current().id();
+        if frame.call_token.is_none() {
+            frame.call_token = current_call_token();
+        }
+        lock_frames(&self.interrupt_frames)
+            .entry(thread)
+            .or_default()
+            .push(frame);
+        InterruptGuard {
+            frames: self.interrupt_frames.clone(),
+            thread,
+        }
+    }
+
+    /// Live frame count for the calling thread.
+    #[allow(dead_code)]
+    pub(crate) fn interrupt_depth(&self) -> usize {
+        lock_frames(&self.interrupt_frames)
+            .get(&std::thread::current().id())
+            .map(|stack| stack.len())
+            .unwrap_or(0)
+    }
+
+    /// True when a live frame governs execution on the calling thread, i.e.
+    /// the installed handler would enforce a deadline or observe cancellation
+    /// right now.
+    #[allow(dead_code)]
+    pub(crate) fn interrupt_armed(&self) -> bool {
+        self.interrupt_depth() > 0
+    }
+
     pub fn execute(&self, code: &str) -> Result<ExecutionResult> {
+        self.execute_within(code, None)
+    }
+
+    /// `execute`, with an optional per-call timeout standing in for the
+    /// manifest-wide one. A slot's `limits.timeout_ms` arrives here. The
+    /// embedder's hard ceiling still clamps it, so a manifest cannot buy
+    /// itself more budget than the host allowed.
+    pub fn execute_within(
+        &self,
+        code: &str,
+        timeout_override_ms: Option<u64>,
+    ) -> Result<ExecutionResult> {
         if let Some(ref token) = self.cancellation
             && token.is_cancelled()
         {
             return Err(XriptError::Cancelled);
         }
+        if call_cancelled() {
+            return Err(XriptError::Cancelled);
+        }
 
-        let timeout_ms = self.effective_timeout_ms;
+        let timeout_ms = match timeout_override_ms {
+            Some(requested) => effective_limit(Some(requested), self.hard_timeout_ms)
+                .unwrap_or(self.effective_timeout_ms),
+            None => self.effective_timeout_ms,
+        };
 
         let interrupted = Arc::new(AtomicBool::new(false));
-        let interrupted_clone = interrupted.clone();
         let cancelled = Arc::new(AtomicBool::new(false));
-        let cancelled_clone = cancelled.clone();
-        let token = self.cancellation.clone();
         let start = Instant::now();
-        let deadline = start + Duration::from_millis(timeout_ms);
-        let debug_clock = self.debug.as_ref().map(|d| d.paused_clock());
 
-        self.rt
-            .set_interrupt_handler(Some(Box::new(move || {
-                if token.as_ref().map(|t| t.is_cancelled()).unwrap_or(false) {
-                    cancelled_clone.store(true, Ordering::Relaxed);
-                    return true;
-                }
-                let paused = debug_clock
-                    .as_ref()
-                    .map(|c| Duration::from_millis(c.load(Ordering::Relaxed)))
-                    .unwrap_or_default();
-                if Instant::now() >= deadline + paused {
-                    interrupted_clone.store(true, Ordering::Relaxed);
-                    true
-                } else {
-                    false
-                }
-            }) as Box<dyn FnMut() -> bool + Send>));
+        let _interrupt = self.push_interrupt_frame(InterruptFrame {
+            deadline: start + Duration::from_millis(timeout_ms),
+            token: self.cancellation.clone(),
+            call_token: None,
+            debug_clock: self.debug.as_ref().map(|d| d.paused_clock()),
+            interrupted: interrupted.clone(),
+            cancelled: cancelled.clone(),
+        });
 
         let result = self.ctx.with(|ctx| {
             let res: std::result::Result<Value, _> = ctx.eval(code);
@@ -675,9 +1256,19 @@ impl XriptRuntime {
                         PromiseOutcome::Rejected(v) => {
                             Err(XriptError::Script(format_rejection(&ctx, &v)))
                         }
-                        PromiseOutcome::Pending => Err(XriptError::Script(
-                            "workflow promise never resolved (no pending jobs left)".into(),
-                        )),
+                        PromiseOutcome::Pending => {
+                            if cancelled.load(Ordering::Relaxed) {
+                                Err(XriptError::Cancelled)
+                            } else if interrupted.load(Ordering::Relaxed) {
+                                Err(XriptError::ExecutionLimit {
+                                    limit: "timeout_ms".into(),
+                                })
+                            } else {
+                                Err(XriptError::Script(
+                                    "workflow promise never settled: it awaited something that never resolves, and no pending jobs remain. A host binding declared `async` does not yield, so awaiting one cannot be what is outstanding here.".into(),
+                                ))
+                            }
+                        }
                     }
                 }
                 Err(_) => {
@@ -695,9 +1286,6 @@ impl XriptRuntime {
             }
         });
 
-        self.rt
-            .set_interrupt_handler(None::<Box<dyn FnMut() -> bool + Send>>);
-
         let duration_ms = start.elapsed().as_secs_f64() * 1000.0;
 
         result.map(|value| ExecutionResult { value, duration_ms })
@@ -707,6 +1295,27 @@ impl XriptRuntime {
         &self.manifest
     }
 
+    /// Bindings the manifest declares that the host did not supply, fully
+    /// qualified and sorted. Each installs as a stub that throws when called,
+    /// so this is the drift between the contract a mod author reads and the
+    /// surface the host actually wired.
+    pub fn missing_bindings(&self) -> &[String] {
+        &self.missing_bindings
+    }
+
+    /// The manifest as a shared handle, for a caller that wants to read it
+    /// without holding a borrow on the runtime.
+    pub fn manifest_arc(&self) -> Arc<Manifest> {
+        self.manifest.clone()
+    }
+
+    /// The loaded-mod table this runtime writes into. Reading it requires no
+    /// access to the JS context, so a host may resolve slots and roles from
+    /// another thread while the runtime is busy.
+    pub fn loaded_mods(&self) -> SharedMods {
+        self.loaded_mods.clone()
+    }
+
     pub fn load_mod(
         &self,
         mod_manifest_json: &str,
@@ -714,27 +1323,43 @@ impl XriptRuntime {
         granted_capabilities: &HashSet<String>,
         entry_source: Option<&str>,
     ) -> Result<crate::fragment::ModInstance> {
-        let (normalized_json, new_hook_fills) = crate::fragment::normalize_mod_fills(
+        let normalized = crate::fragment::normalize_mod_fills(
             mod_manifest_json,
             self.manifest.slots.as_deref().unwrap_or(&[]),
             &self.granted,
         )?;
-        let mod_manifest_json = normalized_json.as_str();
+        let mod_manifest_json = normalized.manifest_json.as_str();
 
-        let mod_instance = crate::fragment::load_mod(
+        let mod_instance = crate::fragment::load_mod_with_options(
             mod_manifest_json,
             &self.manifest,
             granted_capabilities,
             &fragment_sources,
+            self.strict_html_vocabulary,
         )?;
+
+        if let Some(ref sink) = self.on_fragment_diagnostic {
+            for fragment in &mod_instance.fragments {
+                for diagnostic in &fragment.diagnostics {
+                    sink(&fragment.id, diagnostic);
+                }
+            }
+        }
 
         let mod_manifest: crate::manifest::ModManifest =
             serde_json::from_str(mod_manifest_json).map_err(XriptError::Json)?;
         let entry = mod_manifest.entry_block();
+        let owning_mod = mod_instance.name.clone();
         if let Some(ref entry) = entry {
             let mut caps = self.export_caps.lock().unwrap();
+            let mut owners = self.export_owners.lock().unwrap();
+            let own = caps.entry(owning_mod.clone()).or_default();
             for (export_name, decl) in &entry.exports {
-                caps.insert(export_name.clone(), decl.capability.clone());
+                own.insert(export_name.clone(), decl.capability.clone());
+                let declared = owners.entry(export_name.clone()).or_default();
+                if !declared.contains(&owning_mod) {
+                    declared.push(owning_mod.clone());
+                }
             }
         }
 
@@ -749,8 +1374,9 @@ impl XriptRuntime {
                 self.library_registry.approve(&mod_name, specifier)
             })?;
 
-            if is_module {
-                self.eval_module_entry(&mod_name, source)?;
+            self.set_export_owner(Some(&mod_name));
+            let evaluated = if is_module {
+                self.eval_module_entry(&mod_name, source)
             } else {
                 self.ctx.with(|ctx| {
                     let res: std::result::Result<Value, _> = ctx.eval(source);
@@ -762,12 +1388,23 @@ impl XriptRuntime {
                         });
                     }
                     Ok(())
-                })?;
-            }
+                })
+            };
+            self.set_export_owner(None);
+            evaluated?;
         }
 
-        self.hook_fills.lock().unwrap().extend(new_hook_fills);
-        self.loaded_mods.lock().unwrap().push(mod_instance.clone());
+        self.hook_fills.lock().unwrap().extend(normalized.hook_fills);
+        self.command_fills
+            .lock()
+            .unwrap()
+            .extend(normalized.command_fills);
+        // Write-locked for the push alone; the entry evaluation above is long
+        // and already done, so a concurrent slot read waits on a vector push.
+        self.loaded_mods
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(mod_instance.clone());
 
         Ok(mod_instance)
     }
@@ -775,26 +1412,17 @@ impl XriptRuntime {
     fn eval_module_entry(&self, mod_name: &str, source: &str) -> Result<()> {
         let timeout_ms = self.effective_timeout_ms;
         let interrupted = Arc::new(AtomicBool::new(false));
-        let interrupted_clone = interrupted.clone();
         let cancelled = Arc::new(AtomicBool::new(false));
-        let cancelled_clone = cancelled.clone();
-        let token = self.cancellation.clone();
         let start = Instant::now();
-        let deadline = start + Duration::from_millis(timeout_ms);
 
-        self.rt
-            .set_interrupt_handler(Some(Box::new(move || {
-                if token.as_ref().map(|t| t.is_cancelled()).unwrap_or(false) {
-                    cancelled_clone.store(true, Ordering::Relaxed);
-                    return true;
-                }
-                if Instant::now() >= deadline {
-                    interrupted_clone.store(true, Ordering::Relaxed);
-                    true
-                } else {
-                    false
-                }
-            }) as Box<dyn FnMut() -> bool + Send>));
+        let _interrupt = self.push_interrupt_frame(InterruptFrame {
+            deadline: start + Duration::from_millis(timeout_ms),
+            token: self.cancellation.clone(),
+            call_token: None,
+            debug_clock: None,
+            interrupted: interrupted.clone(),
+            cancelled: cancelled.clone(),
+        });
 
         self.library_registry.load_phase.store(true, Ordering::Relaxed);
         let result = self.ctx.with(|ctx| -> Result<()> {
@@ -846,9 +1474,6 @@ impl XriptRuntime {
         });
         self.library_registry.load_phase.store(false, Ordering::Relaxed);
 
-        self.rt
-            .set_interrupt_handler(None::<Box<dyn FnMut() -> bool + Send>>);
-
         result
     }
 
@@ -862,22 +1487,123 @@ impl XriptRuntime {
         name: &str,
         args: &[serde_json::Value],
     ) -> Result<serde_json::Value> {
-        if let Some(Some(cap)) = self.export_caps.lock().unwrap().get(name)
-            && !crate::cap_match::granted_satisfies(&self.granted, cap)
+        let owner = self.declared_owner(name)?;
+        self.invoke_export_in(name, args, owner.as_deref(), None)
+    }
+
+    /// Invokes an export inside one named mod's own namespace. Gated by that
+    /// mod's own declaration, so a second mod declaring the same name can
+    /// neither weaken the gate nor shadow the function.
+    pub fn invoke_mod_export(
+        &self,
+        mod_name: &str,
+        name: &str,
+        args: &[serde_json::Value],
+    ) -> Result<serde_json::Value> {
+        self.invoke_export_in(name, args, Some(mod_name), None)
+    }
+
+    /// `invoke_mod_export`, bounded by a slot's own `limits.timeout_ms` instead
+    /// of the manifest-wide budget. `None` keeps the manifest budget.
+    pub fn invoke_mod_export_within(
+        &self,
+        mod_name: &str,
+        name: &str,
+        args: &[serde_json::Value],
+        timeout_override_ms: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        self.invoke_export_in(name, args, Some(mod_name), timeout_override_ms)
+    }
+
+    fn declared_owner(&self, name: &str) -> Result<Option<String>> {
+        let owners = self.export_owners.lock().unwrap();
+        match owners.get(name) {
+            Some(mods) if mods.len() > 1 => Err(XriptError::AmbiguousExport {
+                export: name.to_string(),
+                mods: mods.clone(),
+            }),
+            Some(mods) if mods.len() == 1 => Ok(Some(mods[0].clone())),
+            _ => Ok(None),
+        }
+    }
+
+    /// The capability an export declares when the granted set does not satisfy
+    /// it, otherwise `None`.
+    fn denied_capability(&self, owner: &str, name: &str) -> Option<String> {
+        let caps = self.export_caps.lock().unwrap();
+        let cap = caps.get(owner).and_then(|own| own.get(name))?.as_ref()?;
+        if crate::cap_match::granted_satisfies(&self.granted, cap) {
+            None
+        } else {
+            Some(cap.clone())
+        }
+    }
+
+    /// Reports a hook fill refused on capability grounds to the audit sink,
+    /// once per `(mod, handler, hook)` for the lifetime of the runtime so a
+    /// hot hook cannot flood the channel.
+    fn audit_hook_fill_denial(&self, mod_name: &str, handler: &str, hook: &str, capability: &str) {
+        let Some(sink) = self.audit.as_ref() else {
+            return;
+        };
+        let key = (
+            mod_name.to_string(),
+            handler.to_string(),
+            hook.to_string(),
+        );
+        if !self
+            .reported_hook_fill_denials
+            .lock()
+            .unwrap()
+            .insert(key)
+        {
+            return;
+        }
+        sink(AuditEvent {
+            binding: handler.to_string(),
+            capability: Some(capability.to_string()),
+            at_ms: now_ms(),
+            decision: AuditDecision::Denied,
+            mod_name: Some(mod_name.to_string()),
+            hook: Some(hook.to_string()),
+            ..Default::default()
+        });
+    }
+
+    fn set_export_owner(&self, owner: Option<&str>) {
+        let escaped = escape_js_string(owner.unwrap_or(""));
+        let code = format!("globalThis.__xript_set_export_owner('{escaped}');");
+        let _ = self
+            .ctx
+            .with(|ctx| ctx.eval::<Value, _>(code.as_str()).map(|_| ()));
+    }
+
+    fn invoke_export_in(
+        &self,
+        name: &str,
+        args: &[serde_json::Value],
+        owner: Option<&str>,
+        timeout_override_ms: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        if let Some(owner) = owner
+            && let Some(cap) = self.denied_capability(owner, name)
         {
             return Err(XriptError::CapabilityDenied {
                 binding: name.to_string(),
-                capability: cap.clone(),
+                capability: cap,
             });
         }
 
         let args_json = serde_json::to_string(args).unwrap_or_else(|_| "[]".into());
-        let escaped_name = name.replace('\\', "\\\\").replace('\'', "\\'");
+        let escaped_name = escape_js_string(name);
+        let owner_expr = match owner {
+            Some(owner) => format!("'{}'", escape_js_string(owner)),
+            None => "undefined".to_string(),
+        };
         let escaped_args = args_json.replace('\\', "\\\\").replace('`', "\\`");
         let code = format!(
             r#"(function() {{
-                var registry = globalThis.__xript_exports || {{}};
-                var fn = registry['{name}'];
+                var fn = globalThis.__xript_lookup_export('{name}', {owner});
                 if (typeof fn !== 'function') {{
                     return JSON.stringify({{ __xript_err: "export {name} not found" }});
                 }}
@@ -890,10 +1616,11 @@ impl XriptRuntime {
                 }}
             }})()"#,
             name = escaped_name,
+            owner = owner_expr,
             args = escaped_args,
         );
 
-        let result = self.execute(&code)?;
+        let result = self.execute_within(&code, timeout_override_ms)?;
         let raw = result.value.as_str().unwrap_or("{}");
         let envelope: serde_json::Value = serde_json::from_str(raw).unwrap_or(serde_json::Value::Null);
         if let Some(err) = envelope.get("__xript_err").and_then(|v| v.as_str()) {
@@ -919,6 +1646,21 @@ impl XriptRuntime {
         hook: &str,
         payload: &[serde_json::Value],
     ) -> Result<Vec<serde_json::Value>> {
+        Ok(self
+            .fire_hook_tagged(hook, payload)?
+            .into_iter()
+            .map(|tagged| tagged.value)
+            .collect())
+    }
+
+    /// [`fire_hook`](Self::fire_hook) with each result tagged by the mod that
+    /// registered the handler and its index within that mod's handlers for this
+    /// hook.
+    ///
+    /// Additive: `fire_hook` keeps its exact signature and behavior. The tags
+    /// exist so a pool can merge segments from several workers back into a
+    /// single deterministic order — see `spec/hooks.md`.
+    pub fn fire_hook_tagged(&self, hook: &str, payload: &[serde_json::Value]) -> Result<Vec<TaggedResult>> {
         let mut results = self.dispatch_to_registry("__xript_hooks", hook, payload, true)?;
         let fills: Vec<crate::fragment::HookFillDecl> = self
             .hook_fills
@@ -928,11 +1670,32 @@ impl XriptRuntime {
             .filter(|fill| fill.hook == hook)
             .cloned()
             .collect();
+        let mut counters: HashMap<String, u32> = HashMap::new();
+        for tagged in &results {
+            let next = counters.entry(tagged.mod_id.clone()).or_default();
+            *next = (*next).max(tagged.index + 1);
+        }
         for fill in fills {
-            match self.invoke_export(&fill.handler, payload) {
-                Ok(value) => results.push(value),
-                Err(_) => results.push(serde_json::Value::Null),
+            let index = counters.entry(fill.mod_name.clone()).or_default();
+            let at = *index;
+            *index += 1;
+            if let Some(capability) = self.denied_capability(&fill.mod_name, &fill.handler) {
+                self.audit_hook_fill_denial(&fill.mod_name, &fill.handler, hook, &capability);
+                results.push(TaggedResult {
+                    mod_id: fill.mod_name.clone(),
+                    index: at,
+                    value: serde_json::Value::Null,
+                });
+                continue;
             }
+            let value = self
+                .invoke_mod_export(&fill.mod_name, &fill.handler, payload)
+                .unwrap_or(serde_json::Value::Null);
+            results.push(TaggedResult {
+                mod_id: fill.mod_name.clone(),
+                index: at,
+                value,
+            });
         }
         Ok(results)
     }
@@ -947,6 +1710,16 @@ impl XriptRuntime {
         event: &str,
         payload: &[serde_json::Value],
     ) -> Result<Vec<serde_json::Value>> {
+        Ok(self
+            .emit_tagged(event, payload)?
+            .into_iter()
+            .map(|tagged| tagged.value)
+            .collect())
+    }
+
+    /// [`emit`](Self::emit) with each result tagged by the subscribing mod and
+    /// its index within that mod's subscriptions for this event.
+    pub fn emit_tagged(&self, event: &str, payload: &[serde_json::Value]) -> Result<Vec<TaggedResult>> {
         self.dispatch_to_registry("__xript_event_handlers", event, payload, false)
     }
 
@@ -956,15 +1729,11 @@ impl XriptRuntime {
         id: &str,
         payload: &[serde_json::Value],
         hook_shaped: bool,
-    ) -> Result<Vec<serde_json::Value>> {
+    ) -> Result<Vec<TaggedResult>> {
         let payload_json = serde_json::to_string(payload).unwrap_or_else(|_| "[]".into());
         let escaped_id = id.replace('\\', "\\\\").replace('\'', "\\'");
         let escaped_payload = payload_json.replace('\\', "\\\\").replace('`', "\\`");
-        let handler_accessor = if hook_shaped {
-            "(entries[i] && entries[i].handler) || entries[i]"
-        } else {
-            "entries[i]"
-        };
+        let _ = hook_shaped;
         let code = format!(
             r#"(function() {{
                 var registry = globalThis['{registry}'] || {{}};
@@ -975,13 +1744,15 @@ impl XriptRuntime {
                     : args;
                 var results = [];
                 for (var i = 0; i < entries.length; i++) {{
-                    var handler = {handler_accessor};
-                    if (typeof handler !== 'function') {{ results.push(null); continue; }}
+                    var entry = entries[i];
+                    var handler = (entry && entry.handler) || entry;
+                    var modId = (entry && entry.modId) || '';
+                    if (typeof handler !== 'function') {{ results.push({{ modId: modId, value: null }}); continue; }}
                     try {{
                         var r = handler.apply(null, spread);
-                        results.push(r === undefined ? null : r);
+                        results.push({{ modId: modId, value: r === undefined ? null : r }});
                     }} catch (e) {{
-                        results.push(null);
+                        results.push({{ modId: modId, value: null }});
                     }}
                 }}
                 return JSON.stringify(results);
@@ -989,17 +1760,80 @@ impl XriptRuntime {
             registry = registry,
             id = escaped_id,
             payload = escaped_payload,
-            handler_accessor = handler_accessor,
         );
 
         let result = self.execute(&code)?;
         let raw = result.value.as_str().unwrap_or("[]");
         let parsed: serde_json::Value =
             serde_json::from_str(raw).unwrap_or(serde_json::Value::Null);
-        Ok(parsed
-            .as_array()
-            .cloned()
-            .unwrap_or_default())
+        let entries = parsed.as_array().cloned().unwrap_or_default();
+        let mut counters: HashMap<String, u32> = HashMap::new();
+        Ok(entries
+            .into_iter()
+            .map(|entry| {
+                let mod_id = entry
+                    .get("modId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let counter = counters.entry(mod_id.clone()).or_default();
+                let index = *counter;
+                *counter += 1;
+                TaggedResult {
+                    mod_id,
+                    index,
+                    value: entry.get("value").cloned().unwrap_or(serde_json::Value::Null),
+                }
+            })
+            .collect())
+    }
+
+    /// Which hooks and events the handlers registered by `mod_id` answer to.
+    ///
+    /// A pool reads this at load time so a fan-out only reaches the workers
+    /// that actually host a handler, instead of queueing a no-op behind
+    /// whatever every other worker is doing.
+    pub fn handler_index_for(&self, mod_id: &str) -> HandlerIndex {
+        let escaped = js_string_escape(mod_id);
+        let code = format!(
+            r#"(function() {{
+                var out = {{ hooks: [], events: [] }};
+                var want = '{escaped}';
+                function scan(registry, into) {{
+                    var reg = globalThis[registry] || {{}};
+                    for (var id in reg) {{
+                        var entries = reg[id] || [];
+                        for (var i = 0; i < entries.length; i++) {{
+                            var entry = entries[i];
+                            if (entry && entry.modId === want) {{ into.push(id); break; }}
+                        }}
+                    }}
+                }}
+                scan('__xript_hooks', out.hooks);
+                scan('__xript_event_handlers', out.events);
+                return JSON.stringify(out);
+            }})()"#
+        );
+        let mut index = match self.execute(&code) {
+            Ok(result) => result
+                .value
+                .as_str()
+                .and_then(|raw| serde_json::from_str::<HandlerIndex>(raw).ok())
+                .unwrap_or_default(),
+            Err(_) => HandlerIndex::default(),
+        };
+        for fill in self.hook_fills.lock().unwrap().iter() {
+            if fill.mod_name == mod_id && !index.hooks.contains(&fill.hook) {
+                index.hooks.push(fill.hook.clone());
+            }
+        }
+        index
+    }
+
+    /// The instrumentation a supervisor reads to tell a slow call from a
+    /// wedged one.
+    pub fn probe(&self) -> Arc<RuntimeProbe> {
+        self.probe.clone()
     }
 
     /// Returns the loaded fragment contributions targeting `slot_id`, ordered by
@@ -1007,40 +1841,7 @@ impl XriptRuntime {
     /// `multiple` is false (default), at most one contribution (the winner) is
     /// returned. An undeclared slot id returns an empty vec.
     pub fn resolve_slot(&self, slot_id: &str) -> Vec<SlotContribution> {
-        let multiple = self
-            .manifest
-            .slots
-            .as_ref()
-            .and_then(|slots| slots.iter().find(|s| s.id == slot_id))
-            .and_then(|s| s.multiple)
-            .unwrap_or(false);
-
-        let mods = self.loaded_mods.lock().unwrap();
-        let mut contributions: Vec<SlotContribution> = Vec::new();
-        for m in mods.iter() {
-            for frag in &m.fragments {
-                if frag.slot == slot_id {
-                    contributions.push(SlotContribution {
-                        mod_name: m.name.clone(),
-                        fragment_id: frag.id.clone(),
-                        slot: frag.slot.clone(),
-                        format: frag.format.clone(),
-                        priority: frag.priority,
-                    });
-                }
-            }
-        }
-
-        contributions.sort_by(|a, b| {
-            b.priority
-                .cmp(&a.priority)
-                .then_with(|| a.fragment_id.cmp(&b.fragment_id))
-        });
-
-        if !multiple {
-            contributions.truncate(1);
-        }
-        contributions
+        resolve_slot_from(&self.manifest, &self.loaded_mods, slot_id)
     }
 
     /// Convenience for single-cardinality slots: returns the winning
@@ -1049,41 +1850,105 @@ impl XriptRuntime {
         self.resolve_slot(slot_id).into_iter().next()
     }
 
-    /// Returns every loaded mod that provides `role`, in load order. The host
-    /// uses this ordered candidate set to build its own picker UI. An
-    /// unprovided role returns an empty vec.
+    /// Returns every loaded mod that provides `role`, ordered by owning mod
+    /// name ascending. The host uses this ordered candidate set to build its
+    /// own picker UI. An unprovided role returns an empty vec.
+    ///
+    /// The order is the shared slot ordering (priority descending, fill id
+    /// ascending, owning mod ascending) collapsed onto role candidates, which
+    /// carry neither a priority nor a fill id: two providers of one role
+    /// therefore resolve by mod name and never by the host's load order.
     pub fn resolve_role_all(&self, role: &str) -> Vec<RoleResolution> {
-        let mods = self.loaded_mods.lock().unwrap();
-        let mut out = Vec::new();
-        for m in mods.iter() {
-            for provided in &m.provides {
-                if provided.role == role {
-                    out.push(RoleResolution {
-                        addon: m.name.clone(),
-                        role: provided.role.clone(),
-                        fns: provided.fns.clone(),
-                    });
-                }
-            }
-        }
-        out
+        resolve_role_all_from(&self.loaded_mods, role)
     }
 
-    /// Resolves the winning provider for `role`. Policy is first-installed-wins
-    /// (load order) unless `role_preferences[role]` names a candidate present in
-    /// the loaded set, in which case that addon wins. A role with no provider
-    /// resolves to `None`. xript never invokes the returned fns.
+    /// Resolves the winning provider for `role`. Policy is the deterministic
+    /// ordering of [`Self::resolve_role_all`] unless `role_preferences[role]`
+    /// names a candidate present in the loaded set, in which case that addon
+    /// wins. A role with no provider resolves to `None`. xript never invokes
+    /// the returned fns.
     pub fn resolve_role(&self, role: &str) -> Option<RoleResolution> {
-        let candidates = self.resolve_role_all(role);
-        if candidates.is_empty() {
-            return None;
-        }
-        if let Some(preferred) = self.role_preferences.get(role) {
-            if let Some(hit) = candidates.iter().find(|c| &c.addon == preferred) {
-                return Some(hit.clone());
-            }
-        }
-        candidates.into_iter().next()
+        resolve_role_from(&self.loaded_mods, &self.role_preferences, role)
+    }
+
+    /// The authority a host renders for a command: the handler's export
+    /// capability when it declares one, otherwise the slot's gate. Purely
+    /// informational — [`Self::invoke_command`] enforces through the export
+    /// path, never through this value.
+    fn command_capability(&self, fill: &crate::commands::CommandFill) -> Option<String> {
+        let declared = self
+            .export_caps
+            .lock()
+            .unwrap()
+            .get(&fill.mod_name)
+            .and_then(|own| own.get(&fill.handler).cloned())
+            .flatten();
+        declared.or_else(|| {
+            self.manifest
+                .slots
+                .as_ref()
+                .and_then(|slots| slots.iter().find(|slot| slot.id == fill.slot))
+                .and_then(|slot| slot.capability.clone())
+        })
+    }
+
+    fn slots(&self) -> &[crate::manifest::Slot] {
+        self.manifest.slots.as_deref().unwrap_or(&[])
+    }
+
+    /// Every command filling `slot_id`, ordered by priority descending, then
+    /// command id ascending, then owning mod ascending, with no cardinality
+    /// applied.
+    pub fn resolve_commands_all(&self, slot_id: &str) -> Vec<crate::commands::ResolvedCommand> {
+        let fills = self.command_fills.lock().unwrap().clone();
+        crate::commands::resolve_commands_all_with(slot_id, &fills, &|fill| {
+            self.command_capability(fill)
+        })
+    }
+
+    /// The commands filling `slot_id` after the slot's cardinality is applied:
+    /// a `multiple: false` command slot resolves to exactly one command across
+    /// all mods, the same as every other slot kind.
+    pub fn resolve_commands(&self, slot_id: &str) -> Vec<crate::commands::ResolvedCommand> {
+        let fills = self.command_fills.lock().unwrap().clone();
+        crate::commands::resolve_commands_with(slot_id, &fills, self.slots(), &|fill| {
+            self.command_capability(fill)
+        })
+    }
+
+    /// Resolves a bare command id or a `mod:id` qualified id. A qualified id is
+    /// total and ignores preferences; a bare id honors
+    /// `command_preferences`, keyed by command id or by slot id.
+    pub fn resolve_command(&self, reference: &str) -> Option<crate::commands::ResolvedCommand> {
+        let fills = self.command_fills.lock().unwrap().clone();
+        crate::commands::resolve_command_with(
+            reference,
+            &fills,
+            self.slots(),
+            &self.command_preferences,
+            &|fill| self.command_capability(fill),
+        )
+    }
+
+    /// Invokes a resolved command: bound args merged with call args (call-time
+    /// wins), then dispatched through the mod-scoped export path, so the
+    /// handler runs in its declaring mod's own namespace behind that export's
+    /// capability gate. A throwing handler surfaces as an invocation error
+    /// rather than being swallowed the way a hook handler's is.
+    pub fn invoke_command(
+        &self,
+        command: &crate::commands::ResolvedCommand,
+        call_args: Option<&serde_json::Map<String, serde_json::Value>>,
+    ) -> Result<serde_json::Value> {
+        let effective = crate::commands::merge_command_args(&command.args, call_args);
+        self.invoke_mod_export_within(
+            &command.mod_name,
+            &command.handler,
+            &[serde_json::Value::Object(effective)],
+            Some(self
+                .manifest
+                .effective_slot_timeout_ms(&command.slot, self.hard_timeout_ms)),
+        )
     }
 
     /// Returns the attached DAP debug session, or `None` when the runtime was
@@ -1097,7 +1962,7 @@ impl XriptRuntime {
         fragment_id: &str,
         lifecycle: &str,
         bindings: Option<&serde_json::Value>,
-    ) -> Result<Vec<serde_json::Value>> {
+    ) -> Result<Vec<crate::fragment::ops::FragmentOp>> {
         let bindings_json = match bindings {
             Some(b) => serde_json::to_string(b).unwrap_or("{}".into()),
             None => "{}".into(),
@@ -1118,7 +1983,8 @@ impl XriptRuntime {
                         removeClass: function(sel, cls) {{ ops.push({{ op: "removeClass", selector: sel, value: cls }}); }},
                         setText: function(sel, txt) {{ ops.push({{ op: "setText", selector: sel, value: txt }}); }},
                         setAttr: function(sel, attr, val) {{ ops.push({{ op: "setAttr", selector: sel, attr: attr, value: val }}); }},
-                        replaceChildren: function(sel, html) {{ ops.push({{ op: "replaceChildren", selector: sel, value: html }}); }}
+                        setProp: function(sel, prop, val) {{ ops.push({{ op: "setProp", selector: sel, prop: prop, value: val }}); }},
+                        replaceChildren: function(sel, children) {{ ops.push({{ op: "replaceChildren", selector: sel, value: children }}); }}
                     }};
                     list[i](bindingsObj, proxy);
                     results.push(ops);
@@ -1131,12 +1997,35 @@ impl XriptRuntime {
         );
 
         let result = self.execute(&code)?;
-        match serde_json::from_str::<Vec<serde_json::Value>>(
+        let raw: Vec<serde_json::Value> = serde_json::from_str::<Vec<Vec<serde_json::Value>>>(
             result.value.as_str().unwrap_or("[]"),
-        ) {
-            Ok(ops) => Ok(ops),
-            Err(_) => Ok(vec![]),
+        )
+        .map(|per_handler| per_handler.into_iter().flatten().collect())
+        .unwrap_or_default();
+
+        let profile = self.fragment_profile(fragment_id);
+        let sink = self.on_fragment_diagnostic.clone();
+        let mut report = |diagnostic: crate::fragment::vocabulary::FragmentDiagnostic| {
+            if let Some(ref sink) = sink {
+                sink(fragment_id, &diagnostic);
+            }
+        };
+        Ok(crate::fragment::ops::finalize_ops(&raw, &profile, &mut report))
+    }
+
+    /// Resolves the vocabulary a loaded fragment speaks, falling back to
+    /// `text/html` for a fragment this runtime does not know about.
+    fn fragment_profile(&self, fragment_id: &str) -> crate::fragment::profiles::FormatProfile {
+        let mods = read_mods(&self.loaded_mods);
+        for loaded in mods.iter() {
+            for fragment in &loaded.fragments {
+                if fragment.id == fragment_id {
+                    return fragment.profile.clone();
+                }
+            }
         }
+        crate::fragment::profiles::builtin_profile("text/html")
+            .expect("text/html is a built-in profile")
     }
 }
 
@@ -1174,9 +2063,16 @@ fn harvest_named_exports<'js>(
         .namespace()
         .map_err(|e| XriptError::Engine(e.to_string()))?;
 
-    let registry: Object = ctx
+    let all_exports: Object = ctx
         .globals()
         .get("__xript_exports")
+        .map_err(|e| XriptError::Engine(e.to_string()))?;
+    let owner: String = ctx
+        .globals()
+        .get("__xript_export_owner")
+        .unwrap_or_default();
+    let registry: Object = all_exports
+        .get(owner.as_str())
         .map_err(|e| XriptError::Engine(e.to_string()))?;
 
     for entry in namespace.props::<String, Value>() {
@@ -1252,7 +2148,30 @@ fn register_console(ctx: &Ctx<'_>, console: ConsoleHandler) -> Result<()> {
 
 fn register_exports_surface(ctx: &Ctx<'_>) -> Result<()> {
     let script = r#"
-        globalThis.__xript_exports = {};
+        globalThis.__xript_exports = { "": {} };
+        globalThis.__xript_export_owner = "";
+        globalThis.__xript_set_export_owner = function(owner) {
+            var key = typeof owner === 'string' ? owner : "";
+            globalThis.__xript_export_owner = key;
+            if (!globalThis.__xript_exports[key]) globalThis.__xript_exports[key] = {};
+            return key;
+        };
+        globalThis.__xript_export_owners_of = function(name) {
+            var owners = [];
+            var keys = Object.keys(globalThis.__xript_exports);
+            for (var i = 0; i < keys.length; i++) {
+                if (typeof globalThis.__xript_exports[keys[i]][name] === 'function') owners.push(keys[i]);
+            }
+            return owners;
+        };
+        globalThis.__xript_lookup_export = function(name, owner) {
+            if (typeof owner === 'string') {
+                var bucket = globalThis.__xript_exports[owner];
+                return bucket ? bucket[name] : undefined;
+            }
+            var owners = globalThis.__xript_export_owners_of(name);
+            return owners.length === 1 ? globalThis.__xript_exports[owners[0]][name] : undefined;
+        };
         var exportsNs = {
             register: function(name, fn) {
                 if (typeof name !== 'string') {
@@ -1261,7 +2180,7 @@ fn register_exports_surface(ctx: &Ctx<'_>) -> Result<()> {
                 if (typeof fn !== 'function') {
                     throw new Error("xript.exports.register: fn must be a function");
                 }
-                globalThis.__xript_exports[name] = fn;
+                globalThis.__xript_exports[globalThis.__xript_export_owner][name] = fn;
             }
         };
         Object.freeze(exportsNs);
@@ -1283,38 +2202,67 @@ fn make_throwing_function<'js>(ctx: &Ctx<'js>, message: &str) -> Result<Function
 
 /// Wraps a [`HostFn`] so each invocation emits an audit event (binding name +
 /// gating capability) before the host function runs. Emission is best-effort.
-fn audited_sync(f: HostFn, audit: &Option<AuditSink>, binding: &str, capability: Option<String>) -> HostFn {
-    let Some(sink) = audit.clone() else {
-        return f;
-    };
+/// Wraps a sync host binding so that entering it is visible to the probe and,
+/// when a sink is configured, audited. The probe wrap is unconditional: wedge
+/// detection has to be able to name the binding a thread is stuck in whether
+/// or not the host asked for an audit trail.
+fn audited_sync(
+    f: HostFn,
+    audit: &Option<AuditSink>,
+    binding: &str,
+    capability: Option<String>,
+    probe: &Arc<RuntimeProbe>,
+) -> HostFn {
+    let index = probe.intern(binding);
+    let probe = probe.clone();
+    let sink = audit.clone();
     let binding = binding.to_string();
     Arc::new(move |args| {
-        sink(AuditEvent {
-            binding: binding.clone(),
-            capability: capability.clone(),
-            at_ms: now_ms(),
-        });
+        if let Some(ref sink) = sink {
+            sink(AuditEvent {
+                binding: binding.clone(),
+                capability: capability.clone(),
+                at_ms: now_ms(),
+                decision: AuditDecision::Invoke,
+                ..Default::default()
+            });
+        }
+        let _scope = BindingScope::enter(&probe, index);
         f(args)
     })
 }
 
+/// The async mirror of [`audited_sync`]. The scope covers the whole future,
+/// which the Rust runtime settles with `pollster::block_on` on the JS thread —
+/// so a host future that never settles reads as "inside this binding" for as
+/// long as it takes, which is exactly right.
 fn audited_async(
     f: AsyncHostFn,
     audit: &Option<AuditSink>,
     binding: &str,
     capability: Option<String>,
+    probe: &Arc<RuntimeProbe>,
 ) -> AsyncHostFn {
-    let Some(sink) = audit.clone() else {
-        return f;
-    };
+    let index = probe.intern(binding);
+    let probe = probe.clone();
+    let sink = audit.clone();
     let binding = binding.to_string();
     Arc::new(move |args| {
-        sink(AuditEvent {
-            binding: binding.clone(),
-            capability: capability.clone(),
-            at_ms: now_ms(),
-        });
-        f(args)
+        if let Some(ref sink) = sink {
+            sink(AuditEvent {
+                binding: binding.clone(),
+                capability: capability.clone(),
+                at_ms: now_ms(),
+                decision: AuditDecision::Invoke,
+                ..Default::default()
+            });
+        }
+        let scope = BindingScope::enter(&probe, index);
+        let inner = f(args);
+        Box::pin(async move {
+            let _scope = scope;
+            inner.await
+        })
     })
 }
 
@@ -1324,6 +2272,7 @@ fn register_bindings(
     host_bindings: HostBindings,
     granted: &HashSet<String>,
     audit: &Option<AuditSink>,
+    probe: &Arc<RuntimeProbe>,
 ) -> Result<()> {
     let Some(ref bindings) = manifest.bindings else {
         return Ok(());
@@ -1349,14 +2298,14 @@ fn register_bindings(
                 let cap = func_def.capability.clone();
                 match host_bindings.bindings.get(name) {
                     Some(HostBinding::Function(f)) => {
-                        let wrapped = audited_sync(f.clone(), audit, name, cap);
+                        let wrapped = audited_sync(f.clone(), audit, name, cap, probe);
                         let js_fn = create_host_function(ctx, name, wrapped)?;
                         ctx.globals()
                             .set(name.as_str(), js_fn)
                             .map_err(|e| XriptError::Engine(e.to_string()))?;
                     }
                     Some(HostBinding::AsyncFunction(f)) => {
-                        let wrapped = audited_async(f.clone(), audit, name, cap);
+                        let wrapped = audited_async(f.clone(), audit, name, cap, probe);
                         let js_fn = create_async_host_function(ctx, name, wrapped)?;
                         ctx.globals()
                             .set(name.as_str(), js_fn)
@@ -1372,7 +2321,7 @@ fn register_bindings(
                 }
             }
             Binding::Namespace(ns_def) => {
-                register_namespace_binding(ctx, name, ns_def, &host_bindings, granted, audit)?;
+                register_namespace_binding(ctx, name, ns_def, &host_bindings, granted, audit, probe)?;
             }
         }
     }
@@ -1398,6 +2347,7 @@ fn register_namespace_binding(
     host_bindings: &HostBindings,
     granted: &HashSet<String>,
     audit: &Option<AuditSink>,
+    probe: &Arc<RuntimeProbe>,
 ) -> Result<()> {
     let host_view = match host_bindings.bindings.get(name) {
         Some(HostBinding::Namespace(m)) => HostNsView::Sync(m),
@@ -1413,7 +2363,7 @@ fn register_namespace_binding(
         _ => HostNsView::None,
     };
 
-    let ns_obj = build_namespace_object(ctx, name, &ns_def.members, &host_view, granted, audit)?;
+    let ns_obj = build_namespace_object(ctx, name, &ns_def.members, &host_view, granted, audit, probe)?;
 
     ctx.globals()
         .set(name, ns_obj)
@@ -1431,6 +2381,7 @@ fn build_namespace_object<'js>(
     host_view: &HostNsView<'_>,
     granted: &HashSet<String>,
     audit: &Option<AuditSink>,
+    probe: &Arc<RuntimeProbe>,
 ) -> Result<Object<'js>> {
     let ns_obj = Object::new(ctx.clone()).map_err(|e| XriptError::Engine(e.to_string()))?;
 
@@ -1441,7 +2392,7 @@ fn build_namespace_object<'js>(
             Binding::Namespace(sub_ns) => {
                 let sub_view = nested_host_view(host_view, member_name);
                 let sub_obj =
-                    build_namespace_object(ctx, &full_name, &sub_ns.members, &sub_view, granted, audit)?;
+                    build_namespace_object(ctx, &full_name, &sub_ns.members, &sub_view, granted, audit, probe)?;
                 ns_obj
                     .set(member_name.as_str(), sub_obj)
                     .map_err(|e| XriptError::Engine(e.to_string()))?;
@@ -1469,6 +2420,7 @@ fn build_namespace_object<'js>(
                     host_view,
                     cap,
                     audit,
+                    probe,
                 )?;
                 ns_obj
                     .set(member_name.as_str(), value)
@@ -1496,6 +2448,7 @@ fn resolve_namespace_member<'js>(
     host_view: &HostNsView<'_>,
     capability: Option<String>,
     audit: &Option<AuditSink>,
+    probe: &Arc<RuntimeProbe>,
 ) -> Result<Value<'js>> {
     match host_view {
         HostNsView::Mixed {
@@ -1506,29 +2459,29 @@ fn resolve_namespace_member<'js>(
                 return json_to_js(ctx, value);
             }
             if let Some(f) = functions.get(member_name) {
-                let wrapped = audited_sync(f.clone(), audit, full_name, capability);
+                let wrapped = audited_sync(f.clone(), audit, full_name, capability, probe);
                 return Ok(create_host_function(ctx, full_name, wrapped)?.into_value());
             }
         }
         HostNsView::Sync(map) => {
             if let Some(f) = map.get(member_name) {
-                let wrapped = audited_sync(f.clone(), audit, full_name, capability);
+                let wrapped = audited_sync(f.clone(), audit, full_name, capability, probe);
                 return Ok(create_host_function(ctx, full_name, wrapped)?.into_value());
             }
         }
         HostNsView::Async(map) => {
             if let Some(f) = map.get(member_name) {
-                let wrapped = audited_async(f.clone(), audit, full_name, capability);
+                let wrapped = audited_async(f.clone(), audit, full_name, capability, probe);
                 return Ok(create_async_host_function(ctx, full_name, wrapped)?.into_value());
             }
         }
         HostNsView::Nested(map) => match map.get(member_name) {
             Some(HostNamespaceMember::Function(f)) => {
-                let wrapped = audited_sync(f.clone(), audit, full_name, capability);
+                let wrapped = audited_sync(f.clone(), audit, full_name, capability, probe);
                 return Ok(create_host_function(ctx, full_name, wrapped)?.into_value());
             }
             Some(HostNamespaceMember::AsyncFunction(f)) => {
-                let wrapped = audited_async(f.clone(), audit, full_name, capability);
+                let wrapped = audited_async(f.clone(), audit, full_name, capability, probe);
                 return Ok(create_async_host_function(ctx, full_name, wrapped)?.into_value());
             }
             Some(HostNamespaceMember::Property(value)) => {
@@ -1604,13 +2557,13 @@ fn register_hooks(ctx: &Ctx<'_>, manifest: &Manifest, granted: &HashSet<String>)
                             )
                         } else {
                             format!(
-                                "globalThis.hooks['{hook}']['{phase}'] = function(handler) {{ globalThis.__xript_hooks['{hook}'].push({{ phase: '{phase}', handler: handler }}); }};",
+                                "globalThis.hooks['{hook}']['{phase}'] = function(handler) {{ globalThis.__xript_hooks['{hook}'].push({{ phase: '{phase}', modId: globalThis.__xript_export_owner || '', handler: handler }}); }};",
                                 hook = hook_name, phase = phase
                             )
                         }
                     } else {
                         format!(
-                            "globalThis.hooks['{hook}']['{phase}'] = function(handler) {{ globalThis.__xript_hooks['{hook}'].push({{ phase: '{phase}', handler: handler }}); }};",
+                            "globalThis.hooks['{hook}']['{phase}'] = function(handler) {{ globalThis.__xript_hooks['{hook}'].push({{ phase: '{phase}', modId: globalThis.__xript_export_owner || '', handler: handler }}); }};",
                             hook = hook_name, phase = phase
                         )
                     };
@@ -1627,13 +2580,13 @@ fn register_hooks(ctx: &Ctx<'_>, manifest: &Manifest, granted: &HashSet<String>)
                     )
                 } else {
                     format!(
-                        "globalThis.hooks['{hook}'] = function(handler) {{ globalThis.__xript_hooks['{hook}'].push({{ handler: handler }}); }};",
+                        "globalThis.hooks['{hook}'] = function(handler) {{ globalThis.__xript_hooks['{hook}'].push({{ modId: globalThis.__xript_export_owner || '', handler: handler }}); }};",
                         hook = hook_name
                     )
                 }
             } else {
                 format!(
-                    "globalThis.hooks['{hook}'] = function(handler) {{ globalThis.__xript_hooks['{hook}'].push({{ handler: handler }}); }};",
+                    "globalThis.hooks['{hook}'] = function(handler) {{ globalThis.__xript_hooks['{hook}'].push({{ modId: globalThis.__xript_export_owner || '', handler: handler }}); }};",
                     hook = hook_name
                 )
             };
@@ -1732,7 +2685,7 @@ fn register_events(ctx: &Ctx<'_>, manifest: &Manifest, granted: &HashSet<String>
             if (typeof handler !== 'function') {
                 throw new Error("events.on(\"" + id + "\") handler must be a function");
             }
-            globalThis.__xript_event_handlers[id].push(handler);
+            globalThis.__xript_event_handlers[id].push({ modId: globalThis.__xript_export_owner || '', handler: handler });
         }
         globalThis.events = Object.freeze({
             on: __xript_event_subscribe,
@@ -1884,6 +2837,10 @@ fn resolve_if_promise<'js>(ctx: &Ctx<'js>, val: Value<'js>) -> PromiseOutcome<'j
 /// Best-effort string for a rejection value. Errors get `name: message`;
 /// strings pass through; everything else is JSON-stringified so the user
 /// sees something diagnosable rather than `[object Object]`.
+fn escape_js_string(raw: &str) -> String {
+    raw.replace('\\', "\\\\").replace('\'', "\\'")
+}
+
 fn format_rejection<'js>(ctx: &Ctx<'js>, val: &Value<'js>) -> String {
     if let Some(s) = val.as_string().and_then(|s| s.to_string().ok()) {
         return s;

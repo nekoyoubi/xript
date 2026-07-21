@@ -11,6 +11,8 @@ This is a monorepo managed via npm workspaces.
 ```
 xript/
 ├── spec/           # the specification (manifest schema, capability model, etc.)
+├── crates/         # shared Rust crates
+│   └── xript-expr/ # the xript Expression Grammar (XEG), parser + evaluator, zero deps
 ├── runtimes/       # language-specific runtime implementations
 │   ├── js/         # universal runtime (@xriptjs/runtime, QuickJS WASM sandbox)
 │   ├── node/       # Node.js-optimized runtime (@xriptjs/runtime-node, vm-based)
@@ -29,11 +31,12 @@ xript/
 - **Docs site**: Astro with Starlight, deployed to GitHub Pages via GitHub Actions (live demos depend on `@xriptjs/runtime` -- CI builds sanitize then runtime before docs)
 - **Package management**: npm workspaces
 - **Language**: TypeScript throughout
-- **Runtime sandbox (js)**: QuickJS compiled to WASM via `quickjs-emscripten`, runs in browser, Node, Deno, and more
+- **Runtime sandbox (js)**: QuickJS compiled to WASM via `quickjs-emscripten-core` plus the two release variants (`@jitl/quickjs-wasmfile-release-sync` for `initXript`, `@jitl/quickjs-wasmfile-release-asyncify` for `initXriptAsync`); each variant sits in its own module (`src/quickjs-sync.ts` / `src/quickjs-async.ts`) so a sync-only host never bundles the asyncify build. Runs in browser, Node, Deno, and more
 - **Runtime sandbox (node)**: Node.js `vm` module with `codeGeneration: { strings: false, wasm: false }`
 - **Runtime sandbox (rust)**: QuickJS via `rquickjs` (native), for Rust host applications
 - **Runtime sandbox (csharp)**: Jint (pure C# JS interpreter), for .NET host applications
 - **Fragment renderer (ratatui)**: `xript-ratatui` crate renders `application/x-ratatui+json` fragments as native Ratatui terminal widgets
+- **Expression grammar**: `xript-expr` (Rust) and `@xriptjs/sanitize`'s `expr`/`interpolate` modules (TS) implement XEG, the one grammar behind `data-if`, `data-bind`, and `{{ }}` interpolation. Held to `spec/expression-tests.json` by every runtime and the Ratatui renderer
 - **Test runner**: Node.js built-in test runner (`node --test`), xUnit for C#
 
 ## Development Commands
@@ -63,6 +66,7 @@ npm run build --workspace=tools/cli                # build the unified CLI
 npm test --workspace=tools/cli                     # run CLI tests (76 tests)
 
 # build and test Rust packages
+cd crates/xript-expr && cargo test                 # run the expression grammar corpus (13 suites)
 cd runtimes/rust && cargo build                    # build the Rust runtime
 cd runtimes/rust && cargo test                     # run Rust runtime tests (185 tests)
 cd renderers/ratatui && cargo build                # build the Ratatui fragment renderer
@@ -90,7 +94,7 @@ npx xript describe <m.json>            # summarize a host's bindings/hooks/slots
 npx xript score <m.json> --min N       # rate moddability capacity, with a CI gate
 npx xript score-diff <m.json> --baseline b.json  # capacity regression gate (--min-delta N)
 npx xript lint <m.json> --strict       # findings-based reviewer (errors/warnings/info)
-npx xript run <mod> --invoke export    # load a mod into the QuickJS-WASM sandbox
+npx xript run <mod> <entry.js> --export <name>  # load a mod, invoke an export (bare run supplies no host bindings)
 npx xript run --app h.json --harness x.json --steps s.json  # run a scenario against a synthetic (stub-binding) host
 npx xript guide <topic>                # print xript authoring doctrine by topic
 npx xript mcp                          # run @xriptjs/cli as a Model Context Protocol server (stdio)
@@ -129,7 +133,7 @@ Versions are unified across all 12 published packages. Two scripts handle the me
 A top-level `CHANGELOG.md` tracks all releases. Follow these rules:
 
 - **When to update**: every PR that ships user-facing changes (features, fixes, breaking changes, new packages). Skip internal refactors, CI tweaks, and doc typo fixes.
-- **Format**: version header with a descriptive theme (`## v0.3.0 — Fragment Protocol`), followed by past-tense bullet points. Sub-bullets for implementation detail. Backtick all code references.
+- **Format**: version header, followed by past-tense bullet points. Sub-bullets for implementation detail. Backtick all code references. Versions are not named — the header carries the version and nothing else. Entries through v0.8.0 carry themes for historical reasons; nothing after them does.
 - **Voice**: run changelog entries through Elle before committing — this is user-facing copy.
 - **Scope**: one top-level changelog for the whole monorepo. Reference specific packages inline with backticked names when a change is package-specific (`@xriptjs/sanitize`, `xript-runtime`, etc.).
 - **No dates in headers**: versions are tagged in git; dates go stale in text.
@@ -161,12 +165,12 @@ v0.7.0 shipped — Capability Hierarchy & Live Events (1612 tests across 12 pack
 - **Incremental adoption**: four tiers (expressions only, simple bindings, advanced scripting, full feature)
 - **Universal portability**: QuickJS WASM sandbox runs anywhere JavaScript runs (browser, Node, Deno, Bun, Cloudflare Workers)
 - **Fragments are inert templates**: all dynamic behavior routes through the sandbox (data-bind for values, data-if for visibility, events for interaction, command buffer for mutations)
-- **Two smart attributes only**: `data-bind` and `data-if` are the hard wall — everything beyond that goes through the sandbox fragment API
+- **Two smart attributes only**: `data-bind` and `data-if` are the hard wall — everything beyond that goes through the sandbox fragment API. Both carry XEG, one grammar with one set of semantics in all five evaluators; `{{ }}` interpolation is that same grammar in a text position, opt-in per fill, and refused in attribute values because a prop's sink judges a whole value and cannot judge one assembled from halves
 - **Host declares slots, mods fill them**: the contribution surface is one concept — a host declares typed slots (each slot's `accepts` type governs what a valid fill looks like and what the host does with it: mount, call, resolve, or fire), and a mod contributes through a single `fills` object keyed by slot id. Fragments, provider roles, and hook handlers are all just fills of slots of a particular type, not separate top-level surfaces. Legacy `fragments[]` / `contributions` / standalone `hooks` are accepted with deprecation warnings
 - **More extensible, not less**: the framework defaults toward openness; a restriction is permitted only when it genuinely buys convenience or security the framework couldn't otherwise provide, and must justify itself plainly. This is why the manifest top level accepts `$schema` overlays, remote schema resolution is allowed-unless-opted-out, and the mod `license` field exists
 - **Manifests inherit**: a manifest names base manifests in `extends`, resolved and deep-merged base-then-child before validation. A child can add-new, fill an `abstract` base type, or `refine` a concrete one; any other collision errors so inheritance never silently clobbers. The same resolver runs across all four runtimes and across `validate` / `typegen` / `docgen`
 - **Score measures capacity, lint finds problems**: `xript score` rates how much extension surface a host exposes against the ceiling of exposing all of it (capacity, not how much a mod set exercises it); `xript lint` is the actionable findings list behind the number. Analyzers live in `@xriptjs/validate` so hosts can import them
-- **JSML is core**: `application/jsml+json` (JsonML array format) is a built-in fragment format — native JSON markup with no escaping, processed by all JS/Node runtimes alongside `text/html`
+- **JSML is core**: `application/jsml+json` (J5ML array format) is a built-in fragment format — native JSON markup with no escaping, processed by all JS/Node runtimes alongside `text/html`
 - **Mods compile to ES modules**: `entry.format: "module"` evaluates a real ES module; top-level named exports auto-register as host-invokable. No external imports, no CommonJS — `require`/`module.exports` fail loudly. TypeScript authoring is first-class via `typegen --ambient`
 - **Runtimes stay persistence-agnostic**: record types are described through the `types` surface; the host owns storage. Capability-grant shapes are schemas only — grant policy and prompt UX stay host-side
 - **Engine fidelity is documented, not faked**: the debug protocol uses DAP vocabulary across all four runtimes but per-engine limits (rquickjs has no per-line hook, QuickJS-WASM needs the async sandbox, Jint pauses on the engine thread) are surfaced rather than papered over

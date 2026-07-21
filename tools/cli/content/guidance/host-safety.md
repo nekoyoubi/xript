@@ -18,7 +18,7 @@ Pass a `CancellationToken` as `cancellation`. Call `token.cancel()` to request a
 
 ## Audit
 
-Pass an `audit` callback: `(event: AuditEvent) => void`. The runtime fires it on every gated binding call, with `{ binding, capability, at }` — which binding ran, which capability gated it, and when. Wire it to the host's logging to keep a record of what a mod actually exercised. Pair it with [granting capabilities](/guidance/host-capabilities/): grants are what you *allowed*, audit is what was *used*.
+Pass an `audit` callback: `(event: AuditEvent) => void`. The runtime fires it on every gated binding call, with `{ binding, capability, at, decision }` — which binding ran, which capability gated it, and when. It also fires on a hook fill refused on capability grounds, with `decision: "denied"` plus `mod` and `hook`; that one is otherwise invisible, because hook dispatch swallows per-handler failures so a single bad mod cannot break a hook for everyone. Wire it to the host's logging to keep a record of what a mod actually exercised. Pair it with [granting capabilities](/guidance/host-capabilities/): grants are what you *allowed*, audit is what was *used*.
 
 ## Console
 

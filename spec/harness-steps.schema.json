@@ -1,6 +1,6 @@
 {
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
-	"$id": "https://xript.dev/schema/harness-steps/v0.7.json",
+	"$id": "https://xript.dev/schema/harness-steps/v0.8.json",
 	"title": "xript Harness Steps",
 	"description": "An ordered scenario executed against a harnessed host session. Each step is one action — load a mod, invoke an export, emit an event, fire a hook, execute code, resolve a slot or role, or read the journal. The same step vocabulary drives the CLI's batch mode and the MCP server's interactive session tools.",
 	"type": "object",
@@ -25,18 +25,34 @@
 				"manifest": {
 					"description": "load-mod: the mod manifest — an inline object, or a path resolved relative to the steps file."
 				},
-				"source": {
-					"description": "load-mod: path to the entry script, resolved relative to the steps file.",
-					"type": "string"
-				},
 				"sourceText": {
-					"description": "load-mod: inline entry script source, used instead of `source`.",
+					"description": "load-mod: inline entry script source.",
 					"type": "string"
 				},
-				"sources": {
-					"description": "load-mod: additional fragment/script sources the mod's fills reference, keyed by the path the manifest names, each value a file path resolved relative to the steps file.",
+				"sourcePath": {
+					"description": "load-mod: entry script path, resolved relative to the steps file.",
+					"type": "string"
+				},
+				"sourceTexts": {
+					"description": "load-mod: inline fill sources the mod references, keyed by the path the manifest names; each value is inline content.",
 					"type": "object",
 					"additionalProperties": { "type": "string" }
+				},
+				"sourcePaths": {
+					"description": "load-mod: fill-source paths the mod references, keyed by the path the manifest names; each value is a path resolved relative to the steps file.",
+					"type": "object",
+					"additionalProperties": { "type": "string" }
+				},
+				"source": {
+					"description": "load-mod: DEPRECATED alias for `sourcePath`. Read as a path relative to the steps file.",
+					"type": "string",
+					"deprecated": true
+				},
+				"sources": {
+					"description": "load-mod: DEPRECATED alias for `sourcePaths`. Each value is read as a path relative to the steps file.",
+					"type": "object",
+					"additionalProperties": { "type": "string" },
+					"deprecated": true
 				},
 				"entry": {
 					"description": "load-mod: entry path key; defaults to the manifest's entry.script.",
@@ -45,6 +61,11 @@
 				"export": {
 					"description": "invoke: the export name to call.",
 					"type": "string"
+				},
+				"exportName": {
+					"description": "invoke: DEPRECATED alias for `export`.",
+					"type": "string",
+					"deprecated": true
 				},
 				"args": {
 					"description": "invoke: positional arguments.",

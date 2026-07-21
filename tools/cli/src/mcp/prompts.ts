@@ -49,7 +49,7 @@ export function registerPrompts(server: McpServer): void {
 		"choose-a-surface",
 		{
 			title: "Choose an extensibility surface",
-			description: "Pick the right xript surface — binding, hook, slot, fragment, capability, or command — for a need.",
+			description: "Pick the right xript surface for a need: a binding, or a slot of the right kind (fragment, role, event, command).",
 			argsSchema: { need: z.string().describe("What you want to make extensible.") },
 		},
 		async ({ need }) => {

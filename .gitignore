@@ -43,3 +43,5 @@ Thumbs.db
 coverage/
 
 NUL
+.scratch/
+.playwright-mcp/
