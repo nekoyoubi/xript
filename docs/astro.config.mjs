@@ -53,10 +53,12 @@ export default defineConfig({
 					items: [
 						{ label: "Overview", slug: "guidance/hosting" },
 						{ label: "Rendering fragments", slug: "guidance/host-fragments" },
+						{ label: "Declaring a fragment format", slug: "guidance/host-formats" },
 						{ label: "Granting capabilities", slug: "guidance/host-capabilities" },
 						{ label: "Mounting slots", slug: "guidance/host-slots" },
 						{ label: "Resolving roles", slug: "guidance/host-roles" },
 						{ label: "Firing hooks & events", slug: "guidance/host-hooks" },
+						{ label: "Offering commands", slug: "guidance/host-commands" },
 						{ label: "Limits, cancellation & audit", slug: "guidance/host-safety" },
 					],
 				},
@@ -76,9 +78,12 @@ export default defineConfig({
 						{ label: "Mod Manifest", slug: "spec/mod-manifest" },
 						{ label: "Fragments", slug: "spec/fragments" },
 						{ label: "Fragment Formats", slug: "spec/fragment-formats" },
+						{ label: "Renderers", slug: "spec/renderers" },
+						{ label: "Expressions (XEG)", slug: "spec/expressions" },
 						{ label: "Capabilities", slug: "spec/capabilities" },
 						{ label: "Bindings", slug: "spec/bindings" },
 						{ label: "Hooks", slug: "spec/hooks" },
+						{ label: "Commands", slug: "spec/commands" },
 						{ label: "Module-Format Mods", slug: "spec/modules" },
 						{ label: "Host Harness", slug: "spec/harness" },
 						{ label: "Debugging", slug: "spec/debugging" },
@@ -123,6 +128,10 @@ export default defineConfig({
 							label: "UI Dashboard",
 							slug: "examples/ui-dashboard",
 						},
+						{
+							label: "Fragment Vocabulary",
+							slug: "examples/fragment-vocabulary",
+						},
 					],
 				},
 				{
@@ -160,7 +169,13 @@ export default defineConfig({
 	],
 	vite: {
 		optimizeDeps: {
-			exclude: ["@xriptjs/runtime", "@xriptjs/sanitize", "quickjs-emscripten"],
+			exclude: [
+				"@xriptjs/runtime",
+				"@xriptjs/sanitize",
+				"quickjs-emscripten-core",
+				"@jitl/quickjs-wasmfile-release-sync",
+				"@jitl/quickjs-wasmfile-release-asyncify",
+			],
 		},
 	},
 	server: {

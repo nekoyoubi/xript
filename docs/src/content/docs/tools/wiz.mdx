@@ -123,10 +123,12 @@ The wizard runs `git describe --tags --abbrev=0` to find the last tag, retrieves
 
 | Key | Action |
 |-----|--------|
-| `↑` / `k` | Navigate up |
-| `↓` / `j` | Navigate down |
-| `Enter` | Select / submit |
-| `Tab` | Apply completion suggestion |
+| `↑` / `k` | Navigate up, or move through completion suggestions |
+| `↓` / `j` | Navigate down, or move through completion suggestions |
+| `←` / `→` | Cycle the choice on a Scaffold option field (app/mod, TypeScript/JavaScript) |
+| `Enter` | Select, advance to the next field, or submit |
+| `Tab` | Apply completion suggestion, or advance to the next Scaffold field |
+| `Shift+Tab` | Back to the previous Scaffold field |
 | `Esc` | Back to home (or quit from home) |
-| `q` | Quit (from home) |
+| `q` | Quit (from home only — elsewhere it types into the field) |
 | `Ctrl+C` | Force quit |

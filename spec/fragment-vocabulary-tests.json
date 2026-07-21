@@ -1,0 +1,3524 @@
+[
+	{
+		"description": "built-in text/html keeps its HTML projection",
+		"format": "text/html",
+		"source": "<div class=\"a\"><span>hi</span></div>",
+		"expected": {
+			"contentType": "html",
+			"html": "<div class=\"a\"><span>hi</span></div>",
+			"tree": [
+				{
+					"name": "div",
+					"props": {
+						"class": "a"
+					},
+					"children": [
+						{
+							"name": "span",
+							"props": {},
+							"children": [
+								{
+									"text": "hi"
+								}
+							]
+						}
+					]
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "built-in text/html strips a script element",
+		"format": "text/html",
+		"source": "<div>ok<script>alert(1)</script></div>",
+		"expected": {
+			"contentType": "html",
+			"html": "<div>ok</div>",
+			"tree": [
+				{
+					"name": "div",
+					"props": {},
+					"children": [
+						{
+							"text": "ok"
+						}
+					]
+				}
+			],
+			"diagnostics": [
+				{
+					"code": "stripped-node",
+					"severity": "warning",
+					"path": "/0/1",
+					"node": "script",
+					"message": "stripped dangerous element: <script>"
+				}
+			],
+			"strippedElements": [
+				"script"
+			],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "built-in text/html+jsml parses as HTML despite the name",
+		"format": "text/html+jsml",
+		"source": "<p data-bind=\"x\">y</p>",
+		"expected": {
+			"contentType": "html",
+			"html": "<p data-bind=\"x\">y</p>",
+			"tree": [
+				{
+					"name": "p",
+					"props": {
+						"data-bind": "x"
+					},
+					"children": [
+						{
+							"text": "y"
+						}
+					]
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "built-in application/jsml+json projects to HTML",
+		"format": "application/jsml+json",
+		"source": "[\"div\",{\"class\":\"a\"},[\"span\",\"hi\"]]",
+		"expected": {
+			"contentType": "html",
+			"html": "<div class=\"a\"><span>hi</span></div>",
+			"tree": [
+				{
+					"name": "div",
+					"props": {
+						"class": "a"
+					},
+					"children": [
+						{
+							"name": "span",
+							"props": {},
+							"children": [
+								{
+									"text": "hi"
+								}
+							]
+						}
+					]
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "built-in jsml drops an unknown node's subtree",
+		"format": "application/jsml+json",
+		"source": "[\"div\",[\"mystery\",[\"span\",\"gone\"]]]",
+		"expected": {
+			"contentType": "html",
+			"html": "<div></div>",
+			"tree": [
+				{
+					"name": "div",
+					"props": {},
+					"children": []
+				}
+			],
+			"diagnostics": [
+				{
+					"code": "unknown-node",
+					"severity": "warning",
+					"path": "/0/0",
+					"node": "mystery",
+					"message": "node \"mystery\" is not declared by format \"application/jsml+json\""
+				}
+			],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "built-in html unwraps an unknown tag but keeps its children",
+		"format": "text/html",
+		"source": "<div><mystery><span>kept</span></mystery></div>",
+		"expected": {
+			"contentType": "html",
+			"html": "<div><span>kept</span></div>",
+			"tree": [
+				{
+					"name": "div",
+					"props": {},
+					"children": [
+						{
+							"name": "span",
+							"props": {},
+							"children": [
+								{
+									"text": "kept"
+								}
+							]
+						}
+					]
+				}
+			],
+			"diagnostics": [
+				{
+					"code": "unknown-node",
+					"severity": "warning",
+					"path": "/0/0",
+					"node": "mystery",
+					"message": "node \"mystery\" is not declared by format \"text/html\""
+				}
+			],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "built-in html strips a disallowed attribute",
+		"format": "text/html",
+		"source": "<div bogus=\"1\" onclick=\"x()\">t</div>",
+		"expected": {
+			"contentType": "html",
+			"html": "<div>t</div>",
+			"tree": [
+				{
+					"name": "div",
+					"props": {},
+					"children": [
+						{
+							"text": "t"
+						}
+					]
+				}
+			],
+			"diagnostics": [
+				{
+					"code": "unknown-prop",
+					"severity": "warning",
+					"path": "/0",
+					"node": "div",
+					"prop": "bogus",
+					"message": "stripped attribute \"bogus\" on <div>"
+				},
+				{
+					"code": "unsafe-prop",
+					"severity": "warning",
+					"path": "/0",
+					"node": "div",
+					"prop": "onclick",
+					"message": "stripped attribute \"onclick\" on <div>"
+				}
+			],
+			"strippedElements": [],
+			"strippedAttributes": [
+				{
+					"element": "div",
+					"attribute": "bogus"
+				},
+				{
+					"element": "div",
+					"attribute": "onclick"
+				}
+			]
+		}
+	},
+	{
+		"description": "declared vocabulary preserves node and prop name case",
+		"format": "app/ratatui",
+		"formats": {
+			"app/ratatui": {
+				"syntax": "html",
+				"nodes": {
+					"Block": {
+						"props": {
+							"title": {
+								"type": "string"
+							},
+							"borders": {
+								"type": "string"
+							},
+							"border_style": {
+								"type": "object"
+							}
+						}
+					},
+					"Layout": {
+						"props": {
+							"direction": {
+								"type": "string"
+							},
+							"constraints": {
+								"type": "array"
+							}
+						}
+					},
+					"Paragraph": {
+						"props": {
+							"wrap": {
+								"type": "boolean"
+							},
+							"style": {
+								"type": "object"
+							}
+						},
+						"children": [
+							"Line"
+						]
+					},
+					"Line": {
+						"props": {
+							"align": {
+								"type": "string"
+							}
+						},
+						"children": [
+							"Span"
+						]
+					},
+					"Span": {
+						"props": {
+							"style": {
+								"type": "object"
+							}
+						},
+						"children": "text"
+					},
+					"Gauge": {
+						"props": {
+							"percent": {
+								"type": "number"
+							},
+							"ratio_bind": {
+								"type": "object"
+							},
+							"label": {
+								"type": "string"
+							}
+						},
+						"children": "none",
+						"bindTo": "ratio"
+					}
+				}
+			}
+		},
+		"source": "<Block title=\"Stats\" borders=\"ALL\"><Paragraph><Line><Span>hi</Span></Line></Paragraph></Block>",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Block",
+					"props": {
+						"title": "Stats",
+						"borders": "ALL"
+					},
+					"children": [
+						{
+							"name": "Paragraph",
+							"props": {},
+							"children": [
+								{
+									"name": "Line",
+									"props": {},
+									"children": [
+										{
+											"name": "Span",
+											"props": {},
+											"children": [
+												{
+													"text": "hi"
+												}
+											]
+										}
+									]
+								}
+							]
+						}
+					]
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "declared vocabulary refuses an undeclared node",
+		"format": "app/ratatui",
+		"formats": {
+			"app/ratatui": {
+				"syntax": "html",
+				"nodes": {
+					"Block": {
+						"props": {
+							"title": {
+								"type": "string"
+							},
+							"borders": {
+								"type": "string"
+							},
+							"border_style": {
+								"type": "object"
+							}
+						}
+					},
+					"Layout": {
+						"props": {
+							"direction": {
+								"type": "string"
+							},
+							"constraints": {
+								"type": "array"
+							}
+						}
+					},
+					"Paragraph": {
+						"props": {
+							"wrap": {
+								"type": "boolean"
+							},
+							"style": {
+								"type": "object"
+							}
+						},
+						"children": [
+							"Line"
+						]
+					},
+					"Line": {
+						"props": {
+							"align": {
+								"type": "string"
+							}
+						},
+						"children": [
+							"Span"
+						]
+					},
+					"Span": {
+						"props": {
+							"style": {
+								"type": "object"
+							}
+						},
+						"children": "text"
+					},
+					"Gauge": {
+						"props": {
+							"percent": {
+								"type": "number"
+							},
+							"ratio_bind": {
+								"type": "object"
+							},
+							"label": {
+								"type": "string"
+							}
+						},
+						"children": "none",
+						"bindTo": "ratio"
+					}
+				}
+			}
+		},
+		"source": "<Block><Bogus/></Block>",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Block",
+					"props": {},
+					"children": []
+				}
+			],
+			"diagnostics": [
+				{
+					"code": "unknown-node",
+					"severity": "error",
+					"path": "/0/0",
+					"node": "Bogus",
+					"message": "node \"Bogus\" is not declared by format \"app/ratatui\""
+				}
+			],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "declared vocabulary drops an undeclared prop with a diagnostic",
+		"format": "app/ratatui",
+		"formats": {
+			"app/ratatui": {
+				"syntax": "html",
+				"nodes": {
+					"Block": {
+						"props": {
+							"title": {
+								"type": "string"
+							},
+							"borders": {
+								"type": "string"
+							},
+							"border_style": {
+								"type": "object"
+							}
+						}
+					},
+					"Layout": {
+						"props": {
+							"direction": {
+								"type": "string"
+							},
+							"constraints": {
+								"type": "array"
+							}
+						}
+					},
+					"Paragraph": {
+						"props": {
+							"wrap": {
+								"type": "boolean"
+							},
+							"style": {
+								"type": "object"
+							}
+						},
+						"children": [
+							"Line"
+						]
+					},
+					"Line": {
+						"props": {
+							"align": {
+								"type": "string"
+							}
+						},
+						"children": [
+							"Span"
+						]
+					},
+					"Span": {
+						"props": {
+							"style": {
+								"type": "object"
+							}
+						},
+						"children": "text"
+					},
+					"Gauge": {
+						"props": {
+							"percent": {
+								"type": "number"
+							},
+							"ratio_bind": {
+								"type": "object"
+							},
+							"label": {
+								"type": "string"
+							}
+						},
+						"children": "none",
+						"bindTo": "ratio"
+					}
+				}
+			}
+		},
+		"source": "<Block title=\"ok\" nope=\"1\"/>",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Block",
+					"props": {
+						"title": "ok"
+					},
+					"children": [],
+					"selfClosing": true
+				}
+			],
+			"diagnostics": [
+				{
+					"code": "unknown-prop",
+					"severity": "warning",
+					"path": "/0",
+					"node": "Block",
+					"prop": "nope",
+					"message": "prop \"nope\" is not declared on node \"Block\""
+				}
+			],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "declared vocabulary rejects an on* prop even undeclared",
+		"format": "app/ratatui",
+		"formats": {
+			"app/ratatui": {
+				"syntax": "html",
+				"nodes": {
+					"Block": {
+						"props": {
+							"title": {
+								"type": "string"
+							},
+							"borders": {
+								"type": "string"
+							},
+							"border_style": {
+								"type": "object"
+							}
+						}
+					},
+					"Layout": {
+						"props": {
+							"direction": {
+								"type": "string"
+							},
+							"constraints": {
+								"type": "array"
+							}
+						}
+					},
+					"Paragraph": {
+						"props": {
+							"wrap": {
+								"type": "boolean"
+							},
+							"style": {
+								"type": "object"
+							}
+						},
+						"children": [
+							"Line"
+						]
+					},
+					"Line": {
+						"props": {
+							"align": {
+								"type": "string"
+							}
+						},
+						"children": [
+							"Span"
+						]
+					},
+					"Span": {
+						"props": {
+							"style": {
+								"type": "object"
+							}
+						},
+						"children": "text"
+					},
+					"Gauge": {
+						"props": {
+							"percent": {
+								"type": "number"
+							},
+							"ratio_bind": {
+								"type": "object"
+							},
+							"label": {
+								"type": "string"
+							}
+						},
+						"children": "none",
+						"bindTo": "ratio"
+					}
+				}
+			}
+		},
+		"source": "<Block onclick=\"x()\" title=\"t\"/>",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Block",
+					"props": {
+						"title": "t"
+					},
+					"children": [],
+					"selfClosing": true
+				}
+			],
+			"diagnostics": [
+				{
+					"code": "unsafe-prop",
+					"severity": "warning",
+					"path": "/0",
+					"node": "Block",
+					"prop": "onclick",
+					"message": "prop \"onclick\" is reserved and was dropped"
+				}
+			],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "declared vocabulary enforces a children list",
+		"format": "app/ratatui",
+		"formats": {
+			"app/ratatui": {
+				"syntax": "html",
+				"nodes": {
+					"Block": {
+						"props": {
+							"title": {
+								"type": "string"
+							},
+							"borders": {
+								"type": "string"
+							},
+							"border_style": {
+								"type": "object"
+							}
+						}
+					},
+					"Layout": {
+						"props": {
+							"direction": {
+								"type": "string"
+							},
+							"constraints": {
+								"type": "array"
+							}
+						}
+					},
+					"Paragraph": {
+						"props": {
+							"wrap": {
+								"type": "boolean"
+							},
+							"style": {
+								"type": "object"
+							}
+						},
+						"children": [
+							"Line"
+						]
+					},
+					"Line": {
+						"props": {
+							"align": {
+								"type": "string"
+							}
+						},
+						"children": [
+							"Span"
+						]
+					},
+					"Span": {
+						"props": {
+							"style": {
+								"type": "object"
+							}
+						},
+						"children": "text"
+					},
+					"Gauge": {
+						"props": {
+							"percent": {
+								"type": "number"
+							},
+							"ratio_bind": {
+								"type": "object"
+							},
+							"label": {
+								"type": "string"
+							}
+						},
+						"children": "none",
+						"bindTo": "ratio"
+					}
+				}
+			}
+		},
+		"source": "<Line><Block/></Line>",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Line",
+					"props": {},
+					"children": []
+				}
+			],
+			"diagnostics": [
+				{
+					"code": "illegal-child",
+					"severity": "error",
+					"path": "/0/0",
+					"node": "Block",
+					"message": "node \"Block\" is not permitted here (children: Span)"
+				}
+			],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "declared vocabulary refuses text where children is none",
+		"format": "app/ratatui",
+		"formats": {
+			"app/ratatui": {
+				"syntax": "html",
+				"nodes": {
+					"Block": {
+						"props": {
+							"title": {
+								"type": "string"
+							},
+							"borders": {
+								"type": "string"
+							},
+							"border_style": {
+								"type": "object"
+							}
+						}
+					},
+					"Layout": {
+						"props": {
+							"direction": {
+								"type": "string"
+							},
+							"constraints": {
+								"type": "array"
+							}
+						}
+					},
+					"Paragraph": {
+						"props": {
+							"wrap": {
+								"type": "boolean"
+							},
+							"style": {
+								"type": "object"
+							}
+						},
+						"children": [
+							"Line"
+						]
+					},
+					"Line": {
+						"props": {
+							"align": {
+								"type": "string"
+							}
+						},
+						"children": [
+							"Span"
+						]
+					},
+					"Span": {
+						"props": {
+							"style": {
+								"type": "object"
+							}
+						},
+						"children": "text"
+					},
+					"Gauge": {
+						"props": {
+							"percent": {
+								"type": "number"
+							},
+							"ratio_bind": {
+								"type": "object"
+							},
+							"label": {
+								"type": "string"
+							}
+						},
+						"children": "none",
+						"bindTo": "ratio"
+					}
+				}
+			}
+		},
+		"source": "<Gauge>nope</Gauge>",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Gauge",
+					"props": {},
+					"children": []
+				}
+			],
+			"diagnostics": [
+				{
+					"code": "illegal-child",
+					"severity": "error",
+					"path": "/0/0",
+					"node": "#text",
+					"message": "text is not permitted here (children: none)"
+				}
+			],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "declared vocabulary allows protocol props on any node",
+		"format": "app/ratatui",
+		"formats": {
+			"app/ratatui": {
+				"syntax": "html",
+				"nodes": {
+					"Block": {
+						"props": {
+							"title": {
+								"type": "string"
+							},
+							"borders": {
+								"type": "string"
+							},
+							"border_style": {
+								"type": "object"
+							}
+						}
+					},
+					"Layout": {
+						"props": {
+							"direction": {
+								"type": "string"
+							},
+							"constraints": {
+								"type": "array"
+							}
+						}
+					},
+					"Paragraph": {
+						"props": {
+							"wrap": {
+								"type": "boolean"
+							},
+							"style": {
+								"type": "object"
+							}
+						},
+						"children": [
+							"Line"
+						]
+					},
+					"Line": {
+						"props": {
+							"align": {
+								"type": "string"
+							}
+						},
+						"children": [
+							"Span"
+						]
+					},
+					"Span": {
+						"props": {
+							"style": {
+								"type": "object"
+							}
+						},
+						"children": "text"
+					},
+					"Gauge": {
+						"props": {
+							"percent": {
+								"type": "number"
+							},
+							"ratio_bind": {
+								"type": "object"
+							},
+							"label": {
+								"type": "string"
+							}
+						},
+						"children": "none",
+						"bindTo": "ratio"
+					}
+				}
+			}
+		},
+		"source": "<Gauge id=\"g\" data-bind=\"ratio\" data-if=\"alive\"/>",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Gauge",
+					"props": {
+						"id": "g",
+						"data-bind": "ratio",
+						"data-if": "alive"
+					},
+					"children": [],
+					"selfClosing": true
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "declared vocabulary rejects a reserved prop name",
+		"format": "app/ratatui",
+		"formats": {
+			"app/ratatui": {
+				"syntax": "html",
+				"nodes": {
+					"Block": {
+						"props": {
+							"title": {
+								"type": "string"
+							},
+							"borders": {
+								"type": "string"
+							},
+							"border_style": {
+								"type": "object"
+							}
+						}
+					},
+					"Layout": {
+						"props": {
+							"direction": {
+								"type": "string"
+							},
+							"constraints": {
+								"type": "array"
+							}
+						}
+					},
+					"Paragraph": {
+						"props": {
+							"wrap": {
+								"type": "boolean"
+							},
+							"style": {
+								"type": "object"
+							}
+						},
+						"children": [
+							"Line"
+						]
+					},
+					"Line": {
+						"props": {
+							"align": {
+								"type": "string"
+							}
+						},
+						"children": [
+							"Span"
+						]
+					},
+					"Span": {
+						"props": {
+							"style": {
+								"type": "object"
+							}
+						},
+						"children": "text"
+					},
+					"Gauge": {
+						"props": {
+							"percent": {
+								"type": "number"
+							},
+							"ratio_bind": {
+								"type": "object"
+							},
+							"label": {
+								"type": "string"
+							}
+						},
+						"children": "none",
+						"bindTo": "ratio"
+					}
+				}
+			}
+		},
+		"source": "<Block __proto__=\"x\" title=\"t\"/>",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Block",
+					"props": {
+						"title": "t"
+					},
+					"children": [],
+					"selfClosing": true
+				}
+			],
+			"diagnostics": [
+				{
+					"code": "unsafe-prop",
+					"severity": "warning",
+					"path": "/0",
+					"node": "Block",
+					"prop": "__proto__",
+					"message": "prop \"__proto__\" is reserved and was dropped"
+				}
+			],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "typed prop values survive with full JSON types",
+		"format": "app/sinks",
+		"formats": {
+			"app/sinks": {
+				"syntax": "jsml",
+				"nodes": {
+					"Card": {
+						"props": {
+							"link": {
+								"type": "string",
+								"sink": "uri"
+							},
+							"thumb": {
+								"type": "string",
+								"sink": "image-uri"
+							},
+							"css": {
+								"type": "string",
+								"sink": "css"
+							},
+							"body": {
+								"type": "string",
+								"sink": "html"
+							},
+							"meta": {
+								"type": "object"
+							},
+							"count": {
+								"type": "integer"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[[\"Card\",{\"meta\":{\"a\":1,\"b\":[true,null,\"s\"]},\"count\":3}]]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Card",
+					"props": {
+						"meta": {
+							"a": 1,
+							"b": [
+								true,
+								null,
+								"s"
+							]
+						},
+						"count": 3
+					},
+					"children": []
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "number precision round-trips",
+		"format": "app/ratatui",
+		"formats": {
+			"app/ratatui": {
+				"syntax": "jsml",
+				"nodes": {
+					"Block": {
+						"props": {
+							"title": {
+								"type": "string"
+							},
+							"borders": {
+								"type": "string"
+							},
+							"border_style": {
+								"type": "object"
+							}
+						}
+					},
+					"Layout": {
+						"props": {
+							"direction": {
+								"type": "string"
+							},
+							"constraints": {
+								"type": "array"
+							}
+						}
+					},
+					"Paragraph": {
+						"props": {
+							"wrap": {
+								"type": "boolean"
+							},
+							"style": {
+								"type": "object"
+							}
+						},
+						"children": [
+							"Line"
+						]
+					},
+					"Line": {
+						"props": {
+							"align": {
+								"type": "string"
+							}
+						},
+						"children": [
+							"Span"
+						]
+					},
+					"Span": {
+						"props": {
+							"style": {
+								"type": "object"
+							}
+						},
+						"children": "text"
+					},
+					"Gauge": {
+						"props": {
+							"percent": {
+								"type": "number"
+							},
+							"ratio_bind": {
+								"type": "object"
+							},
+							"label": {
+								"type": "string"
+							}
+						},
+						"children": "none",
+						"bindTo": "ratio"
+					}
+				}
+			}
+		},
+		"source": "[[\"Gauge\",{\"percent\":62.5}]]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Gauge",
+					"props": {
+						"percent": 62.5
+					},
+					"children": []
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "declared type mismatch is an invalid-prop diagnostic",
+		"format": "app/sinks",
+		"formats": {
+			"app/sinks": {
+				"syntax": "jsml",
+				"nodes": {
+					"Card": {
+						"props": {
+							"link": {
+								"type": "string",
+								"sink": "uri"
+							},
+							"thumb": {
+								"type": "string",
+								"sink": "image-uri"
+							},
+							"css": {
+								"type": "string",
+								"sink": "css"
+							},
+							"body": {
+								"type": "string",
+								"sink": "html"
+							},
+							"meta": {
+								"type": "object"
+							},
+							"count": {
+								"type": "integer"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[[\"Card\",{\"count\":\"three\"}]]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Card",
+					"props": {},
+					"children": []
+				}
+			],
+			"diagnostics": [
+				{
+					"code": "invalid-prop",
+					"severity": "warning",
+					"path": "/0",
+					"node": "Card",
+					"prop": "count",
+					"message": "prop \"count\" expects type \"integer\""
+				}
+			],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "uri sink rejects a javascript: URI",
+		"format": "app/sinks",
+		"formats": {
+			"app/sinks": {
+				"syntax": "jsml",
+				"nodes": {
+					"Card": {
+						"props": {
+							"link": {
+								"type": "string",
+								"sink": "uri"
+							},
+							"thumb": {
+								"type": "string",
+								"sink": "image-uri"
+							},
+							"css": {
+								"type": "string",
+								"sink": "css"
+							},
+							"body": {
+								"type": "string",
+								"sink": "html"
+							},
+							"meta": {
+								"type": "object"
+							},
+							"count": {
+								"type": "integer"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[[\"Card\",{\"link\":\"javascript:alert(1)\"}]]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Card",
+					"props": {},
+					"children": []
+				}
+			],
+			"diagnostics": [
+				{
+					"code": "unsafe-prop",
+					"severity": "warning",
+					"path": "/0",
+					"node": "Card",
+					"prop": "link",
+					"message": "prop \"link\" was rejected by sink \"uri\""
+				}
+			],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "uri sink passes a normal URL",
+		"format": "app/sinks",
+		"formats": {
+			"app/sinks": {
+				"syntax": "jsml",
+				"nodes": {
+					"Card": {
+						"props": {
+							"link": {
+								"type": "string",
+								"sink": "uri"
+							},
+							"thumb": {
+								"type": "string",
+								"sink": "image-uri"
+							},
+							"css": {
+								"type": "string",
+								"sink": "css"
+							},
+							"body": {
+								"type": "string",
+								"sink": "html"
+							},
+							"meta": {
+								"type": "object"
+							},
+							"count": {
+								"type": "integer"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[[\"Card\",{\"link\":\"https://example.com/x\"}]]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Card",
+					"props": {
+						"link": "https://example.com/x"
+					},
+					"children": []
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "image-uri sink allows a safe data image",
+		"format": "app/sinks",
+		"formats": {
+			"app/sinks": {
+				"syntax": "jsml",
+				"nodes": {
+					"Card": {
+						"props": {
+							"link": {
+								"type": "string",
+								"sink": "uri"
+							},
+							"thumb": {
+								"type": "string",
+								"sink": "image-uri"
+							},
+							"css": {
+								"type": "string",
+								"sink": "css"
+							},
+							"body": {
+								"type": "string",
+								"sink": "html"
+							},
+							"meta": {
+								"type": "object"
+							},
+							"count": {
+								"type": "integer"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[[\"Card\",{\"thumb\":\"data:image/png;base64,AAA\"}]]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Card",
+					"props": {
+						"thumb": "data:image/png;base64,AAA"
+					},
+					"children": []
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "image-uri sink rejects a data:text/html payload",
+		"format": "app/sinks",
+		"formats": {
+			"app/sinks": {
+				"syntax": "jsml",
+				"nodes": {
+					"Card": {
+						"props": {
+							"link": {
+								"type": "string",
+								"sink": "uri"
+							},
+							"thumb": {
+								"type": "string",
+								"sink": "image-uri"
+							},
+							"css": {
+								"type": "string",
+								"sink": "css"
+							},
+							"body": {
+								"type": "string",
+								"sink": "html"
+							},
+							"meta": {
+								"type": "object"
+							},
+							"count": {
+								"type": "integer"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[[\"Card\",{\"thumb\":\"data:text/html,<script>alert(1)</script>\"}]]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Card",
+					"props": {},
+					"children": []
+				}
+			],
+			"diagnostics": [
+				{
+					"code": "unsafe-prop",
+					"severity": "warning",
+					"path": "/0",
+					"node": "Card",
+					"prop": "thumb",
+					"message": "prop \"thumb\" was rejected by sink \"image-uri\""
+				}
+			],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "css sink strips url() and keeps the rest",
+		"format": "app/sinks",
+		"formats": {
+			"app/sinks": {
+				"syntax": "jsml",
+				"nodes": {
+					"Card": {
+						"props": {
+							"link": {
+								"type": "string",
+								"sink": "uri"
+							},
+							"thumb": {
+								"type": "string",
+								"sink": "image-uri"
+							},
+							"css": {
+								"type": "string",
+								"sink": "css"
+							},
+							"body": {
+								"type": "string",
+								"sink": "html"
+							},
+							"meta": {
+								"type": "object"
+							},
+							"count": {
+								"type": "integer"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[[\"Card\",{\"css\":\"color:red;background:url(javascript:x)\"}]]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Card",
+					"props": {
+						"css": "color:red;background:"
+					},
+					"children": []
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "css sink rejects a value that sanitizes to nothing",
+		"format": "app/sinks",
+		"formats": {
+			"app/sinks": {
+				"syntax": "jsml",
+				"nodes": {
+					"Card": {
+						"props": {
+							"link": {
+								"type": "string",
+								"sink": "uri"
+							},
+							"thumb": {
+								"type": "string",
+								"sink": "image-uri"
+							},
+							"css": {
+								"type": "string",
+								"sink": "css"
+							},
+							"body": {
+								"type": "string",
+								"sink": "html"
+							},
+							"meta": {
+								"type": "object"
+							},
+							"count": {
+								"type": "integer"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[[\"Card\",{\"css\":\"url(javascript:x)\"}]]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Card",
+					"props": {},
+					"children": []
+				}
+			],
+			"diagnostics": [
+				{
+					"code": "unsafe-prop",
+					"severity": "warning",
+					"path": "/0",
+					"node": "Card",
+					"prop": "css",
+					"message": "prop \"css\" was rejected by sink \"css\""
+				}
+			],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "html sink runs the HTML sanitizer over the value",
+		"format": "app/sinks",
+		"formats": {
+			"app/sinks": {
+				"syntax": "jsml",
+				"nodes": {
+					"Card": {
+						"props": {
+							"link": {
+								"type": "string",
+								"sink": "uri"
+							},
+							"thumb": {
+								"type": "string",
+								"sink": "image-uri"
+							},
+							"css": {
+								"type": "string",
+								"sink": "css"
+							},
+							"body": {
+								"type": "string",
+								"sink": "html"
+							},
+							"meta": {
+								"type": "object"
+							},
+							"count": {
+								"type": "integer"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[[\"Card\",{\"body\":\"<b>hi</b><script>alert(1)</script>\"}]]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Card",
+					"props": {
+						"body": "<b>hi</b>"
+					},
+					"children": []
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "a non-string at a non-text sink is an invalid-prop diagnostic",
+		"format": "app/sinks",
+		"formats": {
+			"app/sinks": {
+				"syntax": "jsml",
+				"nodes": {
+					"Card": {
+						"props": {
+							"link": {
+								"type": "string",
+								"sink": "uri"
+							},
+							"thumb": {
+								"type": "string",
+								"sink": "image-uri"
+							},
+							"css": {
+								"type": "string",
+								"sink": "css"
+							},
+							"body": {
+								"type": "string",
+								"sink": "html"
+							},
+							"meta": {
+								"type": "object"
+							},
+							"count": {
+								"type": "integer"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[[\"Card\",{\"link\":42}]]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Card",
+					"props": {},
+					"children": []
+				}
+			],
+			"diagnostics": [
+				{
+					"code": "invalid-prop",
+					"severity": "warning",
+					"path": "/0",
+					"node": "Card",
+					"prop": "link",
+					"message": "prop \"link\" expects type \"string\""
+				}
+			],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "text sink leaves an object value untouched",
+		"format": "app/sinks",
+		"formats": {
+			"app/sinks": {
+				"syntax": "jsml",
+				"nodes": {
+					"Card": {
+						"props": {
+							"link": {
+								"type": "string",
+								"sink": "uri"
+							},
+							"thumb": {
+								"type": "string",
+								"sink": "image-uri"
+							},
+							"css": {
+								"type": "string",
+								"sink": "css"
+							},
+							"body": {
+								"type": "string",
+								"sink": "html"
+							},
+							"meta": {
+								"type": "object"
+							},
+							"count": {
+								"type": "integer"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[[\"Card\",{\"meta\":{\"nested\":{\"deep\":true}}}]]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Card",
+					"props": {
+						"meta": {
+							"nested": {
+								"deep": true
+							}
+						}
+					},
+					"children": []
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "a declared node wins over a same-named HTML element",
+		"format": "app/mixed",
+		"formats": {
+			"app/mixed": {
+				"syntax": "html",
+				"vocabularies": [
+					"html"
+				],
+				"nodes": {
+					"style": {
+						"props": {
+							"label": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "<style label=\"x\">not raw text</style>",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "style",
+					"props": {
+						"label": "x"
+					},
+					"children": [
+						{
+							"text": "not raw text"
+						}
+					]
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "html in scope lets HTML elements through alongside declared nodes",
+		"format": "app/mixed",
+		"formats": {
+			"app/mixed": {
+				"syntax": "html",
+				"vocabularies": [
+					"html"
+				],
+				"nodes": {
+					"Widget": {
+						"props": {
+							"label": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "<div class=\"c\"><Widget label=\"w\"/></div>",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "div",
+					"props": {
+						"class": "c"
+					},
+					"children": [
+						{
+							"name": "Widget",
+							"props": {
+								"label": "w"
+							},
+							"children": [],
+							"selfClosing": true
+						}
+					]
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "html in scope still strips a dangerous element",
+		"format": "app/mixed",
+		"formats": {
+			"app/mixed": {
+				"syntax": "html",
+				"vocabularies": [
+					"html"
+				],
+				"nodes": {
+					"Widget": {
+						"props": {
+							"label": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "<div><script>alert(1)</script></div>",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "div",
+					"props": {},
+					"children": []
+				}
+			],
+			"diagnostics": [
+				{
+					"code": "stripped-node",
+					"severity": "warning",
+					"path": "/0/0",
+					"node": "script",
+					"message": "stripped dangerous element: <script>"
+				}
+			],
+			"strippedElements": [
+				"script"
+			],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "a closed scope refuses every HTML element",
+		"format": "app/ratatui",
+		"formats": {
+			"app/ratatui": {
+				"syntax": "html",
+				"vocabularies": [],
+				"nodes": {
+					"Block": {
+						"props": {
+							"title": {
+								"type": "string"
+							},
+							"borders": {
+								"type": "string"
+							},
+							"border_style": {
+								"type": "object"
+							}
+						}
+					},
+					"Layout": {
+						"props": {
+							"direction": {
+								"type": "string"
+							},
+							"constraints": {
+								"type": "array"
+							}
+						}
+					},
+					"Paragraph": {
+						"props": {
+							"wrap": {
+								"type": "boolean"
+							},
+							"style": {
+								"type": "object"
+							}
+						},
+						"children": [
+							"Line"
+						]
+					},
+					"Line": {
+						"props": {
+							"align": {
+								"type": "string"
+							}
+						},
+						"children": [
+							"Span"
+						]
+					},
+					"Span": {
+						"props": {
+							"style": {
+								"type": "object"
+							}
+						},
+						"children": "text"
+					},
+					"Gauge": {
+						"props": {
+							"percent": {
+								"type": "number"
+							},
+							"ratio_bind": {
+								"type": "object"
+							},
+							"label": {
+								"type": "string"
+							}
+						},
+						"children": "none",
+						"bindTo": "ratio"
+					}
+				}
+			}
+		},
+		"source": "<div><Block/></div>",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [],
+			"diagnostics": [
+				{
+					"code": "unknown-node",
+					"severity": "error",
+					"path": "/0",
+					"node": "div",
+					"message": "node \"div\" is not declared by format \"app/ratatui\""
+				}
+			],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "an array-wrapped javascript: URI is refused at the href sink",
+		"format": "application/jsml+json",
+		"source": "[\"a\",{\"href\":[\"javascript:alert(1)\"]},\"x\"]",
+		"expected": {
+			"contentType": "html",
+			"html": "<a>x</a>",
+			"tree": [
+				{
+					"name": "a",
+					"props": {},
+					"children": [
+						{
+							"text": "x"
+						}
+					]
+				}
+			],
+			"diagnostics": [
+				{
+					"code": "unsafe-prop",
+					"severity": "warning",
+					"path": "/0",
+					"node": "a",
+					"prop": "href",
+					"message": "stripped attribute \"href\" on <a>: unsafe URI"
+				}
+			],
+			"strippedElements": [],
+			"strippedAttributes": [
+				{
+					"element": "a",
+					"attribute": "href"
+				}
+			]
+		}
+	},
+	{
+		"description": "an array-wrapped data:text/html payload is refused at the src sink",
+		"format": "application/jsml+json",
+		"source": "[\"img\",{\"src\":[\"data:text/html,<script>alert(1)</script>\"]}]",
+		"expected": {
+			"contentType": "html",
+			"html": "<img />",
+			"tree": [
+				{
+					"name": "img",
+					"props": {},
+					"children": []
+				}
+			],
+			"diagnostics": [
+				{
+					"code": "unsafe-prop",
+					"severity": "warning",
+					"path": "/0",
+					"node": "img",
+					"prop": "src",
+					"message": "stripped attribute \"src\" on <img>: unsafe URI"
+				}
+			],
+			"strippedElements": [],
+			"strippedAttributes": [
+				{
+					"element": "img",
+					"attribute": "src"
+				}
+			]
+		}
+	},
+	{
+		"description": "an array-wrapped javascript: url() is refused at the style sink",
+		"format": "application/jsml+json",
+		"source": "[\"div\",{\"style\":[\"background:url(javascript:alert(1))\"]}]",
+		"expected": {
+			"contentType": "html",
+			"html": "<div style=\"background:)\"></div>",
+			"tree": [
+				{
+					"name": "div",
+					"props": {
+						"style": "background:)"
+					},
+					"children": []
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "a multi-element array href is coerced before the sink sees it",
+		"format": "application/jsml+json",
+		"source": "[\"a\",{\"href\":[\"java\",\"script:alert(1)\"]},\"x\"]",
+		"expected": {
+			"contentType": "html",
+			"html": "<a href=\"java,script:alert(1)\">x</a>",
+			"tree": [
+				{
+					"name": "a",
+					"props": {
+						"href": "java,script:alert(1)"
+					},
+					"children": [
+						{
+							"text": "x"
+						}
+					]
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "an object href coerces to [object Object] rather than throwing",
+		"format": "application/jsml+json",
+		"source": "[\"a\",{\"href\":{\"toString\":1}},\"x\"]",
+		"expected": {
+			"contentType": "html",
+			"html": "<a href=\"[object Object]\">x</a>",
+			"tree": [
+				{
+					"name": "a",
+					"props": {
+						"href": "[object Object]"
+					},
+					"children": [
+						{
+							"text": "x"
+						}
+					]
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "a numeric href is coerced and kept",
+		"format": "application/jsml+json",
+		"source": "[\"a\",{\"href\":123},\"x\"]",
+		"expected": {
+			"contentType": "html",
+			"html": "<a href=\"123\">x</a>",
+			"tree": [
+				{
+					"name": "a",
+					"props": {
+						"href": "123"
+					},
+					"children": [
+						{
+							"text": "x"
+						}
+					]
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "a boolean-true href stays a bare attribute",
+		"format": "application/jsml+json",
+		"source": "[\"a\",{\"href\":true},\"x\"]",
+		"expected": {
+			"contentType": "html",
+			"html": "<a href>x</a>",
+			"tree": [
+				{
+					"name": "a",
+					"props": {
+						"href": true
+					},
+					"children": [
+						{
+							"text": "x"
+						}
+					]
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "a null href is omitted from the projection",
+		"format": "application/jsml+json",
+		"source": "[\"a\",{\"href\":null},\"x\"]",
+		"expected": {
+			"contentType": "html",
+			"html": "<a>x</a>",
+			"tree": [
+				{
+					"name": "a",
+					"props": {
+						"href": null
+					},
+					"children": [
+						{
+							"text": "x"
+						}
+					]
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "an object style value is coerced before the css sink",
+		"format": "application/jsml+json",
+		"source": "[\"div\",{\"style\":{\"a\":\"b\"}},\"x\"]",
+		"expected": {
+			"contentType": "html",
+			"html": "<div style=\"[object Object]\">x</div>",
+			"tree": [
+				{
+					"name": "div",
+					"props": {
+						"style": "[object Object]"
+					},
+					"children": [
+						{
+							"text": "x"
+						}
+					]
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "built-in application/j5ml+json projects to HTML",
+		"format": "application/j5ml+json",
+		"source": "[\"div\",{\"class\":\"a\"},[\"span\",\"hi\"]]",
+		"expected": {
+			"contentType": "html",
+			"html": "<div class=\"a\"><span>hi</span></div>",
+			"tree": [
+				{
+					"name": "div",
+					"props": {
+						"class": "a"
+					},
+					"children": [
+						{
+							"name": "span",
+							"props": {},
+							"children": [
+								{
+									"text": "hi"
+								}
+							]
+						}
+					]
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "deprecated application/jsml+json matches the j5ml canonical spelling",
+		"format": "application/jsml+json",
+		"source": "[\"div\",{\"class\":\"a\"},[\"span\",\"hi\"]]",
+		"expected": {
+			"contentType": "html",
+			"html": "<div class=\"a\"><span>hi</span></div>",
+			"tree": [
+				{
+					"name": "div",
+					"props": {
+						"class": "a"
+					},
+					"children": [
+						{
+							"name": "span",
+							"props": {},
+							"children": [
+								{
+									"text": "hi"
+								}
+							]
+						}
+					]
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "a host format declaring syntax j5ml parses as J5ML",
+		"format": "app/j5ml-syntax",
+		"formats": {
+			"app/j5ml-syntax": {
+				"syntax": "j5ml",
+				"nodes": {
+					"Card": {
+						"props": {
+							"count": {
+								"type": "integer"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[[\"Card\",{\"count\":3}]]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Card",
+					"props": {
+						"count": 3
+					},
+					"children": []
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "a host format declaring the deprecated syntax jsml parses identically",
+		"format": "app/jsml-syntax",
+		"formats": {
+			"app/jsml-syntax": {
+				"syntax": "jsml",
+				"nodes": {
+					"Card": {
+						"props": {
+							"count": {
+								"type": "integer"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[[\"Card\",{\"count\":3}]]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Card",
+					"props": {
+						"count": 3
+					},
+					"children": []
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "J5ML serialization orders attribute names by code point",
+		"format": "text/html",
+		"source": "<div id=\"z\" class=\"a\" title=\"m\">x</div>",
+		"expected": {
+			"contentType": "html",
+			"html": "<div id=\"z\" class=\"a\" title=\"m\">x</div>",
+			"jsml": [
+				[
+					"div",
+					{
+						"class": "a",
+						"id": "z",
+						"title": "m"
+					},
+					"x"
+				]
+			],
+			"tree": [
+				{
+					"name": "div",
+					"props": {
+						"id": "z",
+						"class": "a",
+						"title": "m"
+					},
+					"children": [
+						{
+							"text": "x"
+						}
+					]
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "J5ML orders declared prop names by code point, not UTF-16 code unit",
+		"schemaValid": false,
+		"format": "app/ordering",
+		"formats": {
+			"app/ordering": {
+				"syntax": "j5ml",
+				"nodes": {
+					"Card": {
+						"props": {
+							"zz": {
+								"type": "string"
+							},
+							"😀": {
+								"type": "string"
+							},
+							"alpha": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[[\"Card\",{\"😀\":\"e\",\"zz\":\"b\",\"alpha\":\"a\"}]]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"jsml": [
+				[
+					"Card",
+					{
+						"alpha": "a",
+						"zz": "b",
+						"😀": "e"
+					}
+				]
+			],
+			"tree": [
+				{
+					"name": "Card",
+					"props": {
+						"😀": "e",
+						"zz": "b",
+						"alpha": "a"
+					},
+					"children": []
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "a declared vocabulary of custom elements projects to HTML",
+		"format": "app/custom-elements",
+		"formats": {
+			"app/custom-elements": {
+				"syntax": "html",
+				"vocabularies": [
+					"html"
+				],
+				"nodes": {
+					"app-icon": {
+						"props": {
+							"name": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "<div class=\"c\"><app-icon name=\"gear\"></app-icon></div>",
+		"expected": {
+			"contentType": "tree",
+			"html": "<div class=\"c\"><app-icon name=\"gear\"></app-icon></div>",
+			"tree": [
+				{
+					"name": "div",
+					"props": {
+						"class": "c"
+					},
+					"children": [
+						{
+							"name": "app-icon",
+							"props": {
+								"name": "gear"
+							},
+							"children": []
+						}
+					]
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "a declared node that redeclares an HTML name refuses the HTML projection",
+		"format": "app/shadowed",
+		"formats": {
+			"app/shadowed": {
+				"syntax": "html",
+				"vocabularies": [
+					"html"
+				],
+				"nodes": {
+					"style": {
+						"props": {
+							"label": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "<style label=\"x\">not raw text</style>",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "style",
+					"props": {
+						"label": "x"
+					},
+					"children": [
+						{
+							"text": "not raw text"
+						}
+					]
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "a declared node without a hyphen refuses the HTML projection",
+		"format": "app/nohyphen",
+		"formats": {
+			"app/nohyphen": {
+				"syntax": "html",
+				"vocabularies": [
+					"html"
+				],
+				"nodes": {
+					"Widget": {
+						"props": {
+							"label": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "<div class=\"c\"><Widget label=\"w\"/></div>",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "div",
+					"props": {
+						"class": "c"
+					},
+					"children": [
+						{
+							"name": "Widget",
+							"props": {
+								"label": "w"
+							},
+							"children": [],
+							"selfClosing": true
+						}
+					]
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "a declared node admits dataset and ARIA props without declaring them, but not an event handler",
+		"format": "app/metadata",
+		"formats": {
+			"app/metadata": {
+				"syntax": "html",
+				"vocabularies": [
+					"html"
+				],
+				"nodes": {
+					"x-thing": {
+						"props": {
+							"name": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "<x-thing name=\"a\" data-foo=\"b\" aria-label=\"c\" onclick=\"boom()\"></x-thing>",
+		"expected": {
+			"contentType": "tree",
+			"html": "<x-thing name=\"a\" data-foo=\"b\" aria-label=\"c\"></x-thing>",
+			"tree": [
+				{
+					"name": "x-thing",
+					"props": {
+						"name": "a",
+						"data-foo": "b",
+						"aria-label": "c"
+					},
+					"children": []
+				}
+			],
+			"diagnostics": [
+				{
+					"code": "unsafe-prop",
+					"severity": "warning",
+					"path": "/0",
+					"node": "x-thing",
+					"prop": "onclick",
+					"message": "prop \"onclick\" is reserved and was dropped"
+				}
+			],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "a named vocabulary produces the same tree as the same nodes inlined",
+		"format": "app/named",
+		"formats": {
+			"app/named": {
+				"syntax": "j5ml",
+				"vocabularies": [
+					"app.widgets"
+				]
+			}
+		},
+		"vocabularies": {
+			"app.widgets": {
+				"nodes": {
+					"Panel": {
+						"props": {
+							"heading": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[\"Panel\",{\"heading\":\"Stats\"}]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Panel",
+					"props": {
+						"heading": "Stats"
+					},
+					"children": []
+				}
+			],
+			"jsml": [
+				[
+					"Panel",
+					{
+						"heading": "Stats"
+					}
+				]
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "the same nodes inlined produce the same tree as a named vocabulary",
+		"format": "app/inlined",
+		"formats": {
+			"app/inlined": {
+				"syntax": "j5ml",
+				"nodes": {
+					"Panel": {
+						"props": {
+							"heading": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[\"Panel\",{\"heading\":\"Stats\"}]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Panel",
+					"props": {
+						"heading": "Stats"
+					},
+					"children": []
+				}
+			],
+			"jsml": [
+				[
+					"Panel",
+					{
+						"heading": "Stats"
+					}
+				]
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "the first vocabulary to claim a node name wins",
+		"format": "app/order",
+		"formats": {
+			"app/order": {
+				"syntax": "j5ml",
+				"vocabularies": [
+					"app.first",
+					"app.second"
+				]
+			}
+		},
+		"vocabularies": {
+			"app.first": {
+				"nodes": {
+					"Panel": {
+						"props": {
+							"alpha": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			},
+			"app.second": {
+				"nodes": {
+					"Panel": {
+						"props": {
+							"beta": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[\"Panel\",{\"alpha\":\"1\",\"beta\":\"2\"}]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Panel",
+					"props": {
+						"alpha": "1"
+					},
+					"children": []
+				}
+			],
+			"jsml": [
+				[
+					"Panel",
+					{
+						"alpha": "1"
+					}
+				]
+			],
+			"diagnostics": [
+				{
+					"code": "unknown-prop",
+					"severity": "warning",
+					"path": "/0",
+					"node": "Panel",
+					"prop": "beta",
+					"message": "prop \"beta\" is not declared on node \"Panel\""
+				}
+			],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "swapping the vocabulary order swaps which declaration wins",
+		"format": "app/order",
+		"formats": {
+			"app/order": {
+				"syntax": "j5ml",
+				"vocabularies": [
+					"app.second",
+					"app.first"
+				]
+			}
+		},
+		"vocabularies": {
+			"app.first": {
+				"nodes": {
+					"Panel": {
+						"props": {
+							"alpha": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			},
+			"app.second": {
+				"nodes": {
+					"Panel": {
+						"props": {
+							"beta": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[\"Panel\",{\"alpha\":\"1\",\"beta\":\"2\"}]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Panel",
+					"props": {
+						"beta": "2"
+					},
+					"children": []
+				}
+			],
+			"jsml": [
+				[
+					"Panel",
+					{
+						"beta": "2"
+					}
+				]
+			],
+			"diagnostics": [
+				{
+					"code": "unknown-prop",
+					"severity": "warning",
+					"path": "/0",
+					"node": "Panel",
+					"prop": "alpha",
+					"message": "prop \"alpha\" is not declared on node \"Panel\""
+				}
+			],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "a format's inline nodes beat a named vocabulary declaring the same name",
+		"format": "app/inline-wins",
+		"formats": {
+			"app/inline-wins": {
+				"syntax": "j5ml",
+				"vocabularies": [
+					"app.second"
+				],
+				"nodes": {
+					"Panel": {
+						"props": {
+							"alpha": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			}
+		},
+		"vocabularies": {
+			"app.second": {
+				"nodes": {
+					"Panel": {
+						"props": {
+							"beta": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[\"Panel\",{\"alpha\":\"1\",\"beta\":\"2\"}]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Panel",
+					"props": {
+						"alpha": "1"
+					},
+					"children": []
+				}
+			],
+			"jsml": [
+				[
+					"Panel",
+					{
+						"alpha": "1"
+					}
+				]
+			],
+			"diagnostics": [
+				{
+					"code": "unknown-prop",
+					"severity": "warning",
+					"path": "/0",
+					"node": "Panel",
+					"prop": "beta",
+					"message": "prop \"beta\" is not declared on node \"Panel\""
+				}
+			],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "a named vocabulary listed before html shadows a same-named HTML element",
+		"format": "app/shadow-named",
+		"formats": {
+			"app/shadow-named": {
+				"syntax": "j5ml",
+				"vocabularies": [
+					"app.markup",
+					"html"
+				]
+			}
+		},
+		"vocabularies": {
+			"app.markup": {
+				"nodes": {
+					"span": {
+						"props": {
+							"label": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[\"span\",{\"label\":\"x\"},\"hi\"]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "span",
+					"props": {
+						"label": "x"
+					},
+					"children": [
+						{
+							"text": "hi"
+						}
+					]
+				}
+			],
+			"jsml": [
+				[
+					"span",
+					{
+						"label": "x"
+					},
+					"hi"
+				]
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "listing html before a declared vocabulary is refused",
+		"format": "app/html-first",
+		"formats": {
+			"app/html-first": {
+				"syntax": "j5ml",
+				"vocabularies": [
+					"html",
+					"xtyle.components"
+				]
+			}
+		},
+		"vocabularies": {
+			"xtyle.components": {
+				"description": "The xtyle component set.",
+				"nodes": {
+					"xtyle-icon": {
+						"props": {
+							"name": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[]",
+		"expectedError": {
+			"message": "fragment format \"app/html-first\" lists the built-in html vocabulary before a declared vocabulary; html must be last so declared nodes always win"
+		}
+	},
+	{
+		"description": "a reference to a vocabulary the manifest does not declare is refused",
+		"format": "app/missing",
+		"formats": {
+			"app/missing": {
+				"syntax": "j5ml",
+				"vocabularies": [
+					"nope.missing"
+				]
+			}
+		},
+		"source": "[]",
+		"expectedError": {
+			"message": "fragment format \"app/missing\" references an undeclared vocabulary: \"nope.missing\""
+		}
+	},
+	{
+		"description": "a single-segment reference that is not a built-in is refused on its own terms",
+		"schemaValid": false,
+		"format": "app/single-segment",
+		"formats": {
+			"app/single-segment": {
+				"syntax": "j5ml",
+				"vocabularies": [
+					"foo"
+				]
+			}
+		},
+		"source": "[]",
+		"expectedError": {
+			"message": "fragment format \"app/single-segment\" references \"foo\", which is not a built-in vocabulary (built-ins: html); a host-declared vocabulary id needs two or more dot-separated segments"
+		}
+	},
+	{
+		"description": "an empty scope with no inline nodes is refused",
+		"format": "app/empty",
+		"formats": {
+			"app/empty": {
+				"syntax": "j5ml",
+				"vocabularies": []
+			}
+		},
+		"source": "[]",
+		"schemaValid": false,
+		"expectedError": {
+			"message": "fragment format \"app/empty\" declares no vocabulary and admits no nodes"
+		}
+	},
+	{
+		"description": "a node no vocabulary in scope declares is an error",
+		"format": "app/three",
+		"formats": {
+			"app/three": {
+				"syntax": "j5ml",
+				"vocabularies": [
+					"app.first",
+					"app.second"
+				],
+				"nodes": {
+					"Inline": {}
+				}
+			}
+		},
+		"vocabularies": {
+			"app.first": {
+				"nodes": {
+					"Panel": {}
+				}
+			},
+			"app.second": {
+				"nodes": {
+					"Badge": {}
+				}
+			}
+		},
+		"source": "[\"Nope\",{}]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [],
+			"jsml": [],
+			"diagnostics": [
+				{
+					"code": "unknown-node",
+					"severity": "error",
+					"path": "/0",
+					"node": "Nope",
+					"message": "node \"Nope\" is not declared by format \"app/three\""
+				}
+			],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "a vocabulary shadowing an always-stripped element alongside html is refused",
+		"format": "app/shadow-script",
+		"formats": {
+			"app/shadow-script": {
+				"syntax": "j5ml",
+				"vocabularies": [
+					"app.dangerous",
+					"html"
+				]
+			}
+		},
+		"vocabularies": {
+			"app.dangerous": {
+				"nodes": {
+					"script": {
+						"props": {
+							"src": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[]",
+		"expectedError": {
+			"message": "fragment format \"app/shadow-script\" brings a vocabulary declaring \"script\" into scope alongside the built-in html vocabulary; \"script\" is an element the sanitizer always strips and may not be shadowed"
+		}
+	},
+	{
+		"description": "the same vocabulary without html in scope resolves: the name carries no HTML meaning",
+		"format": "app/no-html",
+		"formats": {
+			"app/no-html": {
+				"syntax": "j5ml",
+				"vocabularies": [
+					"app.dangerous"
+				]
+			}
+		},
+		"vocabularies": {
+			"app.dangerous": {
+				"nodes": {
+					"script": {
+						"props": {
+							"src": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[\"script\",{\"src\":\"/a.js\"}]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "script",
+					"props": {
+						"src": "/a.js"
+					},
+					"children": []
+				}
+			],
+			"jsml": [
+				[
+					"script",
+					{
+						"src": "/a.js"
+					}
+				]
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "an inline nodes block shadowing an always-stripped element alongside html is refused",
+		"format": "app/shadow-inline",
+		"formats": {
+			"app/shadow-inline": {
+				"syntax": "j5ml",
+				"vocabularies": [
+					"html"
+				],
+				"nodes": {
+					"iframe": {
+						"props": {
+							"src": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[]",
+		"expectedError": {
+			"message": "fragment format \"app/shadow-inline\" brings a vocabulary declaring \"iframe\" into scope alongside the built-in html vocabulary; \"iframe\" is an element the sanitizer always strips and may not be shadowed"
+		}
+	},
+	{
+		"description": "a shared vocabulary under html syntax resolves alongside HTML and projects to markup",
+		"format": "app/xtyle-html",
+		"formats": {
+			"app/xtyle-html": {
+				"syntax": "html",
+				"vocabularies": [
+					"xtyle.components",
+					"html"
+				]
+			}
+		},
+		"vocabularies": {
+			"xtyle.components": {
+				"description": "The xtyle component set.",
+				"nodes": {
+					"xtyle-icon": {
+						"props": {
+							"name": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "<div><xtyle-icon name=\"gear\"></xtyle-icon></div>",
+		"expected": {
+			"contentType": "tree",
+			"html": "<div><xtyle-icon name=\"gear\"></xtyle-icon></div>",
+			"tree": [
+				{
+					"name": "div",
+					"props": {},
+					"children": [
+						{
+							"name": "xtyle-icon",
+							"props": {
+								"name": "gear"
+							},
+							"children": []
+						}
+					]
+				}
+			],
+			"jsml": [
+				[
+					"div",
+					[
+						"xtyle-icon",
+						{
+							"name": "gear"
+						}
+					]
+				]
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "the same shared vocabulary under j5ml syntax resolves without HTML in scope",
+		"format": "app/xtyle-j5ml",
+		"formats": {
+			"app/xtyle-j5ml": {
+				"syntax": "j5ml",
+				"vocabularies": [
+					"xtyle.components"
+				]
+			}
+		},
+		"vocabularies": {
+			"xtyle.components": {
+				"description": "The xtyle component set.",
+				"nodes": {
+					"xtyle-icon": {
+						"props": {
+							"name": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[[\"div\",{}],[\"xtyle-icon\",{\"name\":\"gear\"}]]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "xtyle-icon",
+					"props": {
+						"name": "gear"
+					},
+					"children": []
+				}
+			],
+			"jsml": [
+				[
+					"xtyle-icon",
+					{
+						"name": "gear"
+					}
+				]
+			],
+			"diagnostics": [
+				{
+					"code": "unknown-node",
+					"severity": "error",
+					"path": "/0",
+					"node": "div",
+					"message": "node \"div\" is not declared by format \"app/xtyle-j5ml\""
+				}
+			],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "a named vocabulary declaring style keeps its content out of the raw-text region",
+		"format": "app/named-style",
+		"formats": {
+			"app/named-style": {
+				"syntax": "html",
+				"vocabularies": [
+					"app.styling",
+					"html"
+				]
+			}
+		},
+		"vocabularies": {
+			"app.styling": {
+				"nodes": {
+					"style": {
+						"props": {
+							"label": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "<style label=\"x\">not raw text</style>",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "style",
+					"props": {
+						"label": "x"
+					},
+					"children": [
+						{
+							"text": "not raw text"
+						}
+					]
+				}
+			],
+			"jsml": [
+				[
+					"style",
+					{
+						"label": "x"
+					},
+					"not raw text"
+				]
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "a node from one vocabulary may parent a node from another",
+		"format": "app/containment",
+		"formats": {
+			"app/containment": {
+				"syntax": "j5ml",
+				"vocabularies": [
+					"app.first",
+					"app.second"
+				]
+			}
+		},
+		"vocabularies": {
+			"app.first": {
+				"nodes": {
+					"Panel": {}
+				}
+			},
+			"app.second": {
+				"nodes": {
+					"Badge": {}
+				}
+			}
+		},
+		"source": "[\"Panel\",{},[\"Badge\",{}]]",
+		"expected": {
+			"contentType": "tree",
+			"html": "",
+			"tree": [
+				{
+					"name": "Panel",
+					"props": {},
+					"children": [
+						{
+							"name": "Badge",
+							"props": {},
+							"children": []
+						}
+					]
+				}
+			],
+			"jsml": [
+				[
+					"Panel",
+					[
+						"Badge"
+					]
+				]
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	}
+]

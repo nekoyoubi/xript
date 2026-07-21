@@ -15,7 +15,7 @@ describe("Slot union", () => {
 				{ id: "statusbar", accepts: ["text/html"] },
 			],
 		});
-		assert.match(result, /type Slot = "sidebar" \| "statusbar";/);
+		assert.match(result, /type XriptSlot = "sidebar" \| "statusbar";/);
 	});
 });
 
@@ -399,12 +399,12 @@ describe("capability typing surface", () => {
 
 	it("emits a Capability scope union of declared keys", () => {
 		const out = generateTypes(manifest);
-		assert.match(out, /type Capability = "modify-state" \| "run\.command";/);
+		assert.match(out, /type XriptCapability = "modify-state" \| "run\.command";/);
 	});
 
 	it("emits an open CapabilityRef permitting read:/write: prefixes", () => {
 		const out = generateTypes(manifest);
-		assert.match(out, /type CapabilityRef = \(/);
+		assert.match(out, /type XriptCapabilityRef = \(/);
 		assert.match(out, /"read:modify-state"/);
 		assert.match(out, /"write:run\.command"/);
 		assert.match(out, /\| \(string & \{\}\)/);
@@ -413,14 +413,14 @@ describe("capability typing surface", () => {
 	it("emits capability types inside the global block in ambient mode", () => {
 		const out = generateTypes(manifest, { ambient: true });
 		assert.match(out, /declare global \{/);
-		assert.match(out, /\ttype Capability =/);
-		assert.match(out, /\ttype CapabilityRef =/);
+		assert.match(out, /\ttype XriptCapability =/);
+		assert.match(out, /\ttype XriptCapabilityRef =/);
 	});
 
 	it("omits capability types when none are declared", () => {
 		const out = generateTypes({ xript: "0.3", name: "host" });
-		assert.ok(!out.includes("type Capability"));
-		assert.ok(!out.includes("type CapabilityRef"));
+		assert.ok(!out.includes("type XriptCapability"));
+		assert.ok(!out.includes("type XriptCapabilityRef"));
 	});
 });
 

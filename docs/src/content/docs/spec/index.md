@@ -15,6 +15,7 @@ The specification is the contract every runtime, tool, and host implements. The 
 - [Capabilities](/spec/capabilities/) — default-deny grants, prefix subsumption, and the read/write mode lattice
 - [Bindings](/spec/bindings/) — host functions and namespaces, error vocabulary, naming grammars
 - [Hooks](/spec/hooks/) — event-typed slots and the dispatch contract
+- [Commands](/spec/commands/) — command-typed slots: the fill shape, bound arguments, resolution, and invocation
 - [Module-Format Mods](/spec/modules/) — ES module entries, the import deny, and approved libraries
 - [Host Harness](/spec/harness/) — synthetic hosts: stub bindings, journals, and replayable step scenarios
 - [Debugging](/spec/debugging/) — the DAP-shaped debug protocol
@@ -26,7 +27,7 @@ The specification is the contract every runtime, tool, and host implements. The 
 Every schema is served at its `$id` URL, with prior version ids resolving as aliases:
 
 - [`/schema/manifest/v0.7.json`](/schema/manifest/v0.7.json) — the app manifest schema
-- [`/schema/mod-manifest/v0.7.json`](/schema/mod-manifest/v0.7.json) — the mod manifest schema
+- [`/schema/mod-manifest/v0.8.json`](/schema/mod-manifest/v0.8.json) — the mod manifest schema
 - [`/schema/harness/v0.7.json`](/schema/harness/v0.7.json) and [`/schema/harness-steps/v0.7.json`](/schema/harness-steps/v0.7.json) — the harness descriptor and scenario shapes
 - [`/schema/capability-prompt/v0.5.json`](/schema/capability-prompt/v0.5.json), [`/schema/install-descriptor/v0.5.json`](/schema/install-descriptor/v0.5.json), [`/schema/discovery-result/v0.5.json`](/schema/discovery-result/v0.5.json), [`/schema/debug-messages/v0.5.json`](/schema/debug-messages/v0.5.json) — the host-side data shapes
 

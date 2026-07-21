@@ -41,8 +41,8 @@ describe("diffScores", () => {
 			{
 				xript: "0.3",
 				name: "rich",
-				bindings: { f: {} },
-				slots: [{ id: "a", accepts: ["text/html"], capability: "ui", description: "A." }],
+				bindings: { f: { execution: { duration: "brief" } } },
+				slots: [{ id: "a", accepts: ["text/html"], capability: "ui", description: "A.", execution: { duration: "brief" } }],
 				capabilities: { ui: { description: "UI." } },
 				events: [{ id: "x.y", description: "X." }],
 				libraries: { "doc-lib": { description: "Doc helpers.", capability: "ui" } },

@@ -14,7 +14,11 @@ fn opts() -> RuntimeOptions {
         hard_limits: None,
         libraries: HashMap::new(),
         role_preferences: HashMap::new(),
+        command_preferences: HashMap::new(),
         debug: None,
+        strict_html_vocabulary: false,
+        strict_bindings: false,
+        on_fragment_diagnostic: None,
     }
 }
 

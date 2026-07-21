@@ -1,4 +1,11 @@
-import type { QuickJSContext, QuickJSHandle } from "quickjs-emscripten";
+import type { QuickJSContext, QuickJSHandle } from "quickjs-emscripten-core";
+import { BindingError } from "./errors.js";
+
+function isThenable(value: unknown): boolean {
+	if (value === null) return false;
+	if (typeof value !== "object" && typeof value !== "function") return false;
+	return typeof (value as { then?: unknown }).then === "function";
+}
 
 function isStaticHandle(context: QuickJSContext, handle: QuickJSHandle): boolean {
 	return handle === context.undefined || handle === context.null || handle === context.true || handle === context.false;
@@ -10,29 +17,46 @@ export function safeDispose(context: QuickJSContext, handle: QuickJSHandle): voi
 	}
 }
 
-export function marshalToQuickJS(context: QuickJSContext, value: unknown): QuickJSHandle {
+export function marshalToQuickJS(context: QuickJSContext, value: unknown, bindingName = "host function"): QuickJSHandle {
 	if (value === undefined) return context.undefined;
 	if (value === null) return context.null;
 	if (typeof value === "boolean") return value ? context.true : context.false;
 	if (typeof value === "number") return context.newNumber(value);
 	if (typeof value === "string") return context.newString(value);
 
+	if (isThenable(value)) {
+		throw new BindingError(
+			bindingName,
+			"returned a promise, but the synchronous sandbox cannot await it. Declare the binding with \"async\": true in the manifest and create the runtime with initXriptAsync(), or return a plain value.",
+		);
+	}
+
 	if (Array.isArray(value)) {
 		const arr = context.newArray();
-		for (let i = 0; i < value.length; i++) {
-			const element = marshalToQuickJS(context, value[i]);
-			context.setProp(arr, i, element);
-			safeDispose(context, element);
+		try {
+			for (let i = 0; i < value.length; i++) {
+				const element = marshalToQuickJS(context, value[i], bindingName);
+				context.setProp(arr, i, element);
+				safeDispose(context, element);
+			}
+		} catch (e) {
+			safeDispose(context, arr);
+			throw e;
 		}
 		return arr;
 	}
 
 	if (typeof value === "object") {
 		const obj = context.newObject();
-		for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
-			const propHandle = marshalToQuickJS(context, val);
-			context.setProp(obj, key, propHandle);
-			safeDispose(context, propHandle);
+		try {
+			for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+				const propHandle = marshalToQuickJS(context, val, bindingName);
+				context.setProp(obj, key, propHandle);
+				safeDispose(context, propHandle);
+			}
+		} catch (e) {
+			safeDispose(context, obj);
+			throw e;
 		}
 		return obj;
 	}

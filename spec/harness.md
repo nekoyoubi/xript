@@ -7,7 +7,7 @@ Two data shapes define it, and they are the whole contract:
 - [`harness.schema.json`](harness.schema.json) — the **harness descriptor**: stub implementations for declared bindings, plus the capability grants in force.
 - [`harness-steps.schema.json`](harness-steps.schema.json) — a **steps file**: an ordered scenario (load mods, invoke exports, emit events, fire hooks, read the journal).
 
-The session itself is not an API surface. A batch runner (`xript run --harness … --steps …`) and an interactive session host (the MCP server's `xript_host_*` tools) execute the same descriptor and the same step vocabulary; one holds the runtime across calls, the other replays a file. Anything expressible interactively is expressible as a steps file, and vice versa.
+The session itself is not an API surface. A batch runner (`xript run --harness … --steps …`) and an interactive session host (the MCP server's `xript_host_*` tools) execute the same descriptor and **the same step field names** ([the canonical vocabulary below](#the-steps-file)); one holds the runtime across calls, the other replays a file. A session built with the canonical fields transcribes verbatim into a steps file, and a steps file replays as an interactive session — the two are one vocabulary with two front doors.
 
 ## The harness descriptor
 
@@ -69,7 +69,7 @@ The manifest's allow-list and capability gates still govern what a mod may impor
 ```json
 {
 	"steps": [
-		{ "action": "load-mod", "manifest": "./mod.json", "source": "./mod.js" },
+		{ "action": "load-mod", "manifest": "./mod.json", "sourcePath": "./mod.js" },
 		{ "action": "invoke", "export": "transform", "args": ["hello"] },
 		{ "action": "emit", "event": "tick", "payload": { "count": 1 } },
 		{ "action": "fire-hook", "hook": "on-save", "data": { "path": "/tmp/x" } },
@@ -78,7 +78,16 @@ The manifest's allow-list and capability gates still govern what a mod may impor
 }
 ```
 
-Steps execute in order against one session. `load-mod` may appear any number of times — multiple mods share the host, so slot fills, provider-role resolution, and event fan-out across mods are all testable. Relative `manifest` and `source` paths resolve against the steps file's own directory. A mod whose fills reference file-sourced fragments lists them under `sources`, keyed by the path the manifest names: `"sources": { "fragments/panel.html": "../fragments/panel.html" }`.
+Steps execute in order against one session. `load-mod` may appear any number of times — multiple mods share the host, so slot fills, provider-role resolution, and event fan-out across mods are all testable. Relative `manifest` and `sourcePath` paths resolve against the steps file's own directory.
+
+The entry script and a mod's fill sources each come in a path form and an inline form, named in parallel so a step reads the same on both front doors:
+
+| | by path | inline |
+|---|---|---|
+| entry script | `sourcePath` | `sourceText` |
+| fill sources (keyed by the path the manifest names) | `sourcePaths` | `sourceTexts` |
+
+`"sourcePaths": { "fragments/panel.html": "../fragments/panel.html" }` loads a fill fragment from disk; `"sourceTexts": { "fragments/panel.html": "<div>…</div>" }` supplies it inline. The earlier `source`, `sources`, and `exportName` are **deprecated aliases** (`source`/`sources` read as paths, `exportName` as `export`); they still run but emit a deprecation notice, and `xript init` scaffolds the canonical names.
 
 A failing step is captured as that step's result (`ok: false` plus the error) and execution continues — a scenario can assert an expected denial mid-run. Batch runners report failure overall when any step failed.
 

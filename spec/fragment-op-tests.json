@@ -1,0 +1,922 @@
+[
+  {
+    "description": "built-in html sanitizes a setAttr href",
+    "format": "text/html",
+    "ops": [
+      {
+        "op": "setAttr",
+        "selector": "#a",
+        "attr": "href",
+        "value": "javascript:alert(1)"
+      }
+    ],
+    "expected": {
+      "ops": [],
+      "diagnostics": [
+        {
+          "code": "unsafe-prop",
+          "severity": "warning",
+          "node": "#a",
+          "prop": "href",
+          "message": "prop \"href\" was rejected by its sink",
+          "path": "/0"
+        }
+      ]
+    }
+  },
+  {
+    "description": "built-in html allows a safe setAttr href",
+    "format": "text/html",
+    "ops": [
+      {
+        "op": "setAttr",
+        "selector": "#a",
+        "attr": "href",
+        "value": "/docs"
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "setAttr",
+          "selector": "#a",
+          "target": {
+            "by": "id",
+            "id": "a"
+          },
+          "prop": "href",
+          "attr": "href",
+          "value": "/docs"
+        }
+      ],
+      "diagnostics": []
+    }
+  },
+  {
+    "description": "built-in html refuses an event-handler prop",
+    "format": "text/html",
+    "ops": [
+      {
+        "op": "setProp",
+        "selector": ".x",
+        "prop": "onclick",
+        "value": "steal()"
+      }
+    ],
+    "expected": {
+      "ops": [],
+      "diagnostics": [
+        {
+          "code": "unsafe-prop",
+          "severity": "warning",
+          "node": ".x",
+          "prop": "onclick",
+          "message": "prop \"onclick\" is not settable on an HTML node",
+          "path": "/0"
+        }
+      ]
+    }
+  },
+  {
+    "description": "built-in html sanitizes replaceChildren markup",
+    "format": "text/html",
+    "ops": [
+      {
+        "op": "replaceChildren",
+        "selector": "#slot",
+        "value": "<p onclick=\"x()\">hi</p><script>bad()</script>"
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "replaceChildren",
+          "selector": "#slot",
+          "target": {
+            "by": "id",
+            "id": "slot"
+          },
+          "value": "<p>hi</p>"
+        }
+      ],
+      "diagnostics": []
+    }
+  },
+  {
+    "description": "built-in html keeps css selectors and sugar ops",
+    "format": "text/html",
+    "ops": [
+      {
+        "op": "addClass",
+        "selector": ".card",
+        "value": "active"
+      },
+      {
+        "op": "toggle",
+        "selector": "#a",
+        "value": 1
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "addClass",
+          "selector": ".card",
+          "target": {
+            "by": "selector",
+            "selector": ".card"
+          },
+          "value": "active"
+        },
+        {
+          "op": "toggle",
+          "selector": "#a",
+          "target": {
+            "by": "id",
+            "id": "a"
+          },
+          "value": false
+        }
+      ],
+      "diagnostics": []
+    }
+  },
+  {
+    "description": "setText coerces a missing value to the empty string",
+    "format": "text/html",
+    "ops": [
+      {
+        "op": "setText",
+        "selector": "#a"
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "setText",
+          "selector": "#a",
+          "target": {
+            "by": "id",
+            "id": "a"
+          },
+          "value": ""
+        }
+      ],
+      "diagnostics": []
+    }
+  },
+  {
+    "description": "setProp without a prop name is refused",
+    "format": "text/html",
+    "ops": [
+      {
+        "op": "setProp",
+        "selector": "#a",
+        "value": "x"
+      }
+    ],
+    "expected": {
+      "ops": [],
+      "diagnostics": [
+        {
+          "code": "op-unknown-prop",
+          "severity": "warning",
+          "node": "#a",
+          "message": "op \"setProp\" needs a prop name",
+          "path": "/0"
+        }
+      ]
+    }
+  },
+  {
+    "description": "a tree vocabulary refuses HTML sugar ops",
+    "format": "application/x-ratatui+json",
+    "formats": {
+      "application/x-ratatui+json": {
+        "syntax": "jsml",
+        "nodes": {
+          "Block": {
+            "props": {
+              "title": {
+                "type": "string"
+              },
+              "link": {
+                "type": "string",
+                "sink": "uri"
+              }
+            },
+            "children": "any"
+          },
+          "Gauge": {
+            "props": {
+              "ratio": {
+                "type": "number"
+              },
+              "style": {
+                "type": "string",
+                "sink": "css"
+              }
+            },
+            "children": "none",
+            "bindTo": "ratio"
+          }
+        }
+      }
+    },
+    "ops": [
+      {
+        "op": "addClass",
+        "selector": "#g",
+        "value": "on"
+      }
+    ],
+    "expected": {
+      "ops": [],
+      "diagnostics": [
+        {
+          "code": "unsupported-op",
+          "severity": "warning",
+          "node": "#g",
+          "message": "op \"addClass\" is HTML-vocabulary sugar and has no meaning in format \"application/x-ratatui+json\"",
+          "path": "/0"
+        }
+      ]
+    }
+  },
+  {
+    "description": "a tree vocabulary refuses a CSS selector target",
+    "format": "application/x-ratatui+json",
+    "formats": {
+      "application/x-ratatui+json": {
+        "syntax": "jsml",
+        "nodes": {
+          "Block": {
+            "props": {
+              "title": {
+                "type": "string"
+              },
+              "link": {
+                "type": "string",
+                "sink": "uri"
+              }
+            },
+            "children": "any"
+          },
+          "Gauge": {
+            "props": {
+              "ratio": {
+                "type": "number"
+              },
+              "style": {
+                "type": "string",
+                "sink": "css"
+              }
+            },
+            "children": "none",
+            "bindTo": "ratio"
+          }
+        }
+      }
+    },
+    "ops": [
+      {
+        "op": "setProp",
+        "selector": ".gauge",
+        "prop": "ratio",
+        "value": 0.5
+      }
+    ],
+    "expected": {
+      "ops": [],
+      "diagnostics": [
+        {
+          "code": "unsupported-target",
+          "severity": "warning",
+          "node": ".gauge",
+          "message": "format \"application/x-ratatui+json\" has no CSS selectors — target a node by id (\"#name\")",
+          "path": "/0"
+        }
+      ]
+    }
+  },
+  {
+    "description": "a tree vocabulary keeps an inert typed prop value",
+    "format": "application/x-ratatui+json",
+    "formats": {
+      "application/x-ratatui+json": {
+        "syntax": "jsml",
+        "nodes": {
+          "Block": {
+            "props": {
+              "title": {
+                "type": "string"
+              },
+              "link": {
+                "type": "string",
+                "sink": "uri"
+              }
+            },
+            "children": "any"
+          },
+          "Gauge": {
+            "props": {
+              "ratio": {
+                "type": "number"
+              },
+              "style": {
+                "type": "string",
+                "sink": "css"
+              }
+            },
+            "children": "none",
+            "bindTo": "ratio"
+          }
+        }
+      }
+    },
+    "ops": [
+      {
+        "op": "setProp",
+        "selector": "#g",
+        "prop": "ratio",
+        "value": 0.62
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "setProp",
+          "selector": "#g",
+          "target": {
+            "by": "id",
+            "id": "g"
+          },
+          "prop": "ratio",
+          "value": 0.62
+        }
+      ],
+      "diagnostics": []
+    }
+  },
+  {
+    "description": "a tree vocabulary routes a prop through its declared uri sink",
+    "format": "application/x-ratatui+json",
+    "formats": {
+      "application/x-ratatui+json": {
+        "syntax": "jsml",
+        "nodes": {
+          "Block": {
+            "props": {
+              "title": {
+                "type": "string"
+              },
+              "link": {
+                "type": "string",
+                "sink": "uri"
+              }
+            },
+            "children": "any"
+          },
+          "Gauge": {
+            "props": {
+              "ratio": {
+                "type": "number"
+              },
+              "style": {
+                "type": "string",
+                "sink": "css"
+              }
+            },
+            "children": "none",
+            "bindTo": "ratio"
+          }
+        }
+      }
+    },
+    "ops": [
+      {
+        "op": "setProp",
+        "selector": "#b",
+        "prop": "link",
+        "value": "javascript:alert(1)"
+      }
+    ],
+    "expected": {
+      "ops": [],
+      "diagnostics": [
+        {
+          "code": "unsafe-prop",
+          "severity": "warning",
+          "node": "#b",
+          "prop": "link",
+          "message": "prop \"link\" was rejected by sink \"uri\"",
+          "path": "/0"
+        }
+      ]
+    }
+  },
+  {
+    "description": "a tree vocabulary refuses a prop no node declares",
+    "format": "application/x-ratatui+json",
+    "formats": {
+      "application/x-ratatui+json": {
+        "syntax": "jsml",
+        "nodes": {
+          "Block": {
+            "props": {
+              "title": {
+                "type": "string"
+              },
+              "link": {
+                "type": "string",
+                "sink": "uri"
+              }
+            },
+            "children": "any"
+          },
+          "Gauge": {
+            "props": {
+              "ratio": {
+                "type": "number"
+              },
+              "style": {
+                "type": "string",
+                "sink": "css"
+              }
+            },
+            "children": "none",
+            "bindTo": "ratio"
+          }
+        }
+      }
+    },
+    "ops": [
+      {
+        "op": "setProp",
+        "selector": "#b",
+        "prop": "nope",
+        "value": "x"
+      }
+    ],
+    "expected": {
+      "ops": [],
+      "diagnostics": [
+        {
+          "code": "op-unknown-prop",
+          "severity": "warning",
+          "node": "#b",
+          "prop": "nope",
+          "message": "prop \"nope\" is not declared by any node of format \"application/x-ratatui+json\"",
+          "path": "/0"
+        }
+      ]
+    }
+  },
+  {
+    "description": "conflicting sinks for one prop name are refused",
+    "format": "application/x-conflict+json",
+    "formats": {
+      "application/x-conflict+json": {
+        "syntax": "jsml",
+        "nodes": {
+          "Alpha": {
+            "props": {
+              "where": {
+                "type": "string",
+                "sink": "css"
+              }
+            }
+          },
+          "Beta": {
+            "props": {
+              "where": {
+                "type": "string",
+                "sink": "uri"
+              }
+            }
+          }
+        }
+      }
+    },
+    "ops": [
+      {
+        "op": "setProp",
+        "selector": "#n",
+        "prop": "where",
+        "value": "color:red"
+      }
+    ],
+    "expected": {
+      "ops": [],
+      "diagnostics": [
+        {
+          "code": "prop-sink-conflict",
+          "severity": "warning",
+          "node": "#n",
+          "prop": "where",
+          "message": "prop \"where\" is declared with conflicting sinks (css, uri) in format \"application/x-conflict+json\"",
+          "path": "/0"
+        }
+      ]
+    }
+  },
+  {
+    "description": "replaceChildren over a tree vocabulary runs the node list through the vocabulary",
+    "format": "application/x-ratatui+json",
+    "formats": {
+      "application/x-ratatui+json": {
+        "syntax": "jsml",
+        "nodes": {
+          "Block": {
+            "props": {
+              "title": {
+                "type": "string"
+              },
+              "link": {
+                "type": "string",
+                "sink": "uri"
+              }
+            },
+            "children": "any"
+          },
+          "Gauge": {
+            "props": {
+              "ratio": {
+                "type": "number"
+              },
+              "style": {
+                "type": "string",
+                "sink": "css"
+              }
+            },
+            "children": "none",
+            "bindTo": "ratio"
+          }
+        }
+      }
+    },
+    "ops": [
+      {
+        "op": "replaceChildren",
+        "selector": "#b",
+        "value": [
+          [
+            "Gauge",
+            {
+              "ratio": 0.5,
+              "bogus": 1
+            }
+          ],
+          [
+            "Nope"
+          ]
+        ]
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "replaceChildren",
+          "selector": "#b",
+          "target": {
+            "by": "id",
+            "id": "b"
+          },
+          "value": [
+            [
+              "Gauge",
+              {
+                "ratio": 0.5
+              }
+            ]
+          ]
+        }
+      ],
+      "diagnostics": []
+    }
+  },
+  {
+    "description": "setText coerces an explicit null value to the empty string",
+    "format": "text/html",
+    "ops": [
+      {
+        "op": "setText",
+        "selector": "#a",
+        "value": null
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "setText",
+          "selector": "#a",
+          "target": {
+            "by": "id",
+            "id": "a"
+          },
+          "value": ""
+        }
+      ],
+      "diagnostics": []
+    }
+  },
+  {
+    "description": "setText coerces an object value without throwing",
+    "format": "text/html",
+    "ops": [
+      {
+        "op": "setText",
+        "selector": "#a",
+        "value": {
+          "toString": 1
+        }
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "setText",
+          "selector": "#a",
+          "target": {
+            "by": "id",
+            "id": "a"
+          },
+          "value": "[object Object]"
+        }
+      ],
+      "diagnostics": []
+    }
+  },
+  {
+    "description": "addClass coerces an explicit null value to the empty string",
+    "format": "text/html",
+    "ops": [
+      {
+        "op": "addClass",
+        "selector": "#a",
+        "value": null
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "addClass",
+          "selector": "#a",
+          "target": {
+            "by": "id",
+            "id": "a"
+          },
+          "value": ""
+        }
+      ],
+      "diagnostics": []
+    }
+  },
+  {
+    "description": "an unrecognized op reaches the host with no value",
+    "format": "text/html",
+    "ops": [
+      {
+        "op": "somethingElse",
+        "selector": "#a",
+        "value": "javascript:alert(1)"
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "somethingElse",
+          "selector": "#a",
+          "target": {
+            "by": "id",
+            "id": "a"
+          }
+        }
+      ],
+      "diagnostics": []
+    }
+  },
+  {
+    "description": "conflicting sinks across two in-scope vocabularies are refused, sinks sorted",
+    "format": "application/x-cross+json",
+    "formats": {
+      "application/x-cross+json": {
+        "syntax": "j5ml",
+        "vocabularies": [
+          "app.styling",
+          "app.layout"
+        ]
+      }
+    },
+    "vocabularies": {
+      "app.styling": {
+        "nodes": {
+          "Alpha": {
+            "props": {
+              "where": {
+                "type": "string",
+                "sink": "uri"
+              }
+            }
+          }
+        }
+      },
+      "app.layout": {
+        "nodes": {
+          "Beta": {
+            "props": {
+              "where": {
+                "type": "string",
+                "sink": "css"
+              }
+            }
+          }
+        }
+      }
+    },
+    "ops": [
+      {
+        "op": "setProp",
+        "selector": "#n",
+        "prop": "where",
+        "value": "color:red"
+      }
+    ],
+    "expected": {
+      "ops": [],
+      "diagnostics": [
+        {
+          "code": "prop-sink-conflict",
+          "severity": "warning",
+          "node": "#n",
+          "prop": "where",
+          "message": "prop \"where\" is declared with conflicting sinks (css, uri) in format \"application/x-cross+json\"",
+          "path": "/0"
+        }
+      ]
+    }
+  },
+  {
+    "description": "a prop declared only by the second vocabulary routes through that vocabulary, not the html fallback",
+    "format": "application/x-second+json",
+    "formats": {
+      "application/x-second+json": {
+        "syntax": "j5ml",
+        "vocabularies": [
+          "app.first",
+          "app.second",
+          "html"
+        ]
+      }
+    },
+    "vocabularies": {
+      "app.first": {
+        "nodes": {
+          "Alpha": {
+            "props": {
+              "title": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "app.second": {
+        "nodes": {
+          "Beta": {
+            "props": {
+              "href": {
+                "type": "string",
+                "sink": "text"
+              }
+            }
+          }
+        }
+      }
+    },
+    "ops": [
+      {
+        "op": "setProp",
+        "selector": "#n",
+        "prop": "href",
+        "value": "javascript:alert(1)"
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "setProp",
+          "selector": "#n",
+          "target": {
+            "by": "id",
+            "id": "n"
+          },
+          "prop": "href",
+          "value": "javascript:alert(1)"
+        }
+      ],
+      "diagnostics": []
+    }
+  },
+  {
+    "description": "a host-declared html format keeps selector-targeted ops and sugar",
+    "format": "app/mixed",
+    "formats": {
+      "app/mixed": {
+        "syntax": "html",
+        "vocabularies": [
+          "html"
+        ],
+        "nodes": {
+          "Widget": {
+            "props": {
+              "label": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "ops": [
+      {
+        "op": "addClass",
+        "selector": ".card",
+        "value": "active"
+      },
+      {
+        "op": "setAttr",
+        "selector": "#a",
+        "attr": "href",
+        "value": "/docs"
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "addClass",
+          "selector": ".card",
+          "target": {
+            "by": "selector",
+            "selector": ".card"
+          },
+          "value": "active"
+        },
+        {
+          "op": "setAttr",
+          "selector": "#a",
+          "target": {
+            "by": "id",
+            "id": "a"
+          },
+          "prop": "href",
+          "attr": "href",
+          "value": "/docs"
+        }
+      ],
+      "diagnostics": []
+    }
+  },
+  {
+    "description": "replaceChildren over a host-declared html format keeps its declared custom elements",
+    "format": "app/mixed",
+    "formats": {
+      "app/mixed": {
+        "syntax": "html",
+        "vocabularies": [
+          "html"
+        ],
+        "nodes": {
+          "Widget": {
+            "props": {
+              "label": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "ops": [
+      {
+        "op": "replaceChildren",
+        "selector": "#slot",
+        "value": "<div class=\"c\"><Widget label=\"w\"></Widget></div><script>bad()</script>"
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "replaceChildren",
+          "selector": "#slot",
+          "target": {
+            "by": "id",
+            "id": "slot"
+          },
+          "value": "<div class=\"c\"><Widget label=\"w\"></Widget></div>"
+        }
+      ],
+      "diagnostics": []
+    }
+  }
+]

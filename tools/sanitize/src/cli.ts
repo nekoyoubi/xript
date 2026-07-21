@@ -25,7 +25,7 @@ try {
 	const input = await readFile(filePath, "utf-8");
 
 	if (validate) {
-		const result = validateFragment(input, "text/html");
+		const result = validateFragment(input, "text/html", null, null);
 		if (result.valid) {
 			console.log("Fragment is clean — nothing was stripped.");
 		} else {

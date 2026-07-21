@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { readFile, rm, mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -35,6 +36,41 @@ describe("generateDocs", () => {
 		assert.ok(index.content.includes("`log()`"));
 		assert.ok(index.content.includes("`player`"));
 		assert.ok(index.content.includes("1 function"));
+	});
+
+	it("escapes a pipe in a table cell so the row stays well-formed", () => {
+		const result = generateDocs({
+			xript: "0.1",
+			name: "test",
+			capabilities: { "risky.scope": { description: "left | right", risk: "high" } },
+			bindings: {
+				f: { description: "d", params: [{ name: "x", type: "string", description: "a | b" }], returns: "string" },
+			},
+		});
+		const index = result.pages.find((p) => p.slug === "index");
+		const capRow = index.content.split("\n").find((l) => l.includes("risky.scope"));
+		// a raw `|` would make the row a 5-cell row against a 4-column header; escaped it stays 4
+		assert.ok(capRow.includes("left \\| right"), "capability description pipe should be escaped");
+		assert.equal(capRow.split(/(?<!\\)\|/).length - 2, 4, "capability row should have exactly 4 cells");
+
+		const fPage = result.pages.find((p) => p.slug === "bindings/f");
+		const paramRow = fPage.content.split("\n").find((l) => l.includes("`x`"));
+		assert.ok(paramRow.includes("a \\| b"), "param description pipe should be escaped");
+	});
+
+	it("does not print a literal `undefined` for a binding with no description", () => {
+		const result = generateDocs({
+			xript: "0.1",
+			name: "test",
+			bindings: {
+				log: { params: [] },
+				player: { members: { getHealth: { returns: "number" } } },
+			},
+		});
+		const index = result.pages.find((p) => p.slug === "index");
+		assert.ok(!index.content.includes("undefined"), "index leaked a literal `undefined`");
+		const nsPage = result.pages.find((p) => p.slug === "bindings/player");
+		assert.ok(nsPage && !nsPage.content.includes("undefined"), "namespace page leaked `undefined`");
 	});
 
 	it("generates function binding pages", () => {
@@ -360,6 +396,8 @@ describe("generateDocs", () => {
 		assert.ok(apiPage.content.includes("## Fragment Proxy Methods"));
 		assert.ok(apiPage.content.includes("toggle"));
 		assert.ok(apiPage.content.includes("replaceChildren"));
+		assert.ok(apiPage.content.includes("setProp(selector, prop, value)"), "documents the canonical setProp op");
+		assert.match(apiPage.content, /setAttr[^\n]*Deprecated/, "marks setAttr deprecated");
 	});
 
 	it("does not generate slot docs when no slots defined", () => {
@@ -433,6 +471,68 @@ describe("generateDocs", () => {
 		assert.ok(index.content.includes("| Yes |"));
 		assert.ok(index.content.includes("| No |"));
 	});
+
+	it("publishes a node table for a declared fragment format", () => {
+		const result = generateDocs({
+			xript: "0.8",
+			name: "panel-host",
+			formats: {
+				"application/x-panel+json": {
+					description: "The sidebar vocabulary.",
+					syntax: "j5ml",
+					nodes: {
+						Panel: { props: { heading: { type: "string" }, collapsible: { type: "boolean", default: false } } },
+						Link: { children: "text", props: { href: { type: "string", sink: "uri" } } },
+					},
+				},
+			},
+			slots: [{ id: "sidebar.left", accepts: ["application/x-panel+json"], multiple: true }],
+		});
+		const content = result.pages.find((p) => p.slug === "index").content;
+		assert.match(content, /## Fragment Formats/);
+		assert.match(content, /### `application\/x-panel\+json`/);
+		assert.match(content, /\| `Panel` \|/);
+		assert.match(content, /`heading`: `string`/);
+		assert.match(content, /`collapsible`: `boolean`, default `false`/);
+		assert.match(content, /`href`: `string`, sink `uri`/);
+		assert.match(content, /\| text \|/);
+	});
+
+	it("resolves a named vocabulary referenced by a format", () => {
+		const result = generateDocs({
+			xript: "0.8",
+			name: "acme-host",
+			vocabularies: {
+				"acme.components": {
+					nodes: { "acme-icon": { children: "none", props: { name: { type: "string" } } }, "acme-card": { props: { heading: { type: "string" } } } },
+				},
+			},
+			formats: { "application/x-acme+json": { syntax: "j5ml", vocabularies: ["acme.components"] } },
+			slots: [{ id: "main", accepts: ["application/x-acme+json"] }],
+		});
+		const content = result.pages.find((p) => p.slug === "index").content;
+		assert.match(content, /\| `acme-icon` \|/);
+		assert.match(content, /\| `acme-card` \|/);
+		assert.match(content, /`heading`: `string`/);
+	});
+
+	it("does not enumerate the built-in HTML element set for an html-scoped format", () => {
+		const result = generateDocs({
+			xript: "0.8",
+			name: "html-host",
+			formats: { "text/x-host+html": { syntax: "html", vocabularies: ["html"] } },
+			slots: [{ id: "s", accepts: ["text/x-host+html"] }],
+		});
+		const content = result.pages.find((p) => p.slug === "index").content;
+		assert.match(content, /## Fragment Formats/);
+		assert.match(content, /No host-declared nodes/);
+		assert.ok(!content.includes("| `div` |"), "must not dump HTML elements");
+	});
+
+	it("omits the Fragment Formats section when no formats are declared", () => {
+		const result = generateDocs({ xript: "0.8", name: "plain", slots: [{ id: "s", accepts: ["text/html"] }] });
+		assert.ok(!result.pages.find((p) => p.slug === "index").content.includes("## Fragment Formats"));
+	});
 });
 
 describe("writeDocsToDirectory with frontmatter", () => {
@@ -480,4 +580,82 @@ describe("writeDocsToDirectory with frontmatter", () => {
 			await rm(tmpDir, { recursive: true });
 		}
 	});
+});
+
+describe("runtime-configured capability scopes", () => {
+	const host = {
+		xript: "0.8",
+		name: "fs-host",
+		capabilities: {
+			fs: { description: "Filesystem." },
+			"fs.workspace": {
+				description: "A configured workspace root.",
+				instances: { description: "One per configured workspace.", example: "fs.workspace.my-project" },
+			},
+		},
+	};
+
+	const indexOf = (manifest) => generateDocs(manifest).pages[0].content;
+
+	it("documents the dynamic half of the scope tree", () => {
+		const out = indexOf(host);
+		assert.match(out, /### Runtime-configured scopes/);
+		assert.match(out, /One per configured workspace\./);
+		assert.match(out, /fs\.workspace\.my-project/);
+	});
+
+	it("omits the section when no scope declares instances", () => {
+		const plain = { ...host, capabilities: { fs: { description: "Filesystem." } } };
+		assert.doesNotMatch(indexOf(plain), /Runtime-configured scopes/);
+	});
+});
+
+describe("array element precedence", () => {
+	// Both renderers appended `[]` without parenthesising, so an array of a union documented as
+	// `string | number[]` — a union with an array. The signature block is fenced as TypeScript,
+	// so the wrong type was published as code an adopter copies.
+	const host = {
+		xript: "0.8",
+		name: "h",
+		types: { Player: { description: "P.", fields: {} } },
+		bindings: {
+			arrayOfUnion: { description: "A.", params: [{ name: "x", type: { array: { union: ["string", "number"] } } }] },
+			plainArray: { description: "B.", params: [], returns: { array: "Player" } },
+		},
+	};
+	const pageFor = (name) => generateDocs(host).pages.find((p) => p.slug.includes(name)).content;
+
+	it("parenthesises a union in the signature block", () => {
+		assert.match(pageFor("arrayOfUnion"), /\(string \| number\)\[\]/);
+	});
+
+	it("parenthesises a union in the parameter table", () => {
+		assert.match(pageFor("arrayOfUnion"), /\(`string` \\| `number`\)\[\]/);
+	});
+
+	it("leaves a plain element type unparenthesised", () => {
+		const page = pageFor("plainArray");
+		assert.match(page, /Player\[\]/);
+		assert.doesNotMatch(page, /\(`?Player`?\)\[\]/);
+	});
+});
+
+describe("typeRef rendering corpus", () => {
+	// `typegen` and `docgen` are two resolvers of one grammar. When the array-of-union precedence
+	// bug shipped, BOTH were wrong the same way, so a test asserting only that they agree would
+	// have passed. The corpus pins the expected text instead.
+	const corpus = JSON.parse(readFileSync(new URL("../../../spec/type-ref-tests.json", import.meta.url), "utf-8"));
+	const base = { xript: "0.8", name: "h", types: { Player: { description: "P.", fields: {} } } };
+	const manifestFor = (ref) => ({ ...base, bindings: { f: { description: "F.", params: [], returns: ref } } });
+
+	it("carries cases", () => {
+		assert.ok(corpus.cases.length > 0);
+	});
+
+	for (const testCase of corpus.cases) {
+		it(testCase.name, () => {
+			const rendered = (generateDocs(manifestFor(testCase.ref)).pages.find((pg) => pg.slug.includes("bindings/f")).content.match(/## Returns\s+(.+)/) || [])[1].trim();
+			assert.equal(rendered, testCase.markdown, testCase.name);
+		});
+	}
 });

@@ -6,7 +6,12 @@
 	"bindings": {
 		"log": {
 			"description": "Log a message.",
-			"params": [{"name": "msg", "type": "string"}]
+			"params": [
+				{
+					"name": "msg",
+					"type": "string"
+				}
+			]
 		}
 	},
 	"capabilities": {
@@ -15,10 +20,151 @@
 			"risk": "low"
 		}
 	},
+	"formats": {
+		"application/x-ratatui+json": {
+			"description": "Ratatui widget tree. Node names are Ratatui struct names.",
+			"syntax": "j5ml",
+			"nodes": {
+				"Block": {
+					"props": {
+						"title": {
+							"type": "string"
+						},
+						"borders": {
+							"type": "string",
+							"enum": [
+								"NONE",
+								"ALL",
+								"TOP",
+								"BOTTOM",
+								"LEFT",
+								"RIGHT"
+							]
+						},
+						"border_type": {
+							"type": "string",
+							"enum": [
+								"Plain",
+								"Rounded",
+								"Double",
+								"Thick"
+							]
+						},
+						"border_style": {
+							"type": "object"
+						}
+					}
+				},
+				"Layout": {
+					"props": {
+						"direction": {
+							"type": "string",
+							"enum": [
+								"Horizontal",
+								"Vertical"
+							]
+						},
+						"constraints": {
+							"type": "array",
+							"items": {
+								"type": "string"
+							}
+						}
+					}
+				},
+				"Paragraph": {
+					"props": {
+						"alignment": {
+							"type": "string",
+							"enum": [
+								"Left",
+								"Center",
+								"Right"
+							]
+						},
+						"style": {
+							"type": "object"
+						}
+					}
+				},
+				"Line": {
+					"props": {
+						"style": {
+							"type": "object"
+						}
+					}
+				},
+				"Span": {
+					"children": "text",
+					"props": {
+						"style": {
+							"type": "object"
+						}
+					}
+				},
+				"Gauge": {
+					"children": "none",
+					"bindTo": "ratio",
+					"props": {
+						"ratio": {
+							"type": "number",
+							"minimum": 0,
+							"maximum": 1
+						},
+						"gauge_style": {
+							"type": "object"
+						},
+						"label": {
+							"type": "string"
+						},
+						"style": {
+							"type": "object"
+						}
+					}
+				},
+				"List": {
+					"props": {
+						"style": {
+							"type": "object"
+						}
+					}
+				},
+				"Table": {
+					"props": {
+						"header": {
+							"type": "array"
+						},
+						"widths": {
+							"type": "array"
+						},
+						"style": {
+							"type": "object"
+						}
+					}
+				},
+				"Sparkline": {
+					"children": "none",
+					"props": {
+						"data": {
+							"type": "array",
+							"items": {
+								"type": "number"
+							}
+						},
+						"style": {
+							"type": "object"
+						}
+					}
+				}
+			}
+		}
+	},
 	"slots": [
 		{
 			"id": "main",
-			"accepts": ["application/x-ratatui+json"],
+			"accepts": [
+				"application/x-ratatui+json"
+			],
 			"multiple": false,
 			"style": "isolated"
 		}

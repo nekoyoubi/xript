@@ -45,6 +45,22 @@ public record Manifest
     public Dictionary<string, LibraryDef>? Libraries { get; init; }
 
     /// <summary>
+    /// Fragment formats this host declares, keyed by media type. Each entry names a
+    /// <c>syntax</c>, the <c>vocabularies</c> in scope, and an optional inline <c>nodes</c>
+    /// block. The four built-in format ids always win and may not be redeclared.
+    /// </summary>
+    [JsonPropertyName("formats")]
+    public Dictionary<string, JsonElement>? Formats { get; init; }
+
+    /// <summary>
+    /// Reusable node vocabularies this host declares, keyed by id. A vocabulary declares
+    /// nodes and their props and nothing about how they are authored, so any number of
+    /// formats may bring the same vocabulary into scope under different syntaxes.
+    /// </summary>
+    [JsonPropertyName("vocabularies")]
+    public Dictionary<string, JsonElement>? Vocabularies { get; init; }
+
+    /// <summary>
     /// The effective hook map the runtime dispatches: the explicit <c>hooks</c>
     /// section plus a synthesized phaseless <see cref="HookDef"/> for every
     /// event-typed slot (<c>accepts</c> contains <c>application/x-xript-hook</c>).
@@ -127,9 +143,31 @@ public record Slot
     [JsonPropertyName("style")]
     public string? Style { get; init; }
 
+    /// <summary>
+    /// Enforced limits for calls into this slot's fills, overriding the manifest's
+    /// <c>limits</c> field by field. The counterpart to <c>execution</c>: that one is
+    /// advisory routing, this one is enforcement.
+    /// </summary>
+    [JsonPropertyName("limits")]
+    public SlotLimits? Limits { get; init; }
+
+    public const string RoleAccept = "application/x-xript-role";
+
     public const string HookAccept = "application/x-xript-hook";
 
+    public const string CommandAccept = "application/x-xript-command";
+
+    public bool IsRoleSlot() => Accepts.Contains(RoleAccept);
+
     public bool IsHookSlot() => Accepts.Contains(HookAccept);
+
+    /// <summary>
+    /// Whether fills of this slot are read as commands. The three reserved accepts are
+    /// matched in a fixed order — role, then hook, then command — so a slot listing more
+    /// than one resolves the same way in every runtime.
+    /// </summary>
+    public bool IsCommandSlot() =>
+        Accepts.Contains(CommandAccept) && !IsRoleSlot() && !IsHookSlot();
 }
 
 public record ModManifest
@@ -217,6 +255,14 @@ public record FragmentDeclaration
     [JsonPropertyName("priority")]
     public int? Priority { get; init; }
 
+    /// <summary>
+    /// Turns on <c>{{ expr }}</c> interpolation for this fill's text nodes. Off by default:
+    /// a fragment published before the mode existed may carry <c>{{</c> in prose or a code
+    /// sample, and its meaning must not change.
+    /// </summary>
+    [JsonPropertyName("interpolate")]
+    public bool? Interpolate { get; init; }
+
     public List<FragmentHandlerDeclaration> ResolveHandlers() => Handlers ?? Events ?? [];
 }
 
@@ -287,6 +333,18 @@ public record ParameterDef
 
     [JsonPropertyName("required")]
     public bool? Required { get; init; }
+}
+
+/// <summary>
+/// Per-slot execution limits. Carries <c>timeout_ms</c> alone on purpose: memory and
+/// stack ceilings are fixed when an engine is created, so a per-slot value for either
+/// could not be enforced without standing up a separate runtime. That path is
+/// <c>execution.affinity</c> plus a pool worker with its own limits.
+/// </summary>
+public record SlotLimits
+{
+    [JsonPropertyName("timeout_ms")]
+    public long? TimeoutMs { get; init; }
 }
 
 public record ExecutionLimits

@@ -580,5 +580,613 @@
 				"log": { "description": "Write a log line.", "params": [], "returns": "void" }
 			}
 		}
+	},
+	{
+		"description": "add-new format: child declares a fragment vocabulary the base never knew",
+		"base": {
+			"xript": "0.8",
+			"name": "base-canon",
+			"capabilities": {
+				"ui-mount": { "description": "Mount UI into a slot." }
+			},
+			"slots": [
+				{ "id": "sidebar.left", "accepts": ["application/x-widgets+json"], "capability": "ui-mount" }
+			]
+		},
+		"extender": {
+			"xript": "0.8",
+			"name": "consuming-host",
+			"formats": {
+				"application/x-widgets+json": {
+					"description": "The widget vocabulary this host renders.",
+					"syntax": "jsml",
+					"nodes": {
+						"Panel": {
+							"description": "A titled container.",
+							"props": { "heading": { "type": "string" } }
+						}
+					}
+				}
+			}
+		},
+		"resolved": {
+			"xript": "0.8",
+			"name": "consuming-host",
+			"capabilities": {
+				"ui-mount": { "description": "Mount UI into a slot." }
+			},
+			"slots": [
+				{ "id": "sidebar.left", "accepts": ["application/x-widgets+json"], "capability": "ui-mount" }
+			],
+			"formats": {
+				"application/x-widgets+json": {
+					"description": "The widget vocabulary this host renders.",
+					"syntax": "jsml",
+					"nodes": {
+						"Panel": {
+							"description": "A titled container.",
+							"props": { "heading": { "type": "string" } }
+						}
+					}
+				}
+			}
+		}
+	},
+	{
+		"description": "refine format: child adds a node to a vocabulary the base declared",
+		"base": {
+			"xript": "0.8",
+			"name": "base-canon",
+			"formats": {
+				"application/x-widgets+json": {
+					"description": "The widget vocabulary this host renders.",
+					"syntax": "jsml",
+					"nodes": {
+						"Panel": {
+							"description": "A titled container.",
+							"props": { "heading": { "type": "string" } }
+						}
+					}
+				}
+			}
+		},
+		"extender": {
+			"xript": "0.8",
+			"name": "consuming-host",
+			"formats": {
+				"application/x-widgets+json": {
+					"refines": true,
+					"syntax": "jsml",
+					"nodes": {
+						"Progress": {
+							"description": "A progress bar.",
+							"props": { "value": { "type": "number" }, "max": { "type": "number" } }
+						}
+					}
+				}
+			}
+		},
+		"resolved": {
+			"xript": "0.8",
+			"name": "consuming-host",
+			"formats": {
+				"application/x-widgets+json": {
+					"description": "The widget vocabulary this host renders.",
+					"syntax": "jsml",
+					"nodes": {
+						"Panel": {
+							"description": "A titled container.",
+							"props": { "heading": { "type": "string" } }
+						},
+						"Progress": {
+							"description": "A progress bar.",
+							"props": { "value": { "type": "number" }, "max": { "type": "number" } }
+						}
+					}
+				}
+			}
+		}
+	},
+	{
+		"description": "refine node: child adds a prop to a node the base declared",
+		"base": {
+			"xript": "0.8",
+			"name": "base-canon",
+			"formats": {
+				"application/x-widgets+json": {
+					"description": "The widget vocabulary this host renders.",
+					"syntax": "jsml",
+					"nodes": {
+						"Link": {
+							"description": "A navigational link.",
+							"props": { "href": { "type": "string", "sink": "uri" } }
+						}
+					}
+				}
+			}
+		},
+		"extender": {
+			"xript": "0.8",
+			"name": "consuming-host",
+			"formats": {
+				"application/x-widgets+json": {
+					"refines": true,
+					"syntax": "jsml",
+					"nodes": {
+						"Link": {
+							"refines": true,
+							"props": { "label": { "type": "string" } }
+						}
+					}
+				}
+			}
+		},
+		"resolved": {
+			"xript": "0.8",
+			"name": "consuming-host",
+			"formats": {
+				"application/x-widgets+json": {
+					"description": "The widget vocabulary this host renders.",
+					"syntax": "jsml",
+					"nodes": {
+						"Link": {
+							"description": "A navigational link.",
+							"props": {
+								"href": { "type": "string", "sink": "uri" },
+								"label": { "type": "string" }
+							}
+						}
+					}
+				}
+			}
+		}
+	},
+	{
+		"description": "refine node: a same-named prop is replaced wholesale, not deep-merged",
+		"base": {
+			"xript": "0.8",
+			"name": "base-canon",
+			"formats": {
+				"application/x-widgets+json": {
+					"description": "The widget vocabulary this host renders.",
+					"syntax": "jsml",
+					"nodes": {
+						"Icon": {
+							"description": "An icon.",
+							"props": { "glyph": { "type": "string", "sink": "html", "maxLength": 512 } }
+						}
+					}
+				}
+			}
+		},
+		"extender": {
+			"xript": "0.8",
+			"name": "consuming-host",
+			"formats": {
+				"application/x-widgets+json": {
+					"refines": true,
+					"syntax": "jsml",
+					"nodes": {
+						"Icon": {
+							"refines": true,
+							"props": { "glyph": { "type": "object" } }
+						}
+					}
+				}
+			}
+		},
+		"resolved": {
+			"xript": "0.8",
+			"name": "consuming-host",
+			"formats": {
+				"application/x-widgets+json": {
+					"description": "The widget vocabulary this host renders.",
+					"syntax": "jsml",
+					"nodes": {
+						"Icon": {
+							"description": "An icon.",
+							"props": { "glyph": { "type": "object" } }
+						}
+					}
+				}
+			}
+		}
+	},
+	{
+		"description": "error: child redeclares a format id without refines",
+		"base": {
+			"xript": "0.8",
+			"name": "base-canon",
+			"formats": {
+				"application/x-widgets+json": {
+					"description": "The widget vocabulary this host renders.",
+					"syntax": "jsml",
+					"nodes": { "Panel": { "description": "A titled container." } }
+				}
+			}
+		},
+		"extender": {
+			"xript": "0.8",
+			"name": "consuming-host",
+			"formats": {
+				"application/x-widgets+json": {
+					"description": "A conflicting redeclaration.",
+					"syntax": "jsml",
+					"nodes": { "Panel": { "description": "A titled container." } }
+				}
+			}
+		},
+		"error": true
+	},
+	{
+		"description": "error: child redeclares a format node without refines",
+		"base": {
+			"xript": "0.8",
+			"name": "base-canon",
+			"formats": {
+				"application/x-widgets+json": {
+					"description": "The widget vocabulary this host renders.",
+					"syntax": "jsml",
+					"nodes": {
+						"Panel": {
+							"description": "A titled container.",
+							"props": { "heading": { "type": "string" } }
+						}
+					}
+				}
+			}
+		},
+		"extender": {
+			"xript": "0.8",
+			"name": "consuming-host",
+			"formats": {
+				"application/x-widgets+json": {
+					"refines": true,
+					"syntax": "jsml",
+					"nodes": { "Panel": { "description": "A conflicting redeclaration." } }
+				}
+			}
+		},
+		"error": true
+	},
+	{
+		"description": "refine format: child restating 'vocabularies' replaces the base's array wholesale",
+		"base": {
+			"xript": "0.8",
+			"name": "base-canon",
+			"vocabularies": {
+				"a.b": {
+					"description": "A shared vocabulary.",
+					"nodes": {
+						"Panel": {
+							"description": "A titled container.",
+							"props": {
+								"heading": {
+									"type": "string"
+								}
+							}
+						}
+					}
+				}
+			},
+			"formats": {
+				"application/x-widgets+json": {
+					"description": "Widgets.",
+					"syntax": "j5ml",
+					"vocabularies": [
+						"html"
+					],
+					"nodes": {
+						"x-panel": {
+							"description": "A panel."
+						}
+					}
+				}
+			}
+		},
+		"extender": {
+			"xript": "0.8",
+			"name": "consuming-host",
+			"formats": {
+				"application/x-widgets+json": {
+					"refines": true,
+					"vocabularies": [
+						"a.b"
+					]
+				}
+			}
+		},
+		"resolved": {
+			"xript": "0.8",
+			"name": "consuming-host",
+			"vocabularies": {
+				"a.b": {
+					"description": "A shared vocabulary.",
+					"nodes": {
+						"Panel": {
+							"description": "A titled container.",
+							"props": {
+								"heading": {
+									"type": "string"
+								}
+							}
+						}
+					}
+				}
+			},
+			"formats": {
+				"application/x-widgets+json": {
+					"description": "Widgets.",
+					"syntax": "j5ml",
+					"vocabularies": [
+						"a.b"
+					],
+					"nodes": {
+						"x-panel": {
+							"description": "A panel."
+						}
+					}
+				}
+			}
+		}
+	},
+	{
+		"description": "refine format: child omitting 'vocabularies' inherits the base's array unchanged",
+		"base": {
+			"xript": "0.8",
+			"name": "base-canon",
+			"formats": {
+				"application/x-widgets+json": {
+					"description": "Widgets.",
+					"syntax": "j5ml",
+					"vocabularies": [
+						"html"
+					],
+					"nodes": {
+						"x-panel": {
+							"description": "A panel."
+						}
+					}
+				}
+			}
+		},
+		"extender": {
+			"xript": "0.8",
+			"name": "consuming-host",
+			"formats": {
+				"application/x-widgets+json": {
+					"refines": true,
+					"nodes": {
+						"x-badge": {
+							"description": "A badge."
+						}
+					}
+				}
+			}
+		},
+		"resolved": {
+			"xript": "0.8",
+			"name": "consuming-host",
+			"formats": {
+				"application/x-widgets+json": {
+					"description": "Widgets.",
+					"syntax": "j5ml",
+					"vocabularies": [
+						"html"
+					],
+					"nodes": {
+						"x-panel": {
+							"description": "A panel."
+						},
+						"x-badge": {
+							"description": "A badge."
+						}
+					}
+				}
+			}
+		}
+	},
+	{
+		"description": "refine format: child restating an empty 'vocabularies' closes the scope",
+		"base": {
+			"xript": "0.8",
+			"name": "base-canon",
+			"formats": {
+				"application/x-widgets+json": {
+					"description": "Widgets.",
+					"syntax": "j5ml",
+					"vocabularies": [
+						"html"
+					],
+					"nodes": {
+						"x-panel": {
+							"description": "A panel."
+						}
+					}
+				}
+			}
+		},
+		"extender": {
+			"xript": "0.8",
+			"name": "consuming-host",
+			"formats": {
+				"application/x-widgets+json": {
+					"refines": true,
+					"vocabularies": []
+				}
+			}
+		},
+		"resolved": {
+			"xript": "0.8",
+			"name": "consuming-host",
+			"formats": {
+				"application/x-widgets+json": {
+					"description": "Widgets.",
+					"syntax": "j5ml",
+					"vocabularies": [],
+					"nodes": {
+						"x-panel": {
+							"description": "A panel."
+						}
+					}
+				}
+			}
+		}
+	},
+	{
+		"description": "child adds a new top-level vocabulary alongside the base's",
+		"base": {
+			"xript": "0.8",
+			"name": "base-canon",
+			"vocabularies": {
+				"a.b": {
+					"description": "A shared vocabulary.",
+					"nodes": {
+						"Panel": {
+							"description": "A titled container.",
+							"props": {
+								"heading": {
+									"type": "string"
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"extender": {
+			"xript": "0.8",
+			"name": "consuming-host",
+			"vocabularies": {
+				"c.d": {
+					"description": "Another vocabulary.",
+					"nodes": {
+						"Badge": {
+							"description": "A badge."
+						}
+					}
+				}
+			}
+		},
+		"resolved": {
+			"xript": "0.8",
+			"name": "consuming-host",
+			"vocabularies": {
+				"a.b": {
+					"description": "A shared vocabulary.",
+					"nodes": {
+						"Panel": {
+							"description": "A titled container.",
+							"props": {
+								"heading": {
+									"type": "string"
+								}
+							}
+						}
+					}
+				},
+				"c.d": {
+					"description": "Another vocabulary.",
+					"nodes": {
+						"Badge": {
+							"description": "A badge."
+						}
+					}
+				}
+			}
+		}
+	},
+	{
+		"description": "error: child redeclares a base vocabulary id without refines",
+		"base": {
+			"xript": "0.8",
+			"name": "base-canon",
+			"vocabularies": {
+				"a.b": {
+					"description": "A shared vocabulary.",
+					"nodes": {
+						"Panel": {
+							"description": "A titled container.",
+							"props": {
+								"heading": {
+									"type": "string"
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"extender": {
+			"xript": "0.8",
+			"name": "consuming-host",
+			"vocabularies": {
+				"a.b": {
+					"description": "A conflicting redeclaration.",
+					"nodes": {
+						"Badge": {}
+					}
+				}
+			}
+		},
+		"error": true
+	},
+	{
+		"description": "refine vocabulary: child adds a node to a vocabulary the base declared",
+		"base": {
+			"xript": "0.8",
+			"name": "base-canon",
+			"vocabularies": {
+				"a.b": {
+					"description": "A shared vocabulary.",
+					"nodes": {
+						"Panel": {
+							"description": "A titled container.",
+							"props": {
+								"heading": {
+									"type": "string"
+								}
+							}
+						}
+					}
+				}
+			}
+		},
+		"extender": {
+			"xript": "0.8",
+			"name": "consuming-host",
+			"vocabularies": {
+				"a.b": {
+					"refines": true,
+					"nodes": {
+						"Badge": {
+							"description": "A badge."
+						}
+					}
+				}
+			}
+		},
+		"resolved": {
+			"xript": "0.8",
+			"name": "consuming-host",
+			"vocabularies": {
+				"a.b": {
+					"description": "A shared vocabulary.",
+					"nodes": {
+						"Panel": {
+							"description": "A titled container.",
+							"props": {
+								"heading": {
+									"type": "string"
+								}
+							}
+						},
+						"Badge": {
+							"description": "A badge."
+						}
+					}
+				}
+			}
+		}
 	}
 ]

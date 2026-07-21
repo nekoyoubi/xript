@@ -31,6 +31,32 @@ describe("annotation scanner", { skip: skipScan ? "ts-morph not available" : fal
 		assert.equal(log.params[1].name, "level");
 	});
 
+	test("scans single-line JSDoc annotations", async () => {
+		// `/** @xript path */` on one line is the form the spec's nested-namespace example uses.
+		// The tag extractor stripped a multi-line ` * ` prefix but not the `/**` opening, so a
+		// single-line block produced no binding at all.
+		const result = await scanModule.scanFile(resolve(__dirname, "fixtures-oneline.ts"));
+		assert.ok(result.bindings.oneline, "single-line annotation should create the 'oneline' namespace");
+		assert.ok(result.bindings.oneline.members.alpha, "single-line 'oneline.alpha' should scan");
+		assert.ok(result.bindings.oneline.members.beta, "single-line 'oneline.beta' should scan");
+		assert.equal(result.bindings.oneline.members.beta.returns, "boolean");
+	});
+
+	test("scans exported arrow-function and function-expression consts", async () => {
+		// `export const f = () => {}` is idiomatic modern TS; the scanner used to read only
+		// function declarations, so an `@xript` tag on an arrow const was silently dropped.
+		const result = await scanModule.scanFile(resolve(__dirname, "fixtures-oneline.ts"));
+		const ns = result.bindings.arrowns;
+		assert.ok(ns, "arrow const should create the 'arrowns' namespace");
+		const transfer = ns.members.transfer;
+		assert.ok(transfer, "async arrow const 'arrowns.transfer' should scan");
+		assert.equal(transfer.async, true, "async arrow should be marked async");
+		assert.equal(transfer.returns, "boolean", "Promise<boolean> should unwrap to boolean");
+		assert.equal(transfer.params.length, 2);
+		assert.equal(transfer.capability, "move", "@xript-cap on an arrow const should carry");
+		assert.ok(ns.members.leaf, "single-line arrow const 'arrowns.leaf' should scan");
+	});
+
 	test("creates namespaces from dotted paths", async () => {
 		const result = await scanModule.scanDirectory(FIXTURES);
 

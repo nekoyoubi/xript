@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 import { execSync, spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 
+import { sweepWorktrees } from "./sweep-worktrees.mjs";
+
 const root = resolve(import.meta.dirname, "..");
 
 const pkg = JSON.parse(readFileSync(resolve(root, "runtimes/js/package.json"), "utf8"));
@@ -61,3 +63,15 @@ spawnSync("gh", ["release", "create", tag, "--title", title, "--notes-file", "-"
 
 console.log(`\nRelease ${tag} created. Publish workflows should fire momentarily.`);
 console.log(`View at: https://github.com/nekoyoubi/xript/releases/tag/${tag}`);
+
+try {
+	const { removed } = sweepWorktrees({ quiet: true });
+	if (removed.length > 0) {
+		const reclaimed = removed.reduce((n, w) => n + w.size, 0);
+		const mb = (reclaimed / 1024 / 1024).toFixed(0);
+		console.log(`\nSwept ${removed.length} spent worktree(s), reclaiming ${mb} MB.`);
+	}
+} catch (err) {
+	console.warn(`\nWorktree sweep skipped: ${err.message}`);
+	console.warn("Run 'npm run worktrees:sweep' manually.");
+}

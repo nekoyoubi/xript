@@ -16,7 +16,7 @@
 	},
 	{
 		"input": "<div data-if=\"health < 50\" class=\"warning\">low!</div>",
-		"expected": "<div data-if=\"health < 50\" class=\"warning\">low!</div>",
+		"expected": "<div data-if=\"health &lt; 50\" class=\"warning\">low!</div>",
 		"description": "preserves data-if attribute with expression"
 	},
 	{
@@ -206,7 +206,7 @@
 	},
 	{
 		"input": "<div data-bind=\"health\" data-if=\"health > 0\" data-action=\"heal\" class=\"panel\" id=\"hp\">text</div>",
-		"expected": "<div data-bind=\"health\" data-if=\"health > 0\" data-action=\"heal\" class=\"panel\" id=\"hp\">text</div>",
+		"expected": "<div data-bind=\"health\" data-if=\"health &gt; 0\" data-action=\"heal\" class=\"panel\" id=\"hp\">text</div>",
 		"description": "preserves multiple data-* attributes together"
 	},
 	{
@@ -278,5 +278,315 @@
 		"input": "<svg><animate attributeName=\"x\" from=\"0\" to=\"100\" /></svg>",
 		"expected": "<svg></svg>",
 		"description": "strips animate element from SVG"
+	},
+	{
+		"input": "<svg><animate onbegin=\"alert(1)\"></svg><p>after</p>",
+		"expected": "<svg></svg><p>after</p>",
+		"description": "an unclosed stripped element in foreign content does not swallow its following siblings"
+	},
+	{
+		"input": "<div><iframe src=\"x\"></div><p>after</p>",
+		"expected": "<div></div>",
+		"description": "an unclosed iframe reads to end of input as a raw-text element, but still emits balanced markup"
+	},
+	{
+		"input": "<div><form></div><p>after</p>",
+		"expected": "<div></div><p>after</p>",
+		"description": "an unclosed non-raw-text element closes with its parent instead of running to end of input"
+	},
+	{
+		"input": "<div><script></div><p>after</p>",
+		"expected": "<div></div>",
+		"description": "an unclosed script swallows its raw text as the parser does, but still emits balanced markup"
+	},
+	{
+		"input": "<div><animate></div>",
+		"expected": "<div></div>",
+		"description": "stripping an unclosed element still closes every element left open above it"
+	},
+	{
+		"input": "<p>&amp; &lt; &gt;</p>",
+		"expected": "<p>&amp; &lt; &gt;</p>",
+		"description": "character references survive a round trip without being double-escaped"
+	},
+	{
+		"input": "<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>",
+		"expected": "<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>",
+		"description": "an escaped script tag stays text and is never revived as markup"
+	},
+	{
+		"input": "<p title=\"😀\">emoji 😀 and 𝄞</p>",
+		"expected": "<p title=\"😀\">emoji 😀 and 𝄞</p>",
+		"description": "characters above the basic multilingual plane survive unescaped"
+	},
+	{
+		"input": "<div slot=\"body\" part=\"wrap\"><slot name=\"title\"></slot><kbd>Ctrl</kbd></div>",
+		"expected": "<div slot=\"body\" part=\"wrap\"><slot name=\"title\"></slot><kbd>Ctrl</kbd></div>",
+		"description": "the web-component and shadow-part surface survives: slot, part, and kbd"
+	},
+	{
+		"input": "<dialog open><canvas width=\"10\" height=\"10\"></canvas></dialog>",
+		"expected": "<dialog open><canvas width=\"10\" height=\"10\"></canvas></dialog>",
+		"description": "dialog and canvas are allowed markup rather than unwrapped"
+	},
+	{
+		"input": "<img src=\"a.png\" loading=\"lazy\" decoding=\"async\" onerror=\"alert(1)\">",
+		"expected": "<img src=\"a.png\" loading=\"lazy\" decoding=\"async\" />",
+		"description": "loading and decoding survive while an inline event handler does not"
+	},
+	{
+		"input": "<div title=\"a<b>c\">x</div>",
+		"expected": "<div title=\"a&lt;b&gt;c\">x</div>",
+		"description": "escapes angle brackets in an attribute value"
+	},
+	{
+		"input": "<img src=\"x.png\" alt=\"a&quot;><script>alert(1)</script>\" />",
+		"expected": "<img src=\"x.png\" alt=\"a&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;\" />",
+		"description": "leaves no raw tag-shaped substring in an attribute value"
+	},
+	{
+		"input": "<div title=\"it&#39;s fine\">x</div>",
+		"expected": "<div title=\"it&#39;s fine\">x</div>",
+		"description": "escapes a single quote in an attribute value"
+	},
+	{
+		"input": "<a href=\"java\tscript:alert(1)\">x</a>",
+		"expected": "<a>x</a>",
+		"description": "drops a javascript: scheme split by a raw tab"
+	},
+	{
+		"input": "<a href=\"java&#9;script:alert(1)\">x</a>",
+		"expected": "<a>x</a>",
+		"description": "drops a javascript: scheme the tokenizer reassembles from an entity"
+	},
+	{
+		"input": "<a href=\"\u0001javascript:alert(1)\">x</a>",
+		"expected": "<a>x</a>",
+		"description": "drops a javascript: scheme behind a leading control character"
+	},
+	{
+		"input": "<img src=\"DATA:text/html,x\">",
+		"expected": "<img />",
+		"description": "gates a data: URI regardless of scheme casing"
+	},
+	{
+		"input": "<img src=\"da\tta:text/html,x\">",
+		"expected": "<img />",
+		"description": "gates a data: URI split by a raw tab"
+	},
+	{
+		"input": "<img src=\"DATA:image/png;base64,iVBOR\">",
+		"expected": "<img src=\"DATA:image/png;base64,iVBOR\" />",
+		"description": "keeps a safe data image URI regardless of scheme casing"
+	},
+	{
+		"input": "<a href=\"file:///etc/passwd\">x</a>",
+		"expected": "<a>x</a>",
+		"description": "refuses file: URIs, which the default scheme set does not admit"
+	},
+	{
+		"input": "<a href=\"blob:https://example.com/uuid\">x</a>",
+		"expected": "<a>x</a>",
+		"description": "refuses blob: URIs"
+	},
+	{
+		"input": "<img src=\"filesystem:https://example.com/temporary/a.png\" />",
+		"expected": "<img />",
+		"description": "refuses filesystem: URIs on an image source"
+	},
+	{
+		"input": "<a href=\"view-source:https://example.com\">x</a>",
+		"expected": "<a>x</a>",
+		"description": "refuses view-source: URIs"
+	},
+	{
+		"input": "<a href=\"tauri://localhost/api\">x</a>",
+		"expected": "<a>x</a>",
+		"description": "refuses a host-shell scheme no format declared"
+	},
+	{
+		"input": "<a href=\"about:blank\">x</a>",
+		"expected": "<a>x</a>",
+		"description": "refuses about: URIs"
+	},
+	{
+		"input": "<a href=\"jar:http://example.com/a.jar!/b\">x</a>",
+		"expected": "<a>x</a>",
+		"description": "refuses jar: URIs"
+	},
+	{
+		"input": "<a href=\"FILE:///etc/passwd\">x</a>",
+		"expected": "<a>x</a>",
+		"description": "matches schemes case-insensitively when refusing"
+	},
+	{
+		"input": "<a href=\"fi\tle:///etc/passwd\">x</a>",
+		"expected": "<a>x</a>",
+		"description": "refuses a disallowed scheme reassembled across a tab"
+	},
+	{
+		"input": "<a href=\"fil&#101;:///etc/passwd\">x</a>",
+		"expected": "<a>x</a>",
+		"description": "refuses a disallowed scheme reassembled from an entity"
+	},
+	{
+		"input": "<a href=\"fi\nle:///etc/passwd\">x</a>",
+		"expected": "<a>x</a>",
+		"description": "refuses a disallowed scheme reassembled across a newline"
+	},
+	{
+		"input": "<a href=\"HTTPS://example.com/a\">x</a>",
+		"expected": "<a href=\"HTTPS://example.com/a\">x</a>",
+		"description": "keeps an allowed scheme spelled in uppercase"
+	},
+	{
+		"input": "<a href=\"mailto:someone@example.com\">x</a>",
+		"expected": "<a href=\"mailto:someone@example.com\">x</a>",
+		"description": "keeps mailto:, which the default scheme set admits"
+	},
+	{
+		"input": "<a href=\"about.html\">x</a>",
+		"expected": "<a href=\"about.html\">x</a>",
+		"description": "keeps a relative path whose first segment looks like a scheme"
+	},
+	{
+		"input": "<a href=\"/absolute/path\">x</a>",
+		"expected": "<a href=\"/absolute/path\">x</a>",
+		"description": "keeps a root-relative path"
+	},
+	{
+		"input": "<a href=\"//cdn.example.com/a.css\">x</a>",
+		"expected": "<a href=\"//cdn.example.com/a.css\">x</a>",
+		"description": "keeps a scheme-relative URL"
+	},
+	{
+		"input": "<a href=\"#anchor\">x</a>",
+		"expected": "<a href=\"#anchor\">x</a>",
+		"description": "keeps a fragment-only href"
+	},
+	{
+		"input": "<a href=\"?q=1\">x</a>",
+		"expected": "<a href=\"?q=1\">x</a>",
+		"description": "keeps a query-only href"
+	},
+	{
+		"input": "<img src=\"nested/dir/icon.png\" />",
+		"expected": "<img src=\"nested/dir/icon.png\" />",
+		"description": "keeps a relative image source"
+	},
+	{
+		"input": "<a href=\"Kile:///etc/passwd\">x</a>",
+		"expected": "<a>x</a>",
+		"description": "refuses a scheme spelled with a character that lowercases into an ASCII scheme letter"
+	},
+	{
+		"input": "<a href=\"marKet:foo\">x</a>",
+		"expected": "<a>x</a>",
+		"description": "reads a scheme through a non-ASCII lowercase fold rather than treating the value as relative"
+	},
+	{
+		"input": "<a href=\"https://ok.test/\u0001\">x</a>",
+		"expected": "<a href=\"https://ok.test/\">x</a>",
+		"description": "trims a trailing control character from a uri"
+	},
+	{
+		"input": "<a href=\"https://ok.test/  \">x</a>",
+		"expected": "<a href=\"https://ok.test/\">x</a>",
+		"description": "trims trailing spaces from a uri"
+	},
+	{
+		"input": "<a href=\"https://ok.test/ \">x</a>",
+		"expected": "<a href=\"https://ok.test/ \">x</a>",
+		"description": "keeps a trailing no-break space in a uri, which a url parser encodes rather than strips"
+	},
+	{
+		"input": "<a href=\"https://ok.test/ \">x</a>",
+		"expected": "<a href=\"https://ok.test/ \">x</a>",
+		"description": "keeps a trailing line separator in a uri"
+	},
+	{
+		"input": "<a href=\"https://ok.test/　\">x</a>",
+		"expected": "<a href=\"https://ok.test/　\">x</a>",
+		"description": "keeps a trailing ideographic space in a uri"
+	},
+	{
+		"input": "<a href=\"https://ok.test/﻿\">x</a>",
+		"expected": "<a href=\"https://ok.test/﻿\">x</a>",
+		"description": "keeps a trailing byte-order mark in a uri"
+	},
+	{
+		"input": "<a href=\"javaſcript:alert(1)\">x</a>",
+		"expected": "<a href=\"javaſcript:alert(1)\">x</a>",
+		"description": "keeps a latin small letter long s spelling as a relative path, since it names no scheme"
+	},
+	{
+		"input": "<a href=\"JAVASCRİPT:alert(1)\">x</a>",
+		"expected": "<a href=\"JAVASCRİPT:alert(1)\">x</a>",
+		"description": "keeps a latin capital letter i with dot above spelling as a relative path"
+	},
+	{
+		"input": "<a href=\"JavaScript:alert(1)\">x</a>",
+		"expected": "<a>x</a>",
+		"description": "drops a javascript: scheme whatever its ascii casing"
+	},
+	{
+		"input": "<a href=\"  https://ok.test/  \">x</a>",
+		"expected": "<a href=\"https://ok.test/\">x</a>",
+		"description": "trims spaces from both ends of a uri"
+	},
+	{
+		"input": "<div title=\"a\u0000b\">text</div>",
+		"expected": "<div title=\"a�b\">text</div>",
+		"description": "replaces a null character in an attribute value with u+fffd"
+	},
+	{
+		"input": "<div>x\u0000y</div>",
+		"expected": "<div>xy</div>",
+		"description": "drops a null character from text rather than replacing it"
+	},
+	{
+		"input": "<div data-a\u0000b=\"1\">text</div>",
+		"expected": "<div>text</div>",
+		"description": "drops an attribute whose name carries a null character, since u+fffd is not a legal name character"
+	},
+	{
+		"input": "<di\u0000v>text</di\u0000v>",
+		"expected": "text",
+		"description": "unwraps an element whose tag name carries a null character, since u+fffd renames it to an unknown element"
+	},
+	{
+		"input": "<div title=\"a&#0;b\">x&#0;y</div>",
+		"expected": "<div title=\"a�b\">x�y</div>",
+		"description": "resolves a null character reference to u+fffd in both attributes and text"
+	},
+	{
+		"input": "<textarea>a\u0000b</textarea>",
+		"expected": "<textarea>ab</textarea>",
+		"description": "drops a null character from textarea content"
+	},
+	{
+		"input": "<a id=\"first\" id=\"second\" href=\"https://ok.test/\">x</a>",
+		"expected": "<a id=\"first\" href=\"https://ok.test/\">x</a>",
+		"description": "resolves a duplicate attribute to its first occurrence"
+	},
+	{
+		"input": "<a href=\"https://ok.test/\" href=\"javascript:alert(1)\">x</a>",
+		"expected": "<a href=\"https://ok.test/\">x</a>",
+		"description": "keeps the first href when a later duplicate carries a dangerous scheme"
+	},
+	{
+		"input": "<a href=\"javascript:alert(1)\" href=\"https://ok.test/\">x</a>",
+		"expected": "<a>x</a>",
+		"description": "drops the href when the first of two duplicates carries a dangerous scheme"
+	},
+	{
+		"input": "<a href=\" javascript:alert(1)\">x</a>",
+		"expected": "<a href=\" javascript:alert(1)\">x</a>",
+		"description": "keeps a no-break-space-prefixed javascript spelling as a relative path, since it names no scheme"
+	},
+	{
+		"input": "<a href=\"javascript :alert(1)\">x</a>",
+		"expected": "<a>x</a>",
+		"description": "drops a javascript: scheme padded with a space before the colon"
 	}
 ]

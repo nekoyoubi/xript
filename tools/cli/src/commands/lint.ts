@@ -21,9 +21,30 @@ export async function run(args: string[]): Promise<void> {
 	try {
 		const hostAbs = resolve(hostPath);
 		const host = JSON.parse(await readFile(hostAbs, "utf-8"));
+
+		if (looksLikeModManifest(host)) {
+			console.error(
+				[
+					`${hostPath} looks like a mod manifest, and the first argument is the host.`,
+					"A mod cannot be linted on its own: every rule about it asks whether the host declares the slot it",
+					"fills and grants the capability it requests. Without the host, the answer is either silence or a",
+					"false error.",
+					"",
+					`  xript lint <host-manifest> ${hostPath}`,
+				].join("\n"),
+			);
+			process.exit(1);
+		}
 		const mods = await Promise.all(modPaths.map(async (path) => JSON.parse(await readFile(resolve(path), "utf-8"))));
-		const { resolved, inheritedSlots, inheritedCapabilities, inheritedAbstractTypes } = await resolveProvenance(host, dirname(hostAbs));
-		const result = lintManifests(resolved, mods, { strict, inheritedSlots, inheritedCapabilities, inheritedAbstractTypes });
+		const { resolved, inheritedSlots, inheritedCapabilities, inheritedAbstractTypes, inheritedFormats } =
+			await resolveProvenance(host, dirname(hostAbs));
+		const result = lintManifests(resolved, mods, {
+			strict,
+			inheritedSlots,
+			inheritedCapabilities,
+			inheritedAbstractTypes,
+			inheritedFormats,
+		});
 
 		if (asJson) {
 			console.log(JSON.stringify(result, null, 2));
@@ -37,6 +58,20 @@ export async function run(args: string[]): Promise<void> {
 		console.error(error instanceof Error ? error.message : String(error));
 		process.exit(1);
 	}
+}
+
+
+/**
+ * A mod manifest names an `entry` or contributes `fills`, and declares none of the surfaces a
+ * host declares. Passed in the host position it used to lint as a host, where almost no rule
+ * applies, and report that everything lined up cleanly.
+ */
+function looksLikeModManifest(manifest: unknown): boolean {
+	if (typeof manifest !== "object" || manifest === null) return false;
+	const m = manifest as Record<string, unknown>;
+	const contributes = m.entry !== undefined || m.fills !== undefined;
+	const declares = m.slots !== undefined || m.bindings !== undefined || m.hooks !== undefined;
+	return contributes && !declares;
 }
 
 const MARK: Record<Severity, string> = { error: "✗", warn: "!", info: "·" };

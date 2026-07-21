@@ -6,6 +6,7 @@ using Jint.Native.Function;
 using Jint.Native.Object;
 using Jint.Runtime;
 using Jint.Runtime.Modules;
+using Xript.Runtime.Fragments;
 
 namespace Xript.Runtime;
 
@@ -14,6 +15,15 @@ internal sealed class Sandbox : IDisposable
     private readonly Engine _engine;
     private readonly Manifest _manifest;
     private readonly CancellationToken _cancellation;
+    private readonly long _defaultTimeoutMs;
+    private readonly long? _hardTimeoutMs;
+    /// <summary>
+    /// A runtime-owned token linked to the host's. Jint installs its cancellation constraint
+    /// only for a token that can actually be cancelled, so passing the host's
+    /// <c>CancellationToken.None</c> straight through left no constraint to swap and no
+    /// per-call deadline. This one is always cancellable, so the lever always exists.
+    /// </summary>
+    private readonly CancellationTokenSource _constraintLifetime;
     private readonly DenyExternalModuleLoader _moduleLoader = new();
     private readonly IReadOnlyDictionary<string, string> _libraries;
     private readonly HashSet<string> _registeredLibraryModules = [];
@@ -25,12 +35,21 @@ internal sealed class Sandbox : IDisposable
 
     internal DebugSession? DebugSession { get; }
 
+    /// <summary>
+    /// Bindings the manifest declares that the host did not supply, fully qualified and sorted.
+    /// </summary>
+    internal IReadOnlyList<string> MissingBindings { get; }
+
     internal Sandbox(Manifest manifest, RuntimeOptions options)
     {
         _manifest = manifest;
         _cancellation = options.Cancellation;
         var granted = new HashSet<string>(options.Capabilities);
         GrantedCapabilities = granted;
+
+        MissingBindings = MissingBindingNames(manifest, options.HostBindings);
+        if (options.StrictBindings && MissingBindings.Count > 0)
+            throw new MissingBindingsException(MissingBindings);
 
         foreach (var (specifier, source) in options.Libraries)
         {
@@ -47,13 +66,19 @@ internal sealed class Sandbox : IDisposable
 
         var debugEnabled = options.Debug is not null;
 
+        _defaultTimeoutMs = effective.TimeoutMs ?? 5000;
+        _hardTimeoutMs = options.HardLimits?.TimeoutMs;
+        // Jint fixes `TimeoutInterval` when the engine is built, so a slot that widens past
+        // the manifest budget would still be cut off by it. The interval is therefore set to
+        // the widest budget any slot could ask for and serves as a backstop; the real
+        // per-call deadline is the cancellation constraint, swapped per call below.
+        var ceilingMs = WidestBudgetMs(manifest, _defaultTimeoutMs, _hardTimeoutMs);
+        _constraintLifetime = CancellationTokenSource.CreateLinkedTokenSource(options.Cancellation);
+
         _engine = new Engine(cfg =>
         {
             if (!debugEnabled)
-            {
-                var timeoutMs = effective.TimeoutMs ?? 5000;
-                cfg.TimeoutInterval(TimeSpan.FromMilliseconds(timeoutMs));
-            }
+                cfg.TimeoutInterval(TimeSpan.FromMilliseconds(ceilingMs));
 
             if (effective.MemoryMb is > 0)
                 cfg.LimitMemory(effective.MemoryMb.Value * 1024 * 1024);
@@ -61,8 +86,10 @@ internal sealed class Sandbox : IDisposable
             if (effective.MaxStackDepth is > 0)
                 cfg.LimitRecursion(effective.MaxStackDepth.Value);
 
-            if (options.Cancellation.CanBeCanceled)
-                cfg.CancellationToken(options.Cancellation);
+            // Installed unconditionally via the runtime-owned linked token: the constraint is
+            // the only per-call deadline lever Jint exposes, and Jint declines to install one
+            // for a token that cannot be cancelled.
+            cfg.CancellationToken(_constraintLifetime.Token);
 
             if (debugEnabled)
             {
@@ -86,6 +113,114 @@ internal sealed class Sandbox : IDisposable
 
         if (debugEnabled)
             DebugSession = new DebugSession(_engine, options.Debug!);
+    }
+
+    /// <summary>
+    /// The widest deadline any call on this runtime could legitimately ask for: the manifest
+    /// budget, raised by the most generous slot that declares its own, clamped by the
+    /// embedder's ceiling. Used only to size Jint's fixed timeout interval so it never fires
+    /// ahead of a per-call deadline.
+    /// </summary>
+    private static long WidestBudgetMs(Manifest manifest, long defaultMs, long? hardMs)
+    {
+        var widest = defaultMs;
+        foreach (var slot in manifest.Slots ?? [])
+        {
+            if (slot.Limits?.TimeoutMs is { } declared && declared > widest)
+                widest = declared;
+        }
+        return hardMs is { } hard && widest > hard ? hard : widest;
+    }
+
+    /// <summary>
+    /// The deadline governing one call. An override (a slot's <c>limits.timeout_ms</c>)
+    /// replaces the manifest budget and is clamped to the embedder's ceiling rather than
+    /// trusted, so a slot may widen only as far as the host allowed.
+    /// </summary>
+    private long CallTimeoutMs(long? overrideMs)
+    {
+        if (overrideMs is not { } requested)
+            return _defaultTimeoutMs;
+        return _hardTimeoutMs is { } hard && requested > hard ? hard : requested;
+    }
+
+    /// <summary>
+    /// Arms the engine's cancellation constraint with this call's deadline and restores the
+    /// previous token on dispose. <see cref="DeadlineExpired"/> tells a deadline apart from a
+    /// host cancellation, which otherwise surface as the same Jint exception.
+    /// </summary>
+    private sealed class CallBudget : IDisposable
+    {
+        private readonly Jint.Constraints.CancellationConstraint? _constraint;
+        private readonly CancellationToken _previous;
+        private readonly CancellationTokenSource? _source;
+
+        private readonly CancellationToken _hostToken;
+
+        internal CallBudget(Engine engine, long timeoutMs, CancellationToken restoreToken, CancellationToken hostToken)
+        {
+            _constraint = engine.Constraints.Find<Jint.Constraints.CancellationConstraint>();
+            if (_constraint is null)
+                return;
+
+            _hostToken = hostToken;
+            _previous = restoreToken;
+            _source = CancellationTokenSource.CreateLinkedTokenSource(restoreToken);
+            _source.CancelAfter(TimeSpan.FromMilliseconds(timeoutMs));
+            // `Reset` is the public swap; the constraint's `Token` property is not settable
+            // from outside Jint, whatever the shipped XML documentation suggests.
+            _constraint.Reset(_source.Token);
+        }
+
+        /// <summary>The call ran out of budget, as opposed to the host cancelling it.</summary>
+        internal bool DeadlineExpired =>
+            _source is not null && _source.IsCancellationRequested && !_hostToken.IsCancellationRequested;
+
+        public void Dispose()
+        {
+            _constraint?.Reset(_previous);
+            _source?.Dispose();
+        }
+    }
+
+    private CallBudget BeginCallBudget(long? overrideMs) =>
+        new(_engine, CallTimeoutMs(overrideMs), _constraintLifetime.Token, _cancellation);
+
+    /// <summary>
+    /// Every binding the manifest declares that the host did not supply, fully qualified and
+    /// sorted. A declared-but-unsupplied binding installs as a stub that throws only when a mod
+    /// calls it, so without this the manifest and the host's wiring could disagree indefinitely.
+    /// </summary>
+    internal static List<string> MissingBindingNames(Manifest manifest, HostBindings hostBindings)
+    {
+        var missing = new List<string>();
+        if (manifest.Bindings is not null)
+            CollectMissing(manifest.Bindings, hostBindings, new List<string>(), missing);
+        missing.Sort(StringComparer.Ordinal);
+        return missing;
+    }
+
+    private static void CollectMissing(
+        Dictionary<string, JsonElement> bindings,
+        HostBindings host,
+        List<string> path,
+        List<string> missing)
+    {
+        foreach (var (name, def) in bindings)
+        {
+            path.Add(name);
+            if (def.ValueKind == JsonValueKind.Object && def.TryGetProperty("members", out var members))
+            {
+                var nested = new Dictionary<string, JsonElement>();
+                foreach (var member in members.EnumerateObject()) nested[member.Name] = member.Value;
+                CollectMissing(nested, host, path, missing);
+            }
+            else if (!host.Supplies(path))
+            {
+                missing.Add(string.Join(".", path));
+            }
+            path.RemoveAt(path.Count - 1);
+        }
     }
 
     private static ExecutionLimits ResolveEffectiveLimits(ExecutionLimits? manifest, ExecutionLimits? hard)
@@ -121,6 +256,7 @@ internal sealed class Sandbox : IDisposable
             throw new ExecutionCancelledException();
 
         var sw = Stopwatch.StartNew();
+        using var budget = BeginCallBudget(null);
         try
         {
             var jsValue = source is null ? _engine.Evaluate(code) : _engine.Evaluate(code, source);
@@ -130,6 +266,8 @@ internal sealed class Sandbox : IDisposable
         }
         catch (ExecutionCanceledException)
         {
+            if (budget.DeadlineExpired)
+                throw new ExecutionLimitException("timeout_ms");
             throw new ExecutionCancelledException();
         }
         catch (TimeoutException)
@@ -239,7 +377,7 @@ internal sealed class Sandbox : IDisposable
 
             var escaped = JsonSerializer.Serialize(name);
             _engine.Execute(
-                $"if (!Object.prototype.hasOwnProperty.call(globalThis.__xript_exports, {escaped})) {{ globalThis.__xript_exports[{escaped}] = __xript_harvest_tmp; }}");
+                $"(function() {{ var bucket = globalThis.__xript_exports[globalThis.__xript_export_owner]; if (!Object.prototype.hasOwnProperty.call(bucket, {escaped})) {{ bucket[{escaped}] = __xript_harvest_tmp; }} }})();");
             _engine.Execute("delete globalThis.__xript_harvest_tmp;");
         }
     }
@@ -323,7 +461,7 @@ internal sealed class Sandbox : IDisposable
         }
     }
 
-    internal FragmentOp[] FireFragmentHook(
+    internal RawFragmentOp[] FireFragmentHook(
         string fragmentId, string lifecycle, Dictionary<string, object?>? bindings = null)
     {
         try
@@ -345,7 +483,7 @@ internal sealed class Sandbox : IDisposable
             var lengthVal = arrObj.Get("length");
             var length = (int)lengthVal.AsNumber();
 
-            var ops = new List<FragmentOp>();
+            var ops = new List<RawFragmentOp>();
             for (var i = 0; i < length; i++)
             {
                 var item = arrObj.Get(i.ToString());
@@ -353,11 +491,17 @@ internal sealed class Sandbox : IDisposable
                 {
                     var op = opObj.Get("op").AsString();
                     var selector = opObj.Get("selector").AsString();
-                    var value = opObj.HasProperty("value") ? (object?)opObj.Get("value").ToString() : null;
-                    var attr = opObj.HasProperty("attr") && !opObj.Get("attr").IsUndefined()
-                        ? opObj.Get("attr").AsString()
+                    var value = opObj.HasProperty("value")
+                        ? Fragments.PropValue.FromJson(
+                            System.Text.Json.Nodes.JsonNode.Parse(
+                                JsValueToJsonElement(opObj.Get("value")).GetRawText()))
                         : null;
-                    ops.Add(new FragmentOp(op, selector, value, attr));
+                    ops.Add(new RawFragmentOp(
+                        op,
+                        selector,
+                        OptionalString(opObj, "prop"),
+                        OptionalString(opObj, "attr"),
+                        value));
                 }
             }
 
@@ -369,16 +513,34 @@ internal sealed class Sandbox : IDisposable
         }
     }
 
-    internal JsonElement InvokeExport(string name, JsonElement[] args)
+    private static string? OptionalString(ObjectInstance obj, string key)
+    {
+        if (!obj.HasProperty(key)) return null;
+        var value = obj.Get(key);
+        return value.IsUndefined() || value.IsNull() ? null : value.AsString();
+    }
+
+    internal void SetExportOwner(string? owner)
+    {
+        _engine.Execute($"__xript_set_export_owner({JsonSerializer.Serialize(owner ?? string.Empty)});");
+    }
+
+    internal JsonElement InvokeExport(
+        string name,
+        JsonElement[] args,
+        string? owner = null,
+        long? timeoutOverrideMs = null)
     {
         if (_cancellation.IsCancellationRequested)
             throw new ExecutionCancelledException();
+
+        var ownerExpr = owner is null ? "undefined" : JsonSerializer.Serialize(owner);
 
         bool registered;
         try
         {
             registered = _engine.Evaluate(
-                $"Object.prototype.hasOwnProperty.call(globalThis.__xript_exports, {JsonSerializer.Serialize(name)})")
+                $"typeof __xript_lookup_export({JsonSerializer.Serialize(name)}, {ownerExpr}) === 'function'")
                 .AsBoolean();
         }
         catch
@@ -393,12 +555,15 @@ internal sealed class Sandbox : IDisposable
         var escaped = argsJson.Replace("\\", "\\\\").Replace("`", "\\`").Replace("$", "\\$");
 
         JsValue result;
+        using var budget = BeginCallBudget(timeoutOverrideMs);
         try
         {
-            result = _engine.Evaluate($"__xript_invoke_export({JsonSerializer.Serialize(name)}, `{escaped}`)");
+            result = _engine.Evaluate($"__xript_invoke_export({JsonSerializer.Serialize(name)}, `{escaped}`, {ownerExpr})");
         }
         catch (ExecutionCanceledException)
         {
+            if (budget.DeadlineExpired)
+                throw new ExecutionLimitException("timeout_ms");
             throw new ExecutionCancelledException();
         }
         catch (TimeoutException)
@@ -422,12 +587,36 @@ internal sealed class Sandbox : IDisposable
     public void Dispose()
     {
         _engine.Dispose();
+        _constraintLifetime.Dispose();
     }
 
     private void RegisterExportRegistry()
     {
         _engine.Execute("""
-            globalThis.__xript_exports = {};
+            globalThis.__xript_exports = { "": {} };
+            globalThis.__xript_export_owner = "";
+            globalThis.__xript_set_export_owner = function(owner) {
+                var key = typeof owner === 'string' ? owner : "";
+                globalThis.__xript_export_owner = key;
+                if (!globalThis.__xript_exports[key]) globalThis.__xript_exports[key] = {};
+                return key;
+            };
+            globalThis.__xript_export_owners_of = function(name) {
+                var owners = [];
+                var keys = Object.keys(globalThis.__xript_exports);
+                for (var i = 0; i < keys.length; i++) {
+                    if (typeof globalThis.__xript_exports[keys[i]][name] === 'function') owners.push(keys[i]);
+                }
+                return owners;
+            };
+            globalThis.__xript_lookup_export = function(name, owner) {
+                if (typeof owner === 'string') {
+                    var bucket = globalThis.__xript_exports[owner];
+                    return bucket ? bucket[name] : undefined;
+                }
+                var owners = globalThis.__xript_export_owners_of(name);
+                return owners.length === 1 ? globalThis.__xript_exports[owners[0]][name] : undefined;
+            };
             globalThis.xript = globalThis.xript || {};
             globalThis.xript.exports = {
                 register: function(name, fn) {
@@ -437,12 +626,12 @@ internal sealed class Sandbox : IDisposable
                     if (typeof fn !== 'function') {
                         throw new Error('xript.exports.register requires a function');
                     }
-                    globalThis.__xript_exports[name] = fn;
+                    globalThis.__xript_exports[globalThis.__xript_export_owner][name] = fn;
                 }
             };
             Object.freeze(globalThis.xript.exports);
-            globalThis.__xript_invoke_export = function(name, argsJson) {
-                var fn = globalThis.__xript_exports[name];
+            globalThis.__xript_invoke_export = function(name, argsJson, owner) {
+                var fn = globalThis.__xript_lookup_export(name, owner);
                 if (typeof fn !== 'function') {
                     return { __xript_err: "export '" + name + "' not found" };
                 }
@@ -480,6 +669,7 @@ internal sealed class Sandbox : IDisposable
                             removeClass: function(selector, className) { ops.push({ op: "removeClass", selector: selector, value: className }); },
                             setText: function(selector, text) { ops.push({ op: "setText", selector: selector, value: text }); },
                             setAttr: function(selector, attr, value) { ops.push({ op: "setAttr", selector: selector, attr: attr, value: value }); },
+                            setProp: function(selector, prop, value) { ops.push({ op: "setProp", selector: selector, prop: prop, value: value }); },
                             replaceChildren: function(selector, html) { ops.push({ op: "replaceChildren", selector: selector, value: html }); }
                         };
                         handlers[i](data, proxy);
@@ -910,7 +1100,8 @@ internal sealed class Sandbox : IDisposable
                 return JsonDocument.Parse("null").RootElement.Clone();
             if (num == Math.Floor(num) && Math.Abs(num) < long.MaxValue)
                 return JsonDocument.Parse(((long)num).ToString()).RootElement.Clone();
-            return JsonDocument.Parse(num.ToString("R")).RootElement.Clone();
+            return JsonDocument.Parse(
+                num.ToString("R", System.Globalization.CultureInfo.InvariantCulture)).RootElement.Clone();
         }
 
         if (value.IsString())

@@ -16,7 +16,7 @@ export async function run(args: string[]): Promise<void> {
 		const input = await readFile(filePath, "utf-8");
 
 		if (validate) {
-			const result = validateFragment(input, "text/html");
+			const result = validateFragment(input, "text/html", null, null);
 			if (result.valid) {
 				console.log("Fragment is clean — nothing was stripped.");
 			} else {
@@ -31,6 +31,19 @@ export async function run(args: string[]): Promise<void> {
 		}
 
 		const output = sanitizeHTML(input);
+
+		// `--quiet` promised "no diagnostics", which meant the default promised diagnostics and
+		// printed none: sanitizing stripped a script tag and said nothing. A silent drop is the
+		// failure mode this whole contract exists to end, so the default now reports what it
+		// removed — on stderr, so `xript sanitize f.html > out.html` still yields only markup.
+		if (!quiet) {
+			const report = validateFragment(input, "text/html", null, null);
+			for (const error of report.errors) console.error(`  - ${error.message}`);
+			if (report.errors.length > 0) {
+				console.error(`sanitize: removed ${report.errors.length} item(s); pass --quiet to silence this.`);
+			}
+		}
+
 		if (quiet) {
 			process.stdout.write(output);
 		} else {

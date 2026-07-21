@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text.Json;
 
 namespace Xript.Runtime;
@@ -47,6 +48,36 @@ public class HostBindings
     public void AddNestedNamespace(string name, Dictionary<string, HostNamespaceMember> members)
     {
         NestedNamespaces[name] = members;
+    }
+
+    /// <summary>
+    /// Whether a dotted binding path resolves to something callable in this set. The walk
+    /// mirrors registration exactly, so the missing set never disagrees with what installs.
+    /// </summary>
+    internal bool Supplies(IReadOnlyList<string> path)
+    {
+        if (path.Count == 0) return false;
+        var head = path[0];
+        var rest = path.Skip(1).ToList();
+
+        if (rest.Count == 0) return Functions.ContainsKey(head);
+
+        if (Namespaces.TryGetValue(head, out var flat))
+            return rest.Count == 1 && flat.ContainsKey(rest[0]);
+
+        if (NestedNamespaces.TryGetValue(head, out var nested))
+            return NestedSupplies(nested, rest);
+
+        return false;
+    }
+
+    private static bool NestedSupplies(Dictionary<string, HostNamespaceMember> members, IReadOnlyList<string> path)
+    {
+        if (path.Count == 0) return false;
+        if (!members.TryGetValue(path[0], out var member)) return false;
+        var rest = path.Skip(1).ToList();
+        if (rest.Count == 0) return member.Function is not null;
+        return member.Namespace is not null && NestedSupplies(member.Namespace, rest);
     }
 
     internal HostFunction? GetFunction(string name) =>

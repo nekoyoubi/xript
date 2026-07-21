@@ -6,7 +6,7 @@ This document defines the `@xript` JSDoc annotation convention for declaring man
 
 ### `@xript <binding.path>`
 
-Declares a function as an xript binding at the given dot-delimited path. Dots create namespace nesting in the manifest.
+Declares a function as an xript binding at the given dot-delimited path. Dots create namespace nesting in the manifest. The tag applies to an exported `function` declaration or an exported `const` bound to an arrow function or function expression; in every form the parameters, return type, and `async` flag come from the declaration and the description and tags from its JSDoc.
 
 ```typescript
 /**

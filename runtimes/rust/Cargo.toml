@@ -1,6 +1,6 @@
 [package]
 name = "xript-runtime"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2024"
 description = "Rust runtime for xript. Sandboxed JavaScript execution via QuickJS."
 license = "MIT"
@@ -10,7 +10,9 @@ keywords = ["xript", "runtime", "sandbox", "scripting", "quickjs"]
 categories = ["game-development", "wasm", "embedded"]
 
 [dependencies]
-ammonia = "4"
+xript-expr = { version = "0.8.0", path = "../../crates/xript-expr" }
+xript-tree = { version = "0.8.0", path = "../../crates/xript-tree" }
+j5ml = "0.2.0"
 pollster = "0.4"
 regex = "1"
 rquickjs = { version = "0.10", features = ["parallel", "loader"] }

@@ -81,7 +81,7 @@ Slot fills reference these exports by name (see the fill shapes below).
   "fills": {
     "sidebar.left": [
       {
-        "format": "text/html+jsml",
+        "format": "text/html",
         "source": "fragments/panel.html",
         "bindings": [
           { "name": "health", "path": "player.health.val" }
@@ -101,11 +101,11 @@ A fill engages exactly one slot: the key it lives under. The inner shape of a fi
 
 The `accepts` type a slot declares determines the fill's shape and what the host does with it.
 
-**Fragment-format slot** (`accepts` names a fragment format, e.g. `text/html+jsml`, `application/jsml+json`). The fill is an inert fragment the host mounts. The [fragment protocol](./fragments.md) governs this slot type — `data-bind`, `data-if`, the command buffer, and sanitization are its semantics.
+**Fragment-format slot** (`accepts` names a fragment format, e.g. `text/html`, `application/j5ml+json`). The fill is an inert fragment the host mounts. The [fragment protocol](./fragments.md) governs this slot type — `data-bind`, `data-if`, the command buffer, and sanitization are its semantics.
 
 ```json
 {
-  "format": "text/html+jsml",
+  "format": "text/html",
   "source": "panel.html",
   "bindings": [{ "name": "health", "path": "player.health.val" }],
   "handlers": [{ "selector": "[data-action='heal']", "on": "click", "handler": "onHealClicked" }]
@@ -142,6 +142,21 @@ The `accepts` type a slot declares determines the fill's shape and what the host
 }
 ```
 
+**Command slot** (`accepts` is `application/x-xript-command`). The fill is a named, invocable action: an `id` the host addresses it by, a `handler` export that runs it, and optional presentation, bound arguments, and JSON Schema signature. The host lists it and invokes it when the user picks it. See [commands.md](./commands.md).
+
+```json
+{
+  "id": "wrap.double",
+  "title": "Wrap in double quotes",
+  "handler": "wrapSelection",
+  "args": { "open": "\"", "close": "\"" },
+  "keywords": ["surround", "quote"],
+  "group": "text"
+}
+```
+
+Bound `args` are merged under the caller's arguments at invoke, shallowly, with the caller winning, so one export can back several parameterized commands instead of forcing a closure per variant. `id` and `handler` are required and are checked at load; `capability` is **not** a key, and a fill carrying one is a hard error, because per-action authority lives on the export the command names (`entry.exports[<handler>].capability`).
+
 **Data slot** (`accepts` names a data format the host reads, e.g. `application/json`). The fill is pure metadata — no fragment, no code, no handler. The host reads it and applies its own policy. This is the canonical shape for grouping and curation surfaces: a host that wants mods to declare collection membership, ordering, or pack-style bundles declares a data slot with a `payload` schema describing the metadata, and a "grouping mod" is simply a mod whose only contribution is a data fill.
 
 ```json
@@ -164,7 +179,7 @@ When a mod is loaded against a host, the runtime validates each slot id in `fill
 1. The slot id must exist in the host's `slots` (matched by `id`).
 2. If the slot declares a `capability`, the mod must list that capability in its `capabilities`.
 
-The runtime does **not** police the inner shape of a fill; that is the slot type's contract, enforced by whatever consumes the fill (the fragment processor, the renderer, the role resolver, the hook dispatcher). A fill into an undeclared slot, or into a capability-gated slot the mod lacks the capability for, is an error.
+The runtime does **not** police the inner shape of a fill; that is the slot type's contract, enforced by whatever consumes the fill (the fragment processor, the renderer, the role resolver, the hook dispatcher, the command normalizer). A fill into an undeclared slot, or into a capability-gated slot the mod lacks the capability for, is an error.
 
 ## Deprecated Aliases
 

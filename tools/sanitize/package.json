@@ -1,6 +1,6 @@
 {
 	"name": "@xriptjs/sanitize",
-	"version": "0.7.0",
+	"version": "0.8.0",
 	"description": "HTML sanitizer for xript UI fragments. Pure string-based — no DOM dependency.",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -38,7 +38,10 @@
 		"provenance": true
 	},
 	"devDependencies": {
-		"typescript": "^5.7.0",
-		"@types/node": "^22.0.0"
+		"@types/node": "^22.0.0",
+		"typescript": "^5.7.0"
+	},
+	"dependencies": {
+		"@nxis/j5ml": "^0.2.0"
 	}
 }

@@ -18,7 +18,7 @@ using Xript.Runtime;
 
 var manifest = """
 {
-    "xript": "0.7",
+    "xript": "0.8",
     "name": "my-app",
     "bindings": {
         "greet": {

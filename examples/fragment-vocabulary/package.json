@@ -1,0 +1,13 @@
+{
+	"name": "xript-example-fragment-vocabulary",
+	"version": "1.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Example: a host declaring its own typed fragment vocabulary.",
+	"scripts": {
+		"demo": "node src/demo.js"
+	},
+	"dependencies": {
+		"@xriptjs/runtime": "^0.8.0"
+	}
+}

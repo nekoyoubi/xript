@@ -7,29 +7,37 @@ namespace Xript.Runtime;
 /// An event/hook-slot fill resolved from a mod's <c>fills</c>: when the host
 /// fires the named hook, the runtime also invokes the mod export the fill names.
 /// </summary>
-public sealed record HookFillDecl(string Hook, string Handler);
+/// <summary>
+/// An event/hook-slot fill resolved from a mod's <c>fills</c>. <paramref name="Mod"/> is the
+/// declaring mod: a handler resolves inside that mod's own export namespace, so a fill can
+/// never reach an export another mod owns.
+/// </summary>
+public sealed record HookFillDecl(string Hook, string Handler, string Mod);
 
 /// <summary>
 /// Resolves a mod's canonical <c>fills</c> surface into the runtime's internal
 /// contribution model, typed by each target slot's <c>accepts</c>: a
 /// fragment-format fill becomes a fragment declaration, a role fill becomes a
-/// provider role, an event/hook fill becomes an export-backed hook handler. A
+/// provider role, an event/hook fill becomes an export-backed hook handler, a
+/// command fill becomes an invocable action. A
 /// mod that mixes <c>fills</c> with the deprecated
 /// <c>fragments</c>/<c>contributions</c> surfaces is rejected rather than
 /// silently double-contributing.
 /// </summary>
+/// <remarks>
+/// The reserved accepts are matched in a fixed order — role, hook, command — ahead of the
+/// fragment sniff, so a slot listing more than one kind reads the same way in every runtime.
+/// </remarks>
 internal static class FillsNormalizer
 {
-    private const string RoleSlotAccept = "application/x-xript-role";
-
-    internal static (string NormalizedJson, List<HookFillDecl> HookFills) Normalize(
+    internal static (string NormalizedJson, List<HookFillDecl> HookFills, List<CommandFill> CommandFills) Normalize(
         string modManifestJson,
         IReadOnlyList<Slot> slots,
         HashSet<string> granted)
     {
         var root = JsonNode.Parse(modManifestJson);
         if (root is not JsonObject obj || !obj.ContainsKey("fills"))
-            return (modManifestJson, []);
+            return (modManifestJson, [], []);
 
         if (obj.ContainsKey("fragments") || obj.ContainsKey("contributions"))
             throw new ModManifestValidationException([
@@ -44,9 +52,11 @@ internal static class FillsNormalizer
             ]);
 
         var issues = new List<ValidationIssue>();
+        var modName = obj["name"]?.GetValue<string>() ?? string.Empty;
         var fragments = new JsonArray();
         var provides = new JsonArray();
         var hookFills = new List<HookFillDecl>();
+        var commandFills = new List<CommandFill>();
 
         foreach (var (slotId, entriesNode) in fillMap.ToList())
         {
@@ -61,6 +71,7 @@ internal static class FillsNormalizer
                 issues.Add(new ValidationIssue($"/fills/{slotId}", $"slot '{slotId}' does not exist in the app manifest"));
                 continue;
             }
+            var commandIds = new HashSet<string>(StringComparer.Ordinal);
             for (var index = 0; index < entries.Count; index++)
             {
                 var prefix = $"/fills/{slotId}/{index}";
@@ -70,7 +81,7 @@ internal static class FillsNormalizer
                     continue;
                 }
                 var gateDenied = slot.Capability is { } cap && !Capabilities.GrantedSatisfies(granted, cap);
-                if (slot.Accepts.Contains(RoleSlotAccept))
+                if (slot.IsRoleSlot())
                 {
                     if (fill["fns"] is not JsonObject fns)
                     {
@@ -101,7 +112,19 @@ internal static class FillsNormalizer
                         issues.Add(new ValidationIssue(prefix, $"slot '{slotId}' requires capability '{slot.Capability}'"));
                         continue;
                     }
-                    hookFills.Add(new HookFillDecl(slotId, handler));
+                    hookFills.Add(new HookFillDecl(slotId, handler, modName));
+                }
+                else if (slot.IsCommandSlot())
+                {
+                    var command = Commands.Parse(fill, modName, slotId, prefix, commandIds, issues);
+                    if (command is null)
+                        continue;
+                    if (gateDenied)
+                    {
+                        issues.Add(new ValidationIssue(prefix, $"slot '{slotId}' requires capability '{slot.Capability}'"));
+                        continue;
+                    }
+                    commandFills.Add(command);
                 }
                 else
                 {
@@ -122,6 +145,6 @@ internal static class FillsNormalizer
         if (provides.Count > 0)
             obj["contributions"] = new JsonObject { ["provides"] = provides };
 
-        return (obj.ToJsonString(new JsonSerializerOptions { WriteIndented = false }), hookFills);
+        return (obj.ToJsonString(new JsonSerializerOptions { WriteIndented = false }), hookFills, commandFills);
     }
 }

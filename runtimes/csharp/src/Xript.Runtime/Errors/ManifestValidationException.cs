@@ -1,6 +1,11 @@
 namespace Xript.Runtime;
 
-public record ValidationIssue(string Path, string Message);
+/// <summary>
+/// A single manifest defect. <paramref name="Code"/> is a stable machine-readable id for
+/// defects the shared conformance corpora match on; it stays null for issues carrying no
+/// corpus identity.
+/// </summary>
+public record ValidationIssue(string Path, string Message, string? Code = null);
 
 public class ManifestValidationException : Exception
 {

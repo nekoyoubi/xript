@@ -18,11 +18,15 @@ export async function run(args: string[]): Promise<void> {
 
 	try {
 		const raw = await readFile(resolve(filePath), "utf-8");
-		const { summary, docs } = describeManifest(JSON.parse(raw));
+		const { summary, docs, footer } = describeManifest(JSON.parse(raw));
 		console.log(JSON.stringify(summary, null, 2));
 		if (!summaryOnly) {
 			console.log("");
 			console.log(docs);
+		}
+		if (footer) {
+			console.log("");
+			console.log(footer);
 		}
 	} catch (error) {
 		console.error(error instanceof Error ? error.message : String(error));

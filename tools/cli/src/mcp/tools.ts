@@ -31,6 +31,14 @@ function json(value: unknown, isError = false): ToolResult {
 	return text(JSON.stringify(value, null, 2), isError);
 }
 
+/** JSON result, preceded by a deprecation note when a legacy step field was used. */
+function jsonWithDeprecations(value: unknown, deprecations: string[]): ToolResult {
+	const content: Array<{ type: "text"; text: string }> = [];
+	if (deprecations.length > 0) content.push({ type: "text", text: `deprecated: ${deprecations.join("; ")}` });
+	content.push({ type: "text", text: JSON.stringify(value, null, 2) });
+	return { content };
+}
+
 function parseManifest(raw: string): { ok: true; value: unknown } | { ok: false; error: string } {
 	try {
 		return { ok: true, value: JSON.parse(raw) };
@@ -152,7 +160,9 @@ export interface ServerBuildInfo {
 	builtAt: string;
 }
 
-export function registerTools(server: McpServer, buildInfo: ServerBuildInfo): void {
+export async function registerTools(server: McpServer, buildInfo: ServerBuildInfo): Promise<void> {
+	const guidanceTopics = await loadGuidanceIndex();
+	const guidanceIds = guidanceTopics.map((entry) => entry.id).join(", ");
 	server.registerTool(
 		"xript_server_info",
 		{
@@ -210,12 +220,26 @@ export function registerTools(server: McpServer, buildInfo: ServerBuildInfo): vo
 			inputSchema: {
 				manifest: z.string().describe("The manifest — a file path (absolute, or relative to the workspace root), or the inline JSON."),
 				ambient: z.boolean().optional().describe("Emit ambient declarations for the xript global."),
+				intent: z
+					.boolean()
+					.optional()
+					.describe("Emit the execution routing table a host routes on (xriptExecution / xriptModExecution). Implied by ambient."),
+				host: z
+					.string()
+					.optional()
+					.describe("For a mod manifest: the host manifest it fills, so slot kinds (command slots) are read rather than sniffed."),
 			},
 		},
-		async ({ manifest, ambient }) => {
+		async ({ manifest, ambient, intent, host }) => {
 			const parsed = await resolveManifestArg(server, manifest);
 			if (!parsed.ok) return text(parsed.error, true);
-			const out = ambient ? generateAmbientTypes(parsed.value) : generateTypes(parsed.value);
+			let options: { host?: unknown; intent?: boolean } = intent === undefined ? {} : { intent };
+			if (host !== undefined) {
+				const parsedHost = await resolveManifestArg(server, host);
+				if (!parsedHost.ok) return text(`host ${parsedHost.error}`, true);
+				options = { ...options, host: parsedHost.value };
+			}
+			const out = ambient ? generateAmbientTypes(parsed.value, options) : generateTypes(parsed.value, options);
 			return text(out);
 		},
 	);
@@ -227,12 +251,22 @@ export function registerTools(server: McpServer, buildInfo: ServerBuildInfo): vo
 			description: "Generate markdown documentation for an xript manifest — keeps a host's mod-facing docs current with its surface.",
 			inputSchema: {
 				manifest: z.string().describe("The manifest — a file path (absolute, or relative to the workspace root), or the inline JSON."),
+				host: z
+					.string()
+					.optional()
+					.describe("For a mod manifest: the host manifest it fills, so command fills and their capability gates are exact."),
 			},
 		},
-		async ({ manifest }) => {
+		async ({ manifest, host }) => {
 			const parsed = await resolveManifestArg(server, manifest);
 			if (!parsed.ok) return text(parsed.error, true);
-			const { pages } = generateDocs(parsed.value);
+			let options: { host?: unknown } = {};
+			if (host !== undefined) {
+				const parsedHost = await resolveManifestArg(server, host);
+				if (!parsedHost.ok) return text(`host ${parsedHost.error}`, true);
+				options = { host: parsedHost.value };
+			}
+			const { pages } = generateDocs(parsed.value, options);
 			const body = pages.map((page) => `<!-- ${page.slug} -->\n# ${page.title}\n\n${page.content}`).join("\n\n---\n\n");
 			return text(body);
 		},
@@ -297,7 +331,7 @@ export function registerTools(server: McpServer, buildInfo: ServerBuildInfo): vo
 		"xript_manifest_describe",
 		{
 			title: "Describe a host's surface",
-			description: "Given a host manifest, summarize exactly what it exposes — bindings, hooks, slots, capabilities — so a mod author knows what they can call and contribute into.",
+			description: "Given a host manifest, summarize exactly what it exposes (bindings, hooks, slots, capabilities) so a mod author knows what they can call and contribute into.",
 			inputSchema: {
 				manifest: z.string().describe("The host app manifest — a file path (absolute, or relative to the workspace root), or the inline JSON."),
 			},
@@ -432,8 +466,8 @@ export function registerTools(server: McpServer, buildInfo: ServerBuildInfo): vo
 				if (!parsed.ok) return text(`mod[${index}] ${parsed.error}`, true);
 				parsedMods.push(parsed.value);
 			}
-			const { resolved, inheritedSlots, inheritedCapabilities, inheritedAbstractTypes } = await resolveProvenance(parsedHost.value, parsedHost.baseDir);
-			const result = lintManifests(resolved, parsedMods, { ...(strict !== undefined ? { strict } : {}), inheritedSlots, inheritedCapabilities, inheritedAbstractTypes });
+			const { resolved, inheritedSlots, inheritedCapabilities, inheritedAbstractTypes, inheritedFormats } = await resolveProvenance(parsedHost.value, parsedHost.baseDir);
+			const result = lintManifests(resolved, parsedMods, { ...(strict !== undefined ? { strict } : {}), inheritedSlots, inheritedCapabilities, inheritedAbstractTypes, inheritedFormats });
 			const failed = result.counts.error > 0 || (strict === true && result.counts.warn > 0);
 			return json(result, failed);
 		},
@@ -479,16 +513,20 @@ export function registerTools(server: McpServer, buildInfo: ServerBuildInfo): vo
 		"xript_host_step",
 		{
 			title: "Run one step against a harnessed host",
-			description: "Execute a single step against a session created by xript_host_load — load a mod, invoke an export, emit a host event, fire a hook or event-typed slot, execute code in the sandbox, or resolve a slot/role. The step vocabulary matches spec/harness-steps.schema.json, so an interactive session transcribes directly to a replayable steps file.",
+			description: "Execute a single step against a session created by xript_host_load — load a mod, invoke an export, emit a host event, fire a hook or event-typed slot, execute code in the sandbox, or resolve a slot/role. The field vocabulary is the one in spec/harness-steps.schema.json (the same names the CLI's steps file uses), so a session built with the canonical fields transcribes verbatim into a replayable steps file.",
 			inputSchema: {
 				hostId: z.string().describe("The session id from xript_host_load."),
 				action: z.enum(["load-mod", "invoke", "emit", "fire-hook", "execute", "resolve-slot", "resolve-role"]).describe("The step to run."),
 				manifest: z.string().optional().describe("load-mod: the mod manifest — a file path or the inline JSON."),
-				source: z.string().optional().describe("load-mod: the entry script source text."),
-				sourcePath: z.string().optional().describe("load-mod: path to the entry script, read server-side."),
-				sources: z.record(z.string(), z.string()).optional().describe("load-mod: additional fragment/script sources the mod's fills reference, keyed by the path the manifest names — each value is INLINE CONTENT (not a path)."),
+				sourceText: z.string().optional().describe("load-mod: inline entry-script source."),
+				sourcePath: z.string().optional().describe("load-mod: entry-script path, read server-side."),
+				sourceTexts: z.record(z.string(), z.string()).optional().describe("load-mod: inline fill sources, keyed by the path the manifest names — each value is INLINE CONTENT."),
+				sourcePaths: z.record(z.string(), z.string()).optional().describe("load-mod: fill-source paths, keyed by the path the manifest names, read server-side."),
+				source: z.string().optional().describe("load-mod: DEPRECATED alias for `sourceText` (inline entry-script source)."),
+				sources: z.record(z.string(), z.string()).optional().describe("load-mod: DEPRECATED alias for `sourceTexts` (inline fill sources)."),
 				entry: z.string().optional().describe("load-mod: entry path key; defaults to the manifest's entry.script."),
-				exportName: z.string().optional().describe("invoke: the export to call."),
+				export: z.string().optional().describe("invoke: the export to call."),
+				exportName: z.string().optional().describe("invoke: DEPRECATED alias for `export`."),
 				args: z.array(z.unknown()).optional().describe("invoke: positional arguments."),
 				event: z.string().optional().describe("emit: the host event id."),
 				payload: z.unknown().optional().describe("emit: the event payload."),
@@ -500,25 +538,50 @@ export function registerTools(server: McpServer, buildInfo: ServerBuildInfo): vo
 				role: z.string().optional().describe("resolve-role: the provider role."),
 			},
 		},
-		async ({ hostId, action, manifest, source, sourcePath, sources, entry, exportName, args, event, payload, hook, phase, data, code, slot, role }) => {
+		async ({ hostId, action, manifest, sourceText, sourcePath, sourceTexts, sourcePaths, source, sources, entry, export: exportField, exportName, args, event, payload, hook, phase, data, code, slot, role }) => {
 			const record = getSession(hostId);
 			if (!record) return text(`no session "${hostId}" — load a host with xript_host_load first`, true);
+			const deprecations: string[] = [];
 			try {
 				if (action === "load-mod") {
 					if (!manifest) return text("load-mod requires a manifest", true);
 					const mod = await resolveManifestArg(server, manifest);
 					if (!mod.ok) return text(`mod ${mod.error}`, true);
-					let resolvedSource = source;
-					if (resolvedSource === undefined && sourcePath) {
+
+					let entrySource = sourceText;
+					if (entrySource === undefined && sourcePath !== undefined) {
 						const path = await resolveClientPath(server, sourcePath);
 						if (!path.ok) return text(path.error, true);
-						resolvedSource = await readFile(path.path, "utf-8");
+						entrySource = await readFile(path.path, "utf-8");
 					}
-					if (resolvedSource === undefined) return text("load-mod requires source or sourcePath", true);
-					return json(await record.session.loadMod(mod.value, resolvedSource, { entry, sources }));
+					if (entrySource === undefined && source !== undefined) {
+						deprecations.push("`source` is deprecated; use `sourceText` for inline content or `sourcePath` for a path");
+						entrySource = source;
+					}
+					if (entrySource === undefined) return text("load-mod requires sourceText or sourcePath", true);
+
+					const fillSources: Record<string, string> = { ...(sourceTexts ?? {}) };
+					for (const [key, path] of Object.entries(sourcePaths ?? {})) {
+						const resolved = await resolveClientPath(server, path);
+						if (!resolved.ok) return text(resolved.error, true);
+						fillSources[key] = await readFile(resolved.path, "utf-8");
+					}
+					if (sources) {
+						deprecations.push("`sources` is deprecated; use `sourceTexts` for inline content or `sourcePaths` for paths");
+						Object.assign(fillSources, sources);
+					}
+
+					const loadStep: HarnessStep = { action, manifest: mod.value, sourceText: entrySource, sourceTexts: fillSources, entry };
+					return jsonWithDeprecations(await runSessionStep(record.session, loadStep), deprecations);
 				}
-				const step: HarnessStep = { action, export: exportName, args, event, payload, hook, phase, data, code, slot, role };
-				return json(await runSessionStep(record.session, step));
+
+				let exportName2 = exportField;
+				if (exportName2 === undefined && exportName !== undefined) {
+					deprecations.push("`exportName` is deprecated; use `export`");
+					exportName2 = exportName;
+				}
+				const step: HarnessStep = { action, export: exportName2, args, event, payload, hook, phase, data, code, slot, role };
+				return jsonWithDeprecations(await runSessionStep(record.session, step), deprecations);
 			} catch (error) {
 				return text(error instanceof Error ? error.message : String(error), true);
 			}
@@ -571,9 +634,9 @@ export function registerTools(server: McpServer, buildInfo: ServerBuildInfo): vo
 		"xript_guide",
 		{
 			title: "Read xript authoring doctrine",
-			description: "Get canonical xript guidance on when to use xript, how to choose a surface, mod-zero, authoring, and adoption tiers. Omit topic to list available topics.",
+			description: `Get canonical xript guidance on when to use xript, choosing a surface, hosting a runtime, declaring fragment formats, authoring mods, and adoption tiers. Topics: ${guidanceIds}. Omit topic to list available topics.`,
 			inputSchema: {
-				topic: z.string().optional().describe("Topic id, e.g. when-to-use, surfaces, mod-zero, authoring, tiers."),
+				topic: z.string().optional().describe(`Topic id. One of: ${guidanceIds}.`),
 			},
 		},
 		async ({ topic }) => {

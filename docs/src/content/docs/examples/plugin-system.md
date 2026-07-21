@@ -13,7 +13,7 @@ The manifest declares a `tasks` namespace with five methods and a top-level `log
 
 ```json
 {
-  "xript": "0.7",
+  "xript": "0.8",
   "name": "task-manager",
   "version": "1.0.0",
   "bindings": {

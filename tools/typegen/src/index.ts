@@ -1,13 +1,132 @@
 import { readFile } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
-import { resolveExtends } from "@xriptjs/validate";
+import {
+	HOOK_SLOT_ACCEPT,
+	resolveExtends,
+	resolveExecutionIntent,
+	executionSurfaces,
+	isDefaultIntent,
+	DURATION_PROSE,
+	AFFINITY_PROSE,
+	ASYNC_SHAPE_REMARK,
+	LIMITS_REACH_REMARK,
+	HOST_BINDING_THREAD_CONTRACT,
+	resolveFormatProfile,
+	FormatProfileError,
+	PROTOCOL_PROPS,
+	RESERVED_IDENTIFIER_PREFIX,
+	type ResolvedExecutionIntent,
+	type NodeDefinition,
+} from "@xriptjs/validate";
+import { describeCapability, generateJSDoc, indent } from "./emit.js";
+import { commandSlots, generateCommandCatalog, generateCommandSlotTypes, modCommands, schemaToType } from "./commands.js";
 
 export { resolveExtends, ManifestResolutionError } from "@xriptjs/validate";
+export { schemaToType, callArgsType, returnType, modCommands, commandSlots } from "./commands.js";
 
 export interface TypegenOptions {
 	header?: string;
 	includeGrantShapes?: boolean;
 	ambient?: boolean;
+	/**
+	 * The host manifest a mod manifest fills. Supplying it makes the slot kind of every fill exact
+	 * rather than sniffed, which is what lets a mod's command catalog be generated reliably.
+	 */
+	host?: unknown;
+	/**
+	 * Emit the execution routing table (`xriptExecution` / `xriptModExecution`) alongside the
+	 * types. Implied by `ambient`. Declared intent never changes an emitted TYPE — it is a
+	 * routing signal a host consumes, not a compile-time constraint on mods — so this adds a
+	 * const map and doc comments and nothing else.
+	 */
+	intent?: boolean;
+}
+
+/**
+ * The JSDoc declared intent contributes to a binding, hook, or export: `@duration`/`@affinity`
+ * tags when the resolved intent is not the default, plus two unconditional remarks.
+ *
+ * The async remark rides on EVERY async binding, whether or not it declares intent, because
+ * `async` is the thing readers most reliably misread: it declares the shape of the value the
+ * host hands the runtime, not the cost of the call, and it does not promise the interpreter
+ * yields.
+ *
+ * The limits remark rides on every `long`/`unbounded` surface, because that is exactly where a
+ * reader would otherwise assume a timeout will save them. It will not: once control is inside a
+ * host binding, the interpreter is not running and no xript limit is observed.
+ */
+function intentDoc(manifest: unknown, path: string, isAsync = false): { tags: string[]; remarks: string[] } {
+	const resolved: ResolvedExecutionIntent = resolveExecutionIntent(manifest, path);
+	const tags: string[] = [];
+	const remarks: string[] = [];
+	if (!isDefaultIntent(resolved)) {
+		tags.push(`@duration ${resolved.duration} - ${DURATION_PROSE[resolved.duration]}`);
+		tags.push(`@affinity ${resolved.affinity} - ${AFFINITY_PROSE[resolved.affinity]}`);
+	}
+	if (isAsync) remarks.push(ASYNC_SHAPE_REMARK);
+	if (resolved.duration === "long" || resolved.duration === "unbounded") remarks.push(LIMITS_REACH_REMARK);
+	return { tags, remarks };
+}
+
+/**
+ * The routing table a host consumes instead of re-parsing the manifest, under the
+ * host-binding thread contract as a file banner. Keyed by the same surface path
+ * `resolveExecutionIntent` takes, so a host reading the table and a tool resolving the manifest
+ * name a surface the same way and a binding, hook, and slot of the same name cannot collide.
+ */
+/**
+ * A slot's own enforced deadline, where it declares one. Unlike intent this is not advisory,
+ * so it is emitted as a distinct field rather than folded into the routing pair.
+ */
+function slotBudgetMs(manifest: unknown, surface: { kind: string; name: string }): number | undefined {
+	if (surface.kind !== "slot") return undefined;
+	const slots = (manifest as { slots?: unknown }).slots;
+	if (!Array.isArray(slots)) return undefined;
+	const declared = slots.find(
+		(slot): slot is { id: string; limits?: { timeout_ms?: number } } =>
+			typeof slot === "object" && slot !== null && (slot as { id?: unknown }).id === surface.name,
+	);
+	return declared?.limits?.timeout_ms;
+}
+
+function generateExecutionTable(manifest: unknown, constName: string, kinds: ReadonlyArray<string>): string | undefined {
+	const surfaces = executionSurfaces(manifest).filter((surface) => kinds.includes(surface.kind));
+	if (surfaces.length === 0) return undefined;
+
+	const lines: string[] = [];
+	for (const line of wrapBanner(HOST_BINDING_THREAD_CONTRACT)) lines.push(`// ${line}`);
+	lines.push("");
+	lines.push(generateJSDoc(
+		"Declared execution intent for every surface in this manifest, resolved through the manifest-wide default. Advisory: a host routes on it, nothing enforces it. Absent from a mod's view of the world — this is a host-facing artifact. Where a slot declares its own `limits.timeout_ms`, `timeoutMs` carries it: that one *is* enforced, and it is the budget calls into that slot's fills actually run under.",
+	));
+	lines.push(`export declare const ${constName}: {`);
+	for (const surface of surfaces) {
+		const budget = slotBudgetMs(manifest, surface);
+		const budgetField = budget === undefined ? "" : `; readonly timeoutMs: ${budget}`;
+		lines.push(
+			indent(
+				`readonly "${surface.path}": { readonly duration: "${surface.resolved.duration}"; readonly affinity: "${surface.resolved.affinity}"${budgetField} };`,
+				1,
+			),
+		);
+	}
+	lines.push("};");
+	return lines.join("\n");
+}
+
+function wrapBanner(text: string, width = 96): string[] {
+	const out: string[] = [];
+	let line = "";
+	for (const word of text.split(" ")) {
+		if (line.length + word.length + 1 > width) {
+			out.push(line);
+			line = word;
+		} else {
+			line = line ? `${line} ${word}` : word;
+		}
+	}
+	if (line) out.push(line);
+	return out;
 }
 
 interface HookDef {
@@ -26,8 +145,6 @@ interface SlotDef {
 	multiple?: boolean;
 	style?: string;
 }
-
-const HOOK_SLOT_ACCEPT = "application/x-xript-hook";
 
 const JS_IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
 
@@ -81,6 +198,14 @@ interface Fill {
 	source?: string;
 	handlers?: FragmentHandler[];
 	events?: FragmentHandler[];
+	bindings?: FragmentBindingDecl[];
+	interpolate?: boolean;
+}
+
+interface FragmentBindingDecl {
+	name?: string;
+	path?: string;
+	type?: string;
 }
 
 interface Manifest {
@@ -170,6 +295,17 @@ function isNamespace(binding: Binding): binding is NamespaceBinding {
 	return "members" in binding;
 }
 
+/**
+ * Appends `[]`, parenthesising first when the element type is a union or intersection.
+ *
+ * Without the parentheses `{ array: { union: ["string", "number"] } }` emitted
+ * `string | number[]`, which TypeScript reads as `string | (number[])` — a union with an array
+ * rather than an array of a union. It compiles, which is what made it worse than a syntax error.
+ */
+function arrayOf(resolved: string): string {
+	return /[|&]/.test(resolved) ? `(${resolved})[]` : `${resolved}[]`;
+}
+
 function resolveTypeRef(ref: TypeRef): string {
 	if (typeof ref === "string") {
 		const primitives: Record<string, string> = {
@@ -184,14 +320,14 @@ function resolveTypeRef(ref: TypeRef): string {
 
 		if (ref.endsWith("[]")) {
 			const inner = ref.slice(0, -2);
-			return `${resolveTypeRef(inner)}[]`;
+			return arrayOf(resolveTypeRef(inner));
 		}
 
 		return ref;
 	}
 
 	if (ref.array !== undefined) {
-		return `${resolveTypeRef(ref.array)}[]`;
+		return arrayOf(resolveTypeRef(ref.array));
 	}
 	if (ref.union) {
 		return ref.union.map(resolveTypeRef).join(" | ");
@@ -210,63 +346,17 @@ function isOptionalParam(param: Parameter): boolean {
 	return param.default !== undefined || param.required === false;
 }
 
-function splitMode(cap: string): { mode: string; scope: string } {
-	const i = cap.indexOf(":");
-	if (i < 0) return { mode: "write", scope: cap };
-	return { mode: cap.slice(0, i), scope: cap.slice(i + 1) };
-}
-
-function describeCapability(cap: string): string {
-	const { mode, scope } = splitMode(cap);
-	const access = mode === "read" ? "read access" : mode === "write" ? "write access" : `\`${mode}:\` access`;
-	return `Requires capability: \`${cap}\` (${access} to the \`${scope}\` scope, satisfied by a grant on that scope or any dotted ancestor).`;
-}
-
-function indent(text: string, level: number): string {
-	const prefix = "\t".repeat(level);
-	return text
-		.split("\n")
-		.map((line) => (line.trim() === "" ? "" : `${prefix}${line}`))
-		.join("\n");
-}
-
-function generateJSDoc(
-	description: string,
-	extras?: { params?: Parameter[]; capability?: string; deprecated?: string; remarks?: string },
-): string {
+function generateFunction(name: string, binding: FunctionBinding, manifest?: unknown): string {
 	const lines: string[] = [];
-	lines.push("/**");
-	lines.push(` * ${description}`);
-
-	if (extras?.deprecated) {
-		lines.push(` * @deprecated ${extras.deprecated}`);
-	}
-	if (extras?.capability) {
-		lines.push(` * @remarks ${describeCapability(extras.capability)}`);
-	}
-	if (extras?.remarks) {
-		lines.push(` * @remarks ${extras.remarks}`);
-	}
-	if (extras?.params) {
-		for (const param of extras.params) {
-			if (param.description) {
-				lines.push(` * @param ${param.name} - ${param.description}`);
-			}
-		}
-	}
-
-	lines.push(" */");
-	return lines.join("\n");
-}
-
-function generateFunction(name: string, binding: FunctionBinding): string {
-	const lines: string[] = [];
+	const { tags, remarks } = intentDoc(manifest, `bindings/${name}`, binding.async === true);
 
 	lines.push(
 		generateJSDoc(binding.description, {
 			params: binding.params,
 			capability: binding.capability,
 			deprecated: binding.deprecated,
+			tags,
+			remarks,
 		}),
 	);
 
@@ -286,14 +376,17 @@ function generateFunction(name: string, binding: FunctionBinding): string {
 	return lines.join("\n");
 }
 
-function generateNamespaceFunction(name: string, binding: FunctionBinding): string {
+function generateNamespaceFunction(name: string, binding: FunctionBinding, qualified: string, manifest?: unknown): string {
 	const lines: string[] = [];
+	const { tags, remarks } = intentDoc(manifest, `bindings/${qualified}`, binding.async === true);
 
 	lines.push(
 		generateJSDoc(binding.description, {
 			params: binding.params,
 			capability: binding.capability,
 			deprecated: binding.deprecated,
+			tags,
+			remarks,
 		}),
 	);
 
@@ -313,20 +406,22 @@ function generateNamespaceFunction(name: string, binding: FunctionBinding): stri
 	return lines.join("\n");
 }
 
-function generateNamespace(name: string, binding: NamespaceBinding): string {
+function generateNamespace(name: string, binding: NamespaceBinding, manifest?: unknown): string {
 	const lines: string[] = [];
 
 	lines.push(generateJSDoc(binding.description));
 	lines.push(`declare namespace ${name} {`);
 
+	const qualifiedPrefix = name;
 	const memberEntries = Object.entries(binding.members);
 	for (let i = 0; i < memberEntries.length; i++) {
 		const [memberName, memberBinding] = memberEntries[i];
+		const memberPath = `${qualifiedPrefix}.${memberName}`;
 		if (isNamespace(memberBinding)) {
-			const nested = generateNestedNamespace(memberName, memberBinding);
+			const nested = generateNestedNamespace(memberName, memberBinding, memberPath, manifest);
 			lines.push(indent(nested, 1));
 		} else {
-			const fn = generateNamespaceFunction(memberName, memberBinding);
+			const fn = generateNamespaceFunction(memberName, memberBinding, memberPath, manifest);
 			lines.push(indent(fn, 1));
 		}
 		if (i < memberEntries.length - 1) {
@@ -338,20 +433,22 @@ function generateNamespace(name: string, binding: NamespaceBinding): string {
 	return lines.join("\n");
 }
 
-function generateNestedNamespace(name: string, binding: NamespaceBinding): string {
+function generateNestedNamespace(name: string, binding: NamespaceBinding, qualified: string, manifest?: unknown): string {
 	const lines: string[] = [];
 
 	lines.push(generateJSDoc(binding.description));
 	lines.push(`namespace ${name} {`);
 
+	const qualifiedPrefix = qualified;
 	const memberEntries = Object.entries(binding.members);
 	for (let i = 0; i < memberEntries.length; i++) {
 		const [memberName, memberBinding] = memberEntries[i];
+		const memberPath = `${qualifiedPrefix}.${memberName}`;
 		if (isNamespace(memberBinding)) {
-			const nested = generateNestedNamespace(memberName, memberBinding);
+			const nested = generateNestedNamespace(memberName, memberBinding, memberPath, manifest);
 			lines.push(indent(nested, 1));
 		} else {
-			const fn = generateNamespaceFunction(memberName, memberBinding);
+			const fn = generateNamespaceFunction(memberName, memberBinding, memberPath, manifest);
 			lines.push(indent(fn, 1));
 		}
 		if (i < memberEntries.length - 1) {
@@ -447,14 +544,17 @@ function generateHandlerType(hookDef: HookDef): string {
 	return `(${params}) => void`;
 }
 
-function generateHookFunction(name: string, hookDef: HookDef): string {
+function generateHookFunction(name: string, hookDef: HookDef, manifest?: unknown): string {
 	const lines: string[] = [];
 	const handlerType = generateHandlerType(hookDef);
+	const { tags, remarks } = intentDoc(manifest, `hooks/${name}`, hookDef.async === true);
 
 	lines.push(
 		generateJSDoc(hookDef.description, {
 			capability: hookDef.capability,
 			deprecated: hookDef.deprecated,
+			tags,
+			remarks,
 		}),
 	);
 	if (JS_IDENTIFIER.test(name)) {
@@ -465,14 +565,17 @@ function generateHookFunction(name: string, hookDef: HookDef): string {
 	return lines.join("\n");
 }
 
-function generatePhasedHookNamespace(name: string, hookDef: HookDef): string {
+function generatePhasedHookNamespace(name: string, hookDef: HookDef, manifest?: unknown): string {
 	const lines: string[] = [];
 	const handlerType = generateHandlerType(hookDef);
+	const { tags, remarks } = intentDoc(manifest, `hooks/${name}`, hookDef.async === true);
 
 	lines.push(
 		generateJSDoc(hookDef.description, {
 			capability: hookDef.capability,
 			deprecated: hookDef.deprecated,
+			tags,
+			remarks,
 		}),
 	);
 	lines.push(`namespace ${name} {`);
@@ -489,7 +592,7 @@ function generatePhasedHookNamespace(name: string, hookDef: HookDef): string {
 	return lines.join("\n");
 }
 
-function generateHooksNamespace(hooks: Record<string, HookDef>, slots?: SlotDef[]): string {
+function generateHooksNamespace(hooks: Record<string, HookDef>, slots?: SlotDef[], manifest?: unknown): string {
 	const lines: string[] = [];
 
 	lines.push(generateJSDoc("Hook registration functions."));
@@ -499,9 +602,9 @@ function generateHooksNamespace(hooks: Record<string, HookDef>, slots?: SlotDef[
 	for (let i = 0; i < hookEntries.length; i++) {
 		const [hookName, hookDef] = hookEntries[i];
 		if (hookDef.phases && hookDef.phases.length > 0) {
-			lines.push(indent(generatePhasedHookNamespace(hookName, hookDef), 1));
+			lines.push(indent(generatePhasedHookNamespace(hookName, hookDef, manifest), 1));
 		} else {
-			lines.push(indent(generateHookFunction(hookName, hookDef), 1));
+			lines.push(indent(generateHookFunction(hookName, hookDef, manifest), 1));
 		}
 		if (i < hookEntries.length - 1) {
 			lines.push("");
@@ -527,8 +630,8 @@ function generateFragmentHooksNamespace(): string {
 	for (let i = 0; i < lifecycles.length; i++) {
 		const lc = lifecycles[i];
 		const handlerType = lc === "update"
-			? "(bindings: Record<string, unknown>, fragment: FragmentProxy) => void"
-			: "(fragment: FragmentProxy) => void";
+			? `(bindings: Record<string, unknown>, fragment: ${RESERVED_IDENTIFIER_PREFIX}FragmentProxy) => void`
+			: `(fragment: ${RESERVED_IDENTIFIER_PREFIX}FragmentProxy) => void`;
 		lines.push(indent(`function ${lc}(fragmentId: string, handler: ${handlerType}): void;`, 1));
 		if (i < lifecycles.length - 1) lines.push("");
 	}
@@ -564,10 +667,10 @@ function generateCapabilityTypes(capabilities: Record<string, Capability>): stri
 
 	lines.push(
 		generateJSDoc(
-			"A capability scope declared by the host. Scope-only — no `read:`/`write:` mode prefix. Use `CapabilityRef` where a mode-prefixed grant or require string is expected.",
+			`A capability scope declared by the host. Scope-only — no \`read:\`/\`write:\` mode prefix. Use \`${RESERVED_IDENTIFIER_PREFIX}CapabilityRef\` where a mode-prefixed grant or require string is expected.`,
 		),
 	);
-	lines.push(`type Capability = ${scopeUnion};`);
+	lines.push(`type ${RESERVED_IDENTIFIER_PREFIX}Capability = ${scopeUnion};`);
 	lines.push("");
 
 	const refMembers = keys
@@ -579,7 +682,7 @@ function generateCapabilityTypes(capabilities: Record<string, Capability>): stri
 			"A capability reference: a declared scope, optionally carrying a `read:`/`write:` mode prefix. A bare scope means `write:` (the top of the mode lattice). Open to any string so an ancestor scope or host-specific grant still type-checks.",
 		),
 	);
-	lines.push(`type CapabilityRef = (${refMembers}) | (string & {});`);
+	lines.push(`type ${RESERVED_IDENTIFIER_PREFIX}CapabilityRef = (${refMembers}) | (string & {});`);
 
 	return lines.join("\n");
 }
@@ -612,6 +715,18 @@ function generateXriptConst(): string {
 
 export function generateAmbientTypes(manifest: unknown, options?: TypegenOptions): string {
 	const m = manifest as Manifest;
+	/**
+	 * The manifest that describes the *environment* a mod runs inside: the bindings, hooks,
+	 * slots, events, types and capabilities the host installs on the sandbox global.
+	 *
+	 * A mod manifest declares none of those, so generating ambient types from one alone
+	 * emitted an environment with no `log`, no `hooks` and no `events` — the whole surface a
+	 * mod author writes against — and the file broke the very scaffold that recommended it.
+	 * When a host is supplied, the environment comes from the host and only the mod-specific
+	 * parts (`fills`, `entry.exports`) come from the mod. With no host this is the manifest
+	 * itself, which is the host-manifest case and is unchanged.
+	 */
+	const env = (options?.host as Manifest | undefined) ?? m;
 	const sections: string[] = [];
 
 	if (options?.header) {
@@ -626,47 +741,54 @@ export function generateAmbientTypes(manifest: unknown, options?: TypegenOptions
 
 	const globalBlocks: string[] = [];
 
-	if (m.types) {
-		for (const [typeName, typeDef] of Object.entries(m.types)) {
+	if (env.types) {
+		for (const [typeName, typeDef] of Object.entries(env.types)) {
 			if (typeDef.values) {
 				globalBlocks.push(generateEnumType(typeName, typeDef));
 			} else {
-				globalBlocks.push(generateObjectType(typeName, typeDef, m.types));
+				globalBlocks.push(generateObjectType(typeName, typeDef, env.types));
 				if (typeDef.fields && Object.keys(typeDef.fields).length > 0) {
-					globalBlocks.push(generateAccessorInterface(typeName, typeDef, m.types));
+					globalBlocks.push(generateAccessorInterface(typeName, typeDef, env.types));
 				}
 			}
 		}
 	}
 
-	if (m.bindings) {
-		for (const [bindingName, binding] of Object.entries(m.bindings)) {
+	if (env.bindings) {
+		for (const [bindingName, binding] of Object.entries(env.bindings)) {
 			if (isNamespace(binding)) {
-				globalBlocks.push(stripLeadingDeclare(generateNamespace(bindingName, binding)));
+				globalBlocks.push(stripLeadingDeclare(generateNamespace(bindingName, binding, env)));
 			} else {
-				globalBlocks.push(stripLeadingDeclare(generateFunction(bindingName, binding)));
+				globalBlocks.push(stripLeadingDeclare(generateFunction(bindingName, binding, env)));
 			}
 		}
 	}
 
-	if (m.hooks && Object.keys(m.hooks).length > 0) {
-		globalBlocks.push(stripLeadingDeclare(generateHooksNamespace(effectiveHooks(m.hooks, m.slots), m.slots)));
-	} else if (m.slots && m.slots.length > 0) {
-		globalBlocks.push(stripLeadingDeclare(generateHooksNamespace(effectiveHooks(undefined, m.slots), m.slots)));
+	if (env.hooks && Object.keys(env.hooks).length > 0) {
+		globalBlocks.push(stripLeadingDeclare(generateHooksNamespace(effectiveHooks(env.hooks, env.slots), env.slots, env)));
+	} else if (env.slots && env.slots.length > 0) {
+		globalBlocks.push(stripLeadingDeclare(generateHooksNamespace(effectiveHooks(undefined, env.slots), env.slots, env)));
 	}
 
-	if (m.slots && m.slots.length > 0) {
+	if (env.slots && env.slots.length > 0) {
 		globalBlocks.push(generateFragmentAPITypes());
-		globalBlocks.push(generateSlotTypes(m.slots));
+		globalBlocks.push(generateSlotTypes(env.slots, env));
+		const commandSurface = commandSlots(env.slots);
+		if (commandSurface.length > 0) {
+			globalBlocks.push(stripLeadingDeclare(generateCommandSlotTypes(commandSurface)));
+		}
 	}
 
-	if (m.events && m.events.length > 0) {
-		globalBlocks.push(generateEventCatalog(m.events));
+	const ambientFormatTypes = generateFormatTypes(env);
+	if (ambientFormatTypes) globalBlocks.push(ambientFormatTypes);
+
+	if (env.events && env.events.length > 0) {
+		globalBlocks.push(generateEventCatalog(env.events));
 		globalBlocks.push(generateEventsGlobal());
 	}
 
-	if (m.capabilities && Object.keys(m.capabilities).length > 0) {
-		globalBlocks.push(generateCapabilityTypes(m.capabilities));
+	if (env.capabilities && !Array.isArray(env.capabilities) && Object.keys(env.capabilities).length > 0) {
+		globalBlocks.push(generateCapabilityTypes(env.capabilities));
 	}
 
 	globalBlocks.push(generateXriptConst());
@@ -674,21 +796,28 @@ export function generateAmbientTypes(manifest: unknown, options?: TypegenOptions
 	const globalBody = globalBlocks.map((b) => indent(b, 1)).join("\n\n");
 	sections.push(`declare global {\n${globalBody}\n}`);
 
-	if (m.libraries && Object.keys(m.libraries).length > 0) {
-		sections.push(generateLibraryModules(m.libraries));
+	if (env.libraries && Object.keys(env.libraries).length > 0) {
+		sections.push(generateLibraryModules(env.libraries));
 	}
 
 	if (m.fills && Object.keys(m.fills).length > 0) {
 		const handlerTypes = generateFragmentHandlerTypes(m.fills);
 		if (handlerTypes) sections.push(handlerTypes);
+		const bindingTypes = generateFragmentBindingTypes(m.fills, m);
+		if (bindingTypes) sections.push(bindingTypes);
 	}
 
 	if (m.entry && typeof m.entry === "object" && !Array.isArray(m.entry) && m.entry.exports) {
 		const exportEntries = Object.entries(m.entry.exports);
 		if (exportEntries.length > 0) {
-			sections.push(generateExportsInterface(m.entry.exports));
+			sections.push(generateExportsInterface(m.entry.exports, m));
 		}
 	}
+
+	const catalog = generateCommandCatalogFor(m, options);
+	if (catalog) sections.push(catalog);
+
+	for (const table of executionTables(m, { ...options, ambient: true })) sections.push(table);
 
 	if (options?.includeGrantShapes) {
 		sections.push(generateGrantShapeInterfaces());
@@ -733,42 +862,51 @@ export function generateTypes(manifest: unknown, options?: TypegenOptions): stri
 	if (m.bindings) {
 		for (const [bindingName, binding] of Object.entries(m.bindings)) {
 			if (isNamespace(binding)) {
-				sections.push(generateNamespace(bindingName, binding));
+				sections.push(generateNamespace(bindingName, binding, m));
 			} else {
-				sections.push(generateFunction(bindingName, binding));
+				sections.push(generateFunction(bindingName, binding, m));
 			}
 		}
 	}
 
 	if (m.hooks && Object.keys(m.hooks).length > 0) {
-		sections.push(generateHooksNamespace(effectiveHooks(m.hooks, m.slots), m.slots));
+		sections.push(generateHooksNamespace(effectiveHooks(m.hooks, m.slots), m.slots, m));
 	} else if (m.slots && m.slots.length > 0) {
-		sections.push(generateHooksNamespace(effectiveHooks(undefined, m.slots), m.slots));
+		sections.push(generateHooksNamespace(effectiveHooks(undefined, m.slots), m.slots, m));
 	}
 
 	if (m.slots && m.slots.length > 0) {
 		sections.push(generateFragmentAPITypes());
-		sections.push(generateSlotTypes(m.slots));
+		sections.push(generateSlotTypes(m.slots, m));
+		const commandSurface = commandSlots(m.slots);
+		if (commandSurface.length > 0) {
+			sections.push(generateCommandSlotTypes(commandSurface));
+		}
 	}
+
+	const formatTypes = generateFormatTypes(m);
+	if (formatTypes) sections.push(formatTypes);
 
 	if (m.events && m.events.length > 0) {
 		sections.push(generateEventCatalog(m.events));
 		sections.push(generateEventsGlobal(true));
 	}
 
-	if (m.capabilities && Object.keys(m.capabilities).length > 0) {
+	if (m.capabilities && !Array.isArray(m.capabilities) && Object.keys(m.capabilities).length > 0) {
 		sections.push(generateCapabilityTypes(m.capabilities));
 	}
 
 	if (m.fills && Object.keys(m.fills).length > 0) {
 		const handlerTypes = generateFragmentHandlerTypes(m.fills);
 		if (handlerTypes) sections.push(handlerTypes);
+		const bindingTypes = generateFragmentBindingTypes(m.fills, m);
+		if (bindingTypes) sections.push(bindingTypes);
 	}
 
 	if (m.entry && typeof m.entry === "object" && !Array.isArray(m.entry) && m.entry.exports) {
 		const exportEntries = Object.entries(m.entry.exports);
 		if (exportEntries.length > 0) {
-			sections.push(generateExportsInterface(m.entry.exports));
+			sections.push(generateExportsInterface(m.entry.exports, m));
 		}
 	}
 
@@ -776,11 +914,44 @@ export function generateTypes(manifest: unknown, options?: TypegenOptions): stri
 		sections.push(generateProvidedRolesInterface(m.contributions.provides));
 	}
 
+	const catalog = generateCommandCatalogFor(m, options);
+	if (catalog) sections.push(catalog);
+
+	for (const table of executionTables(m, options)) sections.push(table);
+
 	if (options?.includeGrantShapes) {
 		sections.push(generateGrantShapeInterfaces());
 	}
 
 	return sections.join("\n\n") + "\n";
+}
+
+/**
+ * The routing tables `--intent` emits: the host surfaces a host routes on, and the mod exports
+ * a host invokes. A manifest that is both (a host manifest carrying an entry) gets both.
+ */
+function executionTables(m: Manifest, options?: TypegenOptions): string[] {
+	if (!options?.intent && !options?.ambient) return [];
+	const tables: string[] = [];
+	const host = generateExecutionTable(m, "xriptExecution", ["binding", "hook", "slot"]);
+	if (host) tables.push(host);
+	const mod = generateExecutionTable(m, "xriptModExecution", ["export"]);
+	if (mod) tables.push(mod);
+	return tables;
+}
+
+/**
+ * The mod's command catalog, or undefined when the manifest contributes no commands. The host
+ * manifest, when supplied, decides which slots are command slots; without it the fill shape is
+ * sniffed, since a mod manifest alone does not carry the slot declarations it fills.
+ */
+function generateCommandCatalogFor(m: Manifest, options?: TypegenOptions): string | undefined {
+	if (!m.fills || Object.keys(m.fills).length === 0) return undefined;
+	const hostSlots = options?.host !== undefined ? (options.host as { slots?: unknown }).slots : undefined;
+	const commands = modCommands(m.fills, options?.host !== undefined ? (hostSlots ?? []) : undefined);
+	if (commands.length === 0) return undefined;
+	const exports = m.entry && typeof m.entry === "object" && !Array.isArray(m.entry) ? m.entry.exports : undefined;
+	return generateCommandCatalog(commands, (handler) => exports?.[handler]?.capability);
 }
 
 function generateProvidedRolesInterface(provides: ProviderRole[]): string {
@@ -839,7 +1010,7 @@ function generateGrantShapeInterfaces(): string {
 	].join("\n");
 }
 
-function generateExportsInterface(exports: Record<string, ExportDef>): string {
+function generateExportsInterface(exports: Record<string, ExportDef>, manifest?: unknown): string {
 	const lines: string[] = [];
 
 	lines.push(generateJSDoc("Host-invokable exports declared by this mod. Invoke by name via the runtime."));
@@ -848,9 +1019,10 @@ function generateExportsInterface(exports: Record<string, ExportDef>): string {
 	const entries = Object.entries(exports);
 	for (let i = 0; i < entries.length; i++) {
 		const [name, def] = entries[i];
+		const { tags, remarks } = intentDoc(manifest, `exports/${name}`);
 		lines.push(
 			indent(
-				generateJSDoc(def.description, { params: def.params, capability: def.capability }),
+				generateJSDoc(def.description, { params: def.params, capability: def.capability, tags, remarks }),
 				1,
 			),
 		);
@@ -869,12 +1041,12 @@ function generateExportsInterface(exports: Record<string, ExportDef>): string {
 	return lines.join("\n");
 }
 
-function generateSlotTypes(slots: SlotDef[]): string {
+function generateSlotTypes(slots: SlotDef[], manifest?: unknown): string {
 	const lines: string[] = [];
 
 	lines.push(generateJSDoc("A slot id declared by the host application."));
 	const union = slots.map((s) => `"${s.id}"`).join(" | ");
-	lines.push(`type Slot = ${union};`);
+	lines.push(`type ${RESERVED_IDENTIFIER_PREFIX}Slot = ${union};`);
 	lines.push("");
 
 	lines.push(generateJSDoc("Available UI slots for fragment contributions."));
@@ -885,12 +1057,161 @@ function generateSlotTypes(slots: SlotDef[]): string {
 		if (slot.capability) doc.push(describeCapability(slot.capability));
 		if (slot.multiple) doc.push("Multiple fragments allowed");
 		if (slot.style) doc.push(`Style: ${slot.style}`);
-		lines.push(indent(generateJSDoc(doc.join(". ") + "."), 1));
+		const { tags, remarks } = intentDoc(manifest, `slots/${slot.id}`);
+		lines.push(indent(generateJSDoc(doc.join(". ") + ".", { tags, remarks }), 1));
 		lines.push(indent(`"${slot.id}": { accepts: ${JSON.stringify(slot.accepts)}; multiple: ${slot.multiple ?? false}; style: "${slot.style ?? "inherit"}" };`, 1));
 	}
 
 	lines.push("}");
 	return lines.join("\n");
+}
+
+function formatKeyName(key: string): string {
+	return /^[A-Za-z_$][\w$]*$/.test(key) ? key : JSON.stringify(key);
+}
+
+/**
+ * The tuple rest that types a node's children, from its declared constraint. An undeclared
+ * constraint defaults to `any`, matching the sanitizer. `nodeTypeOf` maps an allow-listed child
+ * name to its node type, or null when the name is not one of this vocabulary's own nodes (an HTML
+ * or cross-vocabulary child), in which case the rest widens to the vocabulary union plus text.
+ */
+function childrenRest(
+	children: NodeDefinition["children"],
+	unionName: string,
+	nodeTypeOf: (name: string) => string | null,
+): string {
+	const constraint = children ?? "any";
+	if (constraint === "none") return "";
+	if (constraint === "any") return `, ...(${unionName} | string)[]`;
+	if (constraint === "text") return `, ...string[]`;
+	if (Array.isArray(constraint)) {
+		const allowed = constraint.map(nodeTypeOf).filter((type): type is string => type !== null);
+		if (allowed.length === 0) return `, ...(${unionName} | string)[]`;
+		return `, ...(${[...new Set(allowed)].join(" | ")})[]`;
+	}
+	return "";
+}
+
+/**
+ * Types for each host-declared fragment vocabulary: a props interface and a `[name, props,
+ * ...children]` tuple type per node, plus a union over the vocabulary's nodes. A mod authoring a
+ * fragment of a declared format types its node tree against the union. Children nest as openly as
+ * the node's declared constraint allows — a container declaring `children: "any"` accepts any
+ * number of nodes of any type to any depth. The built-in `html` vocabulary is not typed: a format
+ * that scopes it in accepts every HTML element, whose shape is not enumerable.
+ */
+function generateFormatTypes(manifest: unknown): string {
+	const formats = (manifest as { formats?: unknown }).formats;
+	if (!formats || typeof formats !== "object" || Array.isArray(formats) || Object.keys(formats).length === 0) {
+		return "";
+	}
+	const vocabularies = ((manifest as { vocabularies?: unknown }).vocabularies ?? null) as Parameters<
+		typeof resolveFormatProfile
+	>[2];
+
+	const collected = new Map<string, { prefix: string; nodes: Record<string, NodeDefinition> }>();
+	for (const formatId of Object.keys(formats)) {
+		let profile;
+		try {
+			profile = resolveFormatProfile(
+				formatId,
+				formats as Parameters<typeof resolveFormatProfile>[1],
+				vocabularies,
+			);
+		} catch (error) {
+			if (error instanceof FormatProfileError) continue;
+			throw error;
+		}
+		if (!profile) continue;
+		for (const vocab of profile.scope) {
+			if (vocab.kind !== "declared") continue;
+			if (Object.keys(vocab.nodes).length === 0) continue;
+			const key = vocab.id ?? `format:${formatId}`;
+			if (!collected.has(key)) collected.set(key, { prefix: "", nodes: vocab.nodes });
+		}
+	}
+	if (collected.size === 0) return "";
+
+	const usedPrefixes = new Set<string>();
+	for (const [key, entry] of collected) {
+		const base = pascalCaseIdentifier(key.startsWith("format:") ? key.slice("format:".length) : key);
+		let prefix = base;
+		let disambiguator = 2;
+		while (usedPrefixes.has(prefix)) prefix = `${base}${disambiguator++}`;
+		usedPrefixes.add(prefix);
+		entry.prefix = prefix;
+	}
+
+	const blocks: string[] = [];
+	for (const { prefix, nodes } of collected.values()) {
+		const nodeNames = Object.keys(nodes);
+		const unionName = `${prefix}Node`;
+		const protocolName = `${prefix}NodeProps`;
+		// Two node names can pascal-case to one stem (`my-widget` and `my_widget` both give
+		// `MyWidget`), which would emit duplicate type identifiers. Assign a unique stem per node.
+		// `Node` is reserved so a node literally named "Node" can't collide its props with the
+		// vocabulary's protocol interface.
+		const stems = new Map<string, string>();
+		const usedStems = new Set<string>(["Node"]);
+		for (const name of nodeNames) {
+			const base = pascalCaseIdentifier(name);
+			let stem = base;
+			let disambiguator = 2;
+			while (usedStems.has(stem)) stem = `${base}${disambiguator++}`;
+			usedStems.add(stem);
+			stems.set(name, stem);
+		}
+		const propsName = (name: string) => `${prefix}${stems.get(name)}Props`;
+		const nodeTypeName = (name: string) => `${prefix}${stems.get(name)}Node`;
+
+		const lines: string[] = [];
+		lines.push(
+			generateJSDoc(
+				"Props legal on every node of this vocabulary. `data-bind` and `data-if` carry XEG; `id` addresses a node.",
+			),
+		);
+		lines.push(`interface ${protocolName} {`);
+		lines.push(indent("id?: string;", 1));
+		lines.push(indent('"data-bind"?: string;', 1));
+		lines.push(indent('"data-if"?: string;', 1));
+		lines.push("}");
+
+		for (const name of nodeNames) {
+			const node = nodes[name];
+			lines.push("");
+			if (node.description) lines.push(generateJSDoc(node.description));
+			lines.push(`interface ${propsName(name)} extends ${protocolName} {`);
+			for (const [propKey, propDef] of Object.entries(node.props ?? {})) {
+				// `id`/`data-bind`/`data-if` are always strings the sanitizer enforces regardless of
+				// a node's declaration; the protocol interface already types them, so a node redeclaring
+				// one must not override the inherited member with an incompatible type.
+				if (PROTOCOL_PROPS.has(propKey)) continue;
+				lines.push(indent(`${formatKeyName(propKey)}?: ${schemaToType(propDef)};`, 1));
+			}
+			lines.push("}");
+		}
+
+		lines.push("");
+		lines.push(
+			generateJSDoc(
+				`A node in the \`${prefix}\` vocabulary: a \`[name, props, ...children]\` tuple. The props object holds the second position even when it carries only optional props.`,
+			),
+		);
+		lines.push(`type ${unionName} = ${nodeNames.map(nodeTypeName).join(" | ")};`);
+
+		for (const name of nodeNames) {
+			const rest = childrenRest(nodes[name].children, unionName, (childName) =>
+				nodeNames.includes(childName) ? nodeTypeName(childName) : null,
+			);
+			lines.push("");
+			lines.push(`type ${nodeTypeName(name)} = [${JSON.stringify(name)}, ${propsName(name)}${rest}];`);
+		}
+
+		blocks.push(lines.join("\n"));
+	}
+
+	return blocks.join("\n\n");
 }
 
 function generateEventCatalog(events: EventDef[]): string {
@@ -987,15 +1308,110 @@ function generateFragmentHandlerTypes(fills: Record<string, Fill[]>): string | u
 	return lines.join("\n");
 }
 
+/**
+ * Emits, per fragment fill, the binding surface its expressions read.
+ *
+ * TypeScript cannot type-check a string embedded in markup, and faking it with
+ * template-literal type gymnastics would produce error messages no author could read. So
+ * the work splits: these types give an editor something to complete against inside
+ * `{{ … }}`, `data-if`, and `data-bind`, and the `expressions` analyzer in
+ * `@xriptjs/validate` does the actual checking over the same AST the runtimes walk.
+ */
+function generateFragmentBindingTypes(
+	fills: Record<string, Fill[]>,
+	manifest: Manifest,
+): string | undefined {
+	const blocks: string[] = [];
+
+	for (const [slotId, slotFills] of Object.entries(fills)) {
+		for (const fill of slotFills) {
+			const bindings = fill.bindings?.filter((binding) => typeof binding.name === "string") ?? [];
+			if (bindings.length === 0) continue;
+
+			const base = pascalCaseIdentifier(fill.id ?? slotId);
+			const lines: string[] = [];
+			lines.push(
+				generateJSDoc(
+					`Bindings the \`${slotId}\` fill declares. Every identifier an expression in this fill names must appear here.`,
+					fill.interpolate
+						? { remarks: "This fill parses `{{ expression }}` sites in its text nodes." }
+						: undefined,
+				),
+			);
+			lines.push(`interface ${base}Bindings {`);
+			for (const binding of bindings) {
+				const doc = binding.path ? generateJSDoc(`Resolved from \`${binding.path}\`.`) : undefined;
+				if (doc) lines.push(indent(doc, 1));
+				lines.push(indent(`${binding.name}: ${bindingValueType(binding, manifest)};`, 1));
+			}
+			lines.push("}");
+			lines.push("");
+			lines.push(
+				generateJSDoc(
+					`Every binding name valid inside a \`data-bind\`, \`data-if\`, or interpolation site on the \`${slotId}\` fill.`,
+				),
+			);
+			lines.push(`type ${base}Binding = keyof ${base}Bindings;`);
+			blocks.push(lines.join("\n"));
+		}
+	}
+
+	if (blocks.length === 0) return undefined;
+
+	const body = blocks.map((block) => indent(block, 1)).join("\n\n");
+	return [
+		generateJSDoc(
+			"Per-fill binding surfaces for fragment expressions. Names here are what an editor completes inside `{{ … }}`, `data-if`, and `data-bind`.",
+		),
+		`declare namespace XriptFragments {\n${body}\n}`,
+	].join("\n");
+}
+
+/**
+ * A binding's value type, taken from the host manifest's `types` when the declaration names
+ * one and `unknown` otherwise. Guessing from the data path would be worse than admitting
+ * the type is not knowable: a wrong type produces a confident, wrong error.
+ */
+function bindingValueType(binding: FragmentBindingDecl, manifest: Manifest): string {
+	if (!binding.type) return "unknown";
+	if (manifest.types && Object.prototype.hasOwnProperty.call(manifest.types, binding.type)) {
+		return binding.type;
+	}
+	return mapPrimitiveType(binding.type);
+}
+
+function mapPrimitiveType(name: string): string {
+	switch (name) {
+		case "int":
+		case "float":
+		case "number": return "number";
+		case "string": return "string";
+		case "bool":
+		case "boolean": return "boolean";
+		case "array": return "unknown[]";
+		case "object": return "Record<string, unknown>";
+		default: return "unknown";
+	}
+}
+
+function pascalCaseIdentifier(value: string): string {
+	const parts = value.split(/[^A-Za-z0-9]+/).filter(Boolean);
+	const joined = parts.map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join("");
+	return /^[A-Za-z]/.test(joined) ? joined : `Fill${joined}`;
+}
+
 function generateFragmentAPITypes(): string {
 	const lines: string[] = [];
 
 	lines.push(generateJSDoc("Proxy for imperative fragment manipulation. Method calls accumulate a command buffer."));
-	lines.push("interface FragmentProxy {");
+	lines.push(`interface ${RESERVED_IDENTIFIER_PREFIX}FragmentProxy {`);
 	lines.push(indent("toggle(selector: string, condition: boolean): void;", 1));
 	lines.push(indent("addClass(selector: string, className: string): void;", 1));
 	lines.push(indent("removeClass(selector: string, className: string): void;", 1));
 	lines.push(indent("setText(selector: string, text: string): void;", 1));
+	lines.push(indent("/** Set a prop on matching nodes; the value keeps its type. */", 1));
+	lines.push(indent("setProp(selector: string, prop: string, value: unknown): void;", 1));
+	lines.push(indent("/** @deprecated Alias of `setProp` kept under its own op name. */", 1));
 	lines.push(indent("setAttr(selector: string, attr: string, value: string): void;", 1));
 	lines.push(indent("replaceChildren(selector: string, html: string | string[]): void;", 1));
 	lines.push("}");

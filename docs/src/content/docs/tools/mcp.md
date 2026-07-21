@@ -59,9 +59,9 @@ Every tool that takes a manifest accepts **either a file path or the inline JSON
 
 The server serves the xript spec straight from source, so an agent's answers can't drift from what the spec actually says:
 
-- `xript://spec/{manifest,mod-manifest,capabilities,bindings,hooks,fragments,modules,security,vision,annotations,debug-protocol}`
+- `xript://spec/{manifest,mod-manifest,capabilities,bindings,hooks,commands,fragments,fragment-formats,extends,modules,security,vision,annotations,debug-protocol,harness}`
 - `xript://spec/{manifest-schema,mod-manifest-schema}`
-- `xript://guidance/{when-to-use,surfaces,mod-zero,boundary,openness,authoring,hosting,tiers}`
+- `xript://guidance/{when-to-use,surfaces,mod-zero,boundary,openness,authoring,hosting,host-fragments,host-formats,host-capabilities,host-slots,host-roles,host-hooks,host-commands,host-safety,tiers}`
 
 ## Prompts
 
@@ -71,7 +71,7 @@ Reusable advisory templates, each grounded in the doctrine:
 |--------|-----------|
 | `adopt-xript` | Decide whether a surface should be manifest-driven |
 | `is-this-xript-native` | Audit whether a surface is genuinely extensible or hardcoded next to a manifest |
-| `choose-a-surface` | Pick the right surface: binding, hook, slot, fragment, capability, or command |
+| `choose-a-surface` | Pick the right surface: a binding, or a slot of the right kind (fragment, role, event, command) |
 | `author-a-mod` | Walk the authoring loop, optionally against a specific host manifest |
 
 ## Doctrine as data

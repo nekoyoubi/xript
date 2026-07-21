@@ -12,7 +12,7 @@ test("end-to-end: runtime output flows through the renderer core into the DOM", 
 	const counter = runtime.loadMod(counterMod.manifest, { fragmentSources: counterMod.sources });
 
 	appState.counter.value = 0;
-	const handlers = counterMod.manifest.fragments[0].handlers;
+	const handlers = counterMod.manifest.fills["sidebar.left"][0].handlers;
 
 	function frame(root) {
 		const result = counter.updateBindings({ counter: { value: appState.counter.value } })[0];

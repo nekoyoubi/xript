@@ -1,3 +1,5 @@
+using Xript.Runtime.Fragments;
+
 namespace Xript.Runtime;
 
 public sealed record SlotContribution(
@@ -5,4 +7,11 @@ public sealed record SlotContribution(
     string FragmentId,
     string Slot,
     string Format,
-    int Priority);
+    int Priority)
+{
+    /// <summary>
+    /// Whether the host mounts an HTML string or the fragment tree. A host-declared
+    /// vocabulary has no HTML projection, so its contributions are always trees.
+    /// </summary>
+    public FragmentContentType ContentType { get; init; } = FragmentContentType.Html;
+}

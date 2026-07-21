@@ -10,7 +10,7 @@ A manifest is a JSON file conforming to the [manifest JSON Schema](./manifest.sc
 
 ```json
 {
-  "xript": "0.7",
+  "xript": "0.8",
   "name": "my-app"
 }
 ```
@@ -225,7 +225,7 @@ Slots are the host's typed fill surface, the counterpart to bindings. A binding 
   "slots": [
     {
       "id": "sidebar.left",
-      "accepts": ["text/html+jsml"],
+      "accepts": ["text/html"],
       "capability": "ui-mount",
       "multiple": true,
       "style": "isolated"
@@ -251,10 +251,13 @@ A slot in an extending manifest can redeclare a base slot `id` with `"refines": 
 
 A slot's `accepts` names the format(s) or kind(s) of fill it takes. The type determines what a fill looks like and what the host does with it:
 
-- **Fragment-format slots** — `accepts` names a fragment format (`text/html+jsml`, `application/jsml+json`, `text/html`). The host *mounts* the fill as an inert fragment. The [fragment protocol](./fragments.md) is the semantics of this slot type.
+- **Fragment-format slots** — `accepts` names a fragment format: one of the four built-in ones (`text/html`, `text/html+jsml`, `application/j5ml+json`, `application/jsml+json`), or one the host declares itself in [`formats`](#fragment-formats). The host *mounts* the fill as an inert fragment. The [fragment protocol](./fragments.md) is the semantics of this slot type.
 - **Code-renderer slots** — `accepts` names an executable renderer kind (e.g. `application/javascript+esm`). The host *loads and runs* the fill's code to paint the slot.
 - **Role slots** — `accepts` is `application/x-xript-role`. The host *resolves* the fill's logical-to-concrete function map and calls the named functions itself.
 - **Event slots** — `accepts` is `application/x-xript-hook`; the host *fires* the slot, calling each fill's named handler when the event occurs. This is the modern replacement for the standalone `hooks` concept below.
+- **Command slots** — `accepts` is `application/x-xript-command`. Each fill is a named, invocable action backed by a mod export; the host *lists* them (a palette, a menu, a keybinding table) and *invokes* the one the user picked. See [Command Slots](#command-slots) below and [commands.md](./commands.md).
+
+The three `application/x-xript-*` types are **reserved**: they carry no markup, are never sanitized, and cannot be redeclared in [`formats`](#fragment-formats). When a slot's `accepts` names more than one of them, they are matched in a fixed order: role, then hook, then command.
 
 Mods fill slots through the `fills` surface in their mod manifest; see [mod-manifest.md](./mod-manifest.md).
 
@@ -402,6 +405,105 @@ An approved library runs **inside the sandbox at the importing mod's own privile
 | `version` | string | no | The version or semver range the host ships (the contract mod authors compile against) |
 | `deprecated` | string | no | If present, the library is deprecated; the value says what to use instead |
 
+## Fragment Formats
+
+`slots[].accepts` names the fragment format a slot takes. `formats` says what that format *means*: how a fill of that media type is parsed, which node vocabularies are in scope while it is read, and — through those vocabularies — which props each node accepts and where each prop's value lands.
+
+```json
+{
+  "formats": {
+    "application/x-panel+json": {
+      "syntax": "j5ml",
+      "nodes": {
+        "Panel": { "props": { "heading": { "type": "string" } } },
+        "Link":  { "children": "text", "props": { "href": { "type": "string", "sink": "uri" } } }
+      }
+    }
+  },
+  "slots": [
+    { "id": "sidebar.left", "accepts": ["application/x-panel+json"] }
+  ]
+}
+```
+
+The four built-in formats need no declaration: each brings the built-in `html` vocabulary into scope and nothing else, which is what a manifest carrying no `formats` block gets. A host declares `formats` when it wants a fragment to carry something other than HTML — component nodes, terminal widgets, desktop controls — with node names that keep their case and props that keep their type.
+
+### Format Fields
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `syntax` | `"j5ml"` \| `"jsml"` \| `"html"` | yes | — | The parser a runtime reads a fill's `source` with. `j5ml` reads JSON in J5ML array form, `html` tokenizes an HTML string; `jsml` is a deprecated spelling of `j5ml` and parses identically |
+| `vocabularies` | string[] | no | — | The node vocabularies in scope, in resolution order. Each entry names a built-in vocabulary (`html`) or one this manifest declares in [`vocabularies`](#vocabularies) |
+| `nodes` | object | no | — | An inline single-use vocabulary, resolved ahead of every entry in `vocabularies`. Names are case-sensitive |
+| `schemes` | string[] | no | `["http", "https", "mailto", "data"]` | The URI schemes a `uri` or `image-uri` sink admits, named without the colon. Declaring the key **replaces** the default set rather than extending it, so the one key both widens (`tauri`) and narrows (`https` alone); `[]` closes the format to absolute URLs. `javascript` and `vbscript` are refused and cannot be declared |
+| `description` | string | no | — | What the format is for |
+| `refines` | boolean | no | false | Refines a base manifest's format of the same id (see [extends.md](./extends.md)) |
+
+A format must admit at least one node: `nodes`, a non-empty `vocabularies`, or both. `nodes` and `vocabularies` answer different questions — `syntax` is how a fill is *read*, `vocabularies` is what is *in scope* while reading it — and an inline `nodes` block is exactly a vocabulary that happens to have no id, so nothing else can reference it. Declare a vocabulary in [`vocabularies`](#vocabularies) when more than one format will speak it; inline it otherwise.
+
+Each node declares `props` (each a JSON Schema), a `children` constraint, and an optional `bindTo` naming where a `data-bind` value lands. A prop's `sink` (`text` — the default — `uri`, `image-uri`, `css`, `html`) declares where its value ends up, and is the *only* thing the runtime needs to know in order to sanitize it correctly. A prop with no sink is inert data and is never touched. The format's `schemes` says which absolute URLs the two URI sinks admit; a value carrying no scheme is relative and is never measured against it.
+
+A host **cannot** redeclare a built-in or reserved media type in `formats`; a host that wants a component vocabulary registers a new media type. The full model — vocabulary resolution, the sink table, the tree contract, default-deny semantics — is in [fragment-formats.md](./fragment-formats.md).
+
+## Vocabularies
+
+A format names a parser and a scope. A **vocabulary** is what fills that scope: a set of node names with their props, and nothing at all about how they are authored. The optional top-level `vocabularies` map declares them, keyed by id, so that any number of formats may bring the same one into scope — under different syntaxes, and alongside different neighbours.
+
+```json
+{
+  "vocabularies": {
+    "acme.components": {
+      "description": "The component set the design system ships.",
+      "nodes": {
+        "acme-icon": { "children": "none", "props": { "name": { "type": "string" } } },
+        "acme-card": { "props": { "heading": { "type": "string" } } }
+      }
+    }
+  },
+  "formats": {
+    "text/x-acme+html": {
+      "syntax": "html",
+      "vocabularies": ["acme.components", "html"]
+    },
+    "application/x-acme+json": {
+      "syntax": "j5ml",
+      "vocabularies": ["acme.components"]
+    }
+  }
+}
+```
+
+Those two formats are the shape this surface exists for. The component library authors its own components as HTML, with the whole HTML element vocabulary in scope beside them. An application embedding that library exposes **the same** component vocabulary to mod authors under a J5ML syntax with no HTML in scope at all — so a mod can reach every component and no element, and the application cannot be extended with markup. Same nodes, different syntax, different scope, declared once. Welding the three together, as a format did when it carried its own vocabulary and an HTML on/off switch, forces a host to maintain two copies of one component list and keep them honest by hand.
+
+### Vocabulary Fields
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `nodes` | object | yes | — | The nodes this vocabulary declares, at least one. Names are case-sensitive and matched verbatim |
+| `description` | string | no | — | What the vocabulary is for. Shown in generated docs |
+| `refines` | boolean | no | false | Refines a base manifest's vocabulary of the same id (see [extends.md](./extends.md)) |
+
+Node bodies are identical to the ones a format's inline `nodes` block carries, and are specified in [fragment-formats.md](./fragment-formats.md).
+
+### Two Grammars
+
+Vocabulary ids come in two grammars, and which kind of thing a reference names is readable from the name alone, without a lookup:
+
+- **Built-in** — a single lowercase segment. `html` is currently the only one. Built-ins are *referenceable but not declarable*: a format lists `html` in its `vocabularies` like any other entry, and a `vocabularies` block that tries to declare it is refused.
+- **Host-declared** — two or more lowercase dot-separated segments, `acme.components`. These are the ids a manifest declares and formats reference.
+
+The grammars are disjoint by construction, so a host can never shadow a built-in and a reader never has to resolve an id to learn what sort of vocabulary it is. This is the same split-on-purpose reasoning the [binding grammars](./bindings.md) follow.
+
+### Scope and Resolution
+
+`vocabularies` on a format is an ordered list, and the order is authoritative: **the first vocabulary that claims a node name wins**. A format's inline `nodes` block always resolves first, ahead of every named entry. The built-in `html` vocabulary, when in scope, must be the last entry — an HTML element name is only reachable once every declared vocabulary has declined it, which is what keeps a declared node winning over a same-named element.
+
+Resolution stays default-deny: a node name no vocabulary in scope claims is an error, not a silent drop.
+
+### Containment Is a Separate Axis
+
+A vocabulary declares what a node **is** — its props, its sinks, its bind target. It never declares what a node may *parent*. Containment is its own axis and it defaults **open**: anything in scope may nest inside anything else in scope, across vocabulary boundaries, in any combination. The only thing that narrows it is a node's own `children` constraint, which a node states about itself and which is not scoped by vocabulary — a node listing permitted children names them wherever they come from.
+
 ## Execution Limits
 
 The `limits` section sets default bounds for script execution:
@@ -418,6 +520,32 @@ The `limits` section sets default bounds for script execution:
 
 These are defaults that runtimes enforce unless the host application overrides them at runtime. They exist in the manifest so that the application author can declare sensible defaults for their use case: a game mod system might allow 100ms per frame tick, while a data processing tool might allow 30 seconds.
 
+### Per-slot budgets
+
+A single budget cannot suit every surface at once: a slot whose fills legitimately run long inherits one tuned for something briefer, and a slot handling untrusted input inherits one tuned for something trusted. A slot may therefore declare its own `limits`, which replaces the manifest's for calls into that slot's fills:
+
+```json
+{
+  "slots": [
+    {
+      "id": "report.generators",
+      "accepts": ["application/x-xript-command"],
+      "description": "Report generation, which is allowed to take its time.",
+      "multiple": true,
+      "limits": { "timeout_ms": 30000 }
+    }
+  ]
+}
+```
+
+A slot may **raise** the budget as well as lower it. The host declares both the manifest budget and the slot's, so neither direction is an escalation — a mod cannot buy itself more time by filling a slot, because it never wrote the number. The embedder's hard limits still clamp the result, so a manifest can never exceed what the application embedding the runtime allowed. Fields left out inherit the manifest's `limits`; where neither declares one, the schema default applies.
+
+`slotExecutionLimits` carries **`timeout_ms` alone**, and the omission is deliberate. `memory_mb` and `max_stack_depth` are properties of a runtime at the moment it is created in all four engines, so a per-slot value for either could not be enforced without standing up a separate runtime. That path already exists: route the slot with `execution.affinity` and give the worker its own limits. Declaring keys no engine can honour would promise enforcement and deliver nothing.
+
+`limits` is the enforcement counterpart to `execution`, which is advisory routing. A slot can carry both: `execution` tells a host *where* to run the fills, `limits` bounds them once they run. `limits` is declarable on a slot and on a hook, never on a binding — a binding is host code, and once control is inside it no xript timeout reaches it.
+
+The rule deciding which budget governs a call is pinned by `spec/slot-limit-tests.json` and asserted by all four runtimes.
+
 ## Adoption Tiers
 
 The manifest supports xript's four adoption tiers through progressive complexity.
@@ -428,7 +556,7 @@ The simplest manifest. No bindings, no capabilities. The application uses xript 
 
 ```json
 {
-  "xript": "0.7",
+  "xript": "0.8",
   "name": "calculator"
 }
 ```
@@ -441,7 +569,7 @@ The application exposes a few functions. No capabilities needed because everythi
 
 ```json
 {
-  "xript": "0.7",
+  "xript": "0.8",
   "name": "my-game",
   "version": "1.0.0",
   "title": "My Game",
@@ -482,7 +610,7 @@ A manifest may inherit from one or more base manifests via the optional top-leve
 
 ```jsonc
 {
-  "xript": "0.7",
+  "xript": "0.8",
   "extends": "./host.json",
   "name": "my-workflow",
   "bindings": { /* only new bindings; base bindings are merged in */ }
@@ -561,9 +689,11 @@ A mod fills a role slot through its `fills` surface (see [mod-manifest.md](./mod
 
 The host resolves a role slot through the runtime's resolver API (`resolve_role` / `resolveRole` / `ResolveRole` and the `*_all` variants). Resolution is pure data lookup over loaded mods:
 
-1. Iterate loaded mods in **load order** (first-installed-wins).
-2. Collect every mod that fills the requested role slot; that ordered list is the result of `resolve_role_all`.
+1. Collect every loaded mod that fills the requested role slot.
+2. Order that list by **owning mod name ascending**; that ordered list is the result of `resolve_role_all`.
 3. For `resolve_role`: if the host supplied a preference (a flat `role → addon-name` map on `RuntimeOptions`) that names a candidate, return that candidate; otherwise return the first candidate; otherwise `null`/`None`.
+
+Ordering changed in v0.8.0. Role resolution used to walk mods in **load order**, so the winner depended on the order the host happened to pass its mods in, and reordering that array silently changed which implementation ran. A role candidate carries neither a `priority` nor a fill `id`, so the [three-key slot order](./fragments.md#runtime-slot-resolution) collapses here to its third key alone. A host that was relying on load order to pick between two providers of one role should name its choice in `rolePreferences`, which still outranks the tiebreak.
 
 A resolution returns `{ addon, role, fns }` where `addon` is the filling mod's `name` and `fns` is the winning fill's declared map verbatim.
 
@@ -574,6 +704,30 @@ A resolution returns `{ addon, role, fns }` where `addon` is the filling mod's `
 - A role slot with no fill resolves cleanly to `null`/`None`, never an error.
 - xript stores no preference state and persists nothing; the preference map is host-supplied per run, driven from the host's own settings.
 - `resolve_role` returns only the winner; `resolve_role_all` exposes the full ordered candidate set so the host can build its own picker UI.
+
+## Command Slots
+
+A command slot (`accepts: ["application/x-xript-command"]`) is a host-declared plug-point for **named, invocable actions**: the things a command palette lists, a menu offers, and a keybinding fires. Each fill names an id, a human title, and the mod export that runs it. Full surface in [commands.md](./commands.md).
+
+```json
+{
+  "slots": [
+    {
+      "id": "palette.commands",
+      "accepts": ["application/x-xript-command"],
+      "description": "Named actions offered in the command palette",
+      "capability": "write:editor.text",
+      "multiple": true
+    }
+  ]
+}
+```
+
+Nothing on the declaration is new. Three points a host declaring one should know:
+
+- **`multiple` means fills, not mods.** A `multiple: false` command slot resolves to exactly one command across every loaded mod, the same way it resolves to one fragment on a fragment slot. A palette slot wants `multiple: true`, and `xript lint` warns when a command slot omits it.
+- **`payload` bounds the fill contract.** The fill's `input` and `output` JSON Schemas live on the fill, because a host cannot know the signature of an action it did not write. A host that wants to constrain those signatures narrows them with the `payload` schema it already has, since `input` and `output` are properties of the fill object. No second schema language, and `refines` inheritance keeps working.
+- **`capability` gates contribution, not invocation.** The slot's capability decides which mods may contribute a command at all. Per-action authority is `entry.exports[<handler>].capability` on the mod side, so two commands backed by the same export carry the same authority and two commands differ in authority only by naming different exports. A command fill declaring its own `capability` is a hard error; it could never deny under prefix subsumption, and the [monotonic-privilege invariant](./capabilities.md#the-monotonic-privilege-invariant-normative) mandates re-rooting an escalation under a separate top-level scope instead.
 
 ## Schema Evolution
 

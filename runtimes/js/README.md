@@ -18,7 +18,7 @@ import { initXript } from "@xriptjs/runtime";
 const xript = await initXript();
 const runtime = xript.createRuntime(
   {
-    xript: "0.7",
+    xript: "0.8",
     name: "my-app",
     bindings: {
       greet: {
@@ -60,13 +60,28 @@ runtime.dispose();
 
 ## API
 
-### `initXript(): Promise<XriptFactory>`
+### `initXript(options?): Promise<XriptFactory>`
 
-Loads the QuickJS WASM module and returns a factory for creating runtimes.
+Loads the QuickJS WASM module and returns a factory for creating runtimes. Defaults to the `@jitl/quickjs-wasmfile-release-sync` build.
 
-### `initXriptAsync(): Promise<AsyncXriptFactory>`
+### `initXriptAsync(options?): Promise<AsyncXriptFactory>`
 
-Same as `initXript`, but creates runtimes that support async host bindings (uses the asyncify WASM build).
+Same as `initXript`, but creates runtimes that support async host bindings. Defaults to the `@jitl/quickjs-wasmfile-release-asyncify` build.
+
+### Choosing a WASM build
+
+Both entry points accept an optional `variant`. The sync and asyncify builds live in separate modules, so a host that only calls `initXript()` never pulls the asyncify build into its bundle.
+
+Override it to use a `singlefile-*` build, which inlines the WASM as base64 instead of resolving a separate `.wasm` asset -- the usual fix when shipping into a bundler configuration you do not control:
+
+```javascript
+import { initXript } from "@xriptjs/runtime";
+import RELEASE_SYNC_SINGLEFILE from "@jitl/quickjs-singlefile-browser-release-sync";
+
+const xript = await initXript({ variant: RELEASE_SYNC_SINGLEFILE });
+```
+
+Install any variant you name; only the two release builds ship as dependencies.
 
 ### `factory.createRuntime(manifest, options): XriptRuntime`
 

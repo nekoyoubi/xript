@@ -1,5 +1,645 @@
 # Changelog
 
+## v0.8.0 — Nameless
+
+The fragment protocol had always been documented as format-agnostic while every runtime collapsed a
+fragment to an HTML string before the host saw it; v0.8.0 makes that true.
+A host declares which formats it intakes and which vocabularies each one speaks, the runtime returns
+a validated tree instead of a flattened string, and an unregistered format is a hard error rather
+than a silent pass. Arbitrary JSML vocabularies are first-class, so a PascalCase component node
+arrives intact instead of being lowercased and dropped against an HTML allowlist.
+
+Under that pillar runs a long security and correctness pass, where most of the work and nearly all
+of the new tests went. A real sandbox escape closed: a `data-if` expression had been evaluated as
+host JavaScript outside QuickJS. The three expression sites were unified under one grammar, XEG,
+held to a single shared corpus across all five evaluators. The HTML sanitizer was rebuilt on a
+shared allow-list port with its mXSS and content-loss holes closed, and a URI scheme allow-list now
+refuses `javascript:` and `vbscript:` outright. `@xriptjs/runtime` stopped shipping wasm nobody
+runs, cutting its install from 9.32 MiB to 1.52 MiB by depending on `quickjs-emscripten-core` and
+loading only the variant a host selects. The suite grew from 1612 tests to 5106, almost entirely
+corpus-driven.
+
+- **Fragment formats become real.** This cycle's pillar. The fragment protocol documented itself
+  as format-agnostic and was not: every runtime collapsed a fragment to an HTML string, and an
+  unrecognized format silently fell through to `sanitizeHTML()` instead of erroring, so a non-HTML
+  format worked only by bypassing the runtime entirely.
+  - **A format registry.** A host declares which fragment formats it will intake and
+    what vocabulary each one accepts; the runtime hands back a validated tree rather than a
+    flattened string. An unregistered format becomes a hard error, not a silent HTML pass.
+  - **Arbitrary JSML vocabularies.** JSML was never an HTML format. It represents any markup,
+    it is case-sensitive, and its tag namespace is open; a component-shaped node has always been
+    legal. xript is what narrowed it, in four places, all of them silent: node names are
+    lowercased (so a PascalCase component name is destroyed on arrival), anything outside the HTML
+    element allowlist is dropped rather than rejected (so an unknown node _vanishes_ with no
+    diagnostic), attribute names are lowercased and filtered against an HTML attribute allowlist
+    (so a camelCase prop dies the same quiet death), and every value is stringified into an HTML
+    attribute (so a node can never receive a number, an array, or an object). Make all four
+    vocabulary-driven instead of hardcoded, and a host can declare the node set it speaks.
+  - **Vocabularies are declared once and scoped into formats.** A fragment format used to
+    weld its authoring syntax to its node vocabulary, so neither could vary without the other:
+    a component set authored as HTML could not also be offered as J5ML, and a second format
+    wanting the same nodes had to restate them. A new top-level `vocabularies` block declares
+    reusable node vocabularies, and a format names its syntax plus the ordered list of
+    vocabularies in scope.
+    - `html` is now a built-in vocabulary referenced like any other, which removed the separate
+      `base` field entirely; a format asks for HTML nodes by name, and a format that wants none
+      of them simply leaves them out of scope
+    - one vocabulary can be shared by several formats under different syntaxes and different
+      neighboring scope, so a component set can be authored as HTML by its own library and
+      handed to modders under J5ML with no HTML in reach
+    - containment is documented as a separate axis, defaulting open; scoping a vocabulary into
+      a format says what nodes exist, not what may nest inside what
+    - `lint` gained findings over the _resolved_ vocabulary scope rather than the declaration
+      site, so shared and inherited vocabularies keep their safety checks: `unknown-vocabulary`,
+      `invalid-format-scope`, `dead-vocabulary`, `vocabulary-node-shadowed`,
+      `stripped-name-shadowed`, and `undescribed-vocabulary`
+    - `score` counts the distinct nodes reachable from an accepted format, so a format declared
+      but wired to nothing no longer inflates the number
+  - **Stop discarding the tree we already build.** The sanitizer returns a sanitized `tree`
+    alongside its `html`; the runtime keeps the string and throws the tree away one line later.
+    The tree contract is half-built already; it just never reaches the host.
+  - **Vocabulary validation.** `slot.payload` validates a _fill_; nothing validates a
+    fragment _tree_ against its format's vocabulary. A typo'd node or an unknown variant
+    should fail at `xript validate`, not vanish at mount.
+  - **A declared vocabulary is checkable, typeable, and documentable.** The whole point of
+    declaring a node set is that the toolchain can hold a mod author to it. `xript validate`
+    rejects a misspelled node at CI time; `docgen` publishes a node table per format, listing
+    each node's props and what it may parent; and `typegen` now types the tree itself, emitting a
+    `[name, props, ...children]` tuple per node and a union over the vocabulary. A mod author
+    writes `["Panel", { heading }, ...]` and the compiler checks the props, the children, and the
+    nesting. Children nest as openly as a node declares: a container leaving `children` unset
+    accepts any node to any depth, a `text` node takes strings, a childless node is a leaf, and a
+    named allow-list narrows to exactly its set. Two formats sharing one vocabulary type it once.
+  - **All four runtimes, one release.** The vocabulary model, the tree contract, and the
+    sink model landed in `xript-runtime` (Rust, on the `j5ml` crate) and `Xript.Runtime` (C#,
+    hand-rolled on `System.Text.Json`), so v0.8.0 cuts at parity rather than shipping a
+    JavaScript-only feature with the other two documented as debt. Two shared conformance
+    corpora (`spec/fragment-vocabulary-tests.json` and `spec/fragment-op-tests.json`) are
+    generated from the reference implementation and asserted by every runtime _including_ the
+    reference, so no implementation can fork from the contract without failing the others.
+  - **Closed a typed-prop XSS at the HTML sinks.** The `href`/`src`/`style` sinks in the
+    built-in HTML vocabulary only sanitized values that were already strings, so a JSML prop
+    could wrap a payload in an array (`{"href": ["javascript:alert(1)"]}`) and land it in the
+    rendered attribute unchecked: the HTML projection stringifies with JavaScript's `String()`
+    semantics, and a one-element array stringifies to its element verbatim. Every value that
+    projects into an attribute is now coerced _before_ the sink sees it, on all four runtimes.
+    `true`, `false`, and `null` are untouched: they never carry text into the document.
+  - **Replaced the C# HTML sanitizer with the shared allow-list port.** This is a deliberate
+    behavior change on the .NET HTML surface, not a refactor. The old `SanitizeHtml` was a
+    deny-list pipeline (anything not on a strip list passed through), which let
+    `href="data:text/html,<script>…</script>"` reach the host. The allow-list port closes that,
+    and as a consequence elements that used to survive because nothing stripped them (`<canvas>`,
+    `<marquee>`, custom elements like `<my-widget>`) are now unwrapped to their children. Hosts
+    relying on an element outside the shared allow-list should declare a vocabulary for it.
+  - **The sanitizer serializes from the tree it already builds.** Every runtime kept two
+    readers of the same HTML: a tree walk for the vocabulary pass, and an independent string
+    scanner that produced the markup a host actually mounted. The scanners are gone; the markup
+    and the report of what was removed both come from one traversal.
+    - The scanners could emit unbalanced markup, which is not a cosmetic problem: a caller
+      inserts the output into a document, and the browser re-parses it against that context
+      rather than against the tree the sanitizer inspected. An unclosed stripped element sent the
+      reader to the end of input, so `<svg><animate onbegin="…"></svg><p>after</p>` came back as
+      a bare `<svg>` with the trailing content silently dropped. Output is now always
+      well-formed. This is the one to upgrade for.
+    - Raw-text handling is now spec-shaped rather than uniform. An unclosed `<script>` genuinely
+      does read to the end of input (a browser treats a `</div>` inside it as text), and so do
+      `style`, `title`, `textarea`, `noscript`, `iframe`, `xmp`, `noembed`, and `noframes`.
+      Everything else closes with its parent.
+    - Character references are decoded at the tokenizer, so a text node carries real characters
+      and a round trip no longer double-escapes them.
+    - The shared sanitizer corpus grew cases for unclosed elements, character references, and
+      characters above the basic multilingual plane. The character-reference case caught the same
+      defect in the C# reader, which had no test of its own.
+  - **J5ML output conforms to the format we declare we speak.** J5ML orders attribute names
+    by Unicode code point on serialization; every runtime was emitting them in source order.
+    - The ordering rule is normative because the format's conformance corpus asserts byte-exact
+      output, and attribute order carries no meaning that would otherwise settle it. This changes
+      the bytes of J5ML documents xript emits for any element carrying two or more attributes not
+      already in that order. HTML output is unaffected.
+    - Every runtime now depends on the published j5ml implementation (`@nxis/j5ml` on the JS and
+      Node paths, the `j5ml` crate for Rust, the `J5ml` package for C#) instead of restating the
+      rule four times. Ordering is by code point, not by a language's default string comparison,
+      and JavaScript's UTF-16 comparison parts company with it above U+FFFF.
+    - The shared vocabulary corpus gained an optional `jsml` expectation, asserted by all four
+      runtimes. It had pinned the tree and the HTML projection but never the J5ML projection,
+      which is how non-conformant output shipped without a failing test.
+  - **A tree contract worth writing a renderer against.** A renderer should be a small
+    tree-walk, written **once per vocabulary** and reused by every app that speaks it — not once
+    per app, and not once per renderer author who gave up and went around us. The tree types now
+    live in `crates/xript-tree`, which carries the node, prop, condition, diagnostic and op types
+    plus a stated contract version and depends only on `serde_json`. A renderer belongs to whoever
+    owns the vocabulary; xript owns the mechanism and stays ignorant of any particular component
+    set by design.
+    - the types used to live inside the Rust runtime, so drawing a terminal widget meant linking
+      a JavaScript engine to get at them
+    - the terminal renderer is folded onto the contract, and the proof is what is gone: it no
+      longer resolves bindings, evaluates visibility, or re-parses a serialized tree, and its
+      production code dropped from 868 lines to 581. It no longer depends on `xript-expr` at all,
+      so it cannot evaluate an expression even by accident
+    - the reason recorded for the original bypass was wrong, and the correction matters more than
+      the item: the pipeline _could_ already hold a tree. `FragmentResult` carried one alongside
+      conditions and diagnostics, and `get_content` had no callers outside tests. The host was
+      serializing the runtime's tree back to JSON and handing it over to be parsed again — and it
+      read the _unbound_ tree, so conditions and diagnostics never left the runtime at all
+    - two bespoke resolvers that survived the expression unification are gone, on the gauge and
+      the sparkline, both of which took a bare name where the same widget took a full expression
+  - **One expression grammar, and inline interpolation in prose.** `data-if` took a full
+    expression and `data-bind` took only a name, so a fragment could _branch_ on `score > 50`
+    but not _display_ `score * 10` without the host pre-computing it and exposing it as
+    another binding. Displaying a value at all meant wrapping it in its own element. Both are
+    closed, and the fix went deeper than the asymmetry: "the expression in `data-if`" meant
+    five different things, and `alive && health < 50` was true in a browser and silently
+    `false` in a terminal.
+    - **XEG**, the xript Expression Grammar, is specified in `spec/expressions.md`,
+      corpus-locked in `spec/expression-tests.json`, and implemented once per runtime. The
+      corpus pins semantics rule by rule rather than deferring to "whatever JavaScript does",
+      which is exactly how the five readings drifted apart with nothing to catch them
+    - `data-bind` now takes any expression. A bare name is a member of the grammar, so every
+      existing binding works unchanged — and stays privileged: the parser classifies the body,
+      a name keeps two-way write-back, and a computed value is read-only, with a write-back
+      handler aimed at one reported as a lint error instead of silently dropped
+    - a fill can set `"interpolate": true` and write `{{ hp }}/{{ maxHp }}` in prose.
+      Opt-in, because a fragment published before the mode existed may quote the delimiter and
+      must keep its meaning; `{{` escapes, and an _unclosed_ `{{` is ordinary text, so a
+      page documenting the syntax survives being one
+    - interpolation is text-only. A prop's sink judges a whole value and cannot judge one
+      assembled from halves, so `href="{{ scheme }}:{{ rest }}"` is not a thing; the wholesale
+      surface for a computed attribute is `data-bind` through the node's `bindTo` prop. That a
+      value can never become markup is structural rather than checked: segmentation runs in the
+      sanitizer before validation, and a segment lives in a text node, which has no props and
+      no children to put it in
+    - the new zero-dependency `xript-expr` crate carries the grammar for both the Rust runtime
+      and the Ratatui renderer, so a terminal renderer gets it without taking a JavaScript
+      engine along. Rust's six-regex ladder, Ratatui's two-operand comparison helper, and C#'s
+      per-evaluation `Jint.Engine` are all gone
+    - `getContent()` returns a `conditions` array keyed by tree position. The `visibility`
+      map it deprecates is keyed by expression text, so two nodes carrying the same `data-if`
+      collapsed into one entry and a host could not map a result back to a node
+    - `xript lint` gained an `expressions` analyzer in `@xriptjs/validate`, and
+      `typegen --ambient` emits a per-fill bindings interface with a `keyof` alias for editor
+      completion inside `{{ … }}`
+    - a render-time "statement to run for effect" was considered and refused. A fragment is an
+      inert description of what should be shown; a statement triggered by rendering makes
+      render order into API and takes re-rendering, caching, and sandbox-free renderers with
+      it. `handlers` already covers the real need, in the sandbox, where the capability model
+      can see it
+- **Commands became a slot kind.** `command` was canonical vocabulary in the guidance
+  ("a named, invocable action with typed inputs and outputs") with no home in the schema, so
+  every adopter reinvented it, usually as a top-level `commands` block that validated clean
+  and was consumed by nothing. It is now the fifth slot kind
+  (`application/x-xript-command`, alongside role and event slots): a host declares a slot,
+  a mod contributes through the same `fills` object it already uses, and a command is a fill
+  like everything else. The guidance page that claimed "this is the whole extensibility
+  surface" and then listed a command as neither a binding nor a slot is finally telling the
+  truth.
+  - **Bound arguments on a command fill**, so one export backs several parameterized
+    commands instead of forcing a closure per variant. `effective = { ...fill.args,
+    ...callArgs }`, shallow, and the caller always wins a conflict
+    - `input` describes the _effective_ argument object rather than the caller's slice, so a
+      bound key satisfies a `required` entry and typegen relaxes bound keys to optional in
+      the call-time type
+  - **Authority lives on the export, not on the fill.** A command fill carrying a
+    `capability` is a hard error in all four runtimes rather than a silently ignored key. A
+    per-fill narrowing could never deny anything (the slot gate the mod already holds
+    subsumes it by prefix), and the monotonic-privilege invariant mandates re-rooting a
+    genuine escalation under a separate top-level scope, which a "must be subsumed by the
+    slot's" rule would have rejected. Contribution is gated by the slot; invocation is gated
+    by `entry.exports[<handler>].capability`
+    - the consequence, stated plainly: two commands differ in authority only by naming
+      different exports, because authority is a property of code rather than of a manifest
+      label pointing at code
+  - **Host-side resolution** (`resolveCommands` / `resolveCommand` and the `*All`
+    variants) that conforms to the existing slot resolver instead of forking it, plus
+    `invokeCommand` routing through the addressed, per-mod export path so two mods can each
+    back a command with an export named `run` and neither invocation is ambiguous
+    - slot ordering gained a third comparator, owning mod name ascending, applied to every
+      slot kind. It closes a real nondeterminism in fragment resolution too: fills that omit
+      an `id` get one synthesized from the slot id and index, so two mods filling the same
+      slot at the same index had the same id and the second comparator was never total
+    - `multiple: false` means one _command_, the same way it means one fragment. A palette
+      slot wants `multiple: true`, and `xript lint` warns when a command slot omits it
+    - a failing command propagates its error to the caller. Hook dispatch swallows a handler
+      error and contributes `undefined`, which is right for a lifecycle notification and
+      wrong for something a user just clicked
+  - **A `score` signal for the exposed command surface**, reported alongside the headline
+    rather than folded into it. A command slot is a slot and is already counted; adding a
+    sixth capacity surface would double-count it and would silently move every existing
+    host's denominator. Declared fragment formats are reported for the same reason
+  - **typegen catalog output**: a `commandSlots` namespace and `CommandSlotId` union on
+    the host side, a `commands.Catalog` interface keyed by command id on the mod side
+  - **docgen catalog output**: a `## Commands` section on both pages, folded out of the
+    generic UI-slots table, with a Requires column that makes authority visibly track the
+    handler — the narrowest gate that applies, the handler's export capability where it declares
+    one and the slot's contribution gate otherwise.
+- **Long-running work stops freezing the host.** Three different problems have been wearing
+  each other's clothes, and the loudest one was the least important. The runtime handle's API is
+  **blocking on the caller's thread** (`rx.recv()`), so a host that drives it from its UI thread
+  freezes, with or without async bindings; the freeze happens at the handle boundary before the
+  sandbox is even reached. Separately, one handle is one thread and one queue, so a single slow
+  call stalls every action, tick, and event behind it. And separately again, an `async` binding
+  does not actually yield: it blocks the interpreter and hands JS a pre-resolved promise, so
+  `async` changes the generated type and nothing else. The answer is not to make the sandbox
+  interleave (that buys cooperative concurrency at the price of permanent reentrancy, and threads
+  already give real parallelism). The answer is to make the good path the easy path.
+  - **A non-blocking handle API**, so driving the runtime from a host's UI thread is not a
+    trap laid for whoever gets there first. A call returns a pending value that is a future, with
+    an immediate-mode take and a callback form beside it; blocking is now the thing a caller asks
+    for by name. Dropping a pending cancels its call unless it was detached.
+  - **A runtime pool.** Long-running or networked work gets its own runtime on its own
+    thread: genuinely parallel, no shared-state surprises, no reentrancy.
+    - a mod has exactly one home worker, so a hook handler runs exactly once no matter how many
+      workers exist. The router governs `execute` and `invoke` placement only; hook and event
+      fan-out always targets home workers, which the trait now says plainly
+    - a wedged worker is detected from an overdue call plus a stalled heartbeat, then abandoned
+      and reported. A thread cannot be reclaimed, and pretending otherwise would be a lie
+  - **Declared intent, in the manifest.** A binding, hook, slot or export can declare how long
+    it may run, so a host can _route_ it instead of finding out the hard way. The intent is
+    routing input, not enforcement; `limits` stays enforcement.
+  - **Be overt about the rest.** The spec and the generated types now say plainly that `async`
+    declares the shape of a binding's value and not the cost of its call.
+    - the "promise never resolved" error blamed the promise for a collision with an execution
+      budget. A workflow left holding an outstanding promise reported a broken promise whether it
+      had been interrupted by its budget, cancelled, or genuinely awaited something that never
+      settles — three different problems with one misleading message, and the two that had a real
+      cause reported the wrong one. The budget and the cancel are now reported as themselves, and
+      what remains says what it means
+    - the module-evaluation path had this right already and the workflow path had forked from it,
+      which is the whole reason it went unnoticed: the correct handling was sitting fifty lines
+      away, in the code that ran for a different kind of entry
+    - also scoped the interrupt frame stack per thread. The guard popped whichever frame was
+      pushed last rather than its own, so a call finishing on one thread removed another thread's
+      live frame, and the handler scanned every thread's frames, so one expired deadline
+      interrupted calls that had not timed out
+    - a poisoned frame lock is recovered rather than given up on. A single panic while the lock
+      was held silently disarmed every limit for the rest of the runtime's life
+- **Adopter feedback fold.** Gaps reported from real integrations:
+  - **ESM-native mod authoring.** Adopters were still wrapping mod code in IIFEs instead of
+    using `entry.format: "module"`, and walking the scaffolded path shows why: it did not work.
+    - **`typegen --ambient` could not describe a mod's own environment.** `log`, `hooks`,
+      `events`, slot ids and capability names are surfaces the _host_ installs on the sandbox
+      global, and a mod manifest declares none of them. Ambient mode read them off whichever
+      manifest it was handed, so generating for a mod emitted an environment with none of it, and
+      `--host` was accepted but consulted only for the command catalog. The scaffold's own stub
+      told the author to run the command; running it replaced a working file with one that failed
+      to compile. The environment now comes from the host, and only `fills` and `entry.exports`
+      come from the mod. A host manifest with no `--host` generates exactly what it did before
+    - **the TypeScript scaffold declared an entry no host could load.** It compiled `src/**` to
+      `dist/` and then wrote `entry.script: "src/mod.ts"`. The demo worked only because
+      `demo/steps.json` separately named `../dist/mod.js`, which is how the two disagreed without
+      anyone noticing. `entry.script` names the artifact a host loads, and a test now asserts the
+      manifest and the demo steps name the same file in both languages
+    - **`xript init` scaffolded the previous release's manifests, permanently.** `templates.ts`
+      hardcoded `0.7` in eleven places and the release script never touched it, so every version
+      shipped an `init` a minor behind itself. The version, the schema URLs and the dependency
+      pins are read from the package that generates them, and the tests assert consistency with
+      that package rather than a literal of their own
+    - `spec/modules.md` claimed the host manifest was optional while promising it would type the
+      host bindings and hooks. It is required, and now says so
+  - **`xript lint` reported findings about a capability called "0".** A mod's `capabilities`
+    is an array of requested names, not a record of declarations, so `Object.entries` named each
+    one by its index. Linting a mod at all was the deeper problem: passed in the host position it
+    linted as a host, where almost no rule applies, and reported that everything lined up
+    cleanly — while linting it against an absent host turns every fill and capability into an
+    error the real host would have satisfied. A mod cannot be checked without its host, and the
+    tool now says so instead of guessing.
+  - **Capability scopes could not _describe_ runtime-configured roots.** They could already
+    reference them: prefix subsumption is structural and consults no declaration, so a host
+    declaring `fs.workspace` grants `write:fs.workspace.my-project` for a root the manifest could
+    never have named, and a mod requesting a descendant of a declared scope validated clean while
+    an undeclared _root_ still errored. The mechanism was never the gap.
+    - what was missing was discoverability. A mod author reading the manifest saw `fs.workspace`
+      and could not tell whether `fs.workspace.my-project` was a meaningful request or a scope
+      they had invented, and generated docs described only the static half of the surface
+    - a capability declaration takes an `instances` block saying its children are created by the
+      host at run time, what one child corresponds to, and an illustrative example. It resolves
+      nothing and validates nothing — no runtime reads it, and the matcher is unchanged
+    - `xript lint` gained `dynamic-scope-undeclared`: a mod naming a scope strictly below a
+      declared node that never claims runtime children is guessing at something the host does not
+      model, and the grant will not be there. Declaring `instances` on the parent is the statement
+      that makes the request intentional, and silences it. An undeclared _root_ is still reported
+      once, as `undeclared-capability`
+    - `docgen` gains a Runtime-configured scopes table and `describe` reports
+      `dynamicCapabilities`, so the dynamic half of the surface is finally visible to tooling
+    - the spec says plainly what subsumption means here: a grant on the parent sweeps every
+      instance under it, **including ones that do not exist yet**. "Grant the parent, it is only
+      one workspace today" is how a broad grant gets issued by accident
+  - **Per-slot execution limits.** `limits` was global, so a slot whose fills legitimately run
+    long inherited a budget tuned for something briefer, and a slot handling untrusted input
+    inherited one tuned for something trusted. A slot now declares its own `limits`, replacing the
+    manifest's for calls into that slot's fills.
+    - a slot may **raise** the budget as well as lower it. The host declares both numbers, so
+      neither direction is an escalation: a mod cannot buy itself more time by filling a slot,
+      because it never wrote the number. The embedder's hard limits still clamp the result
+    - it carries `timeout_ms` and nothing else, on purpose. `memory_mb` and `max_stack_depth` are
+      properties of a runtime at the moment it is created in all four engines, so a per-slot value
+      for either could not be enforced without standing up a separate runtime — a path that
+      already exists, as `execution.affinity` plus a pool worker. Declaring keys no engine can
+      honour would promise enforcement and deliver nothing, which is the mistake `async` made
+    - `spec/slot-limit-tests.json` pins the resolution rule and is asserted by all four runtimes.
+      It deliberately does not pin _enforcement_: that is wall-clock behaviour, proved per runtime
+      by timing tests, and a shared corpus asserting it would be flaky rather than normative
+    - **the Node runtime turned out to apply no deadline to an export invocation at all.**
+      `execute` ran its code through `vm` with a timeout, but `invokeExport` reached into the
+      context, pulled the function out, and called it from the host, where `vm` has nothing to
+      interrupt. A command handler with a 50ms budget declared ran a 2000ms spin to completion,
+      and every hook and command fill in `@xriptjs/runtime-node` had the same freedom. It now
+      calls through `runInContext`. The deadline bounds synchronous work, as it does for
+      `execute`; an `await` that never settles is not something `vm` can interrupt
+    - the JS runtime reported an invocation stopped by its deadline as `InvokeError: interrupted`,
+      blaming the export for the host's budget, while `execute` on the same runtime reported an
+      execution limit. Both now build the error through one constructor
+    - Jint fixes its `TimeoutInterval` when the engine is constructed, so the C# runtime's
+      interval is now sized to the widest budget any slot could ask for and serves as a backstop,
+      with the real per-call deadline carried by the cancellation constraint. Two readings of
+      Jint's API that its shipped documentation supported and its assembly did not were corrected
+      along the way: `CancellationConstraint.Token` is not public (`Reset` is the swap), and
+      `cfg.CancellationToken` installs no constraint at all for a token that cannot be cancelled
+    - `xript lint` told a _binding_ author to "add a `limits` override", which fails
+      `xript validate` with `unexpected property "limits"` — the schema has no such key on a
+      binding, and a timeout would not reach inside host code if it did. A long binding now gets
+      `execution-long-binding-blocks`, which says what actually happens and asks the host to route
+      the call. The same rule had never read a slot's `limits` either, so a slot was warned
+      whether or not it declared one
+    - `docgen` gains a Budget column on both slot tables, and `typegen --intent` carries
+      `timeoutMs` on a slot that declares one. `score` deliberately does not count it: a budget
+      tunes a surface rather than exposing one, and folding it in would move every existing host's
+      number for no gain in moddability
+  - **Same-named handler exports collide** across fills sharing a sandbox. Export identity is
+    now `(mod, name)` rather than a bare name: the sandbox registry is namespaced per mod, the
+    capability map is keyed by owning mod, and a hook fill records the mod that declared it, so a
+    declaration lands in its own slot and is structurally unable to reach another mod's.
+    `invokeExport(name, args)` still serves the single-owner case, and `invokeModExport(mod, name,
+    args)` addresses the ambiguous one; two mods owning a name raises an error naming both instead
+    of silently picking the last one loaded. Rejected at the call site rather than at load, since
+    two providers of the same role legitimately export the same function name.
+  - **Binding registration drift.** A binding the manifest declares and the host never
+    supplies still installs (as a stub that throws when a mod calls it), so the contract a mod
+    author reads and the surface a host actually wired could disagree indefinitely with nothing to
+    catch it. A mod author reads the manifest, ships against a binding that is documented and
+    absent, and the failure lands on a user.
+    - every runtime computes the missing set at construction and exposes it (`missingBindings` /
+      `missing_bindings()` / `MissingBindings`), fully qualified and sorted, walking nested
+      namespace members the same way registration does so the two can never disagree
+    - `strictBindings` refuses to construct the runtime instead, naming everything missing at
+      once. **Off by default**: a host may under-supply deliberately (a feature-flagged binding,
+      a surface still being built), and the missing set is visible either way
+    - the drift is one-directional, which is worth recording: a host function the manifest does
+      _not_ declare is never installed at all, so the manifest remains the gate on what a mod can
+      reach. Only the declared-but-absent direction was silent
+    - the Rust `RuntimeOptions` gained a field, and the integration tests that enumerate every
+      field rather than spreading `Default` needed it. `cargo build` compiles the library and not
+      the tests, so this only surfaced under `cargo test` — the counts caught it
+  - **Dotted capability names in fragment callers.** Swept, and there is nothing stale: the
+    fragment path adopted `grantedSatisfies` in the v0.7.0 hierarchy release itself rather than
+    being left behind by it, no runtime compares a capability by set membership or equality
+    anywhere, and every example and spec capability is a single hyphenated segment with no dotted
+    name to have gone stale.
+    - the coverage the item implies was real, though. Subsumption was pinned at the _binding_
+      gate and nowhere else, so the fragment/slot gate (where a mod's contribution is actually
+      admitted, and the gate a dotted scope has to reach to mean anything on a fill) was correct
+      by construction and unguarded. All four runtimes now assert both axes there: a parent grant
+      subsumes, an exact grant is admitted, a `read:` grant is refused against a `write:` gate,
+      and a scope sharing only a character prefix (`uiother` against `ui`) is refused
+    - the guard earns its place: regressing the gate to a set-membership check fails it at all
+      five sites in the JS runtime
+- **The JS runtime stopped shipping wasm nobody runs.** `@xriptjs/runtime` imported the
+  `quickjs-emscripten` barrel, which top-level-`require()`d all four `@jitl` variants behind
+  getters no bundler can see through. Every consumer installed **9.32 MiB of wasm across four
+  files** and only ever ran one. The runtime now depends on `quickjs-emscripten-core` and imports
+  the two release variants from separate modules, so `initXript()` never pulls the async build.
+  - **Installed wasm: 9.32 MiB → 1.52 MiB, a 83.7% cut.** `debug-sync` (6.62 MiB) and
+    `debug-asyncify` (1.56 MiB) are gone; nothing ever selected them. This is a shipped-size win,
+    not a network one: the variants already lazy-loaded, so a browser only ever fetched the one
+    it picked. The rest were orphan assets no chunk referenced.
+  - `initXript()` and `initXriptAsync()` still work zero-arg; both gain an optional `variant`,
+    the seam for passing a `singlefile-*` build that inlines its wasm as base64
+  - **Vite dev servers need a one-line edit.** Production builds are unaffected. The `@jitl`
+    packages locate their binary with `new URL("emscripten-module.wasm", import.meta.url)`, which
+    Vite's dep pre-bundling breaks by rewriting the module into `node_modules/.vite/deps/`. That
+    hazard is why hosts already carry `optimizeDeps.exclude: ["quickjs-emscripten"]`, but the
+    barrel is no longer in the graph, so that entry becomes a dead no-op while the `@jitl`
+    packages doing the `new URL()` go unexcluded. Name them instead:
+
+    ```js
+    optimizeDeps: {
+      exclude: [
+        "@xriptjs/runtime",
+        "@jitl/quickjs-wasmfile-release-sync",
+        // add "@jitl/quickjs-wasmfile-release-asyncify" only if the app calls initXriptAsync()
+      ],
+    }
+    ```
+
+  - Known residue, flagged rather than fixed: a Vite build still emits the 1.05 MiB asyncify wasm
+    as an orphan asset no chunk references, because Vite emits assets at transform time and does
+    not collect them after tree-shaking. It is never fetched. Removing it would need an
+    `@xriptjs/runtime/async` subpath export, which is a public API change.
+- **Every schema id serves the schema that version actually shipped.** xript.dev answered
+  the historical alias URLs with the current in-development body, so a manifest pinned to an
+  older `$schema` was validated and autocompleted against a schema that version never had, and
+  the mismatch grew with every change on the branch. Each version id now serves its own frozen
+  body; only the current line moves.
+  - also silenced the two JSON Schema strict-mode warnings that printed on every `validate` run
+- **Docs.** Both halves were already written: the fragment-hosting page carries a minimal
+  end-to-end host snippet, and "Roles across isolated runtimes" states plainly that a host with
+  per-mod runtimes implements role resolution itself and that this is canon rather than a
+  workaround. What the sweep found was that the snippet taught the wrong API.
+  - the canonical host loop read `result.visibility`, the text-keyed map this cycle deprecated
+    _because it collides_: two nodes carrying the same `data-if` fold into one entry, last write
+    wins, and nothing maps an entry back to a node. Two `data-if="warning"` nodes is enough. The
+    snippet now reads `conditions`, which is keyed by tree position, and says why
+  - the result shape was documented without the deprecation in both the hosting guidance and
+    `spec/fragment-formats.md`; `spec/renderers.md` and `spec/expressions.md` already had it right
+
+- **A scaffolded TypeScript app did not type-check.** `xript init` is the front door, and the
+  project it produced failed `tsc` four ways. Every adopter who type-checks (which is every
+  adopter who opens the project in an editor) met all four at once.
+  - the demo imported `./host.ts`, and a `.ts` specifier needs `allowImportingTsExtensions`. An
+    ESM import names the emitted module; it is `./host.js`, which TypeScript resolves back to the
+    source
+  - it read `e.message` off a `catch` binding, which is `unknown` under `strict`
+  - it imported `node:fs/promises` without depending on `@types/node`
+  - **its own host bindings did not satisfy `HostBindings`.** `HostFunction` was
+    `(...args: unknown[]) => unknown`, and under `strictFunctionTypes` parameters are
+    contravariant, so the idiomatic `(message: string) => void` was not assignable — every host
+    writing typed bindings had to widen to `unknown` and narrow again inside. The parameter list
+    is now `any[]`, which accepts both shapes and still rejects a non-function. Arguments arrive
+    as JSON-derived values whatever the signature claims, so the stricter type was never
+    enforcing anything a host could rely on, and the relaxation is non-breaking: everything that
+    satisfied the old type satisfies the new one
+
+- **A binding could gate on a capability the host never declared.** `undeclared-capability`
+  was checked for slots, libraries and a mod's requests, and for nothing else — so a host could
+  gate a binding, a nested namespace member, a hook, or an event on a scope absent from
+  `capabilities`, and both `validate` and `lint` passed it clean. `xript scan` had been reporting
+  exactly this as a "capability gap" all along, which is the tool disagreeing with the linter
+  about the same manifest.
+  - such a gate is undiscoverable: it appears in no generated documentation, and a mod that asks
+    for the scope is told the host does not declare it. The gate is real and nothing can be
+    written against it on purpose
+  - all four surfaces are now reported, nested members by their qualified name (`ns.deep`). A gate
+    subsumed by a declared parent scope stays clean, since prefix subsumption is what makes
+    runtime-configured roots work
+
+- **`xript score` told a host with no slots that it had filled all of them.** The coverage
+  fractions score an empty surface as `1` (vacuously, nothing is uncovered), which is the right
+  value for a gate and the wrong thing to draw as a full bar reading "100% of own non-reserved
+  slots filled". A host that declares no slots, or inherits every slot it has through `extends`,
+  read as perfectly covered.
+  - `UtilizationMetric` carries a `total` so a presenter can tell an empty surface from a covered
+    one; the vacuous `score` is unchanged, so no gate moves
+  - the CLI renders `n/a — this host declares no slots of its own` instead of a full bar
+  - `score-diff` had the same defect in its own renderer: deleting the only slot rendered
+    `slots 0% → 100% (+1)`, so a regression read as an improvement. `MetricDiff` carries each
+    side's total and a side with nothing to cover reads `n/a`
+  - found by checking the stated invariant that `extends` must never lower the score. The headline
+    is identical either way (67/100 in both), and the discrepancy was entirely in the
+    informational coverage line
+
+- **A manifest could name a type that does not exist.** A `typeRef` string is just a string to
+  the schema, so `"returns": "NoSuchType"` validated clean, linted clean, and then `typegen`
+  emitted it verbatim into a declaration file that would not compile —
+  `Cannot find name 'NoSuchType'`. The same shape as an undeclared capability gate: a reference to
+  something absent, sailing through validation and breaking downstream.
+  - `xript lint` gained `undeclared-type`, covering binding parameters and returns through nested
+    namespaces, hook parameters, event payloads, and the fields of a declared type, since a type
+    may reference another
+  - primitives, the `[]` shorthand, and the `{ "array": … }` / `{ "union": [...] }` object forms
+    all resolve first, so only a bare custom name is reported. The primitive set is the one
+    `typegen` itself resolves, so the two agree by construction
+  - found by compiling typegen's output, which nothing had ever done
+
+- **A host type or binding could shadow a name `typegen` generates.** A manifest declaring a
+  type or binding named `Capability`, `Slot`, `CapabilityRef`, or `FragmentProxy` validated clean and
+  then emitted a `.d.ts` with two declarations of the same identifier — a `TS2300` duplicate the
+  adopter met only at compile time, three steps from the manifest, and one `--skipLibCheck` masked
+  entirely. The generated helpers now live in a reserved `Xript` identifier namespace, and the
+  namespace itself is what a host is told to stay out of, not a growing list of names.
+  - **the four unprefixed helpers moved under the prefix** (breaking): `Capability` → `XriptCapability`,
+    `CapabilityRef` → `XriptCapabilityRef`, `Slot` → `XriptSlot`, and `FragmentProxy` →
+    `XriptFragmentProxy`. `XriptSlots` and `XriptEventId` already conformed. An adopter referencing one
+    of the four by name updates the reference; the names read the same, just namespaced
+  - `xript lint` gained `reserved-identifier`: a host type or binding whose name starts with `xript`
+    (matched case-insensitively, so both the `Xript`-cased helpers and the `xript`-cased sandbox global
+    and execution tables are covered) is an error. Reserving the prefix rather than a fixed list keeps
+    every future generated name collision-safe with no new rule
+  - `xript lint` gained `generated-accessor-collision`: a record type `Foo` emits a `FooAccessor`
+    interface, so a second type literally named `FooAccessor` collides. That one is the host's own two
+    names, not a framework imposition, so it is surfaced rather than reserved away — the accessor stays
+    unprefixed and readable
+  - the reserved prefix is a single constant in `@xriptjs/validate` that `typegen` emits from and `lint`
+    checks against, so the two cannot drift
+  - slot ids, capability scopes, and event ids are string _literals_ in the emitted unions, never
+    identifiers, so they are deliberately not reserved
+
+- **Both generators emitted the wrong type for an array of a union.**
+  `{ "array": { "union": ["string", "number"] } }` came out as `string | number[]`, which
+  TypeScript reads as `string | (number[])` — a union with an array rather than an array of a
+  union. **It compiled**, which is what made it worse than a syntax error: an adopter got a
+  silently incorrect type with no diagnostic. Element types are parenthesised before `[]` when
+  they are a union or intersection; a plain element type is untouched.
+  - the suite now compiles what typegen emits, the way it compiles what `init` scaffolds. Nothing
+    had ever done so, which is how both this and `undeclared-type` survived
+  - the compile check runs in memory against the real lib, so it needs no temp directory and no
+    install, and it is probed: a binding returning an undeclared type fails it with the
+    compiler's own `TS2552`
+  - `spec/type-ref-tests.json` now pins how a `typeRef` renders, asserted by both generators. It
+    deliberately fixes the _expected text_ rather than asserting the two agree: when this bug
+    shipped they agreed perfectly and were both wrong, so agreement proves nothing
+  - the corpus also caught `docgen` backticking every type name except `undefined`, which now
+    matches the rest
+  - **`docgen` had it in both renderers**, found by cross-checking the two generators against one
+    manifest. Its signature block is fenced as TypeScript, so the wrong type was published as code
+    an adopter copies, and its parameter table said the same thing in prose. Both parenthesise now,
+    decided from the type reference rather than by inspecting the rendered string — the escaped
+    pipes the table emits make that string unreliable to match on
+
+- **`xript sanitize` stripped a script tag and said nothing.** `--quiet` documented itself as
+  "output sanitized HTML only (no diagnostics)", which means the default documented itself as
+  having diagnostics — and it printed none. The two modes differed only by a trailing newline. In
+  a project that calls a silent drop the failure mode the fragment contract exists to end, the
+  tool named after that contract was the one staying silent.
+  - the default now reports what it removed, **on stderr**, so `xript sanitize f.html > out.html`
+    still yields nothing but markup and existing pipelines are unaffected
+  - `--quiet` silences it, which is what it always claimed to do, and a clean fragment still says
+    nothing at all
+
+- **The harness spoke two dialects; now it speaks one.** `spec/harness.md` and the
+  `xript_host_step` MCP tool both promised that an interactive session "transcribes directly to a
+  replayable steps file", and it did not. The two front doors named the same concepts differently
+  (`export` versus `exportName`), and worse, `source` and `sources` meant a _path_ on the
+  steps-file side and _inline content_ on the MCP side, so a verbatim transcription read inline
+  JavaScript as a filename and dropped the export name in silence.
+  - one parallel, unambiguous vocabulary now serves both: `sourceText` / `sourceTexts` for inline
+    content, `sourcePath` / `sourcePaths` for paths, and `export` for the invoke
+  - `source`, `sources`, and `exportName` still work as deprecated aliases and say so, on stderr
+    for the CLI so a redirected stdout stays clean JSON, as a leading note for the MCP tool
+  - `runSessionStep` became the single load-mod path; the MCP tool resolves its client-side paths
+    to inline and delegates to it, so the two cannot drift apart again
+  - `xript init` scaffolds the canonical names, and the promise the spec made is now true: a
+    session built with them transcribes verbatim into a steps file
+
+- **Walked every adopter path and fixed what broke.** A pass that ran each tool the way its own
+  docs tell an adopter to, and mended the front-door papercuts that turned up.
+  - `score-diff` met a manifest where a saved score belonged with a raw `Cannot read properties of
+    undefined`; it now names the mistake and points at `xript score --json`
+  - a failed manifest `oneOf` reported every branch at once, including `unexpected property
+    "members"` on a namespace, advice that deletes the key that makes it a namespace; it now keeps
+    only the branch that came closest and drops the bare meta-error
+  - a description-less binding made `typegen --ambient` emit `/** * undefined */` and `docgen`
+    publish `fs — undefined (1 function)`; both now omit an absent description rather than print the
+    word
+  - `describe` printed every page's heading twice, and `spec/expressions` and `spec/renderers` were
+    reachable through neither `xript guide` nor the `xript://spec/*` resources, the third surface to
+    lose them, so the content sync now derives its page list from the directory and a test fails if
+    a page is left unserved
+  - the rust runtime's README example stopped compiling once `RuntimeOptions` grew; each runtime's
+    front-page example is now run-verified, and the rust and csharp ones are guarded by a test that
+    builds the snippet so it cannot silently rot again
+
+### Behaviour changes
+
+- **Command fills left `dataFills`.** Before v0.8.0, `application/x-xript-command` was reserved
+  in name only: a slot could accept it, and its fills were delivered untyped in
+  `mod.dataFills[slotId]` with no shape checks beyond "is an object" and the slot's capability
+  gate. From v0.8.0 they are parsed as command fills and delivered in `mod.commandFills`. **A
+  host reading them out of `dataFills` must read `commandFills`, or resolve them with
+  `resolveCommands`, instead.**
+  - normalization also got strict: a fill that used to load as an opaque object now fails to
+    load without a valid `handler` and a valid `id`. That is the point of typing the accept,
+    and it is a load-time error carrying a fix-it message rather than a runtime surprise
+  - there is no dual delivery. `dataFills` is the escape hatch for slot kinds the runtime has
+    no typed reading of, and a typed kind appearing there too would make the field mean two
+    things. Neither role nor hook fills dual-deliver either
+  - the same latent hazard existed for role and hook when those accepts were typed. This is
+    the one-time cost of turning a reserved-by-convention string into a
+    reserved-by-implementation one, and no third occurrence is pending
+- **Role resolution stopped depending on load order.** `resolveRole` used to return the first
+  candidate in the order the host happened to pass its mods in, so reordering that array
+  silently changed which implementation of a role ran. Candidates are now ordered by owning
+  mod name ascending, the third key of the shared slot comparator, which is the only one of
+  the three that applies to a role fill. `rolePreferences` still outranks the tiebreak, so a
+  host that was relying on array order should name its choice there.
+
+### Test counts
+
+| Package | v0.7.0 | v0.8.0 |
+|---------|-------:|-------:|
+| `@xriptjs/runtime` (js) | 256 | 879 |
+| `@xriptjs/runtime-node` | 252 | 880 |
+| `xript-runtime` (rust) | 185 | 385 |
+| `Xript.Runtime` (csharp) | 298 | 1304 |
+| `@xriptjs/sanitize` | 93 | 679 |
+| `@xriptjs/validate` | 169 | 430 |
+| `@xriptjs/typegen` | 82 | 163 |
+| `@xriptjs/docgen` | 61 | 109 |
+| `@xriptjs/init` | 44 | 53 |
+| `@xriptjs/cli` | 76 | 115 |
+| `xript-ratatui` | 58 | 58 |
+| `xript-wiz` | 38 | 38 |
+| `xript-expr` | n/a | 13 |
+| **Total** | **1612** | **5106** |
+
 ## v0.7.0 — Capability Hierarchy & Live Events
 
 The security-and-reactivity chapter, and then some. v0.7.0 started as two pillars and finished as five: **hierarchical capabilities** (grant broad or narrow without a flat-cap explosion), **live events** (the `events` catalog actually reaches subscribing mods now), **xript libs** (whole approved libraries, imported in-sandbox), the **host harness** (test a mod end-to-end with no application running), and **`fills` landing in every runtime** (the canonical contribution surface finally loads as authored). Around the pillars: the static tooling reasons about capabilities the same way the runtimes do, the docs reorganized around who's reading them, and the site now serves every schema and spec page it used to 404 on.

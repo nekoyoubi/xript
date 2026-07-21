@@ -1,4 +1,10 @@
 import { readFile } from "node:fs/promises";
+import {
+	sanitizeFragment,
+	resolveFormatProfile,
+	FormatProfileError,
+	FragmentParseError,
+} from "@xriptjs/sanitize";
 import { satisfies, grantedSatisfies } from "./capabilities.js";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,10 +12,35 @@ import { createRequire } from "node:module";
 import { resolveExtends, ManifestResolutionError } from "./resolve.js";
 import { detectCommonJs, commonJsMessage } from "./cjs.js";
 import { resolveSchema, type SchemaResolveOptions, type ResolvedSchema } from "./schema-resolve.js";
+import { commandDefects, declaredExportNames, isCommandSlot } from "./commands.js";
 
 export { resolveExtends, resolveManifestFile, resolveProvenance, ManifestResolutionError, type Provenance } from "./resolve.js";
 export { detectCommonJs, commonJsMessage, COMMONJS_GUIDE_URL } from "./cjs.js";
 export { resolveSchema, type SchemaResolveOptions, type ResolvedSchema } from "./schema-resolve.js";
+export {
+	widenExecutionIntent,
+	resolveExecutionIntent,
+	declaredExecutionIntent,
+	resolveInvokeIntent,
+	executionSurfaces,
+	isDefaultIntent,
+	compareDuration,
+	DURATION_ORDER,
+	AFFINITY_ORDER,
+	DEFAULT_EXECUTION_INTENT,
+	DURATION_PROSE,
+	AFFINITY_PROSE,
+	HOST_BINDING_THREAD_CONTRACT,
+	ASYNC_SHAPE_REMARK,
+	LIMITS_REACH_REMARK,
+	type Duration,
+	type Affinity,
+	type ExecutionIntent,
+	type ResolvedExecutionIntent,
+	type ExecutionSurface,
+	type SurfaceKind,
+	type InvokeIntentOptions,
+} from "./execution.js";
 
 const require = createRequire(import.meta.url);
 const Ajv = require("ajv/dist/2020").default;
@@ -49,6 +80,57 @@ interface AjvError {
 	message?: string;
 	keyword: string;
 	params: Record<string, unknown>;
+	/** Populated under Ajv `verbose`; the branch schema an error came from, by object identity. */
+	parentSchema?: object;
+}
+
+/**
+ * A failed `oneOf` reports every branch's errors plus a bare meta-error, so a namespace binding
+ * that only forgot its `description` came back with four lines — including `unexpected property
+ * "members"` from the function branch, which would tell the author to delete the very key that
+ * makes it a namespace. This keeps only the branch that came closest and drops the meta.
+ *
+ * For each `oneOf` (deepest path first, so a nested one resolves before its parent): if a branch
+ * matched at the failure path and failed deeper, the branches that failed shallowly are noise and
+ * their direct errors are dropped. Otherwise every branch failed at that path, so the branches are
+ * partitioned by `parentSchema` identity and only the smallest survives. The meta-error is dropped
+ * whenever a real error remains to explain the failure.
+ */
+function collapseOneOf(errors: AjvError[]): AjvError[] {
+	const metas = errors.filter((e) => e.keyword === "oneOf");
+	if (metas.length === 0) return errors;
+
+	const byDepth = [...metas].sort((a, b) => b.instancePath.length - a.instancePath.length);
+	let kept = errors;
+	for (const meta of byDepth) {
+		if (!kept.includes(meta)) continue;
+		const p = meta.instancePath;
+		const under = kept.filter(
+			(e) => e !== meta && e.keyword !== "oneOf" && (e.instancePath === p || e.instancePath.startsWith(`${p}/`)),
+		);
+		const direct = under.filter((e) => e.instancePath === p);
+		const deeper = under.length - direct.length;
+		const drop = new Set<AjvError>();
+
+		if (deeper > 0) {
+			for (const e of direct) drop.add(e);
+		} else {
+			const branches = new Map<object, AjvError[]>();
+			for (const e of direct) {
+				const key = e.parentSchema ?? meta;
+				(branches.get(key) ?? branches.set(key, []).get(key)!).push(e);
+			}
+			if (branches.size > 1) {
+				const sorted = [...branches.values()].sort((a, b) => a.length - b.length);
+				for (const branch of sorted.slice(1)) for (const e of branch) drop.add(e);
+			}
+		}
+
+		const survivors = under.filter((e) => !drop.has(e));
+		const dropMeta = survivors.length > 0;
+		kept = kept.filter((e) => !drop.has(e) && !(e === meta && dropMeta));
+	}
+	return kept;
 }
 
 let cachedSchema: object | null = null;
@@ -84,11 +166,13 @@ function schemaId(schema: object): string | undefined {
 }
 
 const LEGACY_SCHEMA_IDS: Record<string, string[]> = {
-	"https://xript.dev/schema/manifest/v0.7.json": [
+	"https://xript.dev/schema/manifest/v0.8.json": [
+		"https://xript.dev/schema/manifest/v0.7.json",
 		"https://xript.dev/schema/manifest/v0.6.json",
 		"https://xript.dev/schema/manifest/v0.3.json",
 	],
-	"https://xript.dev/schema/mod-manifest/v0.7.json": [
+	"https://xript.dev/schema/mod-manifest/v0.8.json": [
+		"https://xript.dev/schema/mod-manifest/v0.7.json",
 		"https://xript.dev/schema/mod-manifest/v0.6.json",
 		"https://xript.dev/schema/mod-manifest/v0.3.json",
 	],
@@ -121,6 +205,9 @@ function formatError(error: AjvError): ValidationError {
 
 	if (error.keyword === "additionalProperties") {
 		const extra = error.params.additionalProperty as string | undefined;
+		message = `unexpected property "${extra}"`;
+	} else if (error.keyword === "unevaluatedProperties") {
+		const extra = error.params.unevaluatedProperty as string | undefined;
 		message = `unexpected property "${extra}"`;
 	} else if (error.keyword === "required") {
 		const missing = error.params.missingProperty as string | undefined;
@@ -167,7 +254,7 @@ export async function validateManifest(
 		// scope and reject a sibling overlay branch's properties — so closing lives here.)
 		ajv.addSchema(schema);
 		await addBundledRefs(ajv, schema);
-		toCompile = { allOf: [{ $ref: schemaId }], unevaluatedProperties: false };
+		toCompile = { type: "object", allOf: [{ $ref: schemaId }], unevaluatedProperties: false };
 	} else if (schemaOverride) {
 		await addBundledRefs(ajv, schema);
 	}
@@ -176,12 +263,13 @@ export async function validateManifest(
 	const valid = validate(manifest) as boolean;
 
 	const warnings = validateFieldEnums(manifest);
+	warnings.push(...validateDeprecatedJ5mlSpellings(manifest));
 
 	if (valid) {
 		return { valid: true, errors: [], warnings };
 	}
 
-	const errors = ((validate.errors || []) as AjvError[]).map(formatError);
+	const errors = collapseOneOf((validate.errors || []) as AjvError[]).map(formatError);
 	return { valid: false, errors, warnings };
 }
 
@@ -207,7 +295,7 @@ export async function validateShape(
 	if (valid) {
 		return { valid: true, errors: [] };
 	}
-	const errors = ((validate.errors || []) as AjvError[]).map(formatError);
+	const errors = collapseOneOf((validate.errors || []) as AjvError[]).map(formatError);
 	return { valid: false, errors };
 }
 
@@ -223,7 +311,7 @@ export async function validateModManifest(
 	const validate = ajv.compile(schema);
 	const valid = validate(manifest) as boolean;
 
-	const errors = valid ? [] : ((validate.errors || []) as AjvError[]).map(formatError);
+	const errors = valid ? [] : collapseOneOf((validate.errors || []) as AjvError[]).map(formatError);
 	errors.push(...validateExportCapabilities(manifest));
 	errors.push(...validateProviderRoles(manifest));
 
@@ -251,6 +339,59 @@ function validateLegacyContributionShapes(manifest: unknown): ValidationWarning[
 			keyword: "deprecated",
 		});
 	}
+	return warnings;
+}
+
+const DEPRECATED_J5ML_FORMAT = "application/jsml+json";
+const CANONICAL_J5ML_FORMAT = "application/j5ml+json";
+
+/** RFC 6901 escaping, so a media-type key's slashes don't split the pointer. */
+function pointerSegment(key: string): string {
+	return key.replace(/~/g, "~0").replace(/\//g, "~1");
+}
+
+/**
+ * `jsml` is an accepted but deprecated spelling of `j5ml`, in both the built-in
+ * media type and a format's `syntax`. Both parse identically; these warnings
+ * point authors at the canonical spelling without failing the manifest.
+ */
+function validateDeprecatedJ5mlSpellings(manifest: unknown): ValidationWarning[] {
+	const warnings: ValidationWarning[] = [];
+	if (typeof manifest !== "object" || manifest === null) return warnings;
+	const root = manifest as Record<string, unknown>;
+
+	const slots = root.slots;
+	if (Array.isArray(slots)) {
+		slots.forEach((slot, slotIndex) => {
+			if (typeof slot !== "object" || slot === null) return;
+			const accepts = (slot as Record<string, unknown>).accepts;
+			const list = Array.isArray(accepts) ? accepts : [accepts];
+			list.forEach((entry, acceptsIndex) => {
+				if (entry !== DEPRECATED_J5ML_FORMAT) return;
+				warnings.push({
+					path: Array.isArray(accepts)
+						? `/slots/${slotIndex}/accepts/${acceptsIndex}`
+						: `/slots/${slotIndex}/accepts`,
+					message: `'${DEPRECATED_J5ML_FORMAT}' is a deprecated spelling of '${CANONICAL_J5ML_FORMAT}'; both parse identically`,
+					keyword: "deprecated",
+				});
+			});
+		});
+	}
+
+	const formats = root.formats;
+	if (typeof formats === "object" && formats !== null) {
+		for (const [formatId, declaration] of Object.entries(formats as Record<string, unknown>)) {
+			if (typeof declaration !== "object" || declaration === null) continue;
+			if ((declaration as Record<string, unknown>).syntax !== "jsml") continue;
+			warnings.push({
+				path: `/formats/${pointerSegment(formatId)}/syntax`,
+				message: "'jsml' is a deprecated spelling of 'j5ml'; both parse identically",
+				keyword: "deprecated",
+			});
+		}
+	}
+
 	return warnings;
 }
 
@@ -503,12 +644,84 @@ export interface CrossValidateOptions {
 	checkFillPayloads?: boolean;
 }
 
+/**
+ * A fill is a fragment fill when it carries both a string `format` and a string `source` —
+ * the same test the runtimes apply. A code-renderer fill carries `entry`, a data fill carries
+ * arbitrary payload members; neither is markup, and neither is checked against a vocabulary.
+ */
+function isFragmentFill(fill: unknown): fill is { format: string; source: string; inline?: boolean } {
+	if (typeof fill !== "object" || fill === null) return false;
+	const f = fill as Record<string, unknown>;
+	return typeof f.format === "string" && typeof f.source === "string";
+}
+
+/**
+ * Checks an inline fragment source against the vocabulary its format declares. Errors are the
+ * defects a runtime would refuse the mod for (an undeclared node in a host-declared vocabulary);
+ * warnings are the things it would drop and report (an undeclared prop, a stripped element). A
+ * non-inline source is a file path the validator cannot read from a manifest pair, so it is skipped.
+ */
+function vocabularyFindings(
+	fill: { format: string; source: string; inline?: boolean },
+	path: string,
+	formats: Record<string, unknown> | undefined,
+	vocabularies: Record<string, unknown> | undefined,
+): { errors: ValidationError[]; warnings: ValidationWarning[] } {
+	const errors: ValidationError[] = [];
+	const warnings: ValidationWarning[] = [];
+
+	let profile;
+	try {
+		profile = resolveFormatProfile(fill.format, formats ?? null, vocabularies ?? null);
+	} catch (err) {
+		if (err instanceof FormatProfileError) {
+			errors.push({ path: `${path}/format`, message: err.message, keyword: "cross-fill-format" });
+			return { errors, warnings };
+		}
+		throw err;
+	}
+
+	if (!profile) {
+		errors.push({
+			path: `${path}/format`,
+			message: `unknown fragment format "${fill.format}" — declare it in the host manifest's 'formats' block`,
+			keyword: "cross-fill-format",
+		});
+		return { errors, warnings };
+	}
+
+	if (fill.inline !== true) return { errors, warnings };
+
+	let result;
+	try {
+		result = sanitizeFragment(fill.source, profile);
+	} catch (err) {
+		if (err instanceof FragmentParseError) {
+			errors.push({ path: `${path}/source`, message: err.message, keyword: "cross-fill-vocabulary" });
+			return { errors, warnings };
+		}
+		throw err;
+	}
+
+	for (const diagnostic of result.diagnostics) {
+		const target = { path: `${path}/source${diagnostic.path}`, message: diagnostic.message };
+		if (diagnostic.severity === "error") {
+			errors.push({ ...target, keyword: "cross-fill-vocabulary" });
+		} else {
+			warnings.push({ ...target, keyword: "cross-fill-vocabulary" });
+		}
+	}
+
+	return { errors, warnings };
+}
+
 export async function crossValidate(
 	appManifest: unknown,
 	modManifest: unknown,
 	options: CrossValidateOptions = {},
 ): Promise<ValidationResult> {
 	const errors: ValidationError[] = [];
+	const warnings: ValidationWarning[] = [];
 	const checkFillPayloads = options.checkFillPayloads !== false;
 
 	if (typeof appManifest !== "object" || appManifest === null) {
@@ -544,6 +757,9 @@ export async function crossValidate(
 		return payloadValidators.get(slotId) ?? null;
 	};
 
+	const declaredFormats = app.formats as Record<string, unknown> | undefined;
+	const declaredVocabularies = app.vocabularies as Record<string, unknown> | undefined;
+
 	const fragments = (mod.fragments ?? []) as Array<{ id: string; slot: string; format: string }>;
 	for (let i = 0; i < fragments.length; i++) {
 		const frag = fragments[i];
@@ -564,6 +780,13 @@ export async function crossValidate(
 				message: `format "${frag.format}" is not accepted by slot "${frag.slot}" (accepts: ${slot.accepts.join(", ")})`,
 				keyword: "cross-format",
 			});
+			continue;
+		}
+
+		if (isFragmentFill(frag)) {
+			const found = vocabularyFindings(frag, `/fragments/${i}`, declaredFormats, declaredVocabularies);
+			errors.push(...found.errors);
+			warnings.push(...found.warnings);
 		}
 	}
 
@@ -587,6 +810,36 @@ export async function crossValidate(
 					keyword: "cross-fill-capability",
 				});
 			}
+			const commandSlot = isCommandSlot(slot);
+			if (commandSlot) {
+				for (const defect of commandDefects(fillValue, slotId, declaredExportNames(mod))) {
+					errors.push({
+						path: `/fills/${slotId}/${defect.index}${defect.pointer}`,
+						message: defect.message,
+						keyword: defect.code,
+					});
+				}
+			}
+
+			const fillEntries = Array.isArray(fillValue) ? fillValue : [fillValue];
+			for (let i = 0; i < fillEntries.length; i++) {
+				const fill = fillEntries[i];
+				if (commandSlot) continue;
+				if (!isFragmentFill(fill) || !Array.isArray(slot.accepts)) continue;
+				const path = `/fills/${slotId}/${i}`;
+				if (!slot.accepts.includes(fill.format)) {
+					errors.push({
+						path: `${path}/format`,
+						message: `format "${fill.format}" is not accepted by slot "${slotId}" (accepts: ${slot.accepts.join(", ")})`,
+						keyword: "cross-fill-format",
+					});
+					continue;
+				}
+				const found = vocabularyFindings(fill, path, declaredFormats, declaredVocabularies);
+				errors.push(...found.errors);
+				warnings.push(...found.warnings);
+			}
+
 			if (checkFillPayloads && slot.payload && typeof slot.payload === "object") {
 				const validate = payloadValidator(slotId, slot.payload);
 				if (validate) {
@@ -623,6 +876,7 @@ export async function crossValidate(
 	return {
 		valid: errors.length === 0,
 		errors,
+		...(warnings.length > 0 ? { warnings } : {}),
 	};
 }
 
@@ -793,7 +1047,42 @@ export {
 	type MetricDiff,
 	type UtilizationMetric,
 	type IntegrityResult,
+	type FormatSurface,
+	type CommandSurface,
 } from "./score.js";
-export { lintManifests, type LintResult, type LintOptions, type Finding, type LintCounts, type Severity } from "./lint.js";
+export { lintManifests, RESERVED_IDENTIFIER_PREFIX, isReservedIdentifier, type LintResult, type LintOptions, type Finding, type LintCounts, type Severity } from "./lint.js";
 
 export { satisfies, grantedSatisfies, splitMode, scopeSubsumes } from "./capabilities.js";
+
+export {
+	resolveFormatProfile,
+	FormatProfileError,
+	PROTOCOL_PROPS,
+	type FormatProfile,
+	type ResolvedVocabulary,
+	type NodeDefinition,
+	type PropDefinition,
+} from "@xriptjs/sanitize";
+
+export {
+	isCommandSlot,
+	commandDefects,
+	commandFillViews,
+	declaredExportNames,
+	exportCapability,
+	COMMAND_SLOT_ACCEPT,
+	ROLE_SLOT_ACCEPT,
+	HOOK_SLOT_ACCEPT,
+	COMMAND_ID_PATTERN,
+	type CommandDefect,
+	type CommandDefectCode,
+	type CommandFillView,
+	type CommandSlotDeclaration,
+} from "./commands.js";
+
+export {
+	analyzeExpressions,
+	type ExpressionAnalysisOptions,
+	type ExpressionSite,
+	type ExpressionType,
+} from "./expressions.js";

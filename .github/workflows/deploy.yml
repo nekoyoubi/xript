@@ -20,6 +20,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-tags: true
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -38,6 +40,9 @@ jobs:
 
       - name: Build docs
         run: npm run docs:build
+
+      - name: Check schema aliases
+        run: npm run check:schema-aliases
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

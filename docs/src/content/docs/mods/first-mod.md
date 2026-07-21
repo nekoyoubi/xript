@@ -34,8 +34,8 @@ Make a folder anywhere and create these two files in it.
 
 ```json
 {
-	"$schema": "https://xript.dev/schema/mod-manifest/v0.7.json",
-	"xript": "0.7",
+	"$schema": "https://xript.dev/schema/mod-manifest/v0.8.json",
+	"xript": "0.8",
 	"name": "hello-mod",
 	"version": "1.0.0",
 	"description": "My first mod.",

@@ -1,0 +1,23 @@
+[package]
+name = "xript-expr"
+version = "0.8.0"
+edition = "2021"
+description = "The xript Expression Grammar (XEG) — parser, evaluator, and text-node interpolation for xript fragments."
+license = "MIT"
+repository = "https://github.com/nekoyoubi/xript"
+readme = "README.md"
+keywords = ["xript", "expression", "parser", "fragment", "interpolation"]
+categories = ["parser-implementations", "template-engine"]
+
+[dependencies]
+serde_json = "1"
+
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "packed"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.release]
+strip = "debuginfo"

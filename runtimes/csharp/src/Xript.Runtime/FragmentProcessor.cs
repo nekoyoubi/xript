@@ -2,12 +2,79 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Jint;
 using Jint.Native;
+using Xript.Runtime.Expressions;
+using Xript.Runtime.Fragments;
 
 namespace Xript.Runtime;
 
-public record FragmentResult(string FragmentId, string Html, Dictionary<string, bool> Visibility);
+/// <summary>
+/// <c>Visibility</c> is keyed by <c>data-if</c> expression text, so two nodes carrying the
+/// same condition collapse into one entry. Deprecated in favour of <see cref="Conditions"/>.
+/// </summary>
+public record FragmentResult(string FragmentId, string Html, Dictionary<string, bool> Visibility)
+{
+    /// <summary>Every <c>data-if</c> in the bound tree, keyed by tree position, not by text.</summary>
+    public IReadOnlyList<FragmentCondition> Conditions { get; init; } = [];
 
-public record FragmentOp(string Op, string Selector, object? Value = null, string? Attr = null);
+    /// <summary>
+    /// The bound fragment tree. Present for every format; for a host-declared vocabulary
+    /// it is the only representation, since such a fragment has no HTML projection.
+    /// </summary>
+    public IReadOnlyList<FragmentNode> Tree { get; init; } = [];
+
+    public string Format { get; init; } = "";
+
+    public FragmentContentType ContentType { get; init; } = FragmentContentType.Html;
+
+    public IReadOnlyList<FragmentDiagnostic> Diagnostics { get; init; } = [];
+}
+
+/// <summary>
+/// A command from a mod's fragment handler, after the vocabulary has routed it.
+/// <c>Selector</c> is the raw target string the mod passed; <c>Target</c> is that string
+/// resolved to an id reference or a CSS selector.
+/// </summary>
+public record FragmentOp(
+    string Op,
+    string Selector,
+    NodeRef Target,
+    PropValue? Value = null,
+    string? Prop = null,
+    string? Attr = null);
+
+/// <summary>Thrown when a fragment names a format no vocabulary resolves.</summary>
+public sealed class FragmentFormatException : Exception
+{
+    public string FragmentId { get; }
+    public string Format { get; }
+
+    public FragmentFormatException(string fragmentId, string format, string? message = null)
+        : base(message ?? $"unknown fragment format '{format}' — declare it in the host manifest's 'formats' block")
+    {
+        FragmentId = fragmentId;
+        Format = format;
+    }
+}
+
+/// <summary>Thrown when a fragment violates its format's vocabulary badly enough to refuse it.</summary>
+public sealed class FragmentSanitizeException : Exception
+{
+    public string FragmentId { get; }
+    public IReadOnlyList<FragmentDiagnostic> Diagnostics { get; }
+
+    public FragmentSanitizeException(string fragmentId, IReadOnlyList<FragmentDiagnostic> diagnostics)
+        : base(FormatMessage(fragmentId, diagnostics))
+    {
+        FragmentId = fragmentId;
+        Diagnostics = diagnostics;
+    }
+
+    private static string FormatMessage(string fragmentId, IReadOnlyList<FragmentDiagnostic> diagnostics)
+    {
+        var lines = diagnostics.Select(d => $"  {d.Path} {d.Message}");
+        return $"fragment '{fragmentId}' violates its format's vocabulary:\n{string.Join("\n", lines)}";
+    }
+}
 
 public class ModManifestValidationException : Exception
 {
@@ -105,7 +172,21 @@ public sealed class FragmentProcessor
             }
 
             if (!slot.Accepts.Contains(frag.Format))
+            {
                 issues.Add($"slot '{frag.Slot}' does not accept format '{frag.Format}'");
+            }
+            else
+            {
+                try
+                {
+                    if (FormatProfiles.Resolve(frag.Format, app.Formats, app.Vocabularies) is null)
+                        issues.Add($"unknown fragment format '{frag.Format}' — declare it in the host manifest's 'formats' block");
+                }
+                catch (FormatProfileException ex)
+                {
+                    issues.Add(ex.Message);
+                }
+            }
 
             if (slot.Capability is not null && !Capabilities.GrantedSatisfies(grantedCapabilities, slot.Capability))
                 issues.Add($"slot '{frag.Slot}' requires capability '{slot.Capability}'");
@@ -114,22 +195,13 @@ public sealed class FragmentProcessor
         return issues;
     }
 
-    public static string SanitizeHtml(string input)
-    {
-        if (string.IsNullOrEmpty(input))
-            return input;
-
-        var result = input;
-
-        result = StripElements(result);
-        result = UnwrapDocumentElements(result);
-        result = SanitizeStyleBlocks(result);
-        result = StripDangerousAttributes(result);
-        result = SanitizeInlineStyles(result);
-        result = SanitizeUris(result);
-
-        return result;
-    }
+    /// <summary>
+    /// Sanitizes an HTML fragment against the built-in HTML vocabulary: an allow-list of
+    /// elements and attributes, with <c>href</c>/<c>src</c> and <c>style</c> values routed
+    /// through their value sanitizers.
+    /// </summary>
+    public static string SanitizeHtml(string input) =>
+        string.IsNullOrEmpty(input) ? input : HtmlReader.Sanitize(input);
 
     public static FragmentResult ProcessFragment(
         string fragmentId,
@@ -234,210 +306,31 @@ public sealed class FragmentProcessor
 
         foreach (Match match in DataIfPattern.Matches(html))
         {
-            var expression = match.Groups[1].Value;
+            var expression = HtmlTokenizer.DecodeTextEntities(match.Groups[1].Value);
             visibility[expression] = EvaluateCondition(expression, bindings);
         }
 
         return visibility;
     }
 
-    public static bool EvaluateCondition(string expression, Dictionary<string, object?> bindings)
-    {
-        try
-        {
-            var engine = new Jint.Engine(cfg => cfg.TimeoutInterval(TimeSpan.FromMilliseconds(100)));
-            foreach (var (name, value) in bindings)
-            {
-                if (value is null)
-                    engine.SetValue(name, Jint.Native.JsValue.Null);
-                else if (value is int intVal)
-                    engine.SetValue(name, intVal);
-                else if (value is long longVal)
-                    engine.SetValue(name, longVal);
-                else if (value is double doubleVal)
-                    engine.SetValue(name, doubleVal);
-                else if (value is float floatVal)
-                    engine.SetValue(name, floatVal);
-                else if (value is bool boolVal)
-                    engine.SetValue(name, boolVal);
-                else if (value is string strVal)
-                    engine.SetValue(name, strVal);
-                else
-                    engine.SetValue(name, value.ToString() ?? "");
-            }
+    /// <summary>
+    /// Evaluates a <c>data-if</c> body.
+    ///
+    /// This replaced a per-evaluation <c>Jint.Engine</c>. That shape had the right instincts
+    /// -- a bare engine, no CLR interop, a 100ms timeout -- and it still had to go: a second
+    /// JavaScript engine is a second grammar with second semantics and a per-render
+    /// allocation, and the point of the exercise is that one expression means one thing in
+    /// every runtime. Nothing on this path compiles or evaluates JavaScript.
+    /// </summary>
+    public static bool EvaluateCondition(string expression, Dictionary<string, object?> bindings) =>
+        Xeg.EvaluateCondition(expression, bindings);
 
-            var result = engine.Evaluate($"!!({expression})");
-            return result.AsBoolean();
-        }
-        catch
-        {
-            return false;
-        }
-    }
+    /// <summary>
+    /// Classifies a <c>data-bind</c> body. A bare identifier is an lvalue and keeps two-way
+    /// write-back; anything else computes a value with no inverse and is read-only.
+    /// </summary>
+    public static ExpressionKind? BindExpressionKind(string source) => Xeg.Kind(source);
 
-    private static readonly string[] StrippedElementNames =
-        ["script", "iframe", "object", "embed", "form", "base", "link", "meta", "title", "noscript", "applet", "frame", "frameset", "param", "foreignobject", "animate", "set"];
-
-    private static string StripElements(string html)
-    {
-        foreach (var tag in StrippedElementNames)
-        {
-            var selfClosingPattern = new Regex(
-                $@"<{tag}\b[^>]*/\s*>",
-                RegexOptions.IgnoreCase | RegexOptions.Singleline);
-            html = selfClosingPattern.Replace(html, "");
-
-            var fullPattern = new Regex(
-                $@"<{tag}\b[^>]*>[\s\S]*?</{tag}\s*>",
-                RegexOptions.IgnoreCase | RegexOptions.Singleline);
-            html = fullPattern.Replace(html, "");
-
-            var openOnlyPattern = new Regex(
-                $@"<{tag}\b[^>]*>",
-                RegexOptions.IgnoreCase);
-            html = openOnlyPattern.Replace(html, "");
-        }
-
-        return html;
-    }
-
-    private static readonly string[] UnwrappedElementNames = ["html", "head", "body"];
-
-    private static string UnwrapDocumentElements(string html)
-    {
-        foreach (var tag in UnwrappedElementNames)
-        {
-            html = Regex.Replace(html, $@"<{tag}\b[^>]*>", "", RegexOptions.IgnoreCase);
-            html = Regex.Replace(html, $@"</{tag}\s*>", "", RegexOptions.IgnoreCase);
-        }
-
-        return html;
-    }
-
-    private static readonly Regex OnEventAttrPattern =
-        new(@"\s+on\w+\s*=\s*(?:""[^""]*""|'[^']*'|\S+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    private static readonly Regex FormActionAttrPattern =
-        new(@"\s+(?:formaction|action|method|enctype)\s*=\s*(?:""[^""]*""|'[^']*'|\S+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    private static string StripDangerousAttributes(string html)
-    {
-        html = Regex.Replace(html, @"(<[a-zA-Z][^>]*?)\s+on\w+\s*=\s*(?:""[^""]*""|'[^']*'|\S+?)([^>]*>)", match =>
-        {
-            var result = match.Value;
-            while (Regex.IsMatch(result, @"<[a-zA-Z][^>]*?\s+on\w+\s*=\s*(?:""[^""]*""|'[^']*'|\S+)"))
-            {
-                result = Regex.Replace(result, @"(\s+)on\w+\s*=\s*(?:""[^""]*""|'[^']*'|\S+?)", "", RegexOptions.IgnoreCase);
-            }
-            return result;
-        }, RegexOptions.IgnoreCase | RegexOptions.Singleline);
-
-        return html;
-    }
-
-    private static readonly Regex JavascriptUriInHrefPattern =
-        new(@"(<[^>]*?\s+href\s*=\s*"")(\s*(?:javascript|vbscript)\s*:[^""]*)("")", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    private static readonly Regex JavascriptUriInSrcPattern =
-        new(@"(<[^>]*?\s+src\s*=\s*"")(\s*(?:javascript|vbscript)\s*:[^""]*)("")", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    private static readonly Regex DangerousDataUriInSrcPattern =
-        new(@"(<[^>]*?\s+src\s*=\s*"")(data:(?!image/(?:png|jpeg|gif|svg\+xml)[;,])[^""]*)("")", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    private static string SanitizeUris(string html)
-    {
-        html = Regex.Replace(html, @"(<[^>]*?)\s+href\s*=\s*""(\s*(?:javascript|vbscript)\s*:[^""]*)""([^>]*>)",
-            "$1$3", RegexOptions.IgnoreCase);
-
-        html = Regex.Replace(html, @"(<[^>]*?)\s+src\s*=\s*""(\s*(?:javascript|vbscript)\s*:[^""]*)""([^>]*>)",
-            "$1$3", RegexOptions.IgnoreCase);
-
-        html = Regex.Replace(html, @"(<[^>]*?)\s+src\s*=\s*""(data:(?!image/(?:png|jpeg|gif|svg\+xml)[;,])[^""]*)""([^>]*>)",
-            "$1$3", RegexOptions.IgnoreCase);
-
-        return html;
-    }
-
-    private static readonly Regex StyleBlockPattern =
-        new(@"(<style\b[^>]*>)([\s\S]*?)(</style\s*>)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    private static readonly Regex[] DangerousStylePatterns =
-    [
-        new(@"url\s*\([^)]*\)", RegexOptions.IgnoreCase | RegexOptions.Compiled),
-        new(@"expression\s*\([^)]*\)", RegexOptions.IgnoreCase | RegexOptions.Compiled),
-        new(@"-moz-binding\s*:[^;}""]* ", RegexOptions.IgnoreCase | RegexOptions.Compiled),
-        new(@"behavior\s*:[^;}""]* ", RegexOptions.IgnoreCase | RegexOptions.Compiled),
-    ];
-
-    private static string SanitizeStyleBlocks(string html)
-    {
-        return StyleBlockPattern.Replace(html, match =>
-        {
-            var openTag = match.Groups[1].Value;
-            var css = match.Groups[2].Value;
-            var closeTag = match.Groups[3].Value;
-
-            css = CleanStyleContent(css);
-
-            css = CleanCssDeclarationBlocks(css);
-
-            return $"{openTag}{css}{closeTag}";
-        });
-    }
-
-    private static string CleanStyleContent(string css)
-    {
-        foreach (var pattern in DangerousStylePatterns)
-            css = pattern.Replace(css, "");
-        return css;
-    }
-
-    private static string CleanCssDeclarationBlocks(string css)
-    {
-        return Regex.Replace(css, @"\{([^}]*)\}", match =>
-        {
-            var block = match.Groups[1].Value;
-            var declarations = block.Split(';')
-                .Select(d => d.Trim())
-                .Where(d =>
-                {
-                    if (string.IsNullOrEmpty(d)) return false;
-                    var colonIdx = d.IndexOf(':');
-                    if (colonIdx < 0) return false;
-                    var value = d[(colonIdx + 1)..].Trim();
-                    return value.Length > 0;
-                })
-                .ToList();
-
-            if (declarations.Count == 0)
-                return "{}";
-
-            return "{ " + string.Join("; ", declarations) + "; }";
-        });
-    }
-
-    private static readonly Regex InlineStylePattern =
-        new(@"(<[^>]*?\s+style\s*=\s*"")((?:[^""])*)(""[^>]*>)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    private static string SanitizeInlineStyles(string html)
-    {
-        return InlineStylePattern.Replace(html, match =>
-        {
-            var prefix = match.Groups[1].Value;
-            var styleValue = match.Groups[2].Value;
-            var suffix = match.Groups[3].Value;
-
-            var cleaned = styleValue;
-            foreach (var pattern in DangerousStylePatterns)
-                cleaned = pattern.Replace(cleaned, "");
-            cleaned = cleaned.Trim();
-
-            if (string.IsNullOrEmpty(cleaned))
-                return Regex.Replace(match.Value, @"\s*style\s*=\s*""[^""]*""", "");
-
-            return $"{prefix}{cleaned}{suffix}";
-        });
-    }
 }
 
 public sealed class ModInstance
@@ -449,7 +342,24 @@ public sealed class ModInstance
     public string Version { get; }
     public List<FragmentInstance> Fragments { get; }
 
+    /// <summary>
+    /// Commands this mod contributed, in declaration order. Before v0.8.0 these arrived as
+    /// opaque fills of a slot the runtime had no typed reading of.
+    /// </summary>
+    public IReadOnlyList<CommandFill> CommandFills { get; internal set; } = [];
+
     public ModInstance(ModManifest mod, Dictionary<string, string>? fragmentSources)
+        : this(mod, fragmentSources, null, null, false, null)
+    {
+    }
+
+    internal ModInstance(
+        ModManifest mod,
+        Dictionary<string, string>? fragmentSources,
+        IReadOnlyDictionary<string, JsonElement>? formats,
+        IReadOnlyDictionary<string, JsonElement>? vocabularies,
+        bool strictHtmlVocabulary,
+        Action<FragmentDiagnosticEvent>? onDiagnostic)
     {
         Id = $"mod-{Interlocked.Increment(ref _idCounter)}-{mod.Name}";
         Name = mod.Name;
@@ -464,8 +374,8 @@ public sealed class ModInstance
                 ? decl.Source
                 : fragmentSources?.GetValueOrDefault(decl.Source) ?? "";
 
-            var sanitized = FragmentProcessor.SanitizeHtml(source);
-            Fragments.Add(new FragmentInstance(decl, sanitized));
+            Fragments.Add(FragmentInstance.Create(
+                decl, source, formats, vocabularies, strictHtmlVocabulary, onDiagnostic));
         }
     }
 
@@ -478,17 +388,76 @@ public sealed class ModInstance
 public sealed class FragmentInstance
 {
     private readonly FragmentDeclaration _declaration;
-    private readonly string _sanitizedSource;
+    private readonly SanitizedFragment _sanitized;
 
     public string Id => _declaration.Id;
     public string Slot => _declaration.Slot;
     public string Format => _declaration.Format;
     public int Priority => _declaration.Priority ?? 0;
 
-    internal FragmentInstance(FragmentDeclaration declaration, string sanitizedSource)
+    /// <summary>The vocabulary this fragment's format resolved to.</summary>
+    public FormatProfile Profile { get; }
+
+    /// <summary>The sanitized fragment tree, before bindings are applied.</summary>
+    public IReadOnlyList<FragmentNode> SanitizedTree => _sanitized.Tree;
+
+    public FragmentContentType ContentType => _sanitized.ContentType;
+
+    public IReadOnlyList<FragmentDiagnostic> Diagnostics => _sanitized.Diagnostics;
+
+    [Obsolete("Use SanitizedTree. The HTML projection is empty for host-declared vocabularies.")]
+    public string SanitizedSource => _sanitized.Html;
+
+    private FragmentInstance(
+        FragmentDeclaration declaration, FormatProfile profile, SanitizedFragment sanitized)
     {
         _declaration = declaration;
-        _sanitizedSource = sanitizedSource;
+        Profile = profile;
+        _sanitized = sanitized;
+    }
+
+    /// <summary>
+    /// Resolves the declaration's format to a vocabulary and sanitizes the source against it.
+    /// </summary>
+    /// <exception cref="FragmentFormatException">when the format resolves to no vocabulary</exception>
+    /// <exception cref="FragmentSanitizeException">when sanitization produces an error-severity finding</exception>
+    internal static FragmentInstance Create(
+        FragmentDeclaration declaration,
+        string source,
+        IReadOnlyDictionary<string, JsonElement>? formats,
+        IReadOnlyDictionary<string, JsonElement>? vocabularies,
+        bool strictHtmlVocabulary,
+        Action<FragmentDiagnosticEvent>? onDiagnostic)
+    {
+        FormatProfile? profile;
+        try
+        {
+            profile = FormatProfiles.Resolve(declaration.Format, formats, vocabularies);
+        }
+        catch (FormatProfileException ex)
+        {
+            throw new FragmentFormatException(declaration.Id, declaration.Format, ex.Message);
+        }
+
+        if (profile is null)
+            throw new FragmentFormatException(declaration.Id, declaration.Format);
+
+        var sanitized = FragmentSanitizer.Sanitize(
+            source, profile, strictHtmlVocabulary, declaration.Interpolate == true);
+
+        if (onDiagnostic is not null)
+        {
+            foreach (var diagnostic in sanitized.Diagnostics)
+                onDiagnostic(new FragmentDiagnosticEvent(declaration.Id, diagnostic));
+        }
+
+        var errors = sanitized.Diagnostics
+            .Where(d => d.Severity == DiagnosticSeverity.Error)
+            .ToList();
+        if (errors.Count > 0)
+            throw new FragmentSanitizeException(declaration.Id, errors);
+
+        return new FragmentInstance(declaration, profile, sanitized);
     }
 
     public FragmentResult GetContent(Dictionary<string, object?> data)
@@ -497,7 +466,32 @@ public sealed class FragmentInstance
             ? FragmentProcessor.ResolveBindings(_declaration.Bindings, data)
             : new Dictionary<string, object?>();
 
-        return FragmentProcessor.ProcessFragment(_declaration.Id, _sanitizedSource, bindings);
+        var bound = FragmentBinder.Bind(
+            _sanitized.Tree, bindings, Profile,
+            expression => FragmentProcessor.EvaluateCondition(expression, bindings));
+
+        if (_sanitized.ContentType == FragmentContentType.Tree)
+            return new FragmentResult(_declaration.Id, "", bound.Visibility)
+            {
+                Tree = bound.Tree,
+                Conditions = bound.Conditions,
+                Format = _declaration.Format,
+                ContentType = FragmentContentType.Tree,
+                Diagnostics = _sanitized.Diagnostics,
+            };
+
+        // The HTML projection is serialized from the bound tree rather than patched into
+        // the sanitized source string. One bind pass feeds both outputs, so an
+        // expression-valued `data-bind` and a resolved interpolation site reach `Html` and
+        // `Tree` identically instead of only the one a regex could see.
+        return new FragmentResult(_declaration.Id, FragmentTree.ToHtml(bound.Tree), bound.Visibility)
+        {
+            Tree = bound.Tree,
+            Conditions = bound.Conditions,
+            Format = _declaration.Format,
+            ContentType = FragmentContentType.Html,
+            Diagnostics = _sanitized.Diagnostics,
+        };
     }
 
     public List<FragmentHandlerDeclaration> GetHandlers()

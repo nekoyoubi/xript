@@ -13,7 +13,7 @@ Add `xript-runtime` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-xript-runtime = "0.6"
+xript-runtime = "0.8"
 ```
 
 ## Creating a Runtime
@@ -28,7 +28,7 @@ xript-runtime = "0.6"
 use xript_runtime::{create_runtime, RuntimeOptions, HostBindings, ConsoleHandler};
 
 let manifest_json = r#"{
-    "xript": "0.7",
+    "xript": "0.8",
     "name": "my-app",
     "bindings": {
         "greet": {
@@ -79,7 +79,7 @@ let runtime = create_runtime_from_file(
 use xript_runtime::{create_runtime_from_value, RuntimeOptions, HostBindings, ConsoleHandler};
 
 let manifest = serde_json::json!({
-    "xript": "0.7",
+    "xript": "0.8",
     "name": "my-app"
 });
 
@@ -104,6 +104,7 @@ let runtime = create_runtime_from_value(manifest, RuntimeOptions {
 | `audit` | `Option<AuditSink>` | Per-capability audit channel fired once per allowed binding invocation; `None` to disable |
 | `hard_limits` | `Option<HardLimits>` | Host-imposed ceilings clamping the manifest's `limits`; `None` for manifest-only limits |
 | `role_preferences` | `HashMap<String, String>` | Per-role provider preference (`role` → preferred mod name) for `resolve_role` |
+| `command_preferences` | `HashMap<String, String>` | Per-command or per-slot preference (command id or slot id → preferred mod name) for `resolve_command` |
 | `debug` | `Option<DebugOptions>` | DAP-shaped debug session options; `None` for zero-overhead off |
 
 ### Host Bindings
@@ -231,7 +232,8 @@ pub type Result<T> = std::result::Result<T, XriptError>;
 
 // Lifecycle, audit, and limits
 pub struct CancellationToken { /* new(), cancel(), is_cancelled() */ }
-pub struct AuditEvent { pub binding: String, pub capability: Option<String>, pub at_ms: f64 }
+pub enum AuditDecision { Invoke, Denied }
+pub struct AuditEvent { pub binding: String, pub capability: Option<String>, pub at_ms: f64, pub decision: AuditDecision, pub mod_name: Option<String>, pub hook: Option<String> }
 pub type AuditSink = Arc<dyn Fn(AuditEvent) + Send + Sync>;
 pub enum LogSeverity { Trace, Debug, Info, Warn, Error }
 pub struct HardLimits { pub timeout_ms: Option<u64>, pub memory_mb: Option<u64>, pub max_stack_depth: Option<usize> }
@@ -355,14 +357,26 @@ let contributions = rt.resolve_slot("sidebar.left");      // Vec<SlotContributio
 let winner = rt.resolve_slot_single("main.overlay");      // Option<SlotContribution>
 ```
 
-Provider roles are resolved the same way. A mod that declares `contributions.provides` offers a logical role with a logical→concrete fn map; the host picks a winner with `resolve_role` (first-installed-wins, unless `role_preferences` names a present candidate) or enumerates every candidate with `resolve_role_all` to build its own picker:
+Provider roles are resolved the same way. A mod that declares `contributions.provides` offers a logical role with a logical→concrete fn map; the host picks a winner with `resolve_role` (candidates ordered by mod name, unless `role_preferences` names a present candidate) or enumerates every candidate with `resolve_role_all` to build its own picker:
 
 ```rust
 let provider = rt.resolve_role("storage");                // Option<RoleResolution>
 let all = rt.resolve_role_all("storage");                 // Vec<RoleResolution>
 ```
 
-The runtime never invokes the named fns itself; it returns the mapping, and the host calls them through its own export/binding path, so each named fn stays gated by its own capability.
+The runtime never invokes the named fns itself; it returns the mapping, and the host calls them through its own export/binding path, so each named fn stays gated by its own capability. Resolution used to walk mods in load order, so reordering the host's mods silently changed the winner; it no longer does.
+
+Command-typed slots (`accepts: ["application/x-xript-command"]`) collect named, invocable actions. The host lists them and invokes the one the user picked:
+
+```rust
+let palette = rt.resolve_commands("palette.commands");    // Vec<ResolvedCommand>, slot cardinality applied
+let every = rt.resolve_commands_all("palette.commands");  // ignoring cardinality
+let one = rt.resolve_command("wrap.double");              // bare id or "mod:id", Option<ResolvedCommand>
+
+let value = rt.invoke_command(&one.unwrap(), json!({ "close": ")" }))?;
+```
+
+Ordering is `priority` descending, then command `id`, then owning mod name, so it does not depend on load order, and a `multiple: false` command slot resolves to exactly one command across all mods. `invoke_command` merges the fill's bound `args` under the caller's (shallow, caller wins) and routes through `invoke_mod_export`, so the handler's export capability is re-checked at call time and the call is never ambiguous between two mods exporting the same name. A throwing handler propagates its error, unlike a hook handler. `XriptHandle` carries the same four methods.
 
 ## Cooperative Cancellation
 

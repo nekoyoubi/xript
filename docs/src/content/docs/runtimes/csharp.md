@@ -22,7 +22,7 @@ using Xript.Runtime;
 
 var manifestJson = """
 {
-    "xript": "0.7",
+    "xript": "0.8",
     "name": "my-app",
     "bindings": {
         "greet": {
@@ -75,9 +75,10 @@ using var runtime = XriptRuntime.CreateFromValue(doc, new RuntimeOptions
 | `Capabilities` | `List<string>` | List of capabilities granted to this script |
 | `Console` | `ConsoleHandler` | Console output routing (`Log`, `Warn`, `Error`, plus optional `Info`/`Debug`/`Trace` and a unified `OnLog`) |
 | `Cancellation` | `CancellationToken` | Cooperatively interrupts in-flight execution; surfaces an `ExecutionCancelledException` distinct from a timeout |
-| `Audit` | `Action<AuditEvent>?` | Fire-and-forget hook invoked on every allowed binding call (`{ Binding, Capability, AtMs }`) |
+| `Audit` | `Action<AuditEvent>?` | Fire-and-forget capability-decision channel (`{ Binding, Capability, AtMs, Decision, Mod, Hook }`) |
 | `HardLimits` | `ExecutionLimits?` | Host-enforced ceiling on `timeout_ms`, `memory_mb`, and `max_stack_depth` (the manifest's `limits` cannot exceed it) |
-| `RolePreferences` | `IReadOnlyDictionary<string, string>` | Per-role addon preference used by `ResolveRole` (overrides first-installed-wins) |
+| `RolePreferences` | `IReadOnlyDictionary<string, string>` | Per-role addon preference used by `ResolveRole` (overrides the mod-name tiebreak) |
+| `CommandPreferences` | `IReadOnlyDictionary<string, string>` | Per-command or per-slot mod preference used by `ResolveCommand` |
 | `Debug` | `DebugOptions?` | Enables the DAP-shaped debug session (breakpoints, stepping, scope inspection) |
 
 ### Host Bindings
@@ -139,7 +140,7 @@ cts.Cancel();
 
 ### Audit Channel
 
-Set `RuntimeOptions.Audit` to observe every allowed binding invocation. The callback fires fire-and-forget with an `AuditEvent` carrying the `Binding` name, the `Capability` that gated it (`null` for ungated bindings), and `AtMs`, the elapsed wall-clock time of the call:
+Set `RuntimeOptions.Audit` to observe capability decisions. The callback fires fire-and-forget with an `AuditEvent` carrying the `Binding` name, the `Capability` that gated it (`null` for ungated bindings), `AtMs` (an epoch-milliseconds timestamp), and a `Decision` of `Invoke` or `Denied`. Every allowed binding invocation reports as `Invoke`; a hook fill refused on capability grounds reports as `Denied`, with `Mod` and `Hook` naming the mod whose fill was refused:
 
 ```csharp
 var log = new List<AuditEvent>();
@@ -216,7 +217,7 @@ As of v0.6 the canonical mod contribution surface is a single `fills` object key
 ```csharp
 var modManifestJson = """
 {
-    "xript": "0.7",
+    "xript": "0.8",
     "name": "health-ui-mod",
     "version": "1.0.0",
     "fragments": [
@@ -280,7 +281,7 @@ A mod can declare named exports the host calls and whose return value it honors.
 ```csharp
 runtime.LoadMod("""
 {
-    "xript": "0.7",
+    "xript": "0.8",
     "name": "transcriber",
     "version": "1.0.0",
     "entry": {
@@ -303,12 +304,12 @@ An export entry may declare a `capability`; calling it without that capability g
 
 ## Provider Roles
 
-Mods advertise logical capabilities through `contributions.provides`, mapping a role name to concrete exports. The host resolves a role to a single provider with `ResolveRole` (first-installed-wins, overridable by `RuntimeOptions.RolePreferences`) or enumerates every provider with `ResolveRoleAll` to build its own picker:
+Mods advertise logical capabilities through `contributions.provides`, mapping a role name to concrete exports. The host resolves a role to a single provider with `ResolveRole` (candidates ordered by mod name, overridable by `RuntimeOptions.RolePreferences`) or enumerates every provider with `ResolveRoleAll` to build its own picker:
 
 ```csharp
 var modJson = """
 {
-    "xript": "0.7",
+    "xript": "0.8",
     "name": "deepl-translator",
     "version": "1.0.0",
     "entry": {
@@ -330,7 +331,23 @@ var provider = runtime.ResolveRole("translator");
 // provider.Fns["translate"] == "translate" (the export name to InvokeExport)
 ```
 
-Declaring a role grants nothing on its own; the named exports stay gated by their own capabilities. `ResolveRole` returns `RoleResolution?` (`null` when no provider exists); `ResolveRoleAll` returns `IReadOnlyList<RoleResolution>`.
+Declaring a role grants nothing on its own; the named exports stay gated by their own capabilities. `ResolveRole` returns `RoleResolution?` (`null` when no provider exists); `ResolveRoleAll` returns `IReadOnlyList<RoleResolution>`. Resolution used to return whichever provider was loaded first, so reordering the host's mods silently changed the winner; it no longer does.
+
+## Commands
+
+A command-typed slot (`accepts: ["application/x-xript-command"]`) collects named, invocable actions: an `id`, a `Title`, and the mod export that runs it, plus optional bound arguments so one export can back several parameterized commands.
+
+```csharp
+var palette = runtime.ResolveCommands("palette.commands");     // slot cardinality applied
+var every = runtime.ResolveCommandsAll("palette.commands");    // ignoring cardinality
+var one = runtime.ResolveCommand("wrap.double");               // bare id or "mod:id", or null
+
+var result = runtime.InvokeCommand(one, new JsonObject { ["close"] = ")" });
+```
+
+Ordering is `Priority` descending, then command id, then owning mod name, so it does not depend on load order, and a `multiple: false` command slot resolves to exactly one command across all mods. `InvokeCommand` merges the fill's bound `Args` under the caller's (shallow, caller wins) and routes through `InvokeModExport`, so the handler's export capability is re-checked at call time and the call is never ambiguous between two mods exporting the same name. A throwing handler propagates its error, unlike a hook handler.
+
+Authority is two layers and neither of them is the fill: the slot's `capability` decides who may contribute a command, and `entry.exports[<handler>].capability` gates each invocation. A command fill declaring its own `capability` fails to load. `ResolvedCommand.Capability` and `.Capabilities` are informational, for rendering "this action requires X" in a palette.
 
 ## Slot Resolution
 
@@ -350,7 +367,7 @@ Setting `entry.format` to `"module"` evaluates the mod entry as a real ES module
 ```csharp
 runtime.LoadMod("""
 {
-    "xript": "0.7",
+    "xript": "0.8",
     "name": "transcriber",
     "version": "1.0.0",
     "entry": { "script": "main.js", "format": "module" }
@@ -491,6 +508,11 @@ public sealed class XriptRuntime : IDisposable
     public ModInstance LoadMod(string modManifestJson, Dictionary<string, string>? fragmentSources = null);
     public RoleResolution? ResolveRole(string role);
     public IReadOnlyList<RoleResolution> ResolveRoleAll(string role);
+    public IReadOnlyList<ResolvedCommand> ResolveCommands(string slotId);
+    public IReadOnlyList<ResolvedCommand> ResolveCommandsAll(string slotId);
+    public ResolvedCommand? ResolveCommand(string reference);
+    public JsonElement InvokeCommand(ResolvedCommand command, JsonObject? callArgs = null);
+    public JsonElement InvokeCommand(string reference, JsonObject? callArgs = null);
     public SlotContribution[] ResolveSlot(string slotId);
     public SlotContribution? ResolveSlotSingle(string slotId);
 }
@@ -501,7 +523,8 @@ public class ConsoleHandler { /* Log, Warn, Error, Info?, Debug?, Trace?, OnLog?
 public class RuntimeOptions { /* HostBindings, Capabilities, Console, Cancellation, Audit, HardLimits, RolePreferences, Debug */ }
 public record ExecutionResult(JsonElement Value, double DurationMs);
 public record FireHookOptions { /* Phase?, Data? */ }
-public record AuditEvent(string Binding, string? Capability, double AtMs);
+public enum AuditDecision { Invoke, Denied }
+public record AuditEvent(string Binding, string? Capability, double AtMs, AuditDecision Decision = AuditDecision.Invoke, string? Mod = null, string? Hook = null);
 public record ExecutionLimits { /* TimeoutMs?, MemoryMb?, MaxStackDepth? */ }
 public record Manifest { /* Xript, Name, Version, Bindings, Hooks, Slots, ... */ }
 public record FragmentOp(string Op, string Selector, object? Value = null, string? Attr = null);

@@ -341,6 +341,61 @@ describe("execution limits", () => {
 		runtime.dispose();
 	});
 
+	it("keeps the outer call's timeout armed across a reentrant execute", () => {
+		const manifest = {
+			xript: "0.7",
+			name: "test",
+			limits: { timeout_ms: 200 },
+			bindings: { reenter: { params: [], returns: "number" } },
+		};
+		let runtime;
+		runtime = xript.createRuntime(manifest, {
+			hostBindings: { reenter: () => runtime.execute("1 + 1").value },
+		});
+
+		const started = Date.now();
+		assert.throws(
+			() =>
+				runtime.execute(
+					"reenter(); let n = 0; const t = Date.now(); while (Date.now() - t < 10000) n++; n;",
+				),
+			(err) => err.name === "ExecutionLimitError" && err.limit === "timeout_ms",
+		);
+		assert.ok(
+			Date.now() - started < 5000,
+			`the inner call must not disarm the outer timeout; took ${Date.now() - started}ms`,
+		);
+		runtime.dispose();
+	});
+
+	it("keeps the outer call's timeout armed across a reentrant invokeExport", () => {
+		const manifest = {
+			xript: "0.7",
+			name: "test",
+			limits: { timeout_ms: 200 },
+			bindings: { reenter: { params: [], returns: "number" } },
+		};
+		let runtime;
+		runtime = xript.createRuntime(manifest, {
+			hostBindings: { reenter: () => runtime.invokeExport("noop", []) },
+		});
+		runtime.execute("xript.exports.register('noop', function () { return 1; });");
+
+		const started = Date.now();
+		assert.throws(
+			() =>
+				runtime.execute(
+					"reenter(); let n = 0; const t = Date.now(); while (Date.now() - t < 10000) n++; n;",
+				),
+			(err) => err.name === "ExecutionLimitError" && err.limit === "timeout_ms",
+		);
+		assert.ok(
+			Date.now() - started < 5000,
+			`the inner invokeExport must not disarm the outer timeout; took ${Date.now() - started}ms`,
+		);
+		runtime.dispose();
+	});
+
 	it("uses default 5000ms timeout when limits are not specified", () => {
 		const runtime = xript.createRuntime(minimalManifest, { hostBindings: {} });
 		const result = runtime.execute("1 + 1");

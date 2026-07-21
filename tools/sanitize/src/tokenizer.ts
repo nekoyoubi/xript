@@ -3,10 +3,68 @@ export interface Attribute {
 	value: string;
 }
 
+const REPLACEMENT_CHARACTER = "\uFFFD";
+
+/**
+ * A raw U+0000 is a parse error wherever it appears. In a tag name, an attribute
+ * name, or an attribute value the parser substitutes U+FFFD; in ordinary text the
+ * tree builder discards the character outright, which is why the two helpers
+ * differ. A character reference that resolves to U+0000 is not raw and always
+ * becomes U+FFFD, so entity decoding runs after the raw pass.
+ */
+function replaceNulls(text: string): string {
+	return text.replace(/\u0000/g, REPLACEMENT_CHARACTER);
+}
+
+function dropNulls(text: string): string {
+	return text.replace(/\u0000/g, "");
+}
+
+const NAMED_ENTITIES: Record<string, string> = {
+	amp: "&",
+	lt: "<",
+	gt: ">",
+	quot: '"',
+	apos: "'",
+	nbsp: " ",
+};
+
+/**
+ * Decodes character references so a text token or attribute value carries real
+ * characters rather than their encoded form. The tree is the canonical
+ * representation and the serializer escapes on the way out, so leaving
+ * references encoded here would double-escape them on a round trip.
+ *
+ * Decoding is safe precisely because the result lands in a text node or an
+ * attribute value: it is re-escaped when serialized and never reinterpreted as
+ * markup. It also hardens the sink checks, which run against the decoded value
+ * and so can no longer be walked past with an encoded `javascript&#58;`.
+ */
+export function decodeEntities(text: string): string {
+	if (!text.includes("&")) return text;
+	return text.replace(/&(#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/g, (match, body: string) => {
+		if (body[0] === "#") {
+			const codePoint =
+				body[1] === "x" || body[1] === "X"
+					? Number.parseInt(body.slice(2), 16)
+					: Number.parseInt(body.slice(1), 10);
+			if (!Number.isFinite(codePoint) || codePoint > 0x10ffff) return match;
+			if (codePoint === 0) return REPLACEMENT_CHARACTER;
+			try {
+				return String.fromCodePoint(codePoint);
+			} catch {
+				return match;
+			}
+		}
+		const named = NAMED_ENTITIES[body.toLowerCase()];
+		return named === undefined ? match : named;
+	});
+}
+
 export type Token =
 	| { type: "text"; value: string }
-	| { type: "open"; tag: string; attributes: Attribute[]; selfClosing: boolean }
-	| { type: "close"; tag: string }
+	| { type: "open"; tag: string; rawTag: string; attributes: Attribute[]; selfClosing: boolean }
+	| { type: "close"; tag: string; rawTag: string }
 	| { type: "comment"; value: string };
 
 export function tokenize(html: string): Token[] {
@@ -29,11 +87,11 @@ export function tokenize(html: string): Token[] {
 			if (html[i + 1] === "/") {
 				const end = html.indexOf(">", i + 2);
 				if (end === -1) {
-					tokens.push({ type: "text", value: html.slice(i) });
+					tokens.push({ type: "text", value: decodeEntities(dropNulls(html.slice(i))) });
 					break;
 				}
-				const tag = html.slice(i + 2, end).trim().toLowerCase();
-				tokens.push({ type: "close", tag });
+				const rawTag = replaceNulls(html.slice(i + 2, end).trim());
+				tokens.push({ type: "close", tag: rawTag.toLowerCase(), rawTag });
 				i = end + 1;
 				continue;
 			}
@@ -50,7 +108,7 @@ export function tokenize(html: string): Token[] {
 		} else {
 			let end = html.indexOf("<", i);
 			if (end === -1) end = html.length;
-			tokens.push({ type: "text", value: html.slice(i, end) });
+			tokens.push({ type: "text", value: decodeEntities(dropNulls(html.slice(i, end))) });
 			i = end;
 		}
 	}
@@ -64,8 +122,9 @@ function parseOpenTag(html: string, start: number): { token: Token; end: number 
 	while (i < html.length && /\s/.test(html[i])) i++;
 
 	const tagStart = i;
-	while (i < html.length && /[a-zA-Z0-9-]/.test(html[i])) i++;
-	const tag = html.slice(tagStart, i).toLowerCase();
+	while (i < html.length && (/[A-Za-z0-9_.:-]/.test(html[i]) || (html[i] === "\u0000" && i > tagStart))) i++;
+	const rawTag = replaceNulls(html.slice(tagStart, i));
+	const tag = rawTag.toLowerCase();
 
 	if (!tag) return null;
 
@@ -77,11 +136,11 @@ function parseOpenTag(html: string, start: number): { token: Token; end: number 
 		if (i >= html.length) break;
 
 		if (html[i] === ">") {
-			return { token: { type: "open", tag, attributes, selfClosing: false }, end: i + 1 };
+			return { token: { type: "open", tag, rawTag, attributes, selfClosing: false }, end: i + 1 };
 		}
 
 		if (html[i] === "/" && html[i + 1] === ">") {
-			return { token: { type: "open", tag, attributes, selfClosing: true }, end: i + 2 };
+			return { token: { type: "open", tag, rawTag, attributes, selfClosing: true }, end: i + 2 };
 		}
 
 		const attrResult = parseAttribute(html, i);
@@ -93,7 +152,7 @@ function parseOpenTag(html: string, start: number): { token: Token; end: number 
 		}
 	}
 
-	return { token: { type: "open", tag, attributes, selfClosing: false }, end: i };
+	return { token: { type: "open", tag, rawTag, attributes, selfClosing: false }, end: i };
 }
 
 function parseAttribute(html: string, start: number): { attribute: Attribute; end: number } | null {
@@ -101,7 +160,7 @@ function parseAttribute(html: string, start: number): { attribute: Attribute; en
 
 	const nameStart = i;
 	while (i < html.length && /[^\s=/>]/.test(html[i])) i++;
-	const name = html.slice(nameStart, i);
+	const name = replaceNulls(html.slice(nameStart, i));
 	if (!name) return null;
 
 	while (i < html.length && /\s/.test(html[i])) i++;
@@ -133,5 +192,5 @@ function parseAttribute(html: string, start: number): { attribute: Attribute; en
 		value = html.slice(valStart, i);
 	}
 
-	return { attribute: { name, value }, end: i };
+	return { attribute: { name, value: decodeEntities(replaceNulls(value)) }, end: i };
 }

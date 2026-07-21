@@ -44,7 +44,7 @@ terminal.draw(|frame| {
 
 ## What it does
 
-- Parses `application/x-ratatui+json` fragments (JsonML format) into a widget tree
+- Parses `application/x-ratatui+json` fragments (J5ML format) into a widget tree
 - Renders the tree as native Ratatui widgets (Block, Paragraph, Gauge, Layout, List, Table, Sparkline)
 - Resolves `data-bind` attributes against a bindings map at render time
 - Supports `data-if` for conditional widget visibility

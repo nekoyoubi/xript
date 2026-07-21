@@ -11,7 +11,7 @@ When a mod's `entry` block declares `format: "module"`:
 - The entry source is evaluated as an **ES module**, one-shot, at `load_mod` / `loadMod` / `LoadMod` time — the same call site that evaluates a classic script in script mode.
 - Evaluation happens in the **same sandbox realm and global** as a script-mode mod. Bindings, hooks, `console`, the `xript` global, the exports surface, and the fragment API are installed on `globalThis` **before** the module is evaluated. A module sees the identical ambient environment a script sees: the host bindings as globals/namespaces, `hooks`, `console`, and `xript`.
 - Top-level code runs **exactly once**. Side-effecting registration (`hooks.fragment.update(...)`, `xript.exports.register(...)`) is legal inside a module and behaves identically to script mode.
-- **Top-level `await` is permitted** where the runtime's module evaluator supports it. A module that never settles its top-level `await` is a load-time error, mirroring the existing "workflow promise never resolved" handling.
+- **Top-level `await` is permitted** where the runtime's module evaluator supports it. A module that never settles its top-level `await` is a load-time error, mirroring the workflow path's unsettled-promise handling. In both paths an execution-budget expiry or a cancellation that lands while the promise is outstanding is reported as itself, not as an unsettled promise.
 - A failed module instantiation or evaluation (syntax error, top-level throw, unresolved import) surfaces as the **same load-time error** the script path uses today — never a silent no-op.
 
 Module-vs-script is a manifest fact (`entry.format`) read by the loader; the host calls the same load entry point in both modes. The single entry script (`entry.script`) is the v1 baseline: exactly one module source is evaluated. Multi-module / array entry is out of scope for module mode in v1.
@@ -34,6 +34,17 @@ After a module evaluates, the runtime reads its **top-level named function expor
 - **Capability gating is unchanged:** `entry.exports[name].capability` gates `invoke_export` by name via the host-side export-capability map, regardless of whether the export came from a module binding or a `register()` call. Audit emission is identical for both origins.
 
 `entry.exports` in the manifest **documents and capability-gates** these exports. It need not enumerate them for invocation to work; the runtime is authoritative for what actually registered. It SHOULD still enumerate them for typed authoring and docs.
+
+## Export Names Are Scoped To The Declaring Mod
+
+The registry described above is **per mod**, not per runtime. Two mods loaded into one runtime may each export `transcribe`; neither shadows the other, and neither can reach the other's function. This is what makes the capability gate hold: an export's gate is read from **the declaration of the mod that owns it**, so a later mod's declaration of the same name lands in its own slot and can neither weaken nor remove an earlier one.
+
+- **Registration is mod-scoped.** `xript.exports.register(name, fn)` and the module harvest both write into the export namespace of the mod whose entry is being evaluated. Code the host runs itself (`execute`) writes into the host's own namespace.
+- **The collision rule above is intra-mod.** `register()` beating a top-level export applies within one mod's namespace. Across mods there is no collision to resolve — the names never meet.
+- **Mod-scoped invocation is the addressed form.** `invoke_mod_export(mod, name, args)` / `invokeModExport` / `InvokeModExport` invokes inside one named mod's namespace and gates on that mod's own declaration. Role resolution already carries the owning mod in `RoleResolution.addon`; hosts SHOULD pass it through.
+- **Command invocation always takes the addressed form.** A resolved command carries its owning mod, so `invokeCommand` routes through the mod-scoped path and MUST NOT fall back to the bare, unaddressed one. Two mods may each back a command with an export named `run`, and neither invocation is ambiguous. See [commands.md](./commands.md#invocation).
+- **Bare-name invocation resolves only when unambiguous.** `invoke_export(name, args)` invokes the sole owner of `name`. When two or more loaded mods own it, the runtime MUST raise an ambiguity error naming the export and every colliding mod, rather than picking one. Silently resolving to the first or last loaded mod is non-conformant: it is the shape that erased the capability boundary.
+- **Loading a duplicate name is not itself an error.** Two providers of the same role exporting the same function name is normal, and load succeeds. The ambiguity surfaces at the call site, where the host has the information to disambiguate.
 
 ## Imports Are Default-Deny; Approved Libraries Lift It
 
@@ -140,7 +151,11 @@ A TypeScript mod must compile to an **ES module** the runtime can evaluate. The 
 2. **Use top-level `export`s for invokable functions.** `export function transcribe(...)` is registered automatically; no `xript.exports.register` call is needed. Declare each export in the mod manifest's `entry.exports` for typed authoring, docs, and capability gating.
 3. **Import only approved libraries.** Imports are default-deny; the only specifiers that link are the ones in the host's `libraries` allow-list (gated by their declared capability). For everything else, use host bindings (available as ambient globals) instead of pulling in packages.
 4. **Never CommonJS.** No `require(...)`, no `module.exports`, no `exports.x = ...`. These fail loudly at both validate and load time.
-5. **Type against the ambient surface.** Generate an ambient declaration file with `xript typegen --ambient` from the mod (and optionally the host) manifest, and reference it from `tsconfig` `types` or a triple-slash directive. This types the `xript` global, the host bindings, `hooks`, and the mod's own `Exports`.
+5. **Type against the ambient surface.** Generate an ambient declaration file with `xript typegen --ambient --host <host-manifest> <mod-manifest>`, and reference it from `tsconfig` `types` or a triple-slash directive. This types the `xript` global, the host bindings, `hooks`, `events`, and the mod's own `Exports`.
+
+   **Pass the host.** `log`, `hooks`, `events`, the slot ids and the capability names are surfaces the *host* installs on the sandbox global; a mod manifest declares none of them. Generating from the mod alone yields an environment with none of that in it, which will not compile against any real mod. The mod manifest supplies only its own half — its fills' binding surfaces and its `entry.exports`.
+
+6. **Name the built artifact, not the source.** `entry.script` is the module a host loads. When authoring in TypeScript it is the compiled output (`dist/mod.js`), never the `.ts` file — a runtime has no compiler in it. The scaffold's `tsconfig` compiles `src/` to `dist/` for exactly this reason.
 
 A minimal module-mode mod entry:
 

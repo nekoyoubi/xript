@@ -1,10 +1,13 @@
 {
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
-	"$id": "https://xript.dev/schema/manifest/v0.7.json",
+	"$id": "https://xript.dev/schema/manifest/v0.8.json",
 	"title": "xript Manifest",
 	"description": "Declarative manifest for xript-enabled applications. Defines the API surface, capabilities, and documentation for modders.",
 	"type": "object",
-	"required": ["xript", "name"],
+	"required": [
+		"xript",
+		"name"
+	],
 	"properties": {
 		"$schema": {
 			"description": "Optional JSON Schema reference for editor autocomplete. Should point to the xript manifest schema URL.",
@@ -15,13 +18,25 @@
 			"description": "The xript specification version this manifest conforms to.",
 			"type": "string",
 			"pattern": "^\\d+\\.\\d+$",
-			"examples": ["0.3", "0.6"]
+			"examples": [
+				"0.3",
+				"0.6",
+				"0.8"
+			]
 		},
 		"extends": {
 			"description": "One or more base manifests to inherit from. Resolved and deep-merged before validation: maps key-merge, arrays append, scalars are child-wins, and duplicate ids are an error. Paths are filesystem-relative to this manifest. Resolution is transitive with cycle detection.",
 			"oneOf": [
-				{ "type": "string" },
-				{ "type": "array", "items": { "type": "string" }, "minItems": 1 }
+				{
+					"type": "string"
+				},
+				{
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"minItems": 1
+				}
 			]
 		},
 		"name": {
@@ -35,7 +50,10 @@
 			"description": "The version of this application's scripting API. Follows semver.",
 			"type": "string",
 			"pattern": "^\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?$",
-			"examples": ["1.0.0", "0.3.0-beta.1"]
+			"examples": [
+				"1.0.0",
+				"0.3.0-beta.1"
+			]
 		},
 		"title": {
 			"description": "Human-readable display name for the application.",
@@ -50,6 +68,10 @@
 		"bindings": {
 			"description": "The functions and namespaces exposed to scripts. This is the API surface.",
 			"type": "object",
+			"propertyNames": {
+				"pattern": "^[A-Za-z_$][A-Za-z0-9_$]*$",
+				"description": "Binding and member names are JavaScript identifiers: a script calls `world.getHealth(...)`, and a kebab name would parse as subtraction. camelCase is the convention; underscores are legal."
+			},
 			"additionalProperties": {
 				"$ref": "#/$defs/binding"
 			}
@@ -67,6 +89,10 @@
 		"types": {
 			"description": "Custom type definitions referenced by bindings. Enables rich type generation and documentation.",
 			"type": "object",
+			"propertyNames": {
+				"pattern": "^[A-Za-z_$][A-Za-z0-9_$]*$",
+				"description": "Type names become generated TypeScript interface and type names, so they are JavaScript identifiers. PascalCase is the convention."
+			},
 			"additionalProperties": {
 				"$ref": "#/$defs/typeDefinition"
 			}
@@ -81,15 +107,23 @@
 		"limits": {
 			"$ref": "#/$defs/executionLimits"
 		},
+		"execution": {
+			"$ref": "#/$defs/executionIntent",
+			"description": "The manifest-wide default execution intent. Every binding, hook, and slot that declares no `execution` of its own inherits this one; absent both, the schema defaults apply (`brief` / `any`)."
+		},
 		"slots": {
 			"description": "The canonical fill surface: typed plug-points the host declares and mods fill. Each slot declares an ID, accepted formats/kinds, and optional capability gating. A fill's shape is governed by the slot's 'accepts' type — a fragment, a role map, or an event handler are all fills of slots of the appropriate type.",
 			"type": "array",
-			"items": { "$ref": "#/$defs/slot" }
+			"items": {
+				"$ref": "#/$defs/slot"
+			}
 		},
 		"events": {
 			"description": "Discovery catalog of the named events this host emits or broadcasts and their payload types. Distinct from slots and from fragment handlers: an event-typed slot is an extension POINT that addons fill with handlers; a fragment's 'handlers' wire DOM responses on a fill; an entry here declares what the host itself emits, with no consumer presupposed — a sandbox script, the host's own UI, or an external subscriber may all listen. In short: bindings are what you can call, slots and handlers are what handles, events are what the host emits.",
 			"type": "array",
-			"items": { "$ref": "#/$defs/eventDefinition" }
+			"items": {
+				"$ref": "#/$defs/eventDefinition"
+			}
 		},
 		"libraries": {
 			"description": "Curated allow-list of libraries mod code may import. Keys are module specifiers (npm-style: '@example/doc', 'lodash'). The blanket import-deny stays in force; an approved specifier is the only thing that lifts it, and only for mods holding the library's capability. An imported library runs IN the sandbox at the importing mod's own privilege — approving one vouches 'this is sandbox-safe shared code I choose to offer', it grants no new power. The host supplies each library's source at runtime construction; xript provides the allow-listed link path, never the library itself.",
@@ -100,13 +134,260 @@
 			"additionalProperties": {
 				"$ref": "#/$defs/library"
 			}
+		},
+		"formats": {
+			"description": "Fragment formats this host declares. A format entry names the parser a fragment of that media type is read with and the node vocabularies in scope while it is read. Keys are media types; each must also appear in some slot's 'accepts' to be reachable. The built-in formats ('text/html', 'text/html+jsml', 'application/j5ml+json', and its deprecated spelling 'application/jsml+json') bring the built-in 'html' vocabulary into scope and may not be redeclared here — a host that wants a component vocabulary registers a new media type of its own.",
+			"type": "object",
+			"propertyNames": {
+				"pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]{0,126}\\/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}$",
+				"not": {
+					"enum": [
+						"text/html",
+						"text/html+jsml",
+						"application/j5ml+json",
+						"application/jsml+json",
+						"application/x-xript-role",
+						"application/x-xript-hook",
+						"application/x-xript-command"
+					]
+				}
+			},
+			"additionalProperties": {
+				"$ref": "#/$defs/fragmentFormat"
+			}
+		},
+		"vocabularies": {
+			"description": "Reusable node vocabularies. A vocabulary declares nodes and their props and nothing about how they are authored: any number of fragment formats may bring the same vocabulary into scope under different syntaxes and alongside different neighbouring vocabularies. Ids are lowercase dotted names of two or more segments; single-segment ids name the built-in vocabularies and may not be declared here.",
+			"type": "object",
+			"propertyNames": {
+				"$ref": "#/$defs/vocabularyId"
+			},
+			"additionalProperties": {
+				"$ref": "#/$defs/vocabulary"
+			}
 		}
 	},
 	"$defs": {
+		"fragmentNodeName": {
+			"type": "string",
+			"pattern": "^[A-Za-z_][A-Za-z0-9_.-]*(:[A-Za-z_][A-Za-z0-9_.-]*)?$",
+			"description": "A node name. CASE-SENSITIVE and matched verbatim: 'Panel' and 'panel' are different nodes. One optional namespace segment is permitted ('svg:rect')."
+		},
+		"vocabularyId": {
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+$",
+			"maxLength": 128,
+			"description": "A host-declared vocabulary id: two or more lowercase dot-separated segments, e.g. 'xtyle.components'. Single-segment ids name the built-in vocabularies and are referenceable but not declarable."
+		},
+		"vocabularyRef": {
+			"anyOf": [
+				{
+					"type": "string",
+					"enum": [
+						"html"
+					]
+				},
+				{
+					"$ref": "#/$defs/vocabularyId"
+				}
+			],
+			"description": "A reference to a vocabulary in scope: either a built-in id (currently exactly 'html') or the id of a vocabulary declared in this manifest's 'vocabularies' block. The two grammars are disjoint by construction, so a reader can tell which kind of thing a reference names without a lookup, and a host can never shadow a built-in."
+		},
+		"uriScheme": {
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9+.-]*$",
+			"maxLength": 64,
+			"not": {
+				"enum": [
+					"javascript",
+					"vbscript"
+				]
+			},
+			"description": "A URI scheme a fragment's 'uri' and 'image-uri' sinks may name: a lowercase scheme name WITHOUT the trailing colon, e.g. 'https', 'mailto', 'tauri'. 'javascript' and 'vbscript' are a hard floor no host may lift: they are refused in every fragment regardless of what is declared here, and naming either is an error rather than a silent no-op."
+		},
+		"vocabulary": {
+			"description": "A node vocabulary: nodes and their props, and nothing about how they are authored. A vocabulary declares what a node IS, never what it may parent — containment is a separate axis and defaults open.",
+			"type": "object",
+			"required": [
+				"nodes"
+			],
+			"additionalProperties": false,
+			"properties": {
+				"description": {
+					"type": "string",
+					"maxLength": 1024,
+					"description": "What this vocabulary describes and which formats are expected to speak it. Shown in generated docs."
+				},
+				"nodes": {
+					"type": "object",
+					"minProperties": 1,
+					"propertyNames": {
+						"$ref": "#/$defs/fragmentNodeName"
+					},
+					"additionalProperties": {
+						"$ref": "#/$defs/fragmentNode"
+					},
+					"description": "The nodes this vocabulary declares."
+				},
+				"refines": {
+					"type": "boolean",
+					"default": false,
+					"description": "When true, this vocabulary refines a base manifest's vocabulary of the same id: 'description' is child-wins and 'nodes' key-merges. Without it, redeclaring a vocabulary id inherited through 'extends' is a resolution error."
+				}
+			}
+		},
+		"fragmentFormat": {
+			"description": "A fragment format. 'syntax' names the parser a runtime must use to read a fill's source; 'vocabularies' names the node vocabularies in scope, in resolution order; 'nodes' is an inline single-use vocabulary resolved ahead of all of them. Default-deny: a node resolvable through none of the vocabularies in scope is an error, not a silent drop.",
+			"type": "object",
+			"required": [
+				"syntax"
+			],
+			"additionalProperties": false,
+			"anyOf": [
+				{
+					"required": [
+						"nodes"
+					]
+				},
+				{
+					"properties": {
+						"vocabularies": {
+							"type": "array",
+							"minItems": 1
+						}
+					},
+					"required": [
+						"vocabularies"
+					]
+				}
+			],
+			"properties": {
+				"description": {
+					"type": "string",
+					"maxLength": 1024,
+					"description": "What this format is for and what renders it. Shown in generated docs."
+				},
+				"syntax": {
+					"type": "string",
+					"enum": [
+						"j5ml",
+						"jsml",
+						"html"
+					],
+					"description": "How a fill's source is parsed. 'j5ml' parses JSON in J5ML array form; 'html' tokenizes an HTML string. 'jsml' is a deprecated spelling of 'j5ml' and parses identically. The enum is closed on purpose: the value names a parser the runtime must actually possess."
+				},
+				"vocabularies": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/vocabularyRef"
+					},
+					"uniqueItems": true,
+					"description": "Node vocabularies in scope, in resolution order: the first vocabulary that claims a node NAME wins. The format's own inline 'nodes' are always resolved first, ahead of every entry here. The built-in 'html' vocabulary, when present, must be the last entry — an HTML element name may only be reached after every declared vocabulary has declined it. An empty array alongside an inline 'nodes' block means deliberate closure: only the inline nodes are legal."
+				},
+				"nodes": {
+					"type": "object",
+					"minProperties": 1,
+					"propertyNames": {
+						"$ref": "#/$defs/fragmentNodeName"
+					},
+					"additionalProperties": {
+						"$ref": "#/$defs/fragmentNode"
+					},
+					"description": "An inline single-use vocabulary, always first in resolution order. Exactly equivalent to declaring a vocabulary containing these nodes and naming it as the first entry of 'vocabularies', except that the resulting vocabulary has no id and cannot be referenced by any other format."
+				},
+				"schemes": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/uriScheme"
+					},
+					"uniqueItems": true,
+					"description": "URI schemes a fill of this format may name in a 'uri' or 'image-uri' sink. Absent means the default safe set: 'http', 'https', 'mailto', 'data'. Present REPLACES that set wholesale rather than extending it, so the one key both widens a host's surface (adding 'tauri') and narrows it (allowing only 'https'). An empty array means deliberate closure: no absolute URI passes at all. A value carrying no scheme is relative and is never subject to this list — relative paths, absolute paths, scheme-relative '//host/path', fragment-only '#anchor', and query-only '?q=1' all pass whatever it says. 'data' grants no more than it ever did: only on an image sink, and only the four safe image subtypes."
+				},
+				"refines": {
+					"type": "boolean",
+					"default": false,
+					"description": "When true, this format refines a base manifest's format of the same media type: scalars are child-wins, 'nodes' key-merges, and 'vocabularies' and 'schemes' — when present — REPLACE the base's array wholesale. Without it, redeclaring a format id inherited through 'extends' is a resolution error."
+				}
+			}
+		},
+		"fragmentNode": {
+			"description": "A node in a fragment-format vocabulary. The host owns this declaration exactly as it owns its slots and bindings: it is the contract a fill's markup is checked against.",
+			"type": "object",
+			"properties": {
+				"description": {
+					"type": "string",
+					"maxLength": 1024,
+					"description": "What this node renders. Shown in generated docs."
+				},
+				"props": {
+					"type": "object",
+					"propertyNames": {
+						"pattern": "^[A-Za-z_][A-Za-z0-9_.:-]*$"
+					},
+					"additionalProperties": {
+						"$ref": "#/$defs/fragmentProp"
+					},
+					"description": "The props this node accepts. Default-deny: an undeclared prop is dropped and reported. Three protocol props are legal on every node of every vocabulary and need not be declared: 'id', 'data-bind', 'data-if'. A prop name beginning with 'on' is always rejected."
+				},
+				"children": {
+					"description": "What may appear as this node's children. 'any' (default), 'none' (a void node), 'text' (text nodes only), or an explicit list of permitted child node names.",
+					"default": "any",
+					"oneOf": [
+						{
+							"type": "string",
+							"enum": [
+								"any",
+								"none",
+								"text"
+							]
+						},
+						{
+							"type": "array",
+							"items": {
+								"type": "string"
+							},
+							"minItems": 1
+						}
+					]
+				},
+				"bindTo": {
+					"type": "string",
+					"default": "children",
+					"description": "Where a resolved 'data-bind' value is written on this node. 'children' replaces the node's children with a single text node; any other value names one of this node's declared props, and the value is written to it THROUGH THAT PROP'S SINK. Defaults to 'children', or to 'value' when 'children' is 'none'."
+				},
+				"refines": {
+					"type": "boolean",
+					"default": false,
+					"description": "When true, this node refines a base format's node of the same name: 'props' key-merges, and a same-named prop is REPLACED wholesale rather than deep-merged, so a child that widens a prop's type must restate its 'sink'. Without it, redeclaring a node name inside a refining format is a resolution error."
+				}
+			},
+			"additionalProperties": false
+		},
+		"fragmentProp": {
+			"description": "A node prop. The body is a JSON Schema (draft 2020-12) describing the prop's value; the xript-specific 'sink' keyword declares WHERE the value lands, which is the only thing sanitization needs to know. A prop with no 'sink' is inert data: it never becomes markup, so there is nothing to sanitize. Runtimes enforce the 'type' keyword; the full schema is enforced by 'xript validate'.",
+			"type": "object",
+			"properties": {
+				"sink": {
+					"type": "string",
+					"enum": [
+						"text",
+						"uri",
+						"image-uri",
+						"css",
+						"html"
+					],
+					"default": "text",
+					"description": "Where this prop's value lands. 'text' (default): inert data, no sanitization. 'uri': a navigational URL (javascript:, vbscript:, and all data: URIs rejected). 'image-uri': a media source (safe data:image/* permitted). 'css': an inline style value (url(), expression(), -moz-binding, behavior stripped). 'html': a raw markup string the component will inject, run through the HTML sanitizer. Any sink other than 'text' REQUIRES \"type\": \"string\"."
+				}
+			},
+			"additionalProperties": true
+		},
 		"library": {
 			"description": "An approved importable library. The host registers the matching pre-bundled ES module source when constructing the runtime; the manifest entry declares that the specifier exists, what gates it, and what version contract the host vouches for.",
 			"type": "object",
-			"required": ["description"],
+			"required": [
+				"description"
+			],
 			"properties": {
 				"description": {
 					"type": "string",
@@ -138,7 +419,16 @@
 				{
 					"type": "string",
 					"description": "A primitive type name, custom type reference, or shorthand.",
-					"examples": ["string", "number", "boolean", "void", "null", "Player", "string[]", "number[]"]
+					"examples": [
+						"string",
+						"number",
+						"boolean",
+						"void",
+						"null",
+						"Player",
+						"string[]",
+						"number[]"
+					]
 				},
 				{
 					"type": "object",
@@ -150,7 +440,9 @@
 						},
 						"union": {
 							"type": "array",
-							"items": { "$ref": "#/$defs/typeRef" },
+							"items": {
+								"$ref": "#/$defs/typeRef"
+							},
 							"minItems": 2,
 							"description": "A union of multiple types."
 						},
@@ -164,10 +456,26 @@
 						}
 					},
 					"oneOf": [
-						{ "required": ["array"] },
-						{ "required": ["union"] },
-						{ "required": ["map"] },
-						{ "required": ["optional"] }
+						{
+							"required": [
+								"array"
+							]
+						},
+						{
+							"required": [
+								"union"
+							]
+						},
+						{
+							"required": [
+								"map"
+							]
+						},
+						{
+							"required": [
+								"optional"
+							]
+						}
 					],
 					"additionalProperties": false
 				}
@@ -176,7 +484,10 @@
 		"parameter": {
 			"description": "A function parameter with a name, type, and optional description.",
 			"type": "object",
-			"required": ["name", "type"],
+			"required": [
+				"name",
+				"type"
+			],
 			"properties": {
 				"name": {
 					"type": "string",
@@ -204,14 +515,20 @@
 		"binding": {
 			"description": "A function or namespace exposed to scripts.",
 			"oneOf": [
-				{ "$ref": "#/$defs/functionBinding" },
-				{ "$ref": "#/$defs/namespaceBinding" }
+				{
+					"$ref": "#/$defs/functionBinding"
+				},
+				{
+					"$ref": "#/$defs/namespaceBinding"
+				}
 			]
 		},
 		"functionBinding": {
 			"description": "A callable function exposed to scripts.",
 			"type": "object",
-			"required": ["description"],
+			"required": [
+				"description"
+			],
 			"properties": {
 				"description": {
 					"type": "string",
@@ -219,7 +536,9 @@
 				},
 				"params": {
 					"type": "array",
-					"items": { "$ref": "#/$defs/parameter" },
+					"items": {
+						"$ref": "#/$defs/parameter"
+					},
 					"description": "The function's parameters, in order."
 				},
 				"returns": {
@@ -228,8 +547,12 @@
 				},
 				"async": {
 					"type": "boolean",
-					"description": "Whether this function is asynchronous. Defaults to false.",
+					"description": "Whether this function is asynchronous — a declaration about the SHAPE of the value the host implementation returns (a promise rather than a settled value), not about the cost of the call and not a promise that the interpreter yields. Declare cost in `execution`. Defaults to false.",
 					"default": false
+				},
+				"execution": {
+					"$ref": "#/$defs/executionIntent",
+					"description": "The cost of calling this host function. Advisory: a host routes on it, nothing enforces it."
 				},
 				"capability": {
 					"$ref": "#/$defs/capabilityRef",
@@ -237,7 +560,9 @@
 				},
 				"examples": {
 					"type": "array",
-					"items": { "$ref": "#/$defs/example" },
+					"items": {
+						"$ref": "#/$defs/example"
+					},
 					"description": "Usage examples for documentation."
 				},
 				"deprecated": {
@@ -250,7 +575,10 @@
 		"namespaceBinding": {
 			"description": "A namespace that groups related functions.",
 			"type": "object",
-			"required": ["description", "members"],
+			"required": [
+				"description",
+				"members"
+			],
 			"properties": {
 				"description": {
 					"type": "string",
@@ -258,6 +586,10 @@
 				},
 				"members": {
 					"type": "object",
+					"propertyNames": {
+						"pattern": "^[A-Za-z_$][A-Za-z0-9_$]*$",
+						"description": "Member names are JavaScript identifiers, like top-level binding names."
+					},
 					"additionalProperties": {
 						"$ref": "#/$defs/binding"
 					},
@@ -269,7 +601,9 @@
 		"capability": {
 			"description": "A named capability that gates access to functionality.",
 			"type": "object",
-			"required": ["description"],
+			"required": [
+				"description"
+			],
 			"properties": {
 				"description": {
 					"type": "string",
@@ -277,7 +611,11 @@
 				},
 				"risk": {
 					"type": "string",
-					"enum": ["low", "medium", "high"],
+					"enum": [
+						"low",
+						"medium",
+						"high"
+					],
 					"description": "Advisory risk level. Helps users make informed decisions about granting capabilities.",
 					"default": "low"
 				},
@@ -285,6 +623,24 @@
 					"type": "boolean",
 					"default": false,
 					"description": "When true, the capability is intentionally declared without yet gating a slot, binding, or hook — inherited for canon parity, or reserved for a future surface. Tooling treats it as aspirational rather than vestigial, and suppresses the unreferenced-capability warning."
+				},
+				"instances": {
+					"description": "Declares that this scope's children are instantiated by the host at run time rather than written in the manifest — one child per configured filesystem root, connected account, or opened project. The scope tree is static; the *instances* under this node are not, so a host can grant `write:fs.workspace.my-project` for a root the manifest could never have named. Prefix subsumption already matches such a grant; this block is what makes the shape discoverable, so a mod author can tell an intended dynamic child from a scope they guessed at. Declaring it also silences the `dynamic-scope-undeclared` lint on descendants of this node.",
+					"type": "object",
+					"required": [
+						"description"
+					],
+					"properties": {
+						"description": {
+							"type": "string",
+							"description": "What one child of this scope corresponds to, in the host's terms — 'one per workspace the user has configured'. Shown wherever the capability tree is documented."
+						},
+						"example": {
+							"type": "string",
+							"description": "A representative fully-qualified child scope, e.g. `fs.workspace.my-project`. Illustrative only; nothing resolves or validates against it."
+						}
+					},
+					"additionalProperties": false
 				}
 			},
 			"additionalProperties": false
@@ -292,7 +648,9 @@
 		"typeDefinition": {
 			"description": "A custom type definition.",
 			"type": "object",
-			"required": ["description"],
+			"required": [
+				"description"
+			],
 			"properties": {
 				"description": {
 					"type": "string",
@@ -307,7 +665,9 @@
 				},
 				"values": {
 					"type": "array",
-					"items": { "type": "string" },
+					"items": {
+						"type": "string"
+					},
 					"description": "The allowed values (for enum types)."
 				},
 				"open": {
@@ -331,7 +691,9 @@
 		"fieldDefinition": {
 			"description": "A field within a custom type.",
 			"type": "object",
-			"required": ["type"],
+			"required": [
+				"type"
+			],
 			"properties": {
 				"type": {
 					"$ref": "#/$defs/typeRef"
@@ -364,7 +726,9 @@
 		"example": {
 			"description": "A usage example for documentation.",
 			"type": "object",
-			"required": ["code"],
+			"required": [
+				"code"
+			],
 			"properties": {
 				"title": {
 					"type": "string",
@@ -384,7 +748,9 @@
 		"hook": {
 			"description": "A hook that scripts can register handlers for. Hooks are the reverse of bindings: the host fires them, and scripts handle them.",
 			"type": "object",
-			"required": ["description"],
+			"required": [
+				"description"
+			],
 			"properties": {
 				"description": {
 					"type": "string",
@@ -394,7 +760,12 @@
 					"type": "array",
 					"items": {
 						"type": "string",
-						"enum": ["pre", "post", "done", "error"]
+						"enum": [
+							"pre",
+							"post",
+							"done",
+							"error"
+						]
 					},
 					"minItems": 1,
 					"uniqueItems": true,
@@ -402,7 +773,9 @@
 				},
 				"params": {
 					"type": "array",
-					"items": { "$ref": "#/$defs/parameter" },
+					"items": {
+						"$ref": "#/$defs/parameter"
+					},
 					"description": "The parameters passed to hook handlers when fired."
 				},
 				"capability": {
@@ -418,9 +791,15 @@
 					"$ref": "#/$defs/executionLimits",
 					"description": "Per-handler execution limits. Overrides the manifest-level defaults for this hook's handlers."
 				},
+				"execution": {
+					"$ref": "#/$defs/executionIntent",
+					"description": "The cost of FIRING this hook, handler fan-out included. Advisory: a host routes on it, nothing enforces it."
+				},
 				"examples": {
 					"type": "array",
-					"items": { "$ref": "#/$defs/example" },
+					"items": {
+						"$ref": "#/$defs/example"
+					},
 					"description": "Usage examples for documentation."
 				},
 				"deprecated": {
@@ -433,7 +812,10 @@
 		"slot": {
 			"description": "A typed plug-point the host declares and mods fill. The 'accepts' type governs what a valid fill looks like and what the host does with it (mount it, call it, resolve it, or fire it).",
 			"type": "object",
-			"required": ["id", "accepts"],
+			"required": [
+				"id",
+				"accepts"
+			],
 			"properties": {
 				"id": {
 					"type": "string",
@@ -442,9 +824,11 @@
 				},
 				"accepts": {
 					"type": "array",
-					"items": { "type": "string" },
+					"items": {
+						"type": "string"
+					},
 					"minItems": 1,
-					"description": "The format(s) or kind(s) this slot takes from fills, e.g. 'text/html+jsml', 'application/javascript+esm', 'application/json', 'application/x-xript-role', 'application/x-xript-hook'."
+					"description": "The format(s) or kind(s) this slot takes from fills, e.g. 'text/html+jsml', 'application/javascript+esm', 'application/json', 'application/x-xript-role', 'application/x-xript-hook', 'application/x-xript-command'. The three 'application/x-xript-*' kinds are reserved: they carry no markup, are never sanitized, and may not be declared in 'formats'. A slot accepting 'application/x-xript-command' takes command fills — named, invocable actions the host lists and calls, each naming a mod export as its 'handler'. Reserved kinds are matched in the order role, hook, command, so a slot listing more than one resolves deterministically."
 				},
 				"description": {
 					"type": "string",
@@ -471,7 +855,11 @@
 				},
 				"style": {
 					"type": "string",
-					"enum": ["inherit", "isolated", "scoped"],
+					"enum": [
+						"inherit",
+						"isolated",
+						"scoped"
+					],
 					"default": "inherit",
 					"description": "Styling mode: 'inherit' applies host styles, 'isolated' prevents style bleed, 'scoped' exposes CSS custom properties."
 				},
@@ -479,14 +867,37 @@
 					"type": "boolean",
 					"default": false,
 					"description": "When true, this slot definition refines a base slot of the same id, deep-merging onto it including its payload contract. Without it, redeclaring a slot id is a resolution error."
+				},
+				"execution": {
+					"$ref": "#/$defs/executionIntent",
+					"description": "The cost a host should assume when driving fills of this slot. A mod's own `execution` on the export it fills with is widened against this one — the more expensive claim wins. Advisory: a host routes on it, nothing enforces it."
+				},
+				"limits": {
+					"$ref": "#/$defs/slotExecutionLimits",
+					"description": "Enforced execution limits for calls into this slot's fills, overriding the manifest's `limits` field by field. The counterpart to `execution`: that one is advisory routing, this one is enforcement."
 				}
 			},
 			"additionalProperties": false
 		},
+		"slotExecutionLimits": {
+			"description": "Per-slot execution limits. A slot whose fills legitimately run long says so here rather than inheriting a budget tuned for something else, and a slot handling untrusted input can tighten below it. Declared by the host in both directions, so neither is an escalation. Fields left out inherit the manifest's `limits`, and the embedder's hard limits still clamp the result.\n\nOnly `timeout_ms` appears here, and the omission is deliberate: `memory_mb` and `max_stack_depth` are properties of a runtime at the moment it is created in all four engines, so a per-slot value for either could not be enforced without standing up a separate runtime. That path exists already — route the slot with `execution.affinity` and give the worker its own limits. Declaring keys no engine can honor would promise enforcement and deliver nothing.",
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"timeout_ms": {
+					"type": "integer",
+					"minimum": 1,
+					"description": "Maximum execution time in milliseconds for a call into a fill of this slot. Replaces the manifest's `timeout_ms` for these calls; may raise it as well as lower it."
+				}
+			}
+		},
 		"eventDefinition": {
 			"description": "A named event the host emits or broadcasts. A discovery declaration, not an extension point: it states what the host fires and the shape of the payload, leaving consumers (sandbox scripts, the host UI, external subscribers) unpresupposed.",
 			"type": "object",
-			"required": ["id", "description"],
+			"required": [
+				"id",
+				"description"
+			],
 			"properties": {
 				"id": {
 					"type": "string",
@@ -507,6 +918,34 @@
 				}
 			},
 			"additionalProperties": false
+		},
+		"executionIntent": {
+			"description": "How a host should expect this surface to behave in time and where it may run. Advisory routing signal — never enforced, never a capability. Enforcement lives in `limits`.",
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"duration": {
+					"type": "string",
+					"enum": [
+						"instant",
+						"brief",
+						"long",
+						"unbounded"
+					],
+					"default": "brief",
+					"description": "How long a host should expect this to take."
+				},
+				"affinity": {
+					"type": "string",
+					"enum": [
+						"any",
+						"pinned",
+						"isolated"
+					],
+					"default": "any",
+					"description": "Where this may run. `any` is poolable. `pinned` must run on the runtime that owns the calling mod's state. `isolated` wants a runtime nobody else is using."
+				}
+			}
 		},
 		"executionLimits": {
 			"description": "Default execution limits for scripts. Runtimes enforce these limits to prevent denial of service.",
