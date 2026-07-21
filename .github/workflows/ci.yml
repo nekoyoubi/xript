@@ -40,11 +40,6 @@ jobs:
       - name: test docgen
         run: npm test --workspace=tools/docgen
 
-      - name: build init
-        run: npm run build --workspace=tools/init
-      - name: test init
-        run: npm test --workspace=tools/init
-
       - name: build runtime
         run: npm run build --workspace=runtimes/js
       - name: test runtime
@@ -54,6 +49,13 @@ jobs:
         run: npm run build --workspace=runtimes/node
       - name: test runtime-node
         run: npm test --workspace=runtimes/node
+
+      # runtimes/js must be built before tools/init: init's compile-test symlinks
+      # runtimes/js as @xriptjs/runtime and type-checks the scaffold against it.
+      - name: build init
+        run: npm run build --workspace=tools/init
+      - name: test init
+        run: npm test --workspace=tools/init
 
       - name: smoke test expression-evaluator example
         run: node examples/expression-evaluator/src/demo.js
