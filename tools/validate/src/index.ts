@@ -223,6 +223,36 @@ function formatError(error: AjvError): ValidationError {
 }
 
 /**
+ * Unknown top-level keys are advisory, not fatal. The runtime reads only declared vocabulary and
+ * ignores stray top-level keys, so a hard error would block a key that has no runtime effect. This
+ * pulls the top-level closure findings out of the error list and re-emits them as warnings that
+ * point at the surfaces that are read. Deeper closures (a nested `additionalProperties`) stay
+ * errors; a key a declared `$schema` overlay accounts for is evaluated and never reaches here.
+ */
+function demoteUnknownTopLevelKeys(errors: ValidationError[]): {
+	errors: ValidationError[];
+	warnings: ValidationWarning[];
+} {
+	const kept: ValidationError[] = [];
+	const warnings: ValidationWarning[] = [];
+	for (const error of errors) {
+		if (error.keyword === "unevaluatedProperties" && error.path === "/") {
+			const key = error.message.match(/"([^"]+)"/)?.[1];
+			warnings.push({
+				path: "/",
+				message: key
+					? `unrecognized top-level key "${key}"; the runtime reads only declared vocabulary and ignores stray keys. Route consumable data through a typed surface (a data fill into a data slot, or a binding), or declare it in a $schema overlay.`
+					: error.message,
+				keyword: "unknown-key",
+			});
+		} else {
+			kept.push(error);
+		}
+	}
+	return { errors: kept, warnings };
+}
+
+/**
  * True when a schema closes itself at the top level (declares `unevaluatedProperties`
  * or `additionalProperties`). Open schemas — the core manifest schema, which stays open
  * so overlays can extend it — get closed by a wrapper at validation time instead.
@@ -247,11 +277,11 @@ export async function validateManifest(
 	const schemaId = (schema as { $id?: string }).$id;
 	if (!topLevelCloses(schema) && schemaId) {
 		// The core manifest schema is open at the top level so a domain overlay can
-		// extend it via `allOf`. A plain manifest must still reject stray top-level
-		// keys, so close it with a wrapper here: the wrapper's `unevaluatedProperties`
-		// sees every property the referenced schema evaluated and rejects only the unknown.
+		// extend it via `allOf`. The wrapper's `unevaluatedProperties` flags top-level
+		// keys the referenced schema never evaluated; those are demoted to warnings
+		// (the runtime ignores stray keys) while deeper closures stay hard errors.
 		// (Putting the close inside the core schema would fire within its own `$ref`
-		// scope and reject a sibling overlay branch's properties — so closing lives here.)
+		// scope and flag a sibling overlay branch's properties, so it lives here.)
 		ajv.addSchema(schema);
 		await addBundledRefs(ajv, schema);
 		toCompile = { type: "object", allOf: [{ $ref: schemaId }], unevaluatedProperties: false };
@@ -269,8 +299,10 @@ export async function validateManifest(
 		return { valid: true, errors: [], warnings };
 	}
 
-	const errors = collapseOneOf((validate.errors || []) as AjvError[]).map(formatError);
-	return { valid: false, errors, warnings };
+	const mapped = collapseOneOf((validate.errors || []) as AjvError[]).map(formatError);
+	const { errors, warnings: unknownKeyWarnings } = demoteUnknownTopLevelKeys(mapped);
+	warnings.push(...unknownKeyWarnings);
+	return { valid: errors.length === 0, errors, warnings };
 }
 
 export async function validateShape(
@@ -306,16 +338,29 @@ export async function validateModManifest(
 	const schema = schemaOverride ?? (await loadModSchema());
 	const ajv = new Ajv({ allErrors: true, verbose: true });
 	addFormats(ajv);
-	if (schemaOverride) await addBundledRefs(ajv, schema);
 
-	const validate = ajv.compile(schema);
+	let toCompile: object = schema;
+	const modSchemaId = (schema as { $id?: string }).$id;
+	if (!topLevelCloses(schema) && modSchemaId) {
+		// The mod schema is open at the top level so a host overlay can extend it via
+		// `$schema` + `allOf`; the wrapper flags top-level keys nothing evaluated so they
+		// surface as warnings (the runtime ignores stray keys). Mirrors `validateManifest`.
+		ajv.addSchema(schema);
+		await addBundledRefs(ajv, schema);
+		toCompile = { type: "object", allOf: [{ $ref: modSchemaId }], unevaluatedProperties: false };
+	} else if (schemaOverride) {
+		await addBundledRefs(ajv, schema);
+	}
+
+	const validate = ajv.compile(toCompile);
 	const valid = validate(manifest) as boolean;
 
-	const errors = valid ? [] : collapseOneOf((validate.errors || []) as AjvError[]).map(formatError);
+	const mapped = valid ? [] : collapseOneOf((validate.errors || []) as AjvError[]).map(formatError);
+	const { errors, warnings: unknownKeyWarnings } = demoteUnknownTopLevelKeys(mapped);
 	errors.push(...validateExportCapabilities(manifest));
 	errors.push(...validateProviderRoles(manifest));
 
-	const warnings = validateProviderRoleFns(manifest);
+	const warnings = [...unknownKeyWarnings, ...validateProviderRoleFns(manifest)];
 	warnings.push(...validateLegacyContributionShapes(manifest));
 
 	return { valid: errors.length === 0, errors, warnings };

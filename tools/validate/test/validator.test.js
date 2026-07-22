@@ -82,17 +82,16 @@ describe("validateManifest", () => {
 		assert.ok(patternError, "should report pattern mismatch");
 	});
 
-	it("rejects unknown top-level properties", async () => {
+	it("warns on unknown top-level properties without failing", async () => {
 		const result = await validateManifest({
 			xript: "0.1",
 			name: "my-app",
 			notARealField: true,
 		});
-		assert.equal(result.valid, false);
-		const extraError = result.errors.find(
-			(e) => e.keyword === "additionalProperties" || e.keyword === "unevaluatedProperties",
-		);
-		assert.ok(extraError, "should report unexpected top-level property");
+		assert.equal(result.valid, true, JSON.stringify(result.errors));
+		const warn = (result.warnings ?? []).find((w) => w.keyword === "unknown-key");
+		assert.ok(warn, "should warn about the unrecognized top-level key");
+		assert.match(warn.message, /notARealField/);
 	});
 
 	it("rejects a binding name that is not a JavaScript identifier", async () => {
@@ -556,17 +555,17 @@ describe("crossValidate — capability subsumption", () => {
 });
 
 describe("unknown top-level properties", () => {
-	it("names the offending property instead of reporting a bare closure failure", async () => {
+	it("warns and names the offending property instead of failing", async () => {
 		const result = await validateManifest({
 			xript: "0.8",
 			name: "stray",
 			version: "1.0.0",
 			commands: { doThing: { description: "nowhere to live" } },
 		});
-		assert.equal(result.valid, false);
-		const messages = result.errors.map((e) => e.message);
+		assert.equal(result.valid, true, JSON.stringify(result.errors));
+		const messages = (result.warnings ?? []).filter((w) => w.keyword === "unknown-key").map((w) => w.message);
 		assert.ok(
-			messages.some((m) => m.includes('unexpected property "commands"')),
+			messages.some((m) => m.includes('"commands"')),
 			`expected the key to be named, got ${JSON.stringify(messages)}`,
 		);
 	});
@@ -579,8 +578,8 @@ describe("unknown top-level properties", () => {
 			alpha: {},
 			beta: {},
 		});
-		assert.equal(result.valid, false);
-		const messages = result.errors.map((e) => e.message).join(" ");
+		assert.equal(result.valid, true, JSON.stringify(result.errors));
+		const messages = (result.warnings ?? []).filter((w) => w.keyword === "unknown-key").map((w) => w.message).join(" ");
 		assert.ok(messages.includes('"alpha"') && messages.includes('"beta"'), messages);
 	});
 });

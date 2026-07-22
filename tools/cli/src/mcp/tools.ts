@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { validateManifest, validateModManifest, crossValidate, isModManifest, type ValidationResult } from "@xriptjs/validate";
+import { validateManifest, validateModManifest, validateManifestFile, validateModManifestFile, resolveSchema, crossValidate, isModManifest, type ValidationResult } from "@xriptjs/validate";
 import { generateTypes, generateAmbientTypes } from "@xriptjs/typegen";
 import { generateDocs } from "@xriptjs/docgen";
 import { sanitizeHTMLDetailed } from "@xriptjs/sanitize";
@@ -47,6 +47,11 @@ function parseManifest(raw: string): { ok: true; value: unknown } | { ok: false;
 	}
 }
 
+function isInlineJson(value: string): boolean {
+	const trimmed = value.trimStart();
+	return trimmed.startsWith("{") || trimmed.startsWith("[");
+}
+
 async function resolveClientPath(server: McpServer, p: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
 	if (isAbsolute(p)) return { ok: true, path: p };
 	if (server.server.getClientCapabilities()?.roots) {
@@ -64,6 +69,12 @@ async function resolveClientPath(server: McpServer, p: string): Promise<{ ok: tr
 	};
 }
 
+/** The client's workspace root, falling back to the server's own cwd when no root is advertised. */
+async function resolveWorkspaceBaseDir(server: McpServer): Promise<string> {
+	const root = await resolveClientPath(server, ".");
+	return root.ok ? root.path : process.cwd();
+}
+
 /**
  * Accepts EITHER the inline manifest JSON or a path to a manifest file (absolute, or
  * relative to the client's workspace root). Passing a path keeps a large manifest out of
@@ -71,13 +82,11 @@ async function resolveClientPath(server: McpServer, p: string): Promise<{ ok: tr
  * as inline JSON; anything else is treated as a path. `extends` is resolved before returning.
  */
 async function resolveManifestArg(server: McpServer, value: string): Promise<{ ok: true; value: unknown } | { ok: false; error: string }> {
-	const trimmed = value.trimStart();
 	let parsed: { ok: true; value: unknown } | { ok: false; error: string };
 	let baseDir: string;
-	if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+	if (isInlineJson(value)) {
 		parsed = parseManifest(value);
-		const root = await resolveClientPath(server, ".");
-		baseDir = root.ok ? root.path : process.cwd();
+		baseDir = await resolveWorkspaceBaseDir(server);
 	} else {
 		const resolved = await resolveClientPath(server, value);
 		if (!resolved.ok) return resolved;
@@ -99,6 +108,35 @@ async function resolveManifestArg(server: McpServer, value: string): Promise<{ o
 }
 
 /**
+ * Like {@link resolveManifestArg}, but reports whether the value came from a file so the
+ * validate path can mirror the CLI: a file is routed through the file-aware validators, which
+ * honor the manifest's declared `$schema` and entry-source checks. Inline JSON reports its
+ * `baseDir` (the workspace root) so `$schema` still resolves for it too.
+ */
+async function locateManifestArg(
+	server: McpServer,
+	value: string,
+): Promise<
+	| { ok: true; kind: "file"; path: string }
+	| { ok: true; kind: "inline"; value: unknown; baseDir: string }
+	| { ok: false; error: string }
+> {
+	if (isInlineJson(value)) {
+		const parsed = parseManifest(value);
+		if (!parsed.ok) return parsed;
+		const baseDir = await resolveWorkspaceBaseDir(server);
+		try {
+			return { ok: true, kind: "inline", value: await resolveExtends(parsed.value, baseDir), baseDir };
+		} catch (error) {
+			return { ok: false, error: `extends resolution failed: ${error instanceof Error ? error.message : String(error)}` };
+		}
+	}
+	const resolved = await resolveClientPath(server, value);
+	if (!resolved.ok) return resolved;
+	return { ok: true, kind: "file", path: resolved.path };
+}
+
+/**
  * Resolves a host manifest arg without pre-resolving `extends`, and reports the `baseDir`
  * that `extends` paths resolve against: the manifest file's own directory when a path was
  * passed, or the client workspace root (falling back to the server cwd) for inline JSON.
@@ -108,12 +146,10 @@ async function resolveHostArg(
 	server: McpServer,
 	value: string,
 ): Promise<{ ok: true; value: unknown; baseDir: string } | { ok: false; error: string }> {
-	const trimmed = value.trimStart();
-	if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+	if (isInlineJson(value)) {
 		const parsed = parseManifest(value);
 		if (!parsed.ok) return parsed;
-		const root = await resolveClientPath(server, ".");
-		return { ok: true, value: parsed.value, baseDir: root.ok ? root.path : process.cwd() };
+		return { ok: true, value: parsed.value, baseDir: await resolveWorkspaceBaseDir(server) };
 	}
 	const resolved = await resolveClientPath(server, value);
 	if (!resolved.ok) return resolved;
@@ -137,8 +173,7 @@ function formatValidation(result: ValidationResult): ToolResult {
 
 /** Path-or-inline JSON, without `extends` resolution — for non-manifest payloads like harness descriptors. */
 async function resolveJsonArg(server: McpServer, value: string): Promise<{ ok: true; value: unknown } | { ok: false; error: string }> {
-	const trimmed = value.trimStart();
-	if (trimmed.startsWith("{") || trimmed.startsWith("[")) return parseManifest(value);
+	if (isInlineJson(value)) return parseManifest(value);
 	const resolved = await resolveClientPath(server, value);
 	if (!resolved.ok) return resolved;
 	try {
@@ -184,10 +219,23 @@ export async function registerTools(server: McpServer, buildInfo: ServerBuildInf
 			},
 		},
 		async ({ manifest, kind }) => {
-			const parsed = await resolveManifestArg(server, manifest);
-			if (!parsed.ok) return text(parsed.error, true);
-			const resolved = kind && kind !== "auto" ? kind : isModManifest(parsed.value) ? "mod" : "app";
-			const result = resolved === "mod" ? await validateModManifest(parsed.value) : await validateManifest(parsed.value);
+			const located = await locateManifestArg(server, manifest);
+			if (!located.ok) return text(located.error, true);
+			const forced = kind && kind !== "auto" ? kind : undefined;
+			if (located.kind === "file") {
+				// Mirror the CLI: file-aware validation resolves the declared `$schema` and
+				// runs entry-source checks. `validateManifestFile` auto-routes app vs mod by
+				// content; force mod when the caller asked for it.
+				const result = forced === "mod" ? await validateModManifestFile(located.path) : await validateManifestFile(located.path);
+				return formatValidation(result);
+			}
+			const isMod = forced ? forced === "mod" : isModManifest(located.value);
+			const schemaFile = isMod ? "mod-manifest.schema.json" : "manifest.schema.json";
+			const resolvedSchema = await resolveSchema(located.value, located.baseDir, schemaFile);
+			const result = isMod ? await validateModManifest(located.value, resolvedSchema.schema) : await validateManifest(located.value, resolvedSchema.schema);
+			if (resolvedSchema.warning) {
+				result.warnings = [...(result.warnings ?? []), { path: "/$schema", message: resolvedSchema.warning, keyword: "schema-fallback" }];
+			}
 			return formatValidation(result);
 		},
 	);
