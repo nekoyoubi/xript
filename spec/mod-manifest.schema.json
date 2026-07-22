@@ -142,7 +142,6 @@
 			"additionalProperties": false
 		}
 	},
-	"additionalProperties": false,
 	"$defs": {
 		"executionIntent": {
 			"description": "How a host should expect this surface to behave in time and where it may run. Advisory routing signal — never enforced, never a capability. Enforcement lives in `limits`.",

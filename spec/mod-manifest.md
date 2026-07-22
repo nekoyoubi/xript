@@ -181,6 +181,24 @@ When a mod is loaded against a host, the runtime validates each slot id in `fill
 
 The runtime does **not** police the inner shape of a fill; that is the slot type's contract, enforced by whatever consumes the fill (the fragment processor, the renderer, the role resolver, the hook dispatcher, the command normalizer). A fill into an undeclared slot, or into a capability-gated slot the mod lacks the capability for, is an error.
 
+### Extending the Mod Vocabulary
+
+Like the core [host manifest](./manifest.md#extending-the-core-vocabulary), the mod manifest schema is **open at the top level** so a domain can add its own surfaces and still validate against core. A domain overlay composes the two:
+
+```json
+{
+  "$schema": "https://example.dev/schemas/my-domain-mod.schema.json",
+  "allOf": [
+    { "$ref": "https://xript.dev/schema/mod-manifest/v0.8.json" },
+    { "properties": { "myDomainSurface": { "type": "object" } }, "unevaluatedProperties": false }
+  ]
+}
+```
+
+The published schema document carries no top-level `additionalProperties`/`unevaluatedProperties`. `@xriptjs/validate` flags an unrecognized top-level key, but as an **advisory warning, not an error** — the manifest still validates. This is deliberate: the runtime reads only the declared vocabulary and ignores a stray top-level key, so it has no runtime effect, and a hard error would block a key that does nothing. The warning exists to catch the *silent* case (a typo of an optional key like `capabilties` that would otherwise leave the real key absent with no signal); a key a declared `$schema` overlay accounts for is evaluated and draws no warning at all. Nested closures (a binding or slot's inner shape) remain hard errors.
+
+Because a stray top-level key is inert, it is **not an access surface** — nothing in the runtime or the sandbox ever reads it. When you want data a host actually consumes, use a payload-schema'd [data fill](#representative-fill-shapes) into a data slot (the host receives it keyed by slot id, checked by `--cross`); for host-provided values a mod reads, use a binding. Reach for a top-level overlay only for manifest-wide domain metadata that an external tool or a human reads off the JSON directly.
+
 ## Deprecated Aliases
 
 Two earlier top-level surfaces fold into `fills`. Validators still accept them and emit a deprecation warning so migration is smooth; new manifests should use `fills` only.

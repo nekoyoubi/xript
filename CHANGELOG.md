@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.8.1
+
+A consistency pass on the toolchain: the pieces that judge a manifest now agree with one another, and none of them hard-blocks a key the runtime just ignores.
+
+- **Unknown top-level manifest keys warn instead of erroring, on both host and mod manifests.** This changes behavior shipped in v0.8.0, where the host manifest hard-errored on an unrecognized top-level key. The runtime reads only the declared vocabulary and ignores a stray top-level key, so a hard error was fencing off something with no runtime effect; the manifest now validates, and a warning names the key and points at the surfaces that _are_ read: a data fill into a data slot, a binding, or a declared `$schema` overlay. The warning still catches the case that actually bites, a silent typo of an optional key (`capabilties` for `capabilities`) that would otherwise leave the real key absent with no signal. Nested closures, a binding or slot's inner shape, stay hard errors, and a genuinely required key that's missing still fails
+- **The mod-manifest schema opens at the top level, so domain overlays compose.** It used to hard-code `additionalProperties: false` while the host schema was already open-at-document with a validator-applied `unevaluatedProperties` wrapper, so a `$schema` + `allOf` overlay that added a top-level surface got rejected and the two managers disagreed. The mod schema now opens at the top level and `validateModManifest` applies the same wrapper, so overlays compose and mod and host manifests are symmetric; it is the same wrapper behind the warnings above, detecting the unaccounted top-level keys that item one then surfaces
+  - documented the reasoning in the spec: a stray top-level key is inert, nothing in the runtime or sandbox reads it, so it is not an access surface; consumable data goes through a data fill or a binding
+- **MCP `xript_validate` now agrees with the CLI on the same file.** It was documented as a CLI mirror but diverged: given a file path it validated in-memory against bundled core and ignored the manifest's declared `$schema`, while the CLI resolved it, so the same file could read `valid` from one tool and `invalid` from the other. A file argument now routes through the same file-aware validators the CLI uses, resolving the declared `$schema` and running the same entry-source checks; inline JSON resolves `$schema` against the workspace root too
+  - the two now agree on the verdict; the MCP tool's output formatting still differs from the CLI's human output
+
+### Test counts
+
+| package | before | after |
+| --- | --- | --- |
+| `@xriptjs/validate` | 430 | 434 |
+| `@xriptjs/cli` | 115 | 117 |
+
 ## v0.8.0 — Nameless
 
 The fragment protocol had always been documented as format-agnostic while every runtime collapsed a

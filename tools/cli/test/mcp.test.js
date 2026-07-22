@@ -162,6 +162,26 @@ describe("tools", () => {
 		assert.equal(result.isError, true);
 	});
 
+	it("validate of a file mirrors the CLI: runs entry-source checks the in-memory path skips", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "xript-validate-file-"));
+		writeFileSync(join(dir, "mod.js"), "const x = require('fs');\nexport function go() { return x; }\n");
+		const modPath = join(dir, "mod.json");
+		writeFileSync(modPath, JSON.stringify({ xript: "0.8", name: "m", version: "1.0.0", entry: { script: "mod.js", format: "module" } }));
+		const { client } = await connectedClient();
+		const result = await client.callTool({ name: "xript_validate", arguments: { manifest: modPath } });
+		assert.equal(result.isError, true);
+		assert.match(textOf(result), /commonjs|import/i);
+	});
+
+	it("validate of an inline mod manifest with an overlay $schema composes", async () => {
+		const { client } = await connectedClient();
+		// A known bundled $schema id resolves to core rather than being ignored; the manifest stays valid.
+		const manifest = JSON.stringify({ $schema: "https://xript.dev/schema/mod-manifest/v0.8.json", xript: "0.8", name: "m", version: "1.0.0" });
+		const result = await client.callTool({ name: "xript_validate", arguments: { manifest } });
+		assert.match(textOf(result), /valid/);
+		assert.notEqual(result.isError, true);
+	});
+
 	it("run loads a mod and invokes an export", async () => {
 		const { client } = await connectedClient();
 		const result = await client.callTool({

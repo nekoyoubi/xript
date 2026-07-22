@@ -760,7 +760,7 @@ The top-level manifest object uses `unevaluatedProperties: false` rather than a 
 }
 ```
 
-Because validation evaluates the composed branches together, properties the overlay introduces are recognized and the manifest still validates against core. Top-level extension is open in exactly this way; deeper objects (bindings, slots, types, and the rest) stay closed, so the loosening is scoped to where a domain legitimately needs room and nowhere else.
+Because validation evaluates the composed branches together, properties the overlay introduces are recognized and the manifest still validates against core. A top-level key that *no* branch accounts for is surfaced as an **advisory warning, not an error** — the manifest still validates. The runtime reads only the declared vocabulary and ignores a stray top-level key, so blocking it would fence off a key that has no runtime effect; the warning is there to catch a silent typo of an optional key. Deeper objects (bindings, slots, types, and the rest) stay closed with hard errors, so the loosening is scoped to the top level, where a domain legitimately needs room, and nowhere else.
 
 ### Honoring the Declared `$schema`
 
