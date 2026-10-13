@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use super::vocabulary::MAX_TREE_DEPTH;
 use super::rules::{
-    sanitize_style_block, RAWTEXT_ELEMENTS, STRIPPED_ELEMENTS, VOID_ELEMENTS,
+    sanitize_style_block, RAWTEXT_ELEMENTS, STRIPPED_ELEMENTS, SVG_TEXT_ELEMENTS, VOID_ELEMENTS,
 };
 use super::profiles::{any_vocabulary_declares, speaks_html, FormatProfile};
 use super::tokenizer::{decode_text_entities, tokenize, Attribute, Token};
@@ -122,7 +122,8 @@ pub fn html_to_tree(input: &str, profile: Option<&FormatProfile>) -> FragmentTre
                 parent.children.push(FragmentNode::Element(element));
 
                 let raw_text = html_rules_apply(raw_tag)
-                    && (tag == "style" || STRIPPED_ELEMENTS.contains(tag.as_str()));
+                    && (tag == "style" || STRIPPED_ELEMENTS.contains(tag.as_str()))
+                    && !(SVG_TEXT_ELEMENTS.contains(&tag.as_str()) && inside_svg(&root, &stack));
 
                 if raw_text {
                     if tag == "style" {
@@ -174,6 +175,13 @@ fn current_mut<'a>(root: &'a mut FragmentElement, path: &[usize]) -> &'a mut Fra
         };
     }
     node
+}
+
+/// Whether an open `<svg>` encloses the insertion point. Inside SVG the HTML
+/// parser reads `<title>` as a foreign element with ordinary content, not as the
+/// document title's raw-text region.
+fn inside_svg(root: &FragmentElement, stack: &[usize]) -> bool {
+    (1..=stack.len()).any(|depth| name_at(root, &stack[..depth]).eq_ignore_ascii_case("svg"))
 }
 
 fn name_at<'a>(root: &'a FragmentElement, path: &[usize]) -> &'a str {

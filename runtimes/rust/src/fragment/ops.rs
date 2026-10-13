@@ -98,7 +98,7 @@ pub fn finalize_ops(
             "setText" | "addClass" | "removeClass" => {
                 op.value = Some(serde_json::Value::String(js_string_of(raw_value)));
             }
-            "setProp" | "setAttr" => {
+            "setProp" | "setAttr" | "removeAttr" => {
                 let prop = raw
                     .get("prop")
                     .or_else(|| raw.get("attr"))
@@ -115,6 +115,46 @@ pub fn finalize_ops(
                     });
                     continue;
                 };
+                let is_attribute = op_name != "setProp" || lands_on_html_attribute(profile, prop);
+                let removes = op_name == "removeAttr"
+                    || (is_attribute
+                        && matches!(
+                            raw_value,
+                            None | Some(serde_json::Value::Null) | Some(serde_json::Value::Bool(false))
+                        ));
+                if removes {
+                    if let Err((code, message)) = check_prop_name(profile, prop) {
+                        report(FragmentDiagnostic {
+                            code,
+                            severity: DiagnosticSeverity::Warning,
+                            path,
+                            node: selector,
+                            prop: Some(prop.to_string()),
+                            message,
+                        });
+                        continue;
+                    }
+                    op.op = "removeAttr".to_string();
+                    op.prop = Some(prop.to_string());
+                    op.attr = Some(prop.to_string());
+                    finalized.push(op);
+                    continue;
+                }
+                if is_attribute
+                    && matches!(raw_value, Some(serde_json::Value::Object(_)) | Some(serde_json::Value::Array(_)))
+                {
+                    report(FragmentDiagnostic {
+                        code: DiagnosticCode::OpInvalidValue,
+                        severity: DiagnosticSeverity::Warning,
+                        path,
+                        node: selector.clone(),
+                        prop: Some(prop.to_string()),
+                        message: format!(
+                            "op \"{op_name}\" on \"{selector}\" cannot write a non-primitive value to attribute \"{prop}\""
+                        ),
+                    });
+                    continue;
+                }
                 match route_op_value(profile, prop, raw_value) {
                     Err((code, message)) => {
                         report(FragmentDiagnostic {
@@ -137,7 +177,20 @@ pub fn finalize_ops(
                 }
             }
             "replaceChildren" => {
-                op.value = Some(sanitize_op_children(raw_value, profile));
+                if !matches!(raw_value, Some(serde_json::Value::String(_)) | Some(serde_json::Value::Array(_))) {
+                    report(FragmentDiagnostic {
+                        code: DiagnosticCode::OpInvalidValue,
+                        severity: DiagnosticSeverity::Warning,
+                        path,
+                        node: selector.clone(),
+                        prop: None,
+                        message: format!(
+                            "op \"replaceChildren\" on \"{selector}\" needs a string or a list of children"
+                        ),
+                    });
+                    continue;
+                }
+                op.value = Some(sanitize_op_children(raw_value, profile, &path, report));
             }
             _ => {}
         }
@@ -267,6 +320,44 @@ fn apply_op_sink(
     Some(serde_json::Value::String(cleaned))
 }
 
+fn is_html_only(profile: &FormatProfile) -> bool {
+    profile.scope.len() == 1 && matches!(profile.scope[0], ResolvedVocabulary::BuiltinHtml)
+}
+
+fn declared_by_scope(profile: &FormatProfile, prop: &str) -> bool {
+    profile
+        .scope
+        .iter()
+        .flat_map(|entry| entry.declared_nodes())
+        .any(|(_, definition)| definition.prop(prop).is_some())
+}
+
+/// Whether a prop write resolves to an HTML attribute rather than to a typed prop
+/// a declared vocabulary owns. An attribute holds a string, so it has no `false`
+/// to hold: `false` and `null` there mean "absent", the way a boolean attribute
+/// does in HTML.
+fn lands_on_html_attribute(profile: &FormatProfile, prop: &str) -> bool {
+    is_html_only(profile) || (speaks_html(profile) && !declared_by_scope(profile, prop))
+}
+
+/// The name half of [`route_op_value`]: whether an op may address this prop at all.
+fn check_prop_name(profile: &FormatProfile, prop: &str) -> Result<(), (DiagnosticCode, String)> {
+    let lower = prop.to_lowercase();
+    if is_html_only(profile) {
+        if is_allowed_attribute("", &lower) {
+            return Ok(());
+        }
+        return Err((DiagnosticCode::UnsafeProp, format!("prop \"{prop}\" is not settable on an HTML node")));
+    }
+    if declared_by_scope(profile, prop) || (speaks_html(profile) && is_allowed_attribute("", &lower)) {
+        return Ok(());
+    }
+    Err((
+        DiagnosticCode::OpUnknownProp,
+        format!("prop \"{prop}\" is not declared by any node of format \"{}\"", profile.id),
+    ))
+}
+
 fn html_sink_for(lower_prop: &str) -> Sink {
     match lower_prop {
         "href" => Sink::Uri,
@@ -282,26 +373,91 @@ fn html_sink_for(lower_prop: &str) -> Sink {
 /// sanitizing its markup against built-in HTML alone would strip exactly the
 /// custom elements the format exists to declare. A J5ML node list takes the same
 /// route through the tree sanitizer.
+///
+/// The value keeps the shape the mod gave it. A list of strings under an
+/// HTML-speaking format is a list of markup strings, each sanitized on its own and
+/// the list kept; the empty list is an explicit clear. Any other list is a J5ML
+/// node list.
+///
+/// Every finding the nested pass makes is forwarded through `report` with its path
+/// prefixed by the op's, and for a markup list by the item's index too (`/0` op,
+/// `/2` item, `/1` node), so a node or prop the markup loses is reported rather
+/// than dropped silently.
 fn sanitize_op_children(
     value: Option<&serde_json::Value>,
     profile: &FormatProfile,
+    op_path: &str,
+    report: &mut dyn FnMut(FragmentDiagnostic),
 ) -> serde_json::Value {
     match value {
         Some(serde_json::Value::String(source)) => {
-            if !speaks_html(profile) {
-                return serde_json::Value::String(source.clone());
-            }
-            let parsed = super::html::html_to_tree(source, Some(profile));
-            let sanitized = sanitize_tree(&parsed, profile, VocabularyOptions::default());
-            serde_json::Value::String(super::tree::tree_to_html(&sanitized.tree))
+            serde_json::Value::String(sanitize_op_markup(source, profile, op_path, report))
+        }
+        Some(serde_json::Value::Array(items))
+            if speaks_html(profile) && items.iter().all(serde_json::Value::is_string) =>
+        {
+            serde_json::Value::Array(
+                items
+                    .iter()
+                    .enumerate()
+                    .map(|(index, item)| {
+                        serde_json::Value::String(sanitize_op_markup(
+                            item.as_str().unwrap_or_default(),
+                            profile,
+                            &format!("{op_path}/{index}"),
+                            report,
+                        ))
+                    })
+                    .collect(),
+            )
         }
         Some(serde_json::Value::Array(items)) => {
             let nodes: Vec<OrderedJson> = items.iter().map(OrderedJson::from_json).collect();
             let sanitized =
                 sanitize_tree(&jsml_to_tree(&nodes), profile, VocabularyOptions::default());
-            serde_json::Value::Array(tree_to_jsml(&sanitized.tree))
+            let jsml = tree_to_jsml(&sanitized.tree);
+            forward_diagnostics(sanitized.diagnostics, op_path, report);
+            serde_json::Value::Array(jsml)
         }
         Some(other) => other.clone(),
         None => serde_json::Value::Null,
+    }
+}
+
+/// Sanitizes one markup string. A built-in format's markup is read as
+/// `text/html`, which is what the string sanitizer has always done; a declared
+/// format's markup is read against its own scope so its custom elements survive.
+fn sanitize_op_markup(
+    source: &str,
+    profile: &FormatProfile,
+    path_prefix: &str,
+    report: &mut dyn FnMut(FragmentDiagnostic),
+) -> String {
+    if !speaks_html(profile) {
+        return source.to_string();
+    }
+    let builtin_html;
+    let markup_profile = if profile.builtin {
+        builtin_html =
+            super::profiles::builtin_profile("text/html").expect("built-in html profile");
+        &builtin_html
+    } else {
+        profile
+    };
+    let parsed = super::html::html_to_tree(source, Some(markup_profile));
+    let sanitized = sanitize_tree(&parsed, markup_profile, VocabularyOptions::default());
+    let html = super::tree::tree_to_html_for(&sanitized.tree, markup_profile);
+    forward_diagnostics(sanitized.diagnostics, path_prefix, report);
+    html
+}
+
+fn forward_diagnostics(
+    diagnostics: Vec<FragmentDiagnostic>,
+    path_prefix: &str,
+    report: &mut dyn FnMut(FragmentDiagnostic),
+) {
+    for mut diagnostic in diagnostics {
+        diagnostic.path = format!("{path_prefix}{}", diagnostic.path);
+        report(diagnostic);
     }
 }

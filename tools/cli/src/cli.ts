@@ -21,7 +21,9 @@ if (!command || command === "--help" || command === "-h") {
 }
 
 if (command === "--version" || command === "-v") {
+	const { manifestVersions, defaultManifestVersion } = (await import("./spec-version.js")).speaksSummary();
 	console.log(getVersion());
+	console.log(`manifest versions: ${manifestVersions.join(", ")} (default ${defaultManifestVersion})`);
 	process.exit(0);
 }
 
@@ -74,7 +76,7 @@ switch (command) {
 
 function printHelp(): void {
 	const version = getVersion();
-	console.log(`xript v${version} — extensible runtime interface protocol tooling`);
+	console.log(`xript v${version}: extensible runtime interface protocol tooling`);
 	console.log("");
 	console.log("Usage: xript <command> [options]");
 	console.log("");
@@ -95,7 +97,9 @@ function printHelp(): void {
 	console.log("");
 	console.log("Options:");
 	console.log("  --help, -h     Show help (use with a command for command-specific help)");
-	console.log("  --version, -v  Show version");
+	console.log("  --version, -v  Show the toolchain version and the manifest versions it speaks");
+	console.log("  --spec <v>     On validate, typegen, docgen, lint, describe, init, and guide: answer for this");
+	console.log("                 manifest version instead of the one the manifest declares");
 	console.log("");
 	console.log("Examples:");
 	console.log("  xript validate manifest.json");

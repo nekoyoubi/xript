@@ -583,3 +583,23 @@ describe("unknown top-level properties", () => {
 		assert.ok(messages.includes('"alpha"') && messages.includes('"beta"'), messages);
 	});
 });
+
+describe("function parameters", () => {
+	it("accepts the callback corpus host, with bare, optional, and signature function types", async () => {
+		const { readFileSync } = await import("node:fs");
+		const corpus = JSON.parse(readFileSync(resolve(__dirname, "../../../spec/callback-tests.json"), "utf8"));
+		const result = await validateManifest(corpus.manifest);
+		assert.equal(result.valid, true, JSON.stringify(result.errors));
+	});
+
+	it("rejects an unknown key in a function signature", async () => {
+		const result = await validateManifest({
+			xript: "0.8",
+			name: "h",
+			bindings: {
+				find: { description: "d", params: [{ name: "test", type: { function: { arguments: [] } } }] },
+			},
+		});
+		assert.equal(result.valid, false);
+	});
+});

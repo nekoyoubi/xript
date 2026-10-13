@@ -21,7 +21,7 @@ describe("top-level events catalog docs", () => {
 		assert.match(index.content, /## Events/);
 		assert.match(index.content, /\| Event \| Payload \| Description \|/);
 		assert.match(index.content, /\| `tab\.opened` \| `TabPayload` \| Fired when a tab opens\. \|/);
-		assert.match(index.content, /\| `app\.ready` \| — \| Fired once the app finishes booting\. \|/);
+		assert.match(index.content, /\| `app\.ready` \| - \| Fired once the app finishes booting\. \|/);
 	});
 
 	it("draws the line between events, event-typed slots, and fragment handlers", () => {

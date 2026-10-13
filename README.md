@@ -69,10 +69,11 @@ v0.7.0's pillars run through every runtime. Hierarchical capabilities give you p
 
 ## Fragments
 
-v0.3 introduced the fragment protocol: host apps declare UI _slots_, mods contribute HTML (or JSML, or Ratatui JSON) fragments into those slots. Two smart attributes handle dynamic behavior:
+v0.3 introduced the fragment protocol: host apps declare UI _slots_, mods contribute HTML (or JSML, or Ratatui JSON) fragments into those slots. Three smart attributes handle dynamic behavior:
 
 - `data-bind` for value binding (O(1) updates at game-loop speed)
 - `data-if` for conditional visibility
+- `data-each` to repeat a node once per list element, with `data-key` so updates patch by key instead of replacing the list
 
 Everything beyond that routes through the sandbox fragment API (command buffer pattern). The protocol is rendering-agnostic; the same mod manifest can target a browser, a terminal, or a native desktop app.
 

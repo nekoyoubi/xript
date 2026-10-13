@@ -52,6 +52,7 @@ const SECTIONS = [
 			"spec/capabilities",
 			"spec/bindings",
 			"spec/hooks",
+			"spec/execution",
 			"spec/commands",
 			"spec/modules",
 			"spec/harness",

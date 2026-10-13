@@ -22,6 +22,49 @@ export class CapabilityDeniedError extends Error {
 	}
 }
 
+/**
+ * Why a call to a script callback did not return a value: the script function threw, the
+ * binding call that received it already returned, it returned a promise, or the calling
+ * script ran out of its execution budget.
+ */
+export type CallbackFailure = "threw" | "expired" | "promise" | "limit";
+
+/**
+ * Thrown on the host when a callback a script passed to a binding cannot produce a value.
+ * For `"threw"`, `message` is the script error's own message and `scriptError` carries its
+ * name; letting this error escape the binding rethrows the original error into the script.
+ */
+export class CallbackError extends Error {
+	public readonly binding: string;
+	public readonly reason: CallbackFailure;
+	public readonly scriptError?: { name?: string; message?: string };
+
+	constructor(binding: string, reason: CallbackFailure, scriptError?: { name?: string; message?: string }) {
+		super(callbackFailureMessage(binding, reason, scriptError));
+		this.name = "CallbackError";
+		this.binding = binding;
+		this.reason = reason;
+		this.scriptError = scriptError;
+	}
+}
+
+function callbackFailureMessage(
+	binding: string,
+	reason: CallbackFailure,
+	scriptError?: { name?: string; message?: string },
+): string {
+	switch (reason) {
+		case "threw":
+			return scriptError?.message ?? "callback threw";
+		case "expired":
+			return `${binding}(): callback expired; a callback passed to a binding can only be called while that binding call is running`;
+		case "promise":
+			return `${binding}(): callback returned a promise; callbacks passed to a binding are synchronous and must return a settled value`;
+		case "limit":
+			return `${binding}(): callback stopped by the calling script's execution limit`;
+	}
+}
+
 export class ExecutionLimitError extends Error {
 	public readonly limit: string;
 
@@ -87,6 +130,24 @@ export class ModEntryError extends Error {
 		super(message);
 		this.name = "ModEntryError";
 		this.modName = modName;
+	}
+}
+
+/**
+ * A mod's `entry` names a script the host did not supply. Loading such a mod used to
+ * succeed and run nothing, so a typo in a script name looked exactly like a healthy mod
+ * with an empty body.
+ */
+export class MissingEntryScriptError extends ModEntryError {
+	public readonly script: string;
+
+	constructor(modName: string, script: string) {
+		super(
+			modName,
+			`mod "${modName}" names entry script "${script}", which was not supplied in fragmentSources`,
+		);
+		this.name = "MissingEntryScriptError";
+		this.script = script;
 	}
 }
 

@@ -13,6 +13,7 @@ mod builtins;
 mod eval;
 mod interpolate;
 mod parser;
+mod repeat;
 mod value;
 
 use std::cell::RefCell;
@@ -30,6 +31,10 @@ pub use interpolate::{
     SegmentResult, TextSegment,
 };
 pub use parser::{parse, parse_with_limit, DEFAULT_MAX_EXPRESSION_NODES};
+pub use repeat::{
+    evaluate_repeat_items, parse_repeat_header, repeat_scope, RepeatHeader, MAX_REPEAT_COPIES,
+    REPEAT_INDEX_NAME,
+};
 pub use value::{format_number, is_truthy, render};
 
 thread_local! {

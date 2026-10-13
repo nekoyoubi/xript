@@ -47,6 +47,20 @@ That means the CLI isn't installed (or your terminal hasn't picked up the new in
 | `xript guide` | Print xript authoring doctrine by topic |
 | `xript mcp` | Start the MCP server: the CLI's capabilities, for agents |
 
+### Target manifest version
+
+The toolchain answers for the xript version a manifest targets, not for its own. `validate`, `typegen`, `docgen`, `lint`, `describe`, `init`, and `guide` accept `--spec <version>` (`0.6`, `0.7`, `0.8`, or `0.9`). Without it, the target is the version in the manifest's `$schema` URL, then its `xript` field, then the current version, and the manifest is checked against that version's frozen schema.
+
+```bash
+xript validate manifest.json             # answers for the version the manifest declares
+xript validate manifest.json --spec 0.9  # asks whether it is a valid 0.9 manifest
+xript init my-app --yes --spec 0.8       # scaffolds manifests that declare 0.8
+xript guide host-formats --spec 0.7      # leads with what was different in 0.7
+xript --version                          # toolchain version, then the manifest versions it speaks
+```
+
+`validate` names the version after each result. `typegen` and `docgen` still generate, and print any violation of the target version's schema to stderr; `lint` reports each one as a `schema-version` error finding. The [MCP server](/tools/mcp/#answering-for-a-manifest-version) follows the same convention through a `version` argument.
+
 ---
 
 ## validate
@@ -169,7 +183,7 @@ xript typegen <manifest> --ambient -o xript.d.ts
 
 When the manifest declares `slots`, the generator produces additional types:
 
-- **`XriptFragmentProxy`** — `toggle`, `addClass`, `removeClass`, `setText`, `setAttr`, `replaceChildren`
+- **`XriptFragmentProxy`**: `toggle`, `addClass`, `removeClass`, `setText`, `setProp`, `setAttr`, `removeAttr`, `replaceChildren`
 - **`hooks.fragment`** — typed lifecycle registration: `mount`, `unmount`, `update`, `suspend`, `resume`
 - **`XriptSlots`** — describes available slots with accepted formats, multiplicity, and styling modes
 
@@ -380,13 +394,13 @@ xript sanitize <file> --quiet
 
 Structural and presentational elements: `div`, `span`, `p`, `h1`–`h6`, `ul`/`ol`/`li`, `table` family, `details`/`summary`, `section`, `article`, `header`, `footer`, `a`, `img`, `br`, `hr`, and more.
 
-Safe attributes: `class`, `id`, `data-*` (including `data-bind` and `data-if`), `aria-*`, `role`, `style` (sanitized), `src`/`href` (safe URIs only), `alt`, `width`, `height`, `tabindex`, `hidden`.
+Safe attributes: `class`, `id`, `data-*` (including `data-bind`, `data-if`, `data-each`, and `data-key`), `aria-*`, `role`, `style` (sanitized), `src`/`href` (safe URIs only), `alt`, `width`, `height`, `tabindex`, `hidden`.
 
 Scoped `<style>` blocks with dangerous CSS properties stripped.
 
 ### What gets stripped
 
-**Elements removed entirely (including children):** `script`, `iframe`, `object`, `embed`, `form`, `base`, `link`, `meta`, `title`, `noscript`, `applet`.
+**Elements removed entirely (including children):** `script`, `iframe`, `object`, `embed`, `form`, `base`, `link`, `meta`, `title`, `noscript`, `applet`. Inside an `<svg>`, `title` and `desc` are kept as text-only accessible names, with element children reduced to their text.
 
 **Document wrappers unwrapped (children preserved):** `html`, `head`, `body`.
 

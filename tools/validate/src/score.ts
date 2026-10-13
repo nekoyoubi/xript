@@ -1,4 +1,4 @@
-import { validateManifest, crossValidate } from "./index.js";
+import { validateManifest, crossValidate } from "./core.js";
 import { gateCapabilities } from "./manifest-util.js";
 import { satisfies } from "./capabilities.js";
 import { isCommandSlot } from "./commands.js";

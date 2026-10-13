@@ -14,7 +14,6 @@
 			<button class="tab" data-tab="export"><span class="tab-num">4</span> Export</button>
 		</nav>
 
-		<!-- TAB 1: MANIFEST -->
 		<div class="tab-content active" id="tab-manifest">
 			<div class="guide" id="guide-manifest">
 				<button class="guide-toggle" data-guide="manifest">
@@ -22,8 +21,8 @@
 					<span class="guide-summary">Load the app manifest your mod will target</span>
 				</button>
 				<div class="guide-body" style="display:none">
-					<p>Every xript mod targets a specific app manifest. The manifest declares what slots are available, what data your fragment can bind to, and what capabilities it needs.</p>
-					<p><strong>Quick start:</strong> Pick an example manifest below. <strong>Your own app:</strong> Select "Custom" and paste your app's <code>manifest.json</code>, or generate one with <code>xript init --yes</code>.</p>
+					<p>Every xript mod targets a specific app manifest. The manifest declares the slots a mod can fill, the formats each slot accepts, the data a fragment can bind to, and the capabilities a fill needs.</p>
+					<p><strong>Quick start:</strong> pick an example manifest below. <strong>Your own app:</strong> select "Custom" and paste your app's <code>manifest.json</code>, or generate one with <code>xript init --yes</code>. Every edit is checked by <code>@xriptjs/validate</code>: schema errors against the version the manifest targets, plus <code>xript lint</code> findings.</p>
 				</div>
 			</div>
 			<div class="tab-panels">
@@ -37,7 +36,7 @@
 						</select>
 					</div>
 					<div class="code-editor" id="fwb-manifest-editor" spellcheck="false"></div>
-					<div class="manifest-status" id="fwb-manifest-status"></div>
+					<div class="findings" id="fwb-manifest-findings"></div>
 				</div>
 				<div class="panel slot-panel">
 					<div class="panel-header"><h3>Slot Contract</h3></div>
@@ -48,16 +47,15 @@
 			</div>
 		</div>
 
-		<!-- TAB 2: AUTHOR -->
 		<div class="tab-content" id="tab-author">
 			<div class="guide" id="guide-author">
 				<button class="guide-toggle" data-guide="author">
 					<span class="guide-arrow">&#9656;</span>
-					<span class="guide-summary">Write your fragment HTML (or JSML) and bind it to slot data</span>
+					<span class="guide-summary">Write your fragment in HTML or J5ML and bind it to host data</span>
 				</button>
 				<div class="guide-body" style="display:none">
-					<p>Use <code>data-bind="key"</code> to display state values and <code>data-if="expr"</code> to conditionally show elements. The diagnostics bar flags unresolved bindings and anything the sanitizer will strip.</p>
-					<p><strong>Tip:</strong> Check the Slot Contract (Manifest tab) to see which bindings are available. Select a sample to start from a working example.</p>
+					<p>Use <code>data-bind="key"</code> to display a value, <code>data-if="expr"</code> to show an element conditionally, <code>data-each="item in list"</code> to repeat an element per list entry, and <code>{"{{ expr }}"}</code> to interpolate into text. The real runtime renders every mount.</p>
+					<p>As you type, the fragment is assembled into a mod manifest, cross-validated against the app manifest, and linted. The findings below the editor are the ones <code>xript validate --cross</code> and <code>xript lint</code> would print: unknown bindings, formats the slot does not accept, missing capabilities, and anything the sanitizer will strip.</p>
 				</div>
 			</div>
 			<div class="tab-panels author-layout">
@@ -67,7 +65,7 @@
 						<span class="header-selects">
 							<select id="fwb-format-toggle">
 								<option value="html">HTML</option>
-								<option value="jsml">JSML</option>
+								<option value="j5ml">J5ML</option>
 							</select>
 							<select id="fwb-sample-select">
 								<option value="">Sample...</option>
@@ -75,7 +73,7 @@
 						</span>
 					</div>
 					<div class="code-editor" id="fwb-editor" spellcheck="false"></div>
-					<div class="editor-diagnostics" id="fwb-diagnostics"></div>
+					<div class="findings" id="fwb-mod-findings"></div>
 					<div class="editor-footer">
 						<label class="slot-picker">
 							<span>Slot:</span>
@@ -86,9 +84,9 @@
 				</div>
 				<div class="author-side">
 					<div class="panel state-panel">
-						<div class="panel-header"><h3>State Simulation</h3></div>
+						<div class="panel-header"><h3>Host Data</h3></div>
 						<div class="state-controls" id="fwb-state-controls">
-							<div class="placeholder">Load a manifest to simulate state.</div>
+							<div class="placeholder">Load a manifest to simulate host data.</div>
 						</div>
 					</div>
 					<div class="panel console-panel">
@@ -104,7 +102,6 @@
 			</div>
 		</div>
 
-		<!-- TAB 3: PREVIEW -->
 		<div class="tab-content" id="tab-preview">
 			<div class="guide" id="guide-preview">
 				<button class="guide-toggle" data-guide="preview">
@@ -112,7 +109,7 @@
 					<span class="guide-summary">See your fragments mounted in the host's slot layout</span>
 				</button>
 				<div class="guide-body" style="display:none">
-					<p>This simulates how your fragment will appear inside the host application. Drag the state sliders (Author tab) to test how your fragment responds to changing data. Click a slot to inspect its contract.</p>
+					<p>This simulates how your fragment will appear inside the host application. Change the host data (Author tab) to test how your fragment responds. Click a slot to inspect its contract.</p>
 				</div>
 			</div>
 			<div class="tab-panels preview-layout">
@@ -134,25 +131,37 @@
 			</div>
 		</div>
 
-		<!-- TAB 4: EXPORT -->
 		<div class="tab-content" id="tab-export">
 			<div class="guide" id="guide-export">
 				<button class="guide-toggle" data-guide="export">
 					<span class="guide-arrow">&#9656;</span>
-					<span class="guide-summary">Download your mod manifest with fragment included</span>
+					<span class="guide-summary">Download your mod: a manifest plus its fragment source</span>
 				</button>
 				<div class="guide-body" style="display:none">
-					<p>This generates a valid <code>mod-manifest.json</code> containing your fragment, targeting the slot you selected. The manifest includes any capabilities the slot requires.</p>
-					<p><strong>Next steps:</strong> Place the downloaded file alongside your mod's entry script. Run <code>xript validate --cross app-manifest.json mod-manifest.json</code> to verify compatibility.</p>
+					<p>The workbench writes a <code>mod-manifest.json</code> that fills the slot you picked with your fragment, declares the bindings your expressions read, and requests the capability the slot requires. The zip holds the manifest and the fragment file it points at; tick <strong>Inline source</strong> to embed the fragment in the manifest instead.</p>
 				</div>
 			</div>
 			<div class="tab-panels">
 				<div class="panel export-panel">
 					<div class="panel-header">
-						<h3>Mod Manifest Preview</h3>
-						<button id="fwb-export-btn" class="run-button">Download</button>
+						<h3>Mod Manifest</h3>
+						<span class="panel-actions">
+							<button id="fwb-copy-manifest-btn" class="clear-button">Copy</button>
+							<button id="fwb-export-btn" class="run-button">Download .zip</button>
+						</span>
+					</div>
+					<div class="export-fields">
+						<label>Name <input type="text" id="fwb-mod-name" value="my-mod" spellcheck="false" /></label>
+						<label>Fill id <input type="text" id="fwb-fill-id" value="panel" spellcheck="false" /></label>
+						<label class="export-check"><input type="checkbox" id="fwb-inline" /> Inline source</label>
 					</div>
 					<pre class="export-preview" id="fwb-export-preview"><span class="placeholder">Author a fragment and select a slot to see your mod manifest here.</span></pre>
+					<div class="findings" id="fwb-export-status"></div>
+					<div class="panel-header sub-header">
+						<h3 id="fwb-fragment-path">Fragment</h3>
+						<button id="fwb-copy-fragment-btn" class="clear-button">Copy</button>
+					</div>
+					<pre class="export-preview fragment-preview" id="fwb-fragment-preview"></pre>
 				</div>
 				<div class="panel export-info">
 					<div class="panel-header"><h3>What's Next</h3></div>
@@ -160,25 +169,25 @@
 						<div class="export-step">
 							<span class="step-num">1</span>
 							<div>
-								<strong>Download</strong> your mod manifest using the button above
+								<strong>Download</strong> the zip and unpack it as your mod's folder
 							</div>
 						</div>
 						<div class="export-step">
 							<span class="step-num">2</span>
 							<div>
-								<strong>Create your mod project</strong> with <code>xript init --mod</code> and replace the generated manifest with yours
+								<strong>Validate</strong> the mod against the host app: <code>xript validate --cross app.json mod-manifest.json</code>
 							</div>
 						</div>
 						<div class="export-step">
 							<span class="step-num">3</span>
 							<div>
-								<strong>Validate</strong> against the host app: <code>xript validate --cross app.json your-mod.json</code>
+								<strong>Lint</strong> the pair for the findings shown here: <code>xript lint app.json mod-manifest.json</code>
 							</div>
 						</div>
 						<div class="export-step">
 							<span class="step-num">4</span>
 							<div>
-								<strong>Add behavior</strong> with a mod entry script using the sandbox fragment API for dynamic updates
+								<strong>Add behavior</strong> with an entry script (<code>xript init --mod</code> scaffolds one) using the sandbox fragment API for dynamic updates
 							</div>
 						</div>
 					</div>
@@ -189,17 +198,51 @@
 </div>
 
 <script>
-	import { sanitizeHTMLDetailed, jsmlToHtml } from "@xriptjs/sanitize";
+	import { htmlToTree, treeToJsml, treeToHtml, jsmlToTree, parseJsmlSource } from "@xriptjs/sanitize";
+	import {
+		validateManifestForVersion,
+		crossValidate,
+		lintManifests,
+		fragmentReadNames,
+		describeTargetVersion,
+	} from "@xriptjs/validate/core";
 	import { CodeJar } from "codejar";
+	import { createLiveFragment } from "./fragment-dom";
+	import { EXAMPLES, CUSTOM_MANIFEST } from "./workbench-examples";
+	import {
+		sampleHostData,
+		bindingCatalog,
+		dataLeaves,
+		readPath,
+		writePath,
+		expressionType,
+		buildModPackage,
+	} from "./workbench-model";
+	import { createZip } from "./zip";
+
+	const J5ML = "application/j5ml+json";
+	const HTML = "text/html";
+
+	const escapeMarkup = (text) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+	const JSON_TOKEN = /("(?:[^"\\\n]|\\.)*")(\s*:)?|(-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)|\b(true|false|null)\b/g;
 
 	function highlightJSON(el) {
 		const code = el.textContent || "";
-		el.innerHTML = code
-			.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-			.replace(/"((?:[^"\\]|\\.)*)"\s*:/g, '<span class="hl-key">"$1"</span>:')
-			.replace(/"((?:[^"\\]|\\.)*)"/g, '<span class="hl-str">"$1"</span>')
-			.replace(/\b(\d+\.?\d*)\b/g, '<span class="hl-num">$1</span>')
-			.replace(/\b(true|false|null)\b/g, '<span class="hl-bool">$1</span>');
+		let html = "";
+		let last = 0;
+		for (const match of code.matchAll(JSON_TOKEN)) {
+			html += escapeMarkup(code.slice(last, match.index));
+			const [, string, colon, number, literal] = match;
+			if (string !== undefined) {
+				html += `<span class="${colon === undefined ? "hl-str" : "hl-key"}">${escapeMarkup(string)}</span>${colon ?? ""}`;
+			} else if (number !== undefined) {
+				html += `<span class="hl-num">${number}</span>`;
+			} else {
+				html += `<span class="hl-bool">${literal}</span>`;
+			}
+			last = match.index + match[0].length;
+		}
+		el.innerHTML = html + escapeMarkup(code.slice(last));
 	}
 
 	function highlightMarkup(el) {
@@ -213,139 +256,26 @@
 			});
 	}
 
+	const $ = (id) => document.getElementById(id);
+	const isObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+
 	let manifestJar;
 	let editorJar;
 	let suppressManifestUpdate = false;
-
-	function validateManifest(manifest) {
-		const errors = [];
-		if (!manifest || typeof manifest !== "object") {
-			errors.push({ message: "manifest must be an object" });
-			return { valid: false, errors };
-		}
-		if (!manifest.xript) errors.push({ message: 'missing "xript" field' });
-		if (!manifest.name) errors.push({ message: 'missing "name" field' });
-		if (manifest.slots && !Array.isArray(manifest.slots)) {
-			errors.push({ message: '"slots" must be an array' });
-		}
-		return { valid: errors.length === 0, errors };
-	}
-
-	const exampleManifests = {
-		dashboard: {
-			xript: "0.4",
-			name: "dashboard-app",
-			title: "Dashboard Application",
-			version: "1.0.0",
-			bindings: {
-				player: {
-					description: "Player info namespace",
-					members: {
-						getName: { description: "Get player name", returns: "string" },
-						getHealth: { description: "Get player health", returns: "number" },
-						getMaxHealth: { description: "Get max health", returns: "number" },
-						getLevel: { description: "Get player level", returns: "number" },
-					},
-				},
-				log: { description: "Log a message", params: [{ name: "msg", type: "string" }] },
-			},
-			capabilities: {
-				"ui-mount": { description: "Mount UI fragments into host slots", risk: "low" },
-				"read-state": { description: "Read application state", risk: "low" },
-			},
-			types: {
-				Player: {
-					description: "Player data",
-					fields: {
-						name: { type: "string", description: "Display name" },
-						health: { type: "number", description: "Current HP" },
-						maxHealth: { type: "number", description: "Maximum HP" },
-						level: { type: "number", description: "Character level" },
-					},
-				},
-			},
-			slots: [
-				{ id: "sidebar.left", accepts: ["text/html", "application/jsml+json"], multiple: true, style: "isolated" },
-				{ id: "header.status", accepts: ["text/html"], multiple: false, style: "inherit" },
-				{ id: "main.overlay", accepts: ["text/html", "application/jsml+json"], capability: "ui-mount", multiple: true, style: "scoped" },
-			],
-		},
-		game: {
-			xript: "0.4",
-			name: "game-hud",
-			title: "Game HUD",
-			version: "2.0.0",
-			bindings: {
-				world: {
-					description: "World state",
-					members: {
-						getTime: { description: "Get game time", returns: "string" },
-						getWeather: { description: "Get weather condition", returns: "string" },
-						getBiome: { description: "Get current biome", returns: "string" },
-					},
-				},
-				combat: {
-					description: "Combat state",
-					members: {
-						getEnemyCount: { description: "Get nearby enemies", returns: "number" },
-						isInCombat: { description: "Check if in combat", returns: "boolean" },
-					},
-				},
-			},
-			capabilities: {
-				"ui-mount": { description: "Mount UI fragments", risk: "low" },
-				"combat-info": { description: "Access combat state", risk: "medium" },
-			},
-			slots: [
-				{ id: "hud.top", accepts: ["text/html"], multiple: true, style: "inherit" },
-				{ id: "hud.minimap", accepts: ["text/html"], multiple: false, style: "isolated" },
-				{ id: "hud.combat", accepts: ["text/html"], capability: "combat-info", multiple: true, style: "scoped" },
-			],
-		},
-	};
-
-	const sampleFragments = {
-		dashboard: [
-			{
-				name: "Health Bar",
-				html: '<div class="health-bar">\n\t<div class="bar-label">Health</div>\n\t<div class="bar-track">\n\t\t<span data-bind="health">0</span> / <span data-bind="maxHealth">0</span>\n\t</div>\n</div>',
-				jsml: '["div", {"class": "health-bar"},\n\t["div", {"class": "bar-label"}, "Health"],\n\t["div", {"class": "bar-track"},\n\t\t["span", {"data-bind": "health"}, "0"],\n\t\t" / ",\n\t\t["span", {"data-bind": "maxHealth"}, "0"]\n\t]\n]',
-			},
-			{
-				name: "Player Card",
-				html: '<div class="player-card">\n\t<div class="card-name" data-bind="name">Player</div>\n\t<div class="card-stat">HP: <span data-bind="health">0</span>/<span data-bind="maxHealth">0</span></div>\n\t<div class="card-stat">Level: <span data-bind="level">1</span></div>\n\t<div data-if="health < 30" class="card-danger">In danger!</div>\n</div>',
-			},
-			{
-				name: "Low Health Warning",
-				html: '<div class="warnings">\n\t<div data-if="health < 50" class="warning">Low health!</div>\n\t<div data-if="health < 20" class="critical">Critical!</div>\n\t<div data-if="health >= 50" class="safe">Health OK</div>\n</div>',
-			},
-			{
-				name: "XSS Test",
-				html: '<div class="safe-content"><p>This is safe.</p></div>\n<script>alert("XSS!")<\/script>\n<div onclick="steal()">Click me</div>\n<iframe src="evil.com"></iframe>',
-			},
-		],
-		game: [
-			{
-				name: "World Info",
-				html: '<div class="world-info">\n\t<div>Time: <span data-bind="time">--:--</span></div>\n\t<div>Weather: <span data-bind="weather">clear</span></div>\n\t<div>Biome: <span data-bind="biome">plains</span></div>\n</div>',
-			},
-			{
-				name: "Combat HUD",
-				html: '<div class="combat-hud">\n\t<div data-if="inCombat" class="combat-active">IN COMBAT</div>\n\t<div data-if="!inCombat" class="combat-idle">Safe</div>\n\t<div>Enemies: <span data-bind="enemyCount">0</span></div>\n</div>',
-			},
-		],
-	};
-
-	let currentManifest = null;
-	let currentManifestKey = "dashboard";
-	let state = {};
-	let mountedFragments = [];
-	let guideStates = {};
+	let currentExample = "dashboard";
+	let host = null;
+	let hostShape = "";
+	let hostData = {};
+	let catalog = [];
+	let hostLintKeys = new Set();
+	let lastCross = null;
+	let mounted = [];
+	let hostRun = 0;
+	let modRun = 0;
 
 	function addConsole(text, level = "log") {
-		const el = document.getElementById("fwb-console");
-		const placeholder = el.querySelector(".placeholder");
-		if (placeholder) placeholder.remove();
+		const el = $("fwb-console");
+		el.querySelector(".placeholder")?.remove();
 		const line = document.createElement("div");
 		line.className = `console-line ${level}`;
 		const prefix = level === "log" ? "[log] " : level === "error" ? "[err] " : "=> ";
@@ -354,48 +284,218 @@
 		el.scrollTop = el.scrollHeight;
 	}
 
-	function buildStateFromManifest(manifest) {
-		const s = {};
-		if (manifest.types) {
-			for (const [, typeDef] of Object.entries(manifest.types)) {
-				if (!typeDef.fields) continue;
-				for (const [fieldName, field] of Object.entries(typeDef.fields)) {
-					if (field.type === "number") s[fieldName] = 50;
-					else if (field.type === "string") s[fieldName] = fieldName;
-					else if (field.type === "boolean") s[fieldName] = false;
-					else s[fieldName] = null;
+	function findingKey(finding) {
+		return `${finding.code}\u0000${finding.message}`;
+	}
+
+	function schemaItems(result) {
+		return [
+			...result.errors.map((e) => ({ severity: "error", label: e.path, message: e.message, hint: e.keyword })),
+			...(result.warnings ?? []).map((w) => ({ severity: "warn", label: w.path, message: w.message, hint: w.keyword })),
+		];
+	}
+
+	function lintItems(findings) {
+		return findings.map((f) => ({ severity: f.severity, label: f.code, message: f.message, hint: f.suggestion }));
+	}
+
+	function renderFindings(el, headline, ok, items) {
+		el.replaceChildren();
+		const head = document.createElement("div");
+		head.className = `findings-head ${ok ? "status-ok" : "status-err"}`;
+		head.textContent = `${ok ? "✓" : "✗"} ${headline}`;
+		el.appendChild(head);
+		const order = { error: 0, warn: 1, info: 2 };
+		for (const item of [...items].sort((a, b) => order[a.severity] - order[b.severity])) {
+			const row = document.createElement("div");
+			row.className = `finding finding-${item.severity}`;
+			const badge = document.createElement("span");
+			badge.className = "finding-badge";
+			badge.textContent = item.severity;
+			const label = document.createElement("code");
+			label.textContent = item.label;
+			const message = document.createElement("span");
+			message.className = "finding-message";
+			message.textContent = item.message;
+			row.append(badge, label, message);
+			if (item.hint) row.title = item.hint;
+			el.appendChild(row);
+		}
+	}
+
+	function countLine(items) {
+		const counts = { error: 0, warn: 0, info: 0 };
+		for (const item of items) counts[item.severity]++;
+		return `${counts.error} error(s), ${counts.warn} warning(s), ${counts.info} note(s)`;
+	}
+
+	async function refreshHost(text) {
+		const run = ++hostRun;
+		const panel = $("fwb-manifest-findings");
+		let manifest;
+		try {
+			manifest = JSON.parse(text);
+		} catch (err) {
+			renderFindings(panel, "Invalid JSON", false, [{ severity: "error", label: "json", message: err.message }]);
+			return;
+		}
+		if (!isObject(manifest)) {
+			renderFindings(panel, "Not a manifest", false, [{ severity: "error", label: "/", message: "a manifest is a JSON object" }]);
+			return;
+		}
+
+		const schema = await validateManifestForVersion(manifest, { kind: "app" });
+		if (run !== hostRun) return;
+		const lint = lintManifests(manifest, []);
+		hostLintKeys = new Set(lint.findings.map(findingKey));
+		const items = [...schemaItems(schema), ...lintItems(lint.findings.filter((f) => f.code !== "dead-slot"))];
+		const version = schema.target ? ` against ${describeTargetVersion(schema.target)}` : "";
+		renderFindings(
+			panel,
+			schema.valid ? `Valid manifest${version}; ${countLine(items)}` : `Schema errors${version}; ${countLine(items)}`,
+			schema.valid && !items.some((i) => i.severity === "error"),
+			items,
+		);
+
+		if (!Array.isArray(manifest.slots)) {
+			host = null;
+			return;
+		}
+		applyHost(manifest);
+		await refreshMod();
+	}
+
+	function applyHost(manifest) {
+		host = manifest;
+		const shape = JSON.stringify([manifest.slots, manifest.bindings, manifest.types]);
+		if (shape === hostShape) {
+			renderSlotContracts();
+			return;
+		}
+		hostShape = shape;
+		const fresh = sampleHostData(manifest);
+		for (const leaf of dataLeaves(hostData)) {
+			const next = readPath(fresh, leaf.path);
+			if (next !== undefined && expressionType(next) === expressionType(leaf.value)) writePath(fresh, leaf.path, leaf.value);
+		}
+		hostData = fresh;
+		catalog = bindingCatalog(hostData);
+		mounted = [];
+		renderSlotRegions();
+		renderStateControls();
+		renderSlotContracts();
+	}
+
+	function slotElementId(slotId) {
+		return `fwb-slot-${slotId.replace(/[^a-z0-9-]/g, "-")}`;
+	}
+
+	function validSlots() {
+		return (host?.slots ?? []).filter((slot) => isObject(slot) && typeof slot.id === "string" && Array.isArray(slot.accepts));
+	}
+
+	function renderSlotRegions() {
+		const container = $("fwb-host-slots");
+		const slotSelect = $("fwb-slot-select");
+		const previous = slotSelect.value;
+		container.replaceChildren();
+		slotSelect.replaceChildren();
+		for (const slot of validSlots()) {
+			const region = document.createElement("div");
+			region.className = "slot-region";
+			const label = document.createElement("div");
+			label.className = "slot-label";
+			label.textContent = slot.id;
+			const meta = document.createElement("span");
+			meta.className = "slot-meta";
+			meta.textContent = [slot.multiple ? "multiple" : "single", slot.style || "inherit", slot.capability].filter(Boolean).join(" · ");
+			label.appendChild(meta);
+			const content = document.createElement("div");
+			content.className = "slot-content";
+			content.id = slotElementId(slot.id);
+			region.append(label, content);
+			region.addEventListener("click", () => renderSlotContracts(slot));
+			container.appendChild(region);
+
+			const option = document.createElement("option");
+			option.value = slot.id;
+			option.textContent = slot.id;
+			slotSelect.appendChild(option);
+		}
+		if ([...slotSelect.options].some((o) => o.value === previous)) slotSelect.value = previous;
+	}
+
+	function renderSlotContracts(slot) {
+		const chosen = slot ?? validSlots().find((s) => s.id === $("fwb-slot-select").value) ?? validSlots()[0];
+		for (const id of ["fwb-slot-contract", "fwb-slot-contract-preview"]) {
+			const panel = $(id);
+			panel.replaceChildren();
+			if (!chosen) {
+				panel.innerHTML = '<div class="placeholder">This manifest declares no slots.</div>';
+				continue;
+			}
+			const header = document.createElement("div");
+			header.className = "contract-header";
+			header.textContent = chosen.id;
+			panel.appendChild(header);
+			const rows = [
+				["Description", chosen.description],
+				["Accepts", chosen.accepts.join(", ")],
+				["Multiple", chosen.multiple ? "yes" : "no"],
+				["Style", chosen.style || "inherit"],
+				["Capability", chosen.capability],
+			];
+			for (const [name, value] of rows) {
+				if (value === undefined) continue;
+				const row = document.createElement("div");
+				row.className = "contract-row";
+				const label = document.createElement("span");
+				label.className = "contract-label";
+				label.textContent = `${name}: `;
+				row.append(label, String(value));
+				panel.appendChild(row);
+			}
+			if (catalog.length > 0) {
+				const row = document.createElement("div");
+				row.className = "contract-row";
+				row.innerHTML = '<span class="contract-label">Bindable host data:</span>';
+				const list = document.createElement("div");
+				list.className = "binding-list";
+				for (const binding of catalog) {
+					const tag = document.createElement("span");
+					tag.className = "binding-tag";
+					tag.title = binding.path;
+					const name = document.createElement("code");
+					name.textContent = binding.name;
+					const type = document.createElement("span");
+					type.className = "binding-type";
+					type.textContent = ` ${expressionType(readPath(hostData, binding.path))}`;
+					tag.append(name, type);
+					list.appendChild(tag);
 				}
+				panel.append(row, list);
 			}
 		}
-		if (manifest.bindings) {
-			for (const [, binding] of Object.entries(manifest.bindings)) {
-				if (!binding.members) continue;
-				for (const [memberName, member] of Object.entries(binding.members)) {
-					const match = memberName.match(/^(?:get|is)(.+)$/);
-					const key = match ? match[1].charAt(0).toLowerCase() + match[1].slice(1) : memberName;
-					if (key in s) continue;
-					if (member.returns === "number") s[key] = 50;
-					else if (member.returns === "string") s[key] = key;
-					else if (member.returns === "boolean") s[key] = false;
-				}
-			}
-		}
-		return s;
 	}
 
 	function renderStateControls() {
-		const container = document.getElementById("fwb-state-controls");
-		container.innerHTML = "";
-		if (Object.keys(state).length === 0) {
-			container.innerHTML = '<div class="placeholder">No state to simulate.</div>';
+		const container = $("fwb-state-controls");
+		container.replaceChildren();
+		const leaves = dataLeaves(hostData);
+		if (leaves.length === 0) {
+			container.innerHTML = '<div class="placeholder">This manifest exposes no readable host data.</div>';
 			return;
 		}
-		for (const [key, value] of Object.entries(state)) {
+		for (const { path, value } of leaves) {
 			const row = document.createElement("div");
 			row.className = "control-row";
 			const label = document.createElement("label");
-			label.textContent = key;
+			label.textContent = path;
 			row.appendChild(label);
+			const set = (next) => {
+				writePath(hostData, path, next);
+				renderFragments();
+			};
 
 			if (typeof value === "number") {
 				const input = document.createElement("input");
@@ -403,418 +503,358 @@
 				input.min = "0";
 				input.max = "100";
 				input.value = String(value);
-				const valSpan = document.createElement("span");
-				valSpan.className = "control-value";
-				valSpan.textContent = String(value);
+				const shown = document.createElement("span");
+				shown.className = "control-value";
+				shown.textContent = String(value);
 				input.addEventListener("input", () => {
-					state[key] = parseInt(input.value);
-					valSpan.textContent = String(state[key]);
-					renderFragments();
+					shown.textContent = input.value;
+					set(Number(input.value));
 				});
-				row.appendChild(input);
-				row.appendChild(valSpan);
+				row.append(input, shown);
 			} else if (typeof value === "boolean") {
 				const input = document.createElement("input");
 				input.type = "checkbox";
 				input.checked = value;
-				input.addEventListener("change", () => {
-					state[key] = input.checked;
-					renderFragments();
+				input.addEventListener("change", () => set(input.checked));
+				row.appendChild(input);
+			} else if (Array.isArray(value) && value.every((v) => typeof v === "string")) {
+				const input = document.createElement("input");
+				input.type = "text";
+				input.value = value.join(", ");
+				input.title = "Comma-separated list";
+				input.addEventListener("input", () => set(input.value.split(",").map((p) => p.trim()).filter((p) => p !== "")));
+				row.appendChild(input);
+			} else if (Array.isArray(value) || isObject(value)) {
+				const input = document.createElement("textarea");
+				input.rows = 3;
+				input.value = JSON.stringify(value);
+				input.title = "JSON";
+				input.addEventListener("input", () => {
+					try {
+						set(JSON.parse(input.value));
+						input.classList.remove("invalid");
+					} catch {
+						input.classList.add("invalid");
+					}
 				});
 				row.appendChild(input);
 			} else {
 				const input = document.createElement("input");
 				input.type = "text";
 				input.value = String(value ?? "");
-				input.addEventListener("input", () => {
-					state[key] = input.value;
-					renderFragments();
-				});
+				input.addEventListener("input", () => set(input.value));
 				row.appendChild(input);
 			}
 			container.appendChild(row);
 		}
 	}
 
-	function renderSlotRegions() {
-		const container = document.getElementById("fwb-host-slots");
-		const slotSelect = document.getElementById("fwb-slot-select");
-		container.innerHTML = "";
-		slotSelect.innerHTML = "";
-		if (!currentManifest?.slots) return;
-
-		for (const slot of currentManifest.slots) {
-			const region = document.createElement("div");
-			region.className = "slot-region";
-
-			const label = document.createElement("div");
-			label.className = "slot-label";
-			const meta = [slot.multiple ? "multiple" : "single", slot.style || "inherit"];
-			if (slot.capability) meta.push(`<code>${slot.capability}</code>`);
-			label.innerHTML = `${slot.id} <span class="slot-meta">${meta.join(" \u00b7 ")}</span>`;
-			region.appendChild(label);
-
-			const content = document.createElement("div");
-			content.className = "slot-content";
-			content.id = `fwb-slot-${slot.id.replace(/\./g, "-")}`;
-			region.appendChild(content);
-			container.appendChild(region);
-
-			const option = document.createElement("option");
-			option.value = slot.id;
-			option.textContent = slot.id;
-			slotSelect.appendChild(option);
-
-			region.addEventListener("click", () => {
-				renderSlotContract(slot, "fwb-slot-contract");
-				renderSlotContract(slot, "fwb-slot-contract-preview");
-			});
-		}
-	}
-
-	function renderSlotContract(slot, targetId) {
-		const panel = document.getElementById(targetId);
-		if (!panel) return;
-		const capHtml = slot.capability
-			? `<div class="contract-row"><span class="contract-label">Capability:</span> <code>${slot.capability}</code></div>`
-			: "";
-
-		const keys = Object.keys(state);
-		const bindingsList = keys.length > 0
-			? `<div class="contract-row"><span class="contract-label">Available bindings:</span></div>
-			   <div class="binding-list">${keys.map(k => `<span class="binding-tag"><code>${k}</code> <span class="binding-type">${typeof state[k]}</span></span>`).join("")}</div>`
-			: "";
-
-		panel.innerHTML = `
-			<div class="contract-header">${slot.id}</div>
-			<div class="contract-row"><span class="contract-label">Accepts:</span> ${slot.accepts.join(", ")}</div>
-			<div class="contract-row"><span class="contract-label">Multiple:</span> ${slot.multiple ? "yes" : "no"}</div>
-			<div class="contract-row"><span class="contract-label">Style:</span> ${slot.style || "inherit"}</div>
-			${capHtml}${bindingsList}`;
-	}
-
 	function renderSamples() {
-		const select = document.getElementById("fwb-sample-select");
+		const select = $("fwb-sample-select");
 		select.innerHTML = '<option value="">Sample...</option>';
-		for (const [i, frag] of (sampleFragments[currentManifestKey] || []).entries()) {
-			const opt = document.createElement("option");
-			opt.value = String(i);
-			opt.textContent = frag.name;
-			select.appendChild(opt);
-		}
-	}
-
-	function applyDataBind(container, data) {
-		for (const el of container.querySelectorAll("[data-bind]")) {
-			const name = el.getAttribute("data-bind");
-			if (data[name] !== undefined) {
-				el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT"
-					? el.value = String(data[name])
-					: el.textContent = String(data[name]);
-			}
-		}
-	}
-
-	function applyDataIf(container, data) {
-		const safeId = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/;
-		for (const el of container.querySelectorAll("[data-if]")) {
-			try {
-				const vars = Object.entries(data).filter(([k]) => safeId.test(k)).map(([k, v]) => `var ${k} = ${JSON.stringify(v)};`).join(" ");
-				el.style.display = new Function(`${vars} return !!(${el.getAttribute("data-if")})`)() ? "" : "none";
-			} catch { el.style.display = "none"; }
+		for (const [i, sample] of (EXAMPLES[currentExample]?.samples ?? []).entries()) {
+			const option = document.createElement("option");
+			option.value = String(i);
+			option.textContent = sample.name;
+			select.appendChild(option);
 		}
 	}
 
 	function renderFragments() {
-		for (const frag of mountedFragments) {
-			applyDataBind(frag.container, state);
-			applyDataIf(frag.container, state);
-		}
+		for (const fragment of mounted) fragment.live.render(fragment.container, hostData);
 	}
 
-	function runDiagnostics(html) {
-		const diagEl = document.getElementById("fwb-diagnostics");
-		const issues = [];
-		const stateKeys = new Set(Object.keys(state));
-
-		for (const [, ref] of html.matchAll(/data-bind="([^"]+)"/g)) {
-			if (!stateKeys.has(ref)) issues.push(`<span class="diag-warn">data-bind="${ref}" — not in state</span>`);
-		}
-		for (const [, expr] of html.matchAll(/data-if="([^"]+)"/g)) {
-			for (const token of (expr.match(/[a-zA-Z_$][a-zA-Z0-9_$]*/g) || [])) {
-				if (!stateKeys.has(token) && !["true", "false", "null", "undefined"].includes(token)) {
-					issues.push(`<span class="diag-warn">data-if references "${token}" — not in state</span>`);
-					break;
-				}
-			}
-		}
-		const sanitized = sanitizeHTMLDetailed(html);
-		for (const tag of sanitized.strippedElements) issues.push(`<span class="diag-strip">&lt;${tag}&gt; will be stripped</span>`);
-		for (const attr of sanitized.strippedAttributes) issues.push(`<span class="diag-strip">${attr.attribute} on &lt;${attr.element}&gt; will be stripped</span>`);
-		diagEl.innerHTML = issues.join(" \u00b7 ");
+	function currentFormat() {
+		return $("fwb-format-toggle").value === "j5ml" ? J5ML : HTML;
 	}
 
-	function mountFragment(html, slotId) {
-		const slot = currentManifest?.slots?.find(s => s.id === slotId);
-		if (!slot) { addConsole(`Slot '${slotId}' not found`, "error"); return; }
-		if (slot.capability) addConsole(`Slot requires capability: ${slot.capability}`, "log");
-
-		const sanitized = sanitizeHTMLDetailed(html);
-		if (sanitized.strippedElements.length > 0 || sanitized.strippedAttributes.length > 0) {
-			addConsole("Sanitizer stripped dangerous content:", "log");
-			for (const tag of sanitized.strippedElements) addConsole(`  stripped <${tag}>`, "error");
-			for (const attr of sanitized.strippedAttributes) addConsole(`  stripped ${attr.attribute} on <${attr.element}>`, "error");
-		} else {
-			addConsole("Fragment is clean", "log");
-		}
-
-		const slotEl = document.getElementById(`fwb-slot-${slotId.replace(/\./g, "-")}`);
-		if (!slotEl) return;
-		if (!slot.multiple) slotEl.innerHTML = "";
-
-		const wrapper = document.createElement("div");
-		wrapper.className = "fragment-wrapper";
-		wrapper.innerHTML = sanitized.html;
-		slotEl.appendChild(wrapper);
-		applyDataBind(wrapper, state);
-		applyDataIf(wrapper, state);
-		mountedFragments.push({ container: wrapper, slotId });
-		addConsole(`Mounted into ${slotId}`, "result");
-		updateExportPreview();
+	function authoredPackage(inline) {
+		const source = editorJar.toString();
+		const format = currentFormat();
+		const read = new Set(fragmentReadNames(source, format, {
+			interpolate: source.includes("{{"),
+			formats: host?.formats ?? null,
+			vocabularies: host?.vocabularies ?? null,
+		}));
+		return buildModPackage({
+			host,
+			slotId: $("fwb-slot-select").value,
+			format,
+			source,
+			modName: $("fwb-mod-name").value.trim(),
+			fillId: $("fwb-fill-id").value.trim(),
+			inline,
+			bindings: catalog.filter((binding) => read.has(binding.name)),
+		});
 	}
 
-	function buildModManifest() {
-		const slotSelect = document.getElementById("fwb-slot-select");
-		const formatToggle = document.getElementById("fwb-format-toggle");
-		const format = formatToggle.value === "jsml" ? "application/jsml+json" : "text/html";
+	async function refreshMod() {
+		const run = ++modRun;
+		const modPanel = $("fwb-mod-findings");
+		const exportStatus = $("fwb-export-status");
+		const preview = $("fwb-export-preview");
+		const fragmentPreview = $("fwb-fragment-preview");
+		if (!host || !editorJar.toString().trim() || !$("fwb-slot-select").value) {
+			modPanel.replaceChildren();
+			exportStatus.replaceChildren();
+			preview.innerHTML = '<span class="placeholder">Author a fragment and select a slot to see your mod manifest here.</span>';
+			fragmentPreview.textContent = "";
+			lastCross = null;
+			return;
+		}
 
-		const mod = {
-			xript: "0.4",
-			name: "my-mod",
-			version: "1.0.0",
-			capabilities: [],
-			fragments: [{
-				id: "my-fragment",
-				slot: slotSelect.value || "sidebar.left",
-				format,
-				inline: true,
-				source: editorJar.toString(),
-			}],
+		const inlinePackage = authoredPackage(true);
+		const exported = authoredPackage($("fwb-inline").checked);
+		const fillId = $("fwb-fill-id").value.trim();
+		const bindingTypes = {
+			[fillId]: Object.fromEntries(catalog.map((b) => [b.name, expressionType(readPath(hostData, b.path))])),
 		};
 
-		if (currentManifest?.slots) {
-			const slot = currentManifest.slots.find(s => s.id === slotSelect.value);
-			if (slot?.capability) mod.capabilities.push(slot.capability);
-		}
-		return mod;
+		const [schema, cross] = await Promise.all([
+			validateManifestForVersion(exported.manifest, { kind: "mod" }),
+			crossValidate(host, inlinePackage.manifest),
+		]);
+		if (run !== modRun) return;
+		const lint = lintManifests(host, [inlinePackage.manifest], { bindingTypes });
+		const modLint = lint.findings.filter((f) => f.code !== "dead-slot" && !hostLintKeys.has(findingKey(f)));
+		lastCross = cross;
+
+		const crossItems = schemaItems(cross).map((item) => ({ ...item, label: item.hint, hint: item.label }));
+		const authorItems = [...crossItems, ...lintItems(modLint)];
+		const authorOk = cross.valid && !authorItems.some((i) => i.severity === "error");
+		renderFindings(modPanel, `${authorOk ? "Fits" : "Does not fit"} ${host.name ?? "the host"}; ${countLine(authorItems)}`, authorOk, authorItems);
+
+		const exportItems = [...schemaItems(schema), ...authorItems];
+		const exportOk = schema.valid && authorOk;
+		renderFindings(
+			exportStatus,
+			exportOk ? "mod-manifest.json validates and cross-validates against the app manifest" : `mod-manifest.json has problems; ${countLine(exportItems)}`,
+			exportOk,
+			exportOk ? exportItems.filter((i) => i.severity !== "info") : exportItems,
+		);
+
+		preview.textContent = JSON.stringify(exported.manifest, null, "\t");
+		const inline = $("fwb-inline").checked;
+		$("fwb-fragment-path").textContent = inline ? "Fragment (inlined in the manifest)" : exported.fragmentPath;
+		fragmentPreview.textContent = inline ? "" : editorJar.toString();
+		$("fwb-copy-fragment-btn").disabled = inline;
 	}
 
-	function updateExportPreview() {
-		const preview = document.getElementById("fwb-export-preview");
-		if (!editorJar || !editorJar.toString().trim()) {
-			preview.innerHTML = '<span class="placeholder">Author a fragment to see your mod manifest here.</span>';
+	let modDebounce;
+	function scheduleModRefresh() {
+		clearTimeout(modDebounce);
+		modDebounce = setTimeout(() => refreshMod(), 300);
+	}
+
+	function mountFragment() {
+		const source = editorJar.toString().trim();
+		if (!source || !host) return;
+		const slotId = $("fwb-slot-select").value;
+		const slot = validSlots().find((s) => s.id === slotId);
+		if (!slot) {
+			addConsole(`Slot '${slotId}' not found`, "error");
 			return;
 		}
-		preview.textContent = JSON.stringify(buildModManifest(), null, "\t");
-	}
+		const format = currentFormat();
+		if (!slot.accepts.includes(format)) {
+			addConsole(`Slot '${slotId}' does not accept ${format} (accepts ${slot.accepts.join(", ")})`, "error");
+			return;
+		}
+		if (slot.capability) addConsole(`Slot requires capability: ${slot.capability}`, "log");
 
-	function exportModManifest() {
-		const mod = buildModManifest();
-		const blob = new Blob([JSON.stringify(mod, null, "\t")], { type: "application/json" });
-		const url = URL.createObjectURL(blob);
-		const a = document.createElement("a");
-		a.href = url;
-		a.download = "mod-manifest.json";
-		a.click();
-		URL.revokeObjectURL(url);
-		addConsole("Exported mod manifest", "result");
-	}
-
-	let manifestReadOnly = false;
-
-	function loadManifest(key) {
-		const status = document.getElementById("fwb-manifest-status");
-
-		if (key === "custom") {
-			manifestReadOnly = false;
-			suppressManifestUpdate = true;
-			manifestJar.updateCode(JSON.stringify({ xript: "0.4", name: "my-app", slots: [] }, null, "\t"));
-			suppressManifestUpdate = false;
-			status.innerHTML = '<span class="status-info">Edit your manifest above</span>';
-			currentManifest = null;
+		const fill = authoredPackage(true).manifest.fills[slotId][0];
+		let live;
+		try {
+			live = createLiveFragment(source, format, fill.bindings ?? [], fill.interpolate === true, {
+				formats: host.formats ?? null,
+				vocabularies: host.vocabularies ?? null,
+			});
+		} catch (err) {
+			addConsole(err.message, "error");
 			return;
 		}
 
-		const manifest = exampleManifests[key];
+		const stripped = (lastCross?.warnings ?? []).filter((w) => w.keyword === "cross-fill-vocabulary");
+		for (const warning of stripped) addConsole(`sanitizer: ${warning.message}`, "error");
+		if (stripped.length === 0) addConsole("Fragment is clean", "log");
+
+		const slotEl = $(slotElementId(slotId));
+		if (!slotEl) return;
+		if (!slot.multiple) {
+			slotEl.replaceChildren();
+			mounted = mounted.filter((m) => m.slotId !== slotId);
+		}
+		const wrapper = document.createElement("div");
+		wrapper.className = "fragment-wrapper";
+		slotEl.appendChild(wrapper);
+		live.render(wrapper, hostData);
+		mounted.push({ container: wrapper, slotId, live });
+		addConsole(`Mounted into ${slotId}`, "result");
+	}
+
+	function attributes(props) {
+		return `{${Object.entries(props).map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`).join(", ")}}`;
+	}
+
+	function formatJ5ml(node, depth = 0) {
+		if (!Array.isArray(node)) return JSON.stringify(node);
+		const [name, ...rest] = node;
+		const head = [JSON.stringify(name)];
+		let children = rest;
+		if (isObject(rest[0])) {
+			head.push(attributes(rest[0]));
+			children = rest.slice(1);
+		}
+		if (children.every((child) => typeof child === "string")) {
+			return `[${[...head, ...children.map((c) => JSON.stringify(c))].join(", ")}]`;
+		}
+		const indent = "\t".repeat(depth + 1);
+		const body = children.map((child) => `${indent}${formatJ5ml(child, depth + 1)}`).join(",\n");
+		return `[${head.join(", ")},\n${body}\n${"\t".repeat(depth)}]`;
+	}
+
+	function dropLayoutWhitespace(nodes) {
+		return nodes
+			.filter((node) => !(typeof node === "string" && node.trim() === "" && node.includes("\n")))
+			.map((node) => (Array.isArray(node) ? [node[0], ...dropLayoutWhitespace(node.slice(1))] : node));
+	}
+
+	function htmlToJ5mlSource(html) {
+		const nodes = dropLayoutWhitespace(treeToJsml(htmlToTree(html)));
+		return nodes.length === 1 ? formatJ5ml(nodes[0]) : `[\n${nodes.map((n) => `\t${formatJ5ml(n, 1)}`).join(",\n")}\n]`;
+	}
+
+	function j5mlToHtmlSource(source) {
+		return treeToHtml(jsmlToTree(parseJsmlSource(source, J5ML)));
+	}
+
+	function loadExample(key) {
+		currentExample = key;
+		const manifest = key === "custom" ? CUSTOM_MANIFEST : EXAMPLES[key]?.manifest;
 		if (!manifest) return;
-
-		manifestReadOnly = true;
 		suppressManifestUpdate = true;
 		manifestJar.updateCode(JSON.stringify(manifest, null, "\t"));
 		suppressManifestUpdate = false;
-		currentManifestKey = key;
-
-		const result = validateManifest(manifest);
-		if (result.valid) {
-			status.innerHTML = '<span class="status-ok">\u2713 Valid manifest</span>';
-			currentManifest = manifest;
-			state = buildStateFromManifest(manifest);
-			mountedFragments = [];
-			renderSlotRegions();
-			renderStateControls();
-			renderSamples();
-			if (manifest.slots?.[0]) {
-				renderSlotContract(manifest.slots[0], "fwb-slot-contract");
-				renderSlotContract(manifest.slots[0], "fwb-slot-contract-preview");
-			}
-		} else {
-			status.innerHTML = `<span class="status-err">\u2717 ${result.errors.length} error(s)</span>`;
-			currentManifest = null;
-		}
-	}
-
-	function parseCustomManifest(json) {
-		const status = document.getElementById("fwb-manifest-status");
-		try {
-			const manifest = JSON.parse(json);
-			const result = validateManifest(manifest);
-			if (result.valid) {
-				status.innerHTML = '<span class="status-ok">\u2713 Valid manifest</span>';
-				currentManifest = manifest;
-				currentManifestKey = "custom";
-				state = buildStateFromManifest(manifest);
-				mountedFragments = [];
-				renderSlotRegions();
-				renderStateControls();
-				renderSamples();
-				if (manifest.slots?.[0]) {
-					renderSlotContract(manifest.slots[0], "fwb-slot-contract");
-					renderSlotContract(manifest.slots[0], "fwb-slot-contract-preview");
-				}
-			} else {
-				status.innerHTML = `<span class="status-err">\u2717 ${result.errors.map(e => e.message).join("; ")}</span>`;
-			}
-		} catch {
-			status.innerHTML = '<span class="status-err">\u2717 Invalid JSON</span>';
-		}
+		renderSamples();
+		refreshHost(manifestJar.toString());
 	}
 
 	function switchTab(tabId) {
-		for (const btn of document.querySelectorAll("#fwb-tabs .tab")) {
-			btn.classList.toggle("active", btn.dataset.tab === tabId);
+		for (const btn of document.querySelectorAll("#fwb-tabs .tab")) btn.classList.toggle("active", btn.dataset.tab === tabId);
+		for (const content of document.querySelectorAll("#fwb .tab-content")) content.classList.toggle("active", content.id === `tab-${tabId}`);
+	}
+
+	async function copyText(text, button) {
+		try {
+			await navigator.clipboard.writeText(text);
+			const label = button.textContent;
+			button.textContent = "Copied";
+			setTimeout(() => (button.textContent = label), 1200);
+		} catch (err) {
+			addConsole(`Copy failed: ${err.message}`, "error");
 		}
-		for (const content of document.querySelectorAll(".tab-content")) {
-			content.classList.toggle("active", content.id === `tab-${tabId}`);
-		}
+	}
+
+	function downloadZip() {
+		if (!host || !editorJar.toString().trim()) return;
+		const inline = $("fwb-inline").checked;
+		const pkg = authoredPackage(inline);
+		const entries = [{ path: "mod-manifest.json", content: `${JSON.stringify(pkg.manifest, null, "\t")}\n` }];
+		if (!inline) entries.push({ path: pkg.fragmentPath, content: editorJar.toString() });
+		const blob = new Blob([createZip(entries)], { type: "application/zip" });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement("a");
+		a.href = url;
+		a.download = `${pkg.manifest.name || "mod"}.zip`;
+		a.click();
+		setTimeout(() => URL.revokeObjectURL(url), 0);
+		addConsole(`Exported ${a.download}`, "result");
 	}
 
 	function boot() {
 		try {
-			document.getElementById("fwb-loading").style.display = "none";
-			document.getElementById("fwb-main").style.display = "block";
+			$("fwb-loading").style.display = "none";
+			$("fwb-main").style.display = "block";
 
-			for (const btn of document.querySelectorAll("#fwb-tabs .tab")) {
-				btn.addEventListener("click", () => switchTab(btn.dataset.tab));
-			}
-
-			for (const toggle of document.querySelectorAll(".guide-toggle")) {
+			for (const btn of document.querySelectorAll("#fwb-tabs .tab")) btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+			for (const toggle of document.querySelectorAll("#fwb .guide-toggle")) {
 				toggle.addEventListener("click", () => {
 					const body = toggle.nextElementSibling;
-					const arrow = toggle.querySelector(".guide-arrow");
-					const key = toggle.dataset.guide;
 					const open = body.style.display === "none";
 					body.style.display = open ? "block" : "none";
-					arrow.textContent = open ? "\u25be" : "\u25b8";
-					guideStates[key] = open;
+					toggle.querySelector(".guide-arrow").textContent = open ? "▾" : "▸";
 				});
 			}
 
-			const manifestSelect = document.getElementById("fwb-manifest-select");
-			const manifestEl = document.getElementById("fwb-manifest-editor");
-			const sampleSelect = document.getElementById("fwb-sample-select");
-			const formatToggle = document.getElementById("fwb-format-toggle");
-			const editorEl = document.getElementById("fwb-editor");
+			const sampleSelect = $("fwb-sample-select");
+			const formatToggle = $("fwb-format-toggle");
+			const editorEl = $("fwb-editor");
 
-			manifestJar = CodeJar(manifestEl, highlightJSON, { tab: "\t" });
+			manifestJar = CodeJar($("fwb-manifest-editor"), highlightJSON, { tab: "\t" });
 			editorJar = CodeJar(editorEl, highlightMarkup, { tab: "\t" });
 
-			let debounce;
-			manifestJar.onUpdate(code => {
+			let manifestDebounce;
+			manifestJar.onUpdate((code) => {
 				if (suppressManifestUpdate) return;
-				if (manifestReadOnly) return;
-				clearTimeout(debounce);
-				debounce = setTimeout(() => parseCustomManifest(code), 500);
+				clearTimeout(manifestDebounce);
+				manifestDebounce = setTimeout(() => refreshHost(code), 400);
 			});
+			$("fwb-manifest-select").addEventListener("change", (event) => loadExample(event.target.value));
 
-			manifestSelect.addEventListener("change", () => loadManifest(manifestSelect.value));
+			const wireEditor = () => editorJar.onUpdate(scheduleModRefresh);
+			const setEditor = (code) => {
+				editorJar.updateCode(code);
+				scheduleModRefresh();
+			};
 
-			function loadSelectedSample(runDiag) {
-				const sample = (sampleFragments[currentManifestKey] || [])[parseInt(sampleSelect.value)];
+			sampleSelect.addEventListener("change", () => {
+				const sample = EXAMPLES[currentExample]?.samples[parseInt(sampleSelect.value)];
 				if (!sample) return;
-				const code = formatToggle.value === "jsml" && sample.jsml ? sample.jsml : sample.html;
-				editorJar.updateCode(code);
-				if (runDiag) runDiagnostics(sample.html || code);
-				updateExportPreview();
-			}
-
-			sampleSelect.addEventListener("change", () => loadSelectedSample(true));
-			function rebuildEditorJar() {
-				const code = editorJar.toString();
-				editorJar.destroy();
-				const hl = formatToggle.value === "jsml" ? highlightJSON : highlightMarkup;
-				editorJar = CodeJar(editorEl, hl, { tab: "\t" });
-				editorJar.updateCode(code);
-				wireEditorUpdate();
-			}
+				if (formatToggle.value === "j5ml") setEditor(sample.j5ml ?? htmlToJ5mlSource(sample.html));
+				else setEditor(sample.html);
+			});
 
 			formatToggle.addEventListener("change", () => {
-				loadSelectedSample(false);
-				rebuildEditorJar();
-			});
-
-			let editorDebounce;
-			function wireEditorUpdate() {
-				editorJar.onUpdate(editorUpdateHandler);
-			}
-			function editorUpdateHandler(code) {
-				clearTimeout(editorDebounce);
-				editorDebounce = setTimeout(() => {
-					let html = code;
-					if (formatToggle.value === "jsml") {
-						try { html = jsmlToHtml(JSON.parse(html)); } catch { return; }
-					}
-					runDiagnostics(html);
-					updateExportPreview();
-				}, 300);
-			}
-			wireEditorUpdate();
-
-			document.getElementById("fwb-mount-btn").addEventListener("click", () => {
-				let html = editorJar.toString().trim();
-				if (!html) return;
-				if (formatToggle.value === "jsml") {
-					try { html = jsmlToHtml(JSON.parse(html)); addConsole("Converted JSML to HTML", "log"); }
-					catch (e) { addConsole(`Invalid JSML: ${e.message}`, "error"); return; }
+				const code = editorJar.toString();
+				const sample = EXAMPLES[currentExample]?.samples[parseInt(sampleSelect.value)];
+				let converted = code;
+				try {
+					if (formatToggle.value === "j5ml") converted = sample?.html === code && sample.j5ml ? sample.j5ml : code.trim() ? htmlToJ5mlSource(code) : "";
+					else converted = sample?.j5ml === code ? sample.html : code.trim() ? j5mlToHtmlSource(code) : "";
+				} catch (err) {
+					addConsole(`Could not convert the source: ${err.message}`, "error");
 				}
-				mountFragment(html, document.getElementById("fwb-slot-select").value);
+				editorJar.destroy();
+				editorJar = CodeJar(editorEl, formatToggle.value === "j5ml" ? highlightJSON : highlightMarkup, { tab: "\t" });
+				wireEditor();
+				setEditor(converted);
 			});
+			wireEditor();
 
-			document.getElementById("fwb-clear-slots-btn").addEventListener("click", () => {
-				for (const el of document.querySelectorAll("#fwb-host-slots .slot-content")) el.innerHTML = "";
-				mountedFragments = [];
+			$("fwb-slot-select").addEventListener("change", () => {
+				renderSlotContracts();
+				scheduleModRefresh();
+			});
+			for (const id of ["fwb-mod-name", "fwb-fill-id"]) $(id).addEventListener("input", scheduleModRefresh);
+			$("fwb-inline").addEventListener("change", scheduleModRefresh);
+
+			$("fwb-mount-btn").addEventListener("click", mountFragment);
+			$("fwb-clear-slots-btn").addEventListener("click", () => {
+				for (const el of document.querySelectorAll("#fwb-host-slots .slot-content")) el.replaceChildren();
+				mounted = [];
 				addConsole("Cleared all slots", "log");
 			});
-
-			document.getElementById("fwb-clear-btn").addEventListener("click", () => {
-				document.getElementById("fwb-console").innerHTML = '<div class="placeholder">Mount a fragment to see output here.</div>';
+			$("fwb-clear-btn").addEventListener("click", () => {
+				$("fwb-console").innerHTML = '<div class="placeholder">Mount a fragment to see output here.</div>';
 			});
+			$("fwb-export-btn").addEventListener("click", downloadZip);
+			$("fwb-copy-manifest-btn").addEventListener("click", (event) => copyText($("fwb-export-preview").textContent, event.currentTarget));
+			$("fwb-copy-fragment-btn").addEventListener("click", (event) => copyText(editorJar.toString(), event.currentTarget));
 
-			document.getElementById("fwb-export-btn").addEventListener("click", exportModManifest);
-
-			loadManifest("dashboard");
+			loadExample("dashboard");
 			addConsole("Fragment Workbench ready", "log");
 		} catch (err) {
-			document.getElementById("fwb-loading").innerHTML = `<p style="color: #f87171;">Failed to load: ${err.message}</p>`;
+			$("fwb-loading").innerHTML = `<p style="color: #f87171;">Failed to load: ${escapeMarkup(String(err && err.message || err))}</p>`;
 		}
 	}
 
@@ -910,7 +950,7 @@
 	}
 	.panel-header {
 		display: flex; align-items: center; justify-content: space-between;
-		flex-wrap: nowrap;
+		flex-wrap: wrap; gap: 0.375rem;
 		padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--sl-color-gray-5);
 		background: var(--sl-color-black);
 	}
@@ -951,13 +991,28 @@
 	:global(.hl-attr) { color: #fcd34d; }
 	:global(.hl-attr + .hl-str) { color: #86efac; }
 
-	.manifest-status {
-		padding: 0.25rem 0.75rem; font-family: var(--sl-font-mono);
-		font-size: 0.6875rem; border-top: 1px solid var(--sl-color-gray-5);
+	.findings {
+		font-family: var(--sl-font-mono); font-size: 0.6875rem; line-height: 1.5;
+		border-top: 1px solid var(--sl-color-gray-5); max-height: 220px; overflow-y: auto; overflow-x: hidden;
 	}
+	.findings:empty { display: none; }
+	:global(#fwb .findings-head) { padding: 0.25rem 0.75rem; margin: 0; }
+	:global(#fwb .finding) {
+		display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.5rem;
+		padding: 0.125rem 0.75rem; margin: 0; color: var(--sl-color-gray-2);
+	}
+	:global(#fwb .finding code) { color: var(--sl-color-gray-3); font-size: 0.625rem; overflow-wrap: anywhere; min-width: 0; }
+	:global(#fwb .finding-message) { flex: 1 1 14rem; min-width: 0; overflow-wrap: anywhere; }
+	:global(#fwb .finding-badge) {
+		font-size: 0.5625rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+		padding: 0 0.25rem; border-radius: 0.125rem; flex-shrink: 0; min-width: 2.75rem; text-align: center;
+		background: var(--sl-color-gray-5);
+	}
+	:global(#fwb .finding-error .finding-badge) { color: #f87171; }
+	:global(#fwb .finding-warn .finding-badge) { color: #fbbf24; }
+	:global(#fwb .finding-info .finding-badge) { color: var(--sl-color-gray-3); }
 	:global(.status-ok) { color: #4ade80; }
 	:global(.status-err) { color: #f87171; }
-	:global(.status-info) { color: var(--sl-color-gray-3); }
 
 	.slot-contract, .export-steps {
 		padding: 0.5rem 0.75rem; font-family: var(--sl-font-mono);
@@ -997,13 +1052,6 @@
 	:global(.fragment-wrapper) { padding: 0.25rem 0; border-bottom: 1px solid var(--sl-color-gray-5); }
 	:global(.fragment-wrapper:last-child) { border-bottom: none; }
 
-	.editor-diagnostics {
-		font-family: var(--sl-font-mono); font-size: 0.625rem;
-		padding: 0 0.5rem; min-height: 0; line-height: 1.6; background: var(--sl-color-black);
-	}
-	:global(.diag-warn) { color: #fbbf24; }
-	:global(.diag-strip) { color: #f87171; }
-
 	.editor-footer {
 		display: flex; align-items: center; justify-content: space-between;
 		padding: 0.375rem 0.5rem; border-top: 1px solid var(--sl-color-gray-5);
@@ -1031,16 +1079,18 @@
 	:global(#fwb .control-row) {
 		display: flex; align-items: center; gap: 0.75rem;
 		font-family: var(--sl-font-mono); font-size: 0.6875rem;
-		padding: 0.125rem 0;
+		padding: 0.125rem 0; margin: 0;
 	}
 	:global(#fwb .control-row label) { min-width: 90px; color: var(--sl-color-gray-3); flex-shrink: 0; }
 	:global(#fwb .control-row input[type="range"]) { flex: 1; accent-color: var(--sl-color-accent); }
-	:global(#fwb .control-row input[type="text"]) {
+	:global(#fwb .control-row input[type="text"]), :global(#fwb .control-row textarea), .export-fields input[type="text"] {
 		flex: 1; font-family: var(--sl-font-mono); font-size: 0.6875rem;
 		padding: 0.125rem 0.375rem; background: var(--sl-color-gray-5);
 		color: var(--sl-color-white); border: 1px solid var(--sl-color-gray-4);
-		border-radius: 0.25rem; outline: none;
+		border-radius: 0.25rem; outline: none; min-width: 0;
 	}
+	:global(#fwb .control-row textarea) { resize: vertical; }
+	:global(#fwb .control-row textarea.invalid) { border-color: #f87171; }
 	:global(#fwb .control-row input[type="checkbox"]) { accent-color: var(--sl-color-accent); }
 	:global(#fwb .control-value) { min-width: 30px; text-align: right; color: var(--sl-color-accent); font-weight: 600; }
 
@@ -1050,6 +1100,7 @@
 		border-radius: 0.25rem; cursor: pointer; transition: all 0.15s;
 	}
 	.clear-button:hover { color: var(--sl-color-white); border-color: var(--sl-color-gray-3); }
+	.clear-button:disabled { opacity: 0.4; cursor: default; }
 
 	.fwb-console {
 		padding: 0.5rem; min-height: 60px; max-height: 120px;
@@ -1068,6 +1119,17 @@
 		color: var(--sl-color-white); line-height: 1.5; overflow: auto;
 		min-height: 200px; max-height: 400px; white-space: pre;
 	}
+	.fragment-preview { min-height: 0; max-height: 200px; }
+	.fragment-preview:empty { display: none; }
+	.sub-header { border-top: 1px solid var(--sl-color-gray-5); }
+	.export-fields {
+		display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center;
+		padding: 0.375rem 0.75rem; border-bottom: 1px solid var(--sl-color-gray-5);
+		font-family: var(--sl-font-mono); font-size: 0.6875rem; color: var(--sl-color-gray-3);
+	}
+	.export-fields label { display: flex; align-items: center; gap: 0.375rem; margin: 0; }
+	.export-fields input[type="text"] { width: 8rem; flex: none; }
+	.export-check input { accent-color: var(--sl-color-accent); margin: 0; }
 	.export-steps { font-family: var(--sl-font); font-size: 0.8125rem; }
 	.export-step {
 		display: flex; gap: 0.75rem; align-items: flex-start;
@@ -1103,4 +1165,5 @@
 	:global(.combat-active) { color: #f87171; font-weight: 700; text-transform: uppercase; }
 	:global(.combat-idle) { color: #4ade80; }
 	:global(.safe-content) { color: var(--sl-color-white); }
+	:global(.inventory), :global(.party) { font-family: var(--sl-font-mono); font-size: 0.8125rem; color: var(--sl-color-gray-2); }
 </style>

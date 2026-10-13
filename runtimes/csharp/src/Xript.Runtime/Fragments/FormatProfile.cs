@@ -235,7 +235,7 @@ public static class FormatProfiles
 {
     /// <summary>Props legal on every node of every vocabulary. Always strings, never sanitized, never dropped.</summary>
     public static readonly HashSet<string> ProtocolProps =
-        new(["id", "data-bind", "data-if"], StringComparer.Ordinal);
+        new(["id", "data-bind", "data-if", "data-each", "data-key"], StringComparer.Ordinal);
 
     public static readonly IReadOnlyList<string> BuiltinFormatIds =
         ["text/html", "text/html+jsml", "application/j5ml+json", "application/jsml+json"];

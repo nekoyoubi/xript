@@ -2,14 +2,14 @@
 
 A host renders a mod's UI by driving the runtime and applying what it returns. The split is the whole job: **the runtime does the processing; the host renders the runtime's inert output and routes interaction back in.** This is the host side of the [authoring](/guidance/authoring/) topic, and the canonical case of the [host/runtime boundary](/guidance/hosting/).
 
-Rendering HTML needs nothing declared: the built-in HTML vocabulary is there and unchanged. Rendering anything else — components, terminal widgets, native controls — starts with [declaring the format](/guidance/host-formats/), which is what tells the runtime which nodes are legal and which prop values are dangerous.
+Rendering HTML needs nothing declared: the built-in HTML vocabulary is there and unchanged. Rendering anything else (components, terminal widgets, native controls) starts with [declaring the format](/guidance/host-formats/), which is what tells the runtime which nodes are legal and which prop values are dangerous.
 
 ## The seam
 
 There is one public entry point: the runtime factory. A host never reaches into the runtime's internals; it drives the runtime and renders what comes back.
 
 1. **Initialize the factory.** `const xript = await initXript()` (or `initXriptAsync()` for the async sandbox). This is the only import a host needs from `@xriptjs/runtime`.
-2. **Create a runtime per app manifest.** `xript.createRuntime(manifest, { hostBindings, capabilities, console, onFragmentDiagnostic })`. The runtime is the unit of hosting — it owns sanitization, the format vocabulary, binding resolution, conditional visibility, hooks, capability enforcement, and the sandbox.
+2. **Create a runtime per app manifest.** `xript.createRuntime(manifest, { hostBindings, capabilities, console, onFragmentDiagnostic })`. The runtime is the unit of hosting: it owns sanitization, the format vocabulary, binding resolution, conditional visibility, hooks, capability enforcement, and the sandbox.
 3. **Load mods into it.** `runtime.loadMod(modManifest, { fragmentSources })` returns a `ModInstance` describing the fragments, data fills, and exports the mod contributed. A fill whose `format` names no vocabulary the host declares fails here, loudly.
 4. **Render inert output.** Push host data in with `modInstance.updateBindings({ ... })`, which returns one `FragmentUpdateResult` per fragment; fire lifecycle and update points with `runtime.fireFragmentHook(fragmentId, lifecycle, bindings)`, which returns a `FragmentOp[]` command buffer. The host applies that content, visibility, and op buffer to its UI, and nothing more.
 5. **Route interaction back in.** When a rendered node fires an event, the host hands the matching handler *declaration* (`{ selector, target, on, handler }`) to a dispatch callback that calls `runtime.invokeExport(handler, args)`. The author's code runs in the sandbox, never in the page.
@@ -27,6 +27,7 @@ There is one public entry point: the runtime factory. A host never reaches into 
 	html: string;                        // the bound HTML serialization; "" when contentType is "tree"
 	tree: FragmentNode[];                // always present, for every format
 	conditions: FragmentCondition[];     // every data-if, keyed by tree position
+	repeats: FragmentRepeat[];           // every data-each expansion, with keys and an update patch
 	visibility: Record<string, boolean>; // deprecated, keyed by expression text; collides
 	diagnostics: FragmentDiagnostic[];
 }
@@ -53,9 +54,11 @@ type FragmentCondition = {
 };
 ```
 
-The tree is **never pruned** — the host decides what "hidden" means for its renderer, because a fragment cannot know whether hiding is a CSS class, an unmount, or a zero-height constraint. Address the node to hide by `path`.
+The tree is **never pruned**: the host decides what "hidden" means for its renderer, because a fragment cannot know whether hiding is a CSS class, an unmount, or a zero-height constraint. Address the node to hide by `path`.
 
-`visibility` is the deprecated predecessor, still populated. It is keyed by the `data-if` expression *text*, so two nodes carrying the same condition collapse into one entry, last write wins, and nothing maps an entry back to the node it came from. Read `conditions`.
+`visibility` is the deprecated predecessor, still populated. It is keyed by the `data-if` expression *text*, so two nodes carrying the same condition collapse into one entry, last write wins, and nothing maps an entry back to the node it came from. Read `conditions`. Inside a `data-each` repeat this matters more: every copy of a templated `data-if` carries the same text and a different answer.
+
+`repeats` describes every `data-each` expansion. The copies are already in `tree`, so a host that remounts the tree on every update can ignore it. A host that keeps drawn nodes alive reads each repeat's `path`, `start`, and `count` to find the range, and its `patch` (`remove`, `insert`, `reuse`, `move`, by key) to turn the copies it drew last time into these without losing focus or scroll position on an item that merely moved. Without a `data-key` the patch replaces the whole range.
 
 `diagnostics` is everything the sanitizer dropped, cleaned, or refused. Surface them; a silent drop is the failure mode this contract exists to end. Op-time findings arrive separately, through the `onFragmentDiagnostic` runtime option.
 
@@ -75,7 +78,7 @@ A host manifest declaring one fragment slot, a mod filling it with an inert temp
 }
 ```
 
-**Mod manifest + template** (`fills` keyed by slot id; the template is inert — `data-bind` for values, `data-if` for visibility, no script):
+**Mod manifest + template** (`fills` keyed by slot id; the template is inert: `data-bind` for values, `data-if` for visibility, `data-each` for lists, no script):
 
 ```json
 {
@@ -108,7 +111,7 @@ A host manifest declaring one fragment slot, a mod filling it with an inert temp
 </div>
 ```
 
-**The host loop** — create, load, push data, apply what comes back:
+**The host loop**: create, load, push data, apply what comes back:
 
 ```js
 import { initXript } from "@xriptjs/runtime";
@@ -126,7 +129,7 @@ const mod = runtime.loadMod(modManifest, {
 
 for (const result of mod.updateBindings({ app: { status: "online", warning: false } })) {
 	for (const d of result.diagnostics) console.warn(`[${result.fragmentId}] ${d.code}: ${d.message}`);
-	mount(result); // your render fn — apply, don't interpret
+	mount(result); // your render fn: apply, don't interpret
 }
 
 for (const fragment of mod.fragments) {
@@ -151,7 +154,7 @@ function mount(result) {
 }
 ```
 
-`conditions` is keyed by **tree position** — each entry carries the child-index `path` into the bound tree, the `expression` it came from, and whether it is `visible`. Address the node by that path.
+`conditions` is keyed by **tree position**: each entry carries the child-index `path` into the bound tree, the `expression` it came from, and whether it is `visible`. Address the node by that path.
 
 `result.visibility` is the deprecated predecessor and is still populated. Do not reach for it: it is keyed by the `data-if` expression *text*, so two nodes carrying the same condition collapse into one entry, last write wins, and there is no way to map an entry back to the node it belongs to. A page with two `data-if="warning"` nodes is enough to hit it.
 
@@ -163,14 +166,26 @@ The fill's `bindings` map each `data-bind`/`data-if` name to a path in the data 
 
 | Op | Fields | Apply it as |
 |----|--------|-------------|
-| `toggle` | `value: boolean` | show or hide the target |
+| `toggle` | `value: boolean` | show the target when `value` is true, hide it when false. **A set, not a flip**: read `value`, never invert the current state |
 | `setText` | `value: string` | **text content, never markup** |
 | `setProp` | `prop: string`, `value: PropValue` | set that prop on the target; the value keeps its type |
-| `replaceChildren` | `value: string \| FragmentNode[]` | replace the target's children with the given content |
+| `removeAttr` | `prop: string` (and `attr`) | remove that prop from the target |
+| `replaceChildren` | `value: string \| string[] \| FragmentNode[]` | replace the target's children: markup, a list of markup strings concatenated in order, or a node list. `[]` clears |
 | `setAttr` | `attr`, `prop`, `value` | **deprecated** alias of `setProp`; read `prop` |
 | `addClass` / `removeClass` | `value: string` | HTML-vocabulary sugar for a class-list change; dropped with an `unsupported-op` diagnostic on a tree format |
 
-A single unknown op must not take a render down — keep a tolerant `default` branch and ignore what you do not recognize.
+A single unknown op must not take a render down; keep a tolerant `default` branch and ignore what you do not recognize.
+
+A `setAttr` with `false` or `null` never reaches you: the runtime finalizes it as `removeAttr`, because `disabled="false"` is still disabled. An object or array bound for an attribute is refused with `op-invalid-value` before you see it.
+
+Read before you write. Setting a value the node already holds still fires mutation observers, restarts transitions, and resets input state. The shared applier table in `spec/fragment-applier-tests.json` counts writes, and `runFragmentApplierConformance(apply)` from `@xriptjs/runtime` runs your applier against it:
+
+```js
+import { runFragmentApplierConformance } from "@xriptjs/runtime";
+
+const report = runFragmentApplierConformance((root, ops) => applyOps(root, ops));
+assert.deepEqual(report.failures, []);
+```
 
 ### Targeting
 
@@ -178,13 +193,13 @@ There is **one** targeting model, and it works in every vocabulary:
 
 > A target string is an **ID reference** if it matches `^#[A-Za-z][A-Za-z0-9_.:-]*$`. It resolves to the node whose `id` prop equals that name, in any vocabulary. Any other string is a **CSS selector**, meaningful only for HTML vocabularies.
 
-`op.selector` is the raw string; `op.target` is that string parsed into `{ by: "id", id }` or `{ by: "selector", selector }`. An HTML host that resolves `op.selector` with `querySelectorAll` keeps working unchanged — `#retry` is simultaneously a valid CSS ID selector. A component host reads `op.target` and matches on `id`. A CSS-selector target against a tree format is dropped with an `unsupported-target` diagnostic rather than guessed at.
+`op.selector` is the raw string; `op.target` is that string parsed into `{ by: "id", id }` or `{ by: "selector", selector }`. An HTML host that resolves `op.selector` with `querySelectorAll` keeps working unchanged: `#retry` is simultaneously a valid CSS ID selector. A component host reads `op.target` and matches on `id`. A CSS-selector target against a tree format is dropped with an `unsupported-target` diagnostic rather than guessed at.
 
 The same grammar governs a fill's `handlers[].selector`, so a component fragment is mutated and wired by one reference model.
 
 ### Op values are sanitized
 
-They were not, before v0.8, in any runtime — a mod could hand a host raw markup through `replaceChildren` or an `onclick` through `setAttr`, and the reference host injected it. Every op value now goes through the same [sink model](/guidance/host-formats/) the fragment's own source does: `href` and `src` values through the URI sanitizer, `style` through the style sanitizer, a `replaceChildren` string through the HTML sanitizer, a `replaceChildren` node list through the vocabulary. An `on*` prop is dropped outright.
+They were not, before v0.8, in any runtime: a mod could hand a host raw markup through `replaceChildren` or an `onclick` through `setAttr`, and the reference host injected it. Every op value now goes through the same [sink model](/guidance/host-formats/) the fragment's own source does: `href` and `src` values through the URI sanitizer, `style` through the style sanitizer, a `replaceChildren` string through the HTML sanitizer, a `replaceChildren` node list through the vocabulary. An `on*` prop is dropped outright.
 
 This does not license a host to relax. `setText` is text, always. Apply the ops; do not reinterpret them.
 

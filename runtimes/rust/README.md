@@ -120,7 +120,7 @@ Three behaviors to know:
 
 `XriptHandle::spawn` returns before construction finishes, for a host that cannot block even that long; commands sent in the meantime are queued.
 
-**What cancellation and timeouts actually bound.** QuickJS's interrupt handler only fires while bytecode is executing. A call sitting inside a blocking host binding observes no cancellation, no timeout, and no drop-cancel until that binding returns. `Pending::wait_timeout` bounds *the caller's wait*, never the call: `Err(XriptError::Timeout { still_running: true })` means "stopped waiting," not "it stopped." A host binding that may block is the host's own responsibility to bound.
+**What cancellation and timeouts actually bound.** QuickJS's interrupt handler only fires while bytecode is executing. A call sitting inside a blocking host binding observes no cancellation, no timeout, and no drop-cancel until that binding returns. That includes an async binding on a sync-mode runtime, which is driven to completion in line. `Pending::wait_timeout` bounds *the caller's wait*, never the call: `Err(XriptError::Timeout { still_running: true })` means "stopped waiting," not "it stopped." A host binding that may block is the host's own responsibility to bound. In [async mode](#async-mode-yielding-host-bindings), a call awaiting an async binding is parked rather than blocked, and the timeout, cancellation and drop-cancel all reach it.
 
 ### `XriptPool` — many runtimes, two lanes, one home per mod
 
@@ -146,6 +146,35 @@ Three rules carry the design:
 `Route::Dedicated` is **execute-only**: a dedicated runtime has no mods loaded, so it cannot serve an export, a hook, or an event. The default `IntentRouter` clamps such a call to the mod's home and records it; a custom `PoolRouter` that asks for it explicitly gets `XriptError::RouteUnsupported`.
 
 Routing reads declared `execution` intent from the manifest — `duration` (`instant`/`brief`/`long`/`unbounded`) and `affinity` (`any`/`pinned`/`isolated`). Both are advisory: nothing is enforced, no capability is consulted, and enforcement lives in `limits`. Where intent pays off most is **placement**: a mod that declares a `long` export never homes on the interactive lane.
+
+### Async mode: yielding host bindings
+
+By default (`RuntimeMode::Sync`) an async host binding does **not** yield: the runtime drives its future with `pollster::block_on` on the interpreter thread and hands the script an already-settled promise. `await` never suspends, and one slow binding holds the interpreter for every other call.
+
+`RuntimeMode::Async` is the opt-in alternative, parallel to the JS runtime's `initXriptAsync`. It runs on rquickjs's `AsyncRuntime`; an async binding returns a genuinely pending promise, its host future runs on the runtime's own executor, and a script awaiting it yields so other calls on the same runtime proceed.
+
+```rust
+use xript_runtime::{create_async_runtime, RuntimeOptions};
+
+let rt = create_async_runtime(manifest, RuntimeOptions { host_bindings, ..Default::default() })?;
+let (slow, quick) = futures::join!(
+    rt.execute_async("(async () => await fetchData('users'))()"),
+    rt.execute_async("40 + 2"),   // finishes while the first call awaits
+);
+```
+
+Every call has an `*_async` twin: `execute_async`, `execute_within_async`, `load_mod_async`, `invoke_export_async`, `invoke_mod_export_async`, `invoke_mod_export_within_async`, `invoke_command_async`, `fire_hook_async`, `fire_hook_tagged_async`, `emit_async`, `emit_tagged_async`, `fire_fragment_hook_async`, plus `idle()` to settle work a script started without awaiting. The plain methods keep working and drive one call to completion on the calling thread. On a sync-mode runtime the `*_async` methods complete on first poll.
+
+`XriptHandle` and `XriptPool` built from async-mode options run calls concurrently on their runtime thread. A call is started, and polled once, in queue order, so everything it does before its first `await` happens in send order; after that, whichever host future settles first continues first. `load_mod` stays a barrier. `in_flight()` reports the oldest parked call and `in_flight_all()` every one, `kill()` cancels them all, and `shutdown()` waits for them. The pool's wedge detector does not count a call parked on an async binding as wedged: a yielding worker is wedged only when its thread is inside a sync binding.
+
+What holds and what differs in async mode:
+
+- **Limits**: `timeout_ms` bounds the whole call, time spent awaiting included. Memory and stack limits are unchanged.
+- **Cancellation**: the runtime's `CancellationToken`, a handle's per-call token, and dropping an in-flight future all reach a parked call within a few milliseconds. A dropped call is driven to its cancellation point rather than torn down, so its JS values are released under the runtime lock.
+- **Capabilities, hooks, events, fragments, exports, commands, slots and roles** behave as in sync mode. Exports and command handlers that return promises are awaited; hook and event handler results are collected unawaited, matching the JS runtime.
+- **Executor-agnostic host futures**: futures are polled by whichever thread drives the call. A future that needs a particular reactor (a `tokio` timer, for example) must be driven from inside that executor.
+- **Interleaved budgets**: promise jobs belonging to one call can run while another call is being polled, and are charged to that call for that slice. Every budget stays bounded; per-call attribution across interleaved calls is approximate.
+- **Sync bindings and debugging** still hold the thread: a sync binding runs in line, and a paused debug session blocks the interpreter as it does in sync mode.
 
 ## When to use this vs `@xriptjs/runtime`
 

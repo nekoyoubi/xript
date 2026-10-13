@@ -50,6 +50,7 @@ const WEAKENED = {
 const MOD = {
 	xript: "0.8",
 	name: "quote-tools",
+	version: "1.0.0",
 	entry: {
 		script: "src/main.js",
 		format: "module",
@@ -210,6 +211,7 @@ describe("xript lint — command findings", () => {
 			JSON.stringify({
 				xript: "0.8",
 				name: "other",
+				version: "1.0.0",
 				entry: { script: "m.js", format: "module", exports: { go: { description: "g" } } },
 				capabilities: ["write:editor.text"],
 				fills: { "palette.commands": [{ id: "wrap.double", handler: "go" }] },

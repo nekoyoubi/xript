@@ -2134,5 +2134,440 @@
 			"expression": "effects[0]",
 			"kind": "expression"
 		}
+	],
+	"render": [
+		{
+			"id": "bind-bare-null-text-renders-empty",
+			"source": "<p data-bind=\"a\">fallback</p>",
+			"bindings": {
+				"a": null
+			},
+			"expectedHtml": "<p data-bind=\"a\"></p>"
+		},
+		{
+			"id": "bind-bare-null-input-renders-empty-value",
+			"source": "<input data-bind=\"a\" value=\"fallback\">",
+			"bindings": {
+				"a": null
+			},
+			"expectedHtml": "<input data-bind=\"a\" value=\"\" />"
+		},
+		{
+			"id": "bind-bare-undefined-keeps-fallback-text",
+			"source": "<p data-bind=\"a\">fallback</p>",
+			"bindings": {},
+			"declared": [
+				"a"
+			],
+			"expectedHtml": "<p data-bind=\"a\">fallback</p>"
+		},
+		{
+			"id": "bind-bare-undefined-keeps-fallback-input",
+			"source": "<input data-bind=\"a\" value=\"fallback\">",
+			"bindings": {},
+			"declared": [
+				"a"
+			],
+			"expectedHtml": "<input data-bind=\"a\" value=\"fallback\" />"
+		},
+		{
+			"id": "bind-bare-undeclared-keeps-fallback",
+			"source": "<p data-bind=\"a\">fallback</p>",
+			"bindings": {
+				"a": 1
+			},
+			"declared": [],
+			"expectedHtml": "<p data-bind=\"a\">fallback</p>"
+		},
+		{
+			"id": "bind-bare-zero-text",
+			"source": "<p data-bind=\"a\">fallback</p>",
+			"bindings": {
+				"a": 0
+			},
+			"expectedHtml": "<p data-bind=\"a\">0</p>"
+		},
+		{
+			"id": "bind-bare-zero-input",
+			"source": "<input data-bind=\"a\" value=\"fallback\">",
+			"bindings": {
+				"a": 0
+			},
+			"expectedHtml": "<input data-bind=\"a\" value=\"0\" />"
+		},
+		{
+			"id": "bind-bare-false-text",
+			"source": "<p data-bind=\"a\">fallback</p>",
+			"bindings": {
+				"a": false
+			},
+			"expectedHtml": "<p data-bind=\"a\">false</p>"
+		},
+		{
+			"id": "bind-bare-integral-float-text",
+			"source": "<p data-bind=\"a\">fallback</p>",
+			"bindings": {
+				"a": 3.0
+			},
+			"expectedHtml": "<p data-bind=\"a\">3</p>"
+		},
+		{
+			"id": "bind-bare-array-text",
+			"source": "<p data-bind=\"a\">fallback</p>",
+			"bindings": {
+				"a": [
+					"burn",
+					null,
+					2
+				]
+			},
+			"expectedHtml": "<p data-bind=\"a\">burn,,2</p>"
+		},
+		{
+			"id": "bind-bare-object-text",
+			"source": "<p data-bind=\"a\">fallback</p>",
+			"bindings": {
+				"a": {
+					"k": 1
+				}
+			},
+			"expectedHtml": "<p data-bind=\"a\">[object Object]</p>"
+		},
+		{
+			"id": "bind-expr-null-text-renders-empty",
+			"source": "<p data-bind=\"str(a)\">fallback</p>",
+			"bindings": {
+				"a": null
+			},
+			"expectedHtml": "<p data-bind=\"str(a)\"></p>"
+		},
+		{
+			"id": "bind-expr-null-input-renders-empty-value",
+			"source": "<input data-bind=\"str(a)\" value=\"fallback\">",
+			"bindings": {
+				"a": null
+			},
+			"expectedHtml": "<input data-bind=\"str(a)\" value=\"\" />"
+		},
+		{
+			"id": "bind-expr-undefined-writes-empty",
+			"source": "<p data-bind=\"str(a)\">fallback</p>",
+			"bindings": {},
+			"declared": [
+				"a"
+			],
+			"expectedHtml": "<p data-bind=\"str(a)\"></p>"
+		},
+		{
+			"id": "bind-expr-undeclared-writes-empty",
+			"source": "<p data-bind=\"str(a)\">fallback</p>",
+			"bindings": {
+				"a": 1
+			},
+			"declared": [],
+			"expectedHtml": "<p data-bind=\"str(a)\"></p>"
+		},
+		{
+			"id": "bind-expr-zero-text",
+			"source": "<p data-bind=\"str(a)\">fallback</p>",
+			"bindings": {
+				"a": 0
+			},
+			"expectedHtml": "<p data-bind=\"str(a)\">0</p>"
+		},
+		{
+			"id": "bind-expr-zero-input",
+			"source": "<input data-bind=\"str(a)\" value=\"fallback\">",
+			"bindings": {
+				"a": 0
+			},
+			"expectedHtml": "<input data-bind=\"str(a)\" value=\"0\" />"
+		},
+		{
+			"id": "bind-expr-array-text",
+			"source": "<p data-bind=\"str(a)\">fallback</p>",
+			"bindings": {
+				"a": [
+					"burn",
+					null,
+					2
+				]
+			},
+			"expectedHtml": "<p data-bind=\"str(a)\">burn,,2</p>"
+		},
+		{
+			"id": "bind-expr-object-text",
+			"source": "<p data-bind=\"str(a)\">fallback</p>",
+			"bindings": {
+				"a": {
+					"k": 1
+				}
+			},
+			"expectedHtml": "<p data-bind=\"str(a)\">[object Object]</p>"
+		},
+		{
+			"id": "bind-path-array-index",
+			"source": "<p data-bind=\"a\">fallback</p>",
+			"bindings": {
+				"items": [
+					"x",
+					"y"
+				]
+			},
+			"declared": [
+				{
+					"name": "a",
+					"path": "items.1"
+				}
+			],
+			"expectedHtml": "<p data-bind=\"a\">y</p>"
+		},
+		{
+			"id": "bind-path-array-index-zero",
+			"source": "<p data-bind=\"a\">fallback</p>",
+			"bindings": {
+				"items": [
+					"x",
+					"y"
+				]
+			},
+			"declared": [
+				{
+					"name": "a",
+					"path": "items.0"
+				}
+			],
+			"expectedHtml": "<p data-bind=\"a\">x</p>"
+		},
+		{
+			"id": "bind-path-nested-array-in-object",
+			"source": "<p data-bind=\"a\">fallback</p>",
+			"bindings": {
+				"player": {
+					"name": "Hero",
+					"title": null,
+					"party": [
+						{
+							"name": "Ana"
+						},
+						{
+							"name": "Bo"
+						}
+					]
+				}
+			},
+			"declared": [
+				{
+					"name": "a",
+					"path": "player.party.1.name"
+				}
+			],
+			"expectedHtml": "<p data-bind=\"a\">Bo</p>"
+		},
+		{
+			"id": "bind-path-present-null-leaf-renders-empty",
+			"source": "<p data-bind=\"a\">fallback</p>",
+			"bindings": {
+				"player": {
+					"name": "Hero",
+					"title": null,
+					"party": [
+						{
+							"name": "Ana"
+						},
+						{
+							"name": "Bo"
+						}
+					]
+				}
+			},
+			"declared": [
+				{
+					"name": "a",
+					"path": "player.title"
+				}
+			],
+			"expectedHtml": "<p data-bind=\"a\"></p>"
+		},
+		{
+			"id": "bind-path-out-of-range-index-keeps-fallback",
+			"source": "<p data-bind=\"a\">fallback</p>",
+			"bindings": {
+				"items": [
+					"x",
+					"y"
+				]
+			},
+			"declared": [
+				{
+					"name": "a",
+					"path": "items.5"
+				}
+			],
+			"expectedHtml": "<p data-bind=\"a\">fallback</p>"
+		},
+		{
+			"id": "bind-path-noncanonical-index-keeps-fallback",
+			"source": "<p data-bind=\"a\">fallback</p>",
+			"bindings": {
+				"items": [
+					"x",
+					"y"
+				]
+			},
+			"declared": [
+				{
+					"name": "a",
+					"path": "items.01"
+				}
+			],
+			"expectedHtml": "<p data-bind=\"a\">fallback</p>"
+		},
+		{
+			"id": "bind-path-negative-index-keeps-fallback",
+			"source": "<p data-bind=\"a\">fallback</p>",
+			"bindings": {
+				"items": [
+					"x",
+					"y"
+				]
+			},
+			"declared": [
+				{
+					"name": "a",
+					"path": "items.-1"
+				}
+			],
+			"expectedHtml": "<p data-bind=\"a\">fallback</p>"
+		},
+		{
+			"id": "bind-path-array-length-keeps-fallback",
+			"source": "<p data-bind=\"a\">fallback</p>",
+			"bindings": {
+				"items": [
+					"x",
+					"y"
+				]
+			},
+			"declared": [
+				{
+					"name": "a",
+					"path": "items.length"
+				}
+			],
+			"expectedHtml": "<p data-bind=\"a\">fallback</p>"
+		},
+		{
+			"id": "bind-path-string-property-keeps-fallback",
+			"source": "<p data-bind=\"a\">fallback</p>",
+			"bindings": {
+				"player": {
+					"name": "Hero",
+					"title": null,
+					"party": [
+						{
+							"name": "Ana"
+						},
+						{
+							"name": "Bo"
+						}
+					]
+				}
+			},
+			"declared": [
+				{
+					"name": "a",
+					"path": "player.name.length"
+				}
+			],
+			"expectedHtml": "<p data-bind=\"a\">fallback</p>"
+		},
+		{
+			"id": "bind-path-string-index-keeps-fallback",
+			"source": "<p data-bind=\"a\">fallback</p>",
+			"bindings": {
+				"player": {
+					"name": "Hero",
+					"title": null,
+					"party": [
+						{
+							"name": "Ana"
+						},
+						{
+							"name": "Bo"
+						}
+					]
+				}
+			},
+			"declared": [
+				{
+					"name": "a",
+					"path": "player.name.0"
+				}
+			],
+			"expectedHtml": "<p data-bind=\"a\">fallback</p>"
+		},
+		{
+			"id": "bind-path-inherited-key-keeps-fallback",
+			"source": "<p data-bind=\"a\">fallback</p>",
+			"bindings": {
+				"player": {
+					"name": "Hero",
+					"title": null,
+					"party": [
+						{
+							"name": "Ana"
+						},
+						{
+							"name": "Bo"
+						}
+					]
+				}
+			},
+			"declared": [
+				{
+					"name": "a",
+					"path": "player.constructor"
+				}
+			],
+			"expectedHtml": "<p data-bind=\"a\">fallback</p>"
+		},
+		{
+			"id": "bind-path-inherited-root-key-keeps-fallback",
+			"source": "<p data-bind=\"a\">fallback</p>",
+			"bindings": {},
+			"declared": [
+				{
+					"name": "a",
+					"path": "toString"
+				}
+			],
+			"expectedHtml": "<p data-bind=\"a\">fallback</p>"
+		},
+		{
+			"id": "bind-path-through-null-keeps-fallback",
+			"source": "<p data-bind=\"a\">fallback</p>",
+			"bindings": {
+				"player": {
+					"name": "Hero",
+					"title": null,
+					"party": [
+						{
+							"name": "Ana"
+						},
+						{
+							"name": "Bo"
+						}
+					]
+				}
+			},
+			"declared": [
+				{
+					"name": "a",
+					"path": "player.title.x"
+				}
+			],
+			"expectedHtml": "<p data-bind=\"a\">fallback</p>"
+		}
 	]
 }

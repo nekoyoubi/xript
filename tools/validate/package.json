@@ -1,6 +1,6 @@
 {
 	"name": "@xriptjs/validate",
-	"version": "0.8.1",
+	"version": "0.9.0",
 	"description": "Validate xript manifests against the specification schema.",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -9,6 +9,10 @@
 		".": {
 			"types": "./dist/index.d.ts",
 			"default": "./dist/index.js"
+		},
+		"./core": {
+			"types": "./dist/core.d.ts",
+			"default": "./dist/core.js"
 		}
 	},
 	"files": [
@@ -21,7 +25,7 @@
 	},
 	"homepage": "https://xript.dev",
 	"scripts": {
-		"build": "tsc && node scripts/copy-schemas.mjs",
+		"build": "node scripts/bundle-schemas.mjs && tsc && node scripts/copy-schemas.mjs",
 		"test": "node --test test/*.test.js",
 		"prepublishOnly": "npm run build"
 	},
@@ -37,12 +41,13 @@
 		"provenance": true
 	},
 	"dependencies": {
-		"@xriptjs/sanitize": "^0.8.1",
+		"@xriptjs/sanitize": "^0.9.0",
 		"ajv": "^8.17.1",
 		"ajv-formats": "^3.0.1"
 	},
 	"devDependencies": {
 		"typescript": "^5.7.0",
-		"@types/node": "^22.0.0"
+		"@types/node": "^22.0.0",
+		"esbuild": "^0.27.3"
 	}
 }

@@ -49,8 +49,8 @@ describe("execution intent — the schema block", () => {
 		assert.equal(modSchema.properties.execution.$ref, "#/$defs/executionIntent");
 	});
 
-	it("keeps the mod schema's `$id` at v0.8 with v0.7 still resolvable as an alias", async () => {
-		assert.equal(modSchema.$id, "https://xript.dev/schema/mod-manifest/v0.8.json");
+	it("keeps the mod schema's `$id` at v0.9 with v0.7 still resolvable as an alias", async () => {
+		assert.equal(modSchema.$id, "https://xript.dev/schema/mod-manifest/v0.9.json");
 		const pinned = {
 			$schema: "https://xript.dev/schema/mod-manifest/v0.7.json",
 			xript: "0.8",

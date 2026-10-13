@@ -11,7 +11,8 @@ use super::profiles::{
 };
 use super::rules::{
     canonical_attribute_name, is_allowed_attribute, is_valid_attribute_name, sanitize_style_value,
-    sanitize_uri, SchemeSet, ALLOWED_ELEMENTS, STRIPPED_ELEMENTS, UNWRAPPED_ELEMENTS,
+    sanitize_uri, SchemeSet, ALLOWED_ELEMENTS, STRIPPED_ELEMENTS, SVG_TEXT_ATTRIBUTES,
+    SVG_TEXT_ELEMENTS, UNWRAPPED_ELEMENTS,
 };
 use super::tree::{
     is_forbidden_prop_name, js_string, matches_json_type, FragmentElement, FragmentNode,
@@ -77,6 +78,8 @@ struct Context<'a> {
     stripped_elements: Vec<String>,
     stripped_attributes: Vec<StrippedAttribute>,
     depth: usize,
+    /// True while walking the descendants of a built-in `<svg>` element.
+    in_svg: bool,
 }
 
 impl Context<'_> {
@@ -114,6 +117,7 @@ impl Context<'_> {
 enum Resolution<'a> {
     Declared(&'a NodeDefinition),
     Html(String),
+    SvgText(String),
     Stripped(String),
     Unwrap,
     Unknown,
@@ -151,6 +155,7 @@ pub fn sanitize_tree(
         stripped_elements: Vec::new(),
         stripped_attributes: Vec::new(),
         depth: 0,
+        in_svg: false,
     };
 
     let sanitized = walk_nodes(tree, &mut ctx, "", &ChildrenConstraint::Any);
@@ -230,7 +235,7 @@ fn walk_nodes_bounded(
             FragmentNode::Element(element) => element,
         };
 
-        match resolve_node(&element.name, ctx.profile) {
+        match resolve_node(&element.name, ctx.profile, ctx.in_svg) {
             Resolution::Unknown => {
                 let severity = ctx.vocabulary_severity();
                 ctx.report(
@@ -310,17 +315,152 @@ fn walk_nodes_bounded(
                     element, &tag, ctx, &node_path,
                 )));
             }
+            Resolution::SvgText(tag) => {
+                if !constraint.allows_child(&tag) {
+                    let severity = ctx.vocabulary_severity();
+                    ctx.report(
+                        DiagnosticCode::IllegalChild,
+                        severity,
+                        &node_path,
+                        &tag,
+                        None,
+                        format!(
+                            "node \"{}\" is not permitted here (children: {})",
+                            tag,
+                            constraint.describe()
+                        ),
+                    );
+                    continue;
+                }
+                result.push(FragmentNode::Element(sanitize_svg_text_node(
+                    element, &tag, ctx, &node_path,
+                )));
+            }
         }
     }
 
     result
 }
 
+/// An SVG `title` or `desc`. Text-only: element children are reduced to their
+/// text, a stripped element's subtree is dropped outright, and a `style`
+/// element's content is dropped rather than surfacing as prose. Each removal is
+/// reported. Attributes are held to [`SVG_TEXT_ATTRIBUTES`] plus the inert
+/// `data-*`/`aria-*` prefixes.
+fn sanitize_svg_text_node(
+    node: &FragmentElement,
+    tag: &str,
+    ctx: &mut Context,
+    path: &str,
+) -> FragmentElement {
+    let mut props = Props::new();
+
+    for (key, value) in node.props.iter() {
+        let lower_key = key.to_lowercase();
+        let allowed = !is_forbidden_prop_name(&lower_key)
+            && is_valid_attribute_name(&lower_key)
+            && (SVG_TEXT_ATTRIBUTES.contains(&lower_key.as_str())
+                || is_metadata_prop_name(&lower_key));
+        if !allowed {
+            ctx.stripped_attributes.push(StrippedAttribute {
+                element: tag.to_string(),
+                attribute: lower_key.clone(),
+            });
+            let code = if lower_key.starts_with("on") {
+                DiagnosticCode::UnsafeProp
+            } else {
+                DiagnosticCode::UnknownProp
+            };
+            ctx.report(
+                code,
+                DiagnosticSeverity::Warning,
+                path,
+                tag,
+                Some(&lower_key),
+                format!("stripped attribute \"{lower_key}\" on <{tag}>"),
+            );
+            continue;
+        }
+        props.set(lower_key, value.clone());
+    }
+
+    let text = collect_svg_text(&node.children, tag, ctx, path);
+    let mut children = Vec::new();
+    if !text.is_empty() {
+        children.push(segment_text_node(&text, ctx, &format!("{path}/0")));
+    }
+
+    FragmentElement { name: tag.to_string(), props, children, self_closing: false }
+}
+
+fn collect_svg_text(nodes: &[FragmentNode], owner: &str, ctx: &mut Context, path: &str) -> String {
+    let mut text = String::new();
+    for (index, child) in nodes.iter().enumerate() {
+        let child_path = format!("{path}/{index}");
+        let element = match child {
+            FragmentNode::Text { value, .. } => {
+                text.push_str(value);
+                continue;
+            }
+            FragmentNode::Element(element) => element,
+        };
+
+        let lower = element.name.to_lowercase();
+        if STRIPPED_ELEMENTS.contains(lower.as_str()) {
+            ctx.stripped_elements.push(lower.clone());
+            ctx.report(
+                DiagnosticCode::StrippedNode,
+                DiagnosticSeverity::Warning,
+                &child_path,
+                &lower,
+                None,
+                format!("stripped dangerous element: <{lower}>"),
+            );
+            continue;
+        }
+
+        let keeps_text = lower != "style";
+        let message = if keeps_text {
+            format!(
+                "node \"{}\" is not permitted inside svg <{owner}>; its text was kept",
+                element.name
+            )
+        } else {
+            format!("node \"{}\" is not permitted inside svg <{owner}> and was dropped", element.name)
+        };
+        ctx.report(
+            DiagnosticCode::IllegalChild,
+            DiagnosticSeverity::Warning,
+            &child_path,
+            &element.name,
+            None,
+            message,
+        );
+        if keeps_text {
+            if ctx.depth >= MAX_TREE_DEPTH {
+                ctx.report(
+                    DiagnosticCode::MaxDepthExceeded,
+                    DiagnosticSeverity::Error,
+                    &child_path,
+                    "#depth",
+                    None,
+                    format!("nesting exceeds the maximum fragment depth of {MAX_TREE_DEPTH}"),
+                );
+                continue;
+            }
+            ctx.depth += 1;
+            text.push_str(&collect_svg_text(&element.children, owner, ctx, &child_path));
+            ctx.depth -= 1;
+        }
+    }
+    text
+}
+
 /// Walks the vocabularies in scope in order: the first to claim a node name wins.
 ///
 /// The built-in HTML arm falls through rather than terminating, so a name HTML
 /// declines is still offered to whatever follows it in scope.
-fn resolve_node<'a>(name: &str, profile: &'a FormatProfile) -> Resolution<'a> {
+fn resolve_node<'a>(name: &str, profile: &'a FormatProfile, in_svg: bool) -> Resolution<'a> {
     for entry in &profile.scope {
         match entry {
             ResolvedVocabulary::Declared { nodes, .. } => {
@@ -330,6 +470,9 @@ fn resolve_node<'a>(name: &str, profile: &'a FormatProfile) -> Resolution<'a> {
             }
             ResolvedVocabulary::BuiltinHtml => {
                 let lower = name.to_lowercase();
+                if in_svg && SVG_TEXT_ELEMENTS.contains(&lower.as_str()) {
+                    return Resolution::SvgText(lower);
+                }
                 if STRIPPED_ELEMENTS.contains(lower.as_str()) {
                     return Resolution::Stripped(lower);
                 }
@@ -456,12 +599,14 @@ fn sanitize_html_node(
         props.set(canonical_attribute_name(&lower_key), value.clone());
     }
 
-    FragmentElement {
-        name: tag.to_string(),
-        props,
-        children: walk_nodes(&node.children, ctx, path, &ChildrenConstraint::Any),
-        self_closing: node.self_closing,
+    let enclosing_svg = ctx.in_svg;
+    if tag == "svg" {
+        ctx.in_svg = true;
     }
+    let children = walk_nodes(&node.children, ctx, path, &ChildrenConstraint::Any);
+    ctx.in_svg = enclosing_svg;
+
+    FragmentElement { name: tag.to_string(), props, children, self_closing: node.self_closing }
 }
 
 /// A node the host's own vocabulary declares. The name and every prop name are

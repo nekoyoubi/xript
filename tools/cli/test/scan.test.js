@@ -57,6 +57,38 @@ describe("annotation scanner", { skip: skipScan ? "ts-morph not available" : fal
 		assert.ok(ns.members.leaf, "single-line arrow const 'arrowns.leaf' should scan");
 	});
 
+	test("scans a rest parameter as a variadic parameter of its element type", async () => {
+		const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+		const { tmpdir } = await import("node:os");
+		const { join } = await import("node:path");
+		const dir = await mkdtemp(join(tmpdir(), "xript-scan-rest-"));
+		try {
+			const file = join(dir, "host.ts");
+			await writeFile(
+				file,
+				[
+					"/**",
+					" * Logs every part.",
+					" * @xript log",
+					" */",
+					"export function log(level: string, ...parts: (string | number)[]): void {}",
+					"",
+					"/**",
+					" * Sums.",
+					" * @xript sum",
+					" */",
+					"export function sum(...values: Array<number>): number { return 0; }",
+				].join("\n"),
+			);
+			const result = await scanModule.scanFile(file);
+			assert.deepEqual(result.bindings.log.params[1], { name: "parts", type: "string | number", description: undefined, variadic: true });
+			assert.equal(result.bindings.sum.params[0].type, "number");
+			assert.equal(result.bindings.sum.params[0].variadic, true);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
 	test("creates namespaces from dotted paths", async () => {
 		const result = await scanModule.scanDirectory(FIXTURES);
 

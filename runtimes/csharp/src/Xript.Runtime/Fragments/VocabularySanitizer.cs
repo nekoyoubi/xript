@@ -22,7 +22,12 @@ public static class DiagnosticCodes
     public const string UnsupportedOp = "unsupported-op";
     public const string UnsupportedTarget = "unsupported-target";
     public const string OpUnknownProp = "op-unknown-prop";
+    public const string OpInvalidValue = "op-invalid-value";
     public const string PropSinkConflict = "prop-sink-conflict";
+
+    public const string DuplicateKey = "duplicate-key";
+    public const string InvalidKey = "invalid-key";
+    public const string RepeatLimit = "repeat-limit";
 }
 
 /// <summary>
@@ -80,6 +85,9 @@ public static class VocabularySanitizer
         public required FormatProfile Profile { get; init; }
         public required bool Strict { get; init; }
         public bool Interpolate { get; init; }
+
+        /// <summary>True while walking the descendants of a built-in <c>&lt;svg&gt;</c> element.</summary>
+        public bool InSvg { get; set; }
         public List<FragmentDiagnostic> Diagnostics { get; } = [];
         public List<string> StrippedElements { get; } = [];
         public List<StrippedAttribute> StrippedAttributes { get; } = [];
@@ -93,6 +101,7 @@ public static class VocabularySanitizer
         public sealed record Declared(
             string? Vocabulary, string Name, NodeDefinition Definition) : Resolution;
         public sealed record Html(string Name) : Resolution;
+        public sealed record SvgText(string Name) : Resolution;
         public sealed record Stripped(string Name) : Resolution;
         public sealed record Unwrap : Resolution;
         public sealed record Unknown : Resolution;
@@ -165,7 +174,7 @@ public static class VocabularySanitizer
             }
 
             var element = (FragmentNode.Element)node;
-            var resolved = ResolveNode(element.Name, ctx.Profile);
+            var resolved = ResolveNode(element.Name, ctx.Profile, ctx.InSvg);
 
             switch (resolved)
             {
@@ -200,7 +209,12 @@ public static class VocabularySanitizer
                     continue;
             }
 
-            var resolvedName = resolved is Resolution.Declared declared ? declared.Name : ((Resolution.Html)resolved).Name;
+            var resolvedName = resolved switch
+            {
+                Resolution.Declared declared => declared.Name,
+                Resolution.SvgText svgText => svgText.Name,
+                _ => ((Resolution.Html)resolved).Name,
+            };
 
             if (!constraint.Allows(resolvedName))
             {
@@ -213,12 +227,90 @@ public static class VocabularySanitizer
                 continue;
             }
 
-            result.Add(resolved is Resolution.Declared d
-                ? SanitizeDeclaredNode(element, d.Definition, ctx, nodePath)
-                : SanitizeHtmlNode(element, resolvedName, ctx, nodePath));
+            result.Add(resolved switch
+            {
+                Resolution.Declared d => SanitizeDeclaredNode(element, d.Definition, ctx, nodePath),
+                Resolution.SvgText => SanitizeSvgTextNode(element, resolvedName, ctx, nodePath),
+                _ => SanitizeHtmlNode(element, resolvedName, ctx, nodePath),
+            });
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// An SVG <c>title</c> or <c>desc</c>. Text-only: element children are reduced to their
+    /// text, a stripped element's subtree is dropped outright, and a <c>style</c> element's
+    /// content is dropped rather than surfacing as prose. Each removal is reported.
+    /// Attributes are held to <see cref="HtmlRules.SvgTextAttributes"/> plus the inert
+    /// <c>data-*</c>/<c>aria-*</c> prefixes.
+    /// </summary>
+    private static FragmentNode.Element SanitizeSvgTextNode(
+        FragmentNode.Element node, string tag, Context ctx, string path)
+    {
+        var props = new PropMap();
+
+        foreach (var (key, value) in node.Props)
+        {
+            var lowerKey = key.ToLowerInvariant();
+            var allowed = !FragmentTree.ForbiddenPropNames.Contains(lowerKey)
+                && HtmlRules.IsValidAttributeName(lowerKey)
+                && (HtmlRules.SvgTextAttributes.Contains(lowerKey) || IsMetadataPropName(lowerKey));
+            if (!allowed)
+            {
+                ctx.StrippedAttributes.Add(new StrippedAttribute(tag, lowerKey));
+                ctx.Diagnostics.Add(new FragmentDiagnostic(
+                    lowerKey.StartsWith("on", StringComparison.Ordinal)
+                        ? DiagnosticCodes.UnsafeProp
+                        : DiagnosticCodes.UnknownProp,
+                    DiagnosticSeverity.Warning, path, tag,
+                    $"stripped attribute \"{lowerKey}\" on <{tag}>", lowerKey));
+                continue;
+            }
+            props.Set(lowerKey, value);
+        }
+
+        var text = CollectSvgText(node.Children, tag, ctx, path);
+        var children = new List<FragmentNode>();
+        if (text.Length > 0)
+            children.Add(SegmentTextNode(new FragmentNode.Text(text), ctx, $"{path}/0"));
+
+        return new FragmentNode.Element { Name = tag, Props = props, Children = children };
+    }
+
+    private static string CollectSvgText(
+        IReadOnlyList<FragmentNode> nodes, string owner, Context ctx, string path)
+    {
+        var text = new System.Text.StringBuilder();
+        for (var index = 0; index < nodes.Count; index++)
+        {
+            var childPath = $"{path}/{index}";
+            if (nodes[index] is FragmentNode.Text childText)
+            {
+                text.Append(childText.Value);
+                continue;
+            }
+
+            var child = (FragmentNode.Element)nodes[index];
+            var lower = child.Name.ToLowerInvariant();
+            if (HtmlRules.StrippedElements.Contains(lower))
+            {
+                ctx.StrippedElements.Add(lower);
+                ctx.Diagnostics.Add(new FragmentDiagnostic(
+                    DiagnosticCodes.StrippedNode, DiagnosticSeverity.Warning, childPath, lower,
+                    $"stripped dangerous element: <{lower}>"));
+                continue;
+            }
+
+            var keepsText = lower != "style";
+            ctx.Diagnostics.Add(new FragmentDiagnostic(
+                DiagnosticCodes.IllegalChild, DiagnosticSeverity.Warning, childPath, child.Name,
+                keepsText
+                    ? $"node \"{child.Name}\" is not permitted inside svg <{owner}>; its text was kept"
+                    : $"node \"{child.Name}\" is not permitted inside svg <{owner}> and was dropped"));
+            if (keepsText) text.Append(CollectSvgText(child.Children, owner, ctx, childPath));
+        }
+        return text.ToString();
     }
 
     /// <summary>
@@ -226,7 +318,7 @@ public static class VocabularySanitizer
     /// Order is authoritative and literal: no reordering, no merging. The built-in HTML arm
     /// declines rather than terminates, so a vocabulary listed after it still gets its turn.
     /// </summary>
-    private static Resolution ResolveNode(string name, FormatProfile profile)
+    private static Resolution ResolveNode(string name, FormatProfile profile, bool inSvg)
     {
         foreach (var entry in profile.Scope)
         {
@@ -238,6 +330,7 @@ public static class VocabularySanitizer
             }
 
             var lower = name.ToLowerInvariant();
+            if (inSvg && HtmlRules.SvgTextElements.Contains(lower)) return new Resolution.SvgText(lower);
             if (HtmlRules.StrippedElements.Contains(lower)) return new Resolution.Stripped(lower);
             if (HtmlRules.UnwrappedElements.Contains(lower) && profile.Syntax == FragmentSyntax.Html)
                 return new Resolution.Unwrap();
@@ -330,9 +423,19 @@ public static class VocabularySanitizer
         {
             Name = tag,
             Props = props,
-            Children = WalkNodes(node.Children, ctx, path, ChildrenConstraint.Any),
+            Children = WalkSvgAware(node.Children, tag, ctx, path),
             SelfClosing = node.SelfClosing,
         };
+    }
+
+    private static List<FragmentNode> WalkSvgAware(
+        IReadOnlyList<FragmentNode> children, string tag, Context ctx, string path)
+    {
+        var enclosingSvg = ctx.InSvg;
+        if (tag == "svg") ctx.InSvg = true;
+        var walked = WalkNodes(children, ctx, path, ChildrenConstraint.Any);
+        ctx.InSvg = enclosingSvg;
+        return walked;
     }
 
     /// <summary>

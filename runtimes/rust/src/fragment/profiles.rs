@@ -171,7 +171,7 @@ pub fn any_vocabulary_declares(profile: &FormatProfile, name: &str) -> bool {
 
 /// Props legal on every node of every vocabulary. Always strings, never
 /// sanitized, never dropped.
-pub const PROTOCOL_PROPS: [&str; 3] = ["id", "data-bind", "data-if"];
+pub const PROTOCOL_PROPS: [&str; 5] = ["id", "data-bind", "data-if", "data-each", "data-key"];
 
 pub const BUILTIN_FORMAT_IDS: [&str; 4] = [
     "text/html",

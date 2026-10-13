@@ -13,7 +13,7 @@ xript ships four runtime implementations, all conforming to the same specificati
 | **Sandbox** | QuickJS WASM | Node.js `vm` | QuickJS (native) | Jint (pure C#) |
 | **Environments** | Browser, Node, Deno, Bun, Workers | Node.js only | Any Rust app | Any .NET app |
 | **Manifest loading** | Pass object directly | `createRuntimeFromFile` | `create_runtime` (JSON) | `XriptRuntime.Create` (JSON) |
-| **Async bindings** | Via `initXriptAsync()` | Native `async`/`await` | `add_async_function` (script `await`s a `Promise`) | Sync only (Jint) |
+| **Async bindings** | Via `initXriptAsync()` | Native `async`/`await` | `add_async_function`; blocks the interpreter by default, yields under `RuntimeMode::Async` | Sync only (Jint) |
 | **Memory isolation** | Separate WASM heap | Shared Node.js process | Separate QuickJS heap | Jint engine per runtime |
 | **Best for** | Cross-platform, browser | Node.js servers, CLI | Rust apps, game engines | Unity, Godot (.NET), enterprise |
 

@@ -21,6 +21,7 @@ public class ExpressionCorpusTests
     public static IEnumerable<object[]> AttributeCases() => Section("attributes");
     public static IEnumerable<object[]> ConditionCases() => Section("conditions");
     public static IEnumerable<object[]> BindCases() => Section("bind");
+    public static IEnumerable<object[]> RenderCases() => Section("render");
 
     [Theory]
     [MemberData(nameof(EvaluationCases))]
@@ -158,6 +159,62 @@ public class ExpressionCorpusTests
         Assert.Equal(expected, Xeg.Kind(testCase["expression"]!.GetValue<string>()));
     }
 
+    [Theory]
+    [MemberData(nameof(RenderCases))]
+    public void ABareNameRendersAsItsExpressionDoes(string id, string json)
+    {
+        var testCase = JsonNode.Parse(json)!.AsObject();
+        var bindings = BindingsFrom(testCase["bindings"]);
+        var declared = testCase["declared"] is JsonArray names
+            ? names.Select(DeclaredBinding).ToList()
+            : bindings.Keys.Select(Binding).ToList();
+
+        var result = Render(testCase["source"]!.GetValue<string>(), "text/html", bindings, declared, false);
+
+        Assert.True(testCase["expectedHtml"]!.GetValue<string>() == result.Html, $"{id}: {result.Html}");
+    }
+
+    [Fact]
+    public void AJsonNullBindingRendersEmpty()
+    {
+        var data = new Dictionary<string, object?>
+        {
+            ["a"] = JsonSerializer.Deserialize<JsonElement>("null"),
+        };
+        Assert.Equal(
+            "<p data-bind=\"a\"></p>",
+            Render("<p data-bind=\"a\">fallback</p>", "text/html", data, false).Html);
+    }
+
+    [Fact]
+    public void ADeclaredBindingWithAMissingPathKeepsItsFallback()
+    {
+        var data = new Dictionary<string, object?> { ["other"] = 1 };
+        Assert.Equal(
+            "<p data-bind=\"a\">fallback</p>",
+            Render("<p data-bind=\"a\">fallback</p>", "text/html", data, [Binding("a")], false).Html);
+    }
+
+    [Fact]
+    public void TheDeprecatedStringPassStringifiesTheSameWay()
+    {
+        var bindings = new Dictionary<string, object?> { ["a"] = null, ["b"] = 0 };
+        var result = FragmentProcessor.ProcessFragment(
+            "corpus", "<p data-bind=\"a\">x</p><input data-bind=\"b\" value=\"y\" />", bindings);
+        Assert.Equal("<p data-bind=\"a\"></p><input data-bind=\"b\" value=\"0\" />", result.Html);
+    }
+
+    [Fact]
+    public void TheDeprecatedStringPassEscapesAndWritesLiterally()
+    {
+        var bindings = new Dictionary<string, object?> { ["a"] = "<b>x</b>", ["b"] = "$0\"" };
+        var result = FragmentProcessor.ProcessFragment(
+            "corpus", "<p data-bind=\"a\">x</p><input data-bind=\"b\" value=\"y\" />", bindings);
+        Assert.Equal(
+            "<p data-bind=\"a\">&lt;b&gt;x&lt;/b&gt;</p><input data-bind=\"b\" value=\"$0&quot;\" />",
+            result.Html);
+    }
+
     [Fact]
     public void InterpolationIsOptIn()
     {
@@ -241,7 +298,15 @@ public class ExpressionCorpusTests
     }
 
     private static FragmentResult Render(
-        string source, string format, Dictionary<string, object?> bindings, bool interpolate)
+        string source, string format, Dictionary<string, object?> bindings, bool interpolate) =>
+        Render(source, format, bindings, bindings.Keys.Select(Binding), interpolate);
+
+    private static FragmentResult Render(
+        string source,
+        string format,
+        Dictionary<string, object?> bindings,
+        IEnumerable<FragmentBinding> declared,
+        bool interpolate)
     {
         var declaration = new FragmentDeclaration
         {
@@ -251,13 +316,17 @@ public class ExpressionCorpusTests
             Source = source,
             Inline = true,
             Interpolate = interpolate,
-            Bindings = bindings.Keys
-                .Select(name => new FragmentBinding { Name = name, Path = name })
-                .ToList(),
+            Bindings = declared.ToList(),
         };
 
         return FragmentInstance.Create(declaration, source, null, null, false, null).GetContent(bindings);
     }
+
+    private static FragmentBinding Binding(string name) => new() { Name = name, Path = name };
+
+    private static FragmentBinding DeclaredBinding(JsonNode? entry) => entry is JsonObject named
+        ? new FragmentBinding { Name = named["name"]!.GetValue<string>(), Path = named["path"]!.GetValue<string>() }
+        : Binding(entry!.GetValue<string>());
 
     private static Dictionary<string, object?> BindingsFrom(JsonNode? node)
     {

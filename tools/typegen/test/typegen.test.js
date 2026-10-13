@@ -512,6 +512,14 @@ describe("generateTypes", () => {
 		assert.match(result, /@deprecated[^\n]*setProp[\s\S]*?setAttr\(/, "setAttr carries a deprecation pointing at setProp");
 	});
 
+	it("declares removeAttr, a primitive setAttr value, and list-shaped replaceChildren content", () => {
+		const result = generateTypes({ xript: "0.8", name: "p", slots: [{ id: "s", accepts: ["text/html"] }] });
+		assert.ok(result.includes("removeAttr(selector: string, attr: string): void;"));
+		assert.ok(result.includes("setAttr(selector: string, attr: string, value: string | number | boolean | null): void;"));
+		assert.ok(result.includes("replaceChildren(selector: string, content: string | readonly (string | readonly unknown[])[]): void;"));
+		assert.match(result, /A set, not a flip[^\n]*\n[^\n]*toggle\(/);
+	});
+
 	it("includes fragment API alongside regular hooks", () => {
 		const manifest = {
 			xript: "0.3",
@@ -605,13 +613,14 @@ describe("event-typed slot hook folding", () => {
 		assert.ok(result.includes("function onStart(handler:"));
 	});
 
-	it("notes bracket access for a hook-slot id that is not a JS identifier", () => {
+	it("types a hook-slot id that is not a JS identifier as a quoted member", () => {
 		const result = generateTypes({
 			xript: "0.7",
 			name: "h",
 			slots: [{ id: "on-save", accepts: ["application/x-xript-hook"], description: "save hook" }],
 		});
-		assert.ok(result.includes('hooks["on-save"]'));
+		assert.ok(result.includes("declare const hooks: {"));
+		assert.ok(result.includes('"on-save"(handler: () => void): void;'));
 	});
 
 	it("lets an explicit hook win over a same-id slot", () => {

@@ -1,6 +1,7 @@
 type CapabilityMode = "read" | "write";
 
-interface ParsedCapability {
+/** A capability reference split into its `read:`/`write:` mode and its scope. */
+export interface ParsedCapability {
 	mode: string;
 	scope: string;
 }

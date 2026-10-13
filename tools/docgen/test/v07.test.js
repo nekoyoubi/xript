@@ -172,7 +172,7 @@ describe("Capability Requirements grouping", () => {
 		const index = findPage(result, "index");
 		const runSection = index.content.slice(index.content.indexOf("### `run`"));
 		assert.match(runSection, /A grant on `run` also satisfies, by scope subsumption/);
-		assert.match(runSection, /\[`runCommand\(\)`\]\(\.\/bindings\/runCommand\.md\) \*\(binding\)\* — requires `run\.command`/);
+		assert.match(runSection, /\[`runCommand\(\)`\]\(\.\/bindings\/runCommand\.md\) \*\(binding\)\*: requires `run\.command`/);
 	});
 
 	it("does not treat an unrelated sibling scope as subsumed", () => {
@@ -232,8 +232,8 @@ describe("event subscription and capability gating docs", () => {
 		});
 		const index = findPage(result, "index");
 		assert.match(index.content, /\| Event \| Payload \| Capability \| Description \|/);
-		assert.match(index.content, /\| `tab\.opened` \| — \| `read:tabs` \| Tab opened\. \|/);
-		assert.match(index.content, /\| `app\.ready` \| — \| — \| App ready\. \|/);
+		assert.match(index.content, /\| `tab\.opened` \| - \| `read:tabs` \| Tab opened\. \|/);
+		assert.match(index.content, /\| `app\.ready` \| - \| - \| App ready\. \|/);
 	});
 
 	it("keeps the three-column events table when no event is gated", () => {
@@ -262,7 +262,7 @@ describe("libraries section", () => {
 		assert.ok(index);
 		assert.match(index.content, /## Libraries/);
 		assert.match(index.content, /`@example\/doc` \| `\^1\.0\.0` \| `lib\.doc` \| Doc helpers\./);
-		assert.match(index.content, /`open-lib` \| — \| — \| Ungated helpers\./);
+		assert.match(index.content, /`open-lib` \| - \| - \| Ungated helpers\./);
 	});
 });
 

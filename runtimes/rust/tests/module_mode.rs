@@ -19,6 +19,7 @@ fn opts() -> RuntimeOptions {
         strict_html_vocabulary: false,
         strict_bindings: false,
         on_fragment_diagnostic: None,
+        ..Default::default()
     }
 }
 

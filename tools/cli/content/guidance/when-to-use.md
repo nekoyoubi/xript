@@ -11,7 +11,7 @@ The framework provides primitives. The application's own content is its first mo
 Run every surface a host is about to build through these, in order:
 
 1. **Could this live outside the host as a manifest + script + fragment instead of inside it as host code?** If yes, that is the default. The host implements primitives; behavior and presentation come from data and script.
-2. **Is there already a canonical shape for this?** Everything a mod contributes is a fill of a typed slot, and the slot's `accepts` picks the kind: fragments compose UI, role maps swap an implementation, event handlers fire on lifecycle events, commands name invocable actions. Bindings are the other direction, the host calls a mod can make. Capabilities gate both. When a surface fits one of these cleanly, use that name — do not invent new vocabulary, and do not invent a new top-level manifest key when a slot kind already covers it.
+2. **Is there already a canonical shape for this?** Everything a mod contributes is a fill of a typed slot, and the slot's `accepts` picks the kind: fragments compose UI, role maps swap an implementation, event handlers fire on lifecycle events, commands name invocable actions. Bindings are the other direction, the host calls a mod can make. Capabilities gate both. When a surface fits one of these cleanly, use that name; do not invent new vocabulary, and do not invent a new top-level manifest key when a slot kind already covers it.
 3. **What does the manifest look like first?** The manifest is the contract. Sketch it before the implementation. Types, documentation, and validation all derive from it.
 
 ## Signals you should be using xript

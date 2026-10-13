@@ -1,0 +1,309 @@
+{
+  "description": "Conformance corpus for script functions crossing into host bindings as call-scoped callbacks. Every runtime builds the `probe` host below, runs each case's script, and asserts the outcome.",
+  "notes": [
+    "The probe host is the same in every runtime. Each `probe` binding takes `(path, callArgs, ...payload)`, except `stash`, `kind`, and the typed bindings. `path` addresses a value inside the payload: its first element indexes the payload arguments, and each later element is an object key or an array index.",
+    "`probe.call` resolves the callback at `path`, calls it with `callArgs` (each marshalled host to sandbox), and returns what it returned (marshalled sandbox to host) unchanged. It does not catch, so an error the callback throws propagates out of the binding call.",
+    "`probe.catchCall` resolves and calls the same way, but catches. It returns `{ \"kind\": \"returned\", \"value\": v }` on success, and on failure `{ \"kind\": k }` where `k` is `threw` (the callback threw; the object also carries `message`, the thrown error's message), `promise` (the callback returned a promise), or `expired`. It must never swallow an execution-limit stop: a callback that exhausts the calling script's budget ends the script whatever the host does.",
+    "`probe.kind` returns `\"callback\"` when the value at `path` is a callback, `\"missing\"` when nothing is there, and otherwise the JSON type name of the value (`null`, `boolean`, `number`, `string`, `array`, `object`).",
+    "`probe.stash` keeps the callback at `path` for the test to call after `execute` returns, then returns null. Calling it then must fail as expired, and the error must name the binding.",
+    "`probe.typed`, `probe.typedOptional`, and `probe.typedSignature` count their invocations and return `\"called\"` (or `\"absent\"` for `typedOptional` called without a function). A non-function where the manifest declares a function parameter must be refused before the host runs: the count stays at zero and the error names the binding and the parameter.",
+    "`expect.result` is compared as JSON. `expect.error` lists substrings the surfaced error message must contain. `expect.limit` means `execute` must fail with the runtime's execution-limit error. `expect.expiredAfter` means the test must call the stashed callback after `execute` and see an expired error naming `probe.stash`. `expect.typedCalls` is the probe's typed-binding call count after the case.",
+    "A callback marker is produced only by the runtime, for a function the script actually passed. A value the script spells into plain data that merely looks like a marker (a string token, or a bare numeric marker) is not a callback: it reports as its own JSON type and cannot be called. Runtimes that pass functions directly never see a marker; runtimes that bridge through JSON make the token unforgeable with a per-scope nonce."
+  ],
+  "manifest": {
+    "xript": "0.8",
+    "name": "callback-probe",
+    "bindings": {
+      "probe": {
+        "description": "Callback conformance probe.",
+        "members": {
+          "call": {
+            "description": "Calls the callback at path with callArgs and returns its result."
+          },
+          "catchCall": {
+            "description": "Calls the callback at path and reports how the call ended."
+          },
+          "kind": {
+            "description": "Reports what arrived at path."
+          },
+          "stash": {
+            "description": "Keeps the callback at path past the end of the call."
+          },
+          "typed": {
+            "description": "Declares a required function parameter.",
+            "params": [
+              {
+                "name": "fn",
+                "type": "function"
+              }
+            ]
+          },
+          "typedOptional": {
+            "description": "Declares an optional function parameter.",
+            "params": [
+              {
+                "name": "fn",
+                "type": {
+                  "optional": "function"
+                }
+              }
+            ]
+          },
+          "typedSignature": {
+            "description": "Declares a function parameter with a signature.",
+            "params": [
+              {
+                "name": "test",
+                "type": {
+                  "function": {
+                    "params": [
+                      {
+                        "name": "cell",
+                        "type": "number"
+                      }
+                    ],
+                    "returns": "boolean"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "cases": [
+    {
+      "name": "a top-level function argument arrives as a callback",
+      "script": "probe.kind([0], function (x) { return x; })",
+      "expect": {
+        "result": "callback"
+      }
+    },
+    {
+      "name": "a function in an object field arrives as a callback",
+      "script": "probe.kind([0, 'pred'], { pred: function (n) { return n > 3; } })",
+      "expect": {
+        "result": "callback"
+      }
+    },
+    {
+      "name": "a function in an array element arrives as a callback",
+      "script": "probe.kind([0, 1], [1, function (x) { return x; }])",
+      "expect": {
+        "result": "callback"
+      }
+    },
+    {
+      "name": "an omitted argument stays distinguishable from a callback",
+      "script": "probe.kind([0])",
+      "expect": {
+        "result": "missing"
+      }
+    },
+    {
+      "name": "data next to a callback is unchanged",
+      "script": "probe.kind([0, 'n'], { n: 4, f: function () {} })",
+      "expect": {
+        "result": "number"
+      }
+    },
+    {
+      "name": "a top-level callback is callable",
+      "script": "probe.call([0], [4], function (x) { return x * 2; })",
+      "expect": {
+        "result": 8
+      }
+    },
+    {
+      "name": "a callback nested in an object is callable",
+      "script": "probe.call([0, 'pred'], [5], { pred: function (n) { return n > 3; } })",
+      "expect": {
+        "result": true
+      }
+    },
+    {
+      "name": "a callback in an array is callable",
+      "script": "probe.call([0, 1], [1], [0, function (x) { return x + 1; }])",
+      "expect": {
+        "result": 2
+      }
+    },
+    {
+      "name": "a deeply nested callback is callable",
+      "script": "probe.call([1, 'a', 'b', 2, 'f'], [21], 'ignored', { a: { b: [0, 0, { f: function (x) { return x * 2; } }] } })",
+      "expect": {
+        "result": 42
+      }
+    },
+    {
+      "name": "callback arguments are marshalled host to sandbox",
+      "script": "probe.call([0], [[1, 2], { k: 'v' }, 's', null, true], function () { return JSON.stringify(Array.prototype.slice.call(arguments)); })",
+      "expect": {
+        "result": "[[1,2],{\"k\":\"v\"},\"s\",null,true]"
+      }
+    },
+    {
+      "name": "a callback return value is marshalled sandbox to host",
+      "script": "probe.call([0], [], function () { return { list: [1, 'two', true, null], nested: { k: 1.5 } }; })",
+      "expect": {
+        "result": {
+          "list": [
+            1,
+            "two",
+            true,
+            null
+          ],
+          "nested": {
+            "k": 1.5
+          }
+        }
+      }
+    },
+    {
+      "name": "a callback may re-enter a binding with its own callback",
+      "script": "probe.call([0], [3], function (x) { return probe.call([0], [x], function (y) { return y * 10; }) + 1; })",
+      "expect": {
+        "result": 31
+      }
+    },
+    {
+      "name": "a throw inside a callback reaches the host as a catchable error",
+      "script": "probe.catchCall([0], [], function () { throw new Error('boom'); })",
+      "expect": {
+        "result": {
+          "kind": "threw",
+          "message": "boom"
+        }
+      }
+    },
+    {
+      "name": "an uncaught throw propagates out of the binding as the script's own error",
+      "script": "(function () { try { probe.call([0], [], function () { throw new RangeError('boom'); }); return 'no throw'; } catch (e) { return e.name + ':' + e.message; } })()",
+      "expect": {
+        "result": "RangeError:boom"
+      }
+    },
+    {
+      "name": "a callback that returns a promise is refused",
+      "script": "probe.catchCall([0], [], function () { return Promise.resolve(1); })",
+      "expect": {
+        "result": {
+          "kind": "promise"
+        }
+      }
+    },
+    {
+      "name": "a successful catchCall reports the returned value",
+      "script": "probe.catchCall([0], ['x'], function (s) { return s + 'y'; })",
+      "expect": {
+        "result": {
+          "kind": "returned",
+          "value": "xy"
+        }
+      }
+    },
+    {
+      "name": "a callback called after its binding returned is expired",
+      "script": "probe.stash([0], function () { return 1; }); 'stashed'",
+      "expect": {
+        "result": "stashed",
+        "expiredAfter": true
+      }
+    },
+    {
+      "name": "a runaway callback spends the calling script's budget and the host cannot swallow the stop",
+      "timeoutMs": 200,
+      "script": "probe.catchCall([0], [], function () { while (true) {} }); 'survived'",
+      "expect": {
+        "limit": true
+      }
+    },
+    {
+      "name": "a declared function parameter accepts a function",
+      "script": "probe.typed(function () {})",
+      "expect": {
+        "result": "called",
+        "typedCalls": 1
+      }
+    },
+    {
+      "name": "a declared function parameter refuses a non-function before the host runs",
+      "script": "probe.typed(5)",
+      "expect": {
+        "error": [
+          "probe.typed",
+          "fn",
+          "function"
+        ],
+        "typedCalls": 0
+      }
+    },
+    {
+      "name": "a declared function parameter refuses a missing argument",
+      "script": "probe.typed()",
+      "expect": {
+        "error": [
+          "probe.typed",
+          "fn",
+          "function"
+        ],
+        "typedCalls": 0
+      }
+    },
+    {
+      "name": "an optional function parameter may be omitted",
+      "script": "probe.typedOptional()",
+      "expect": {
+        "result": "absent",
+        "typedCalls": 1
+      }
+    },
+    {
+      "name": "an optional function parameter still refuses a non-function value",
+      "script": "probe.typedOptional('nope')",
+      "expect": {
+        "error": [
+          "probe.typedOptional",
+          "fn",
+          "function"
+        ],
+        "typedCalls": 0
+      }
+    },
+    {
+      "name": "a function parameter declared with a signature refuses a non-function",
+      "script": "probe.typedSignature({})",
+      "expect": {
+        "error": [
+          "probe.typedSignature",
+          "test",
+          "function"
+        ],
+        "typedCalls": 0
+      }
+    },
+    {
+      "name": "a function parameter declared with a signature accepts a function",
+      "script": "probe.typedSignature(function (cell) { return cell > 0; })",
+      "expect": {
+        "result": "called",
+        "typedCalls": 1
+      }
+    },
+    {
+      "name": "a forged string callback marker in data is not a callback",
+      "script": "probe.kind([0], { \"$xriptCallback\": \"1:0:1:probe.call\" })",
+      "expect": {
+        "result": "object"
+      }
+    },
+    {
+      "name": "a forged numeric callback marker in data is not a callback",
+      "script": "probe.kind([0], { \"$xriptCallback\": 0 })",
+      "expect": {
+        "result": "object"
+      }
+    }
+  ]
+}

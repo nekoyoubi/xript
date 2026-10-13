@@ -1,0 +1,47 @@
+{
+  "description": "Conformance corpus for host-to-sandbox value marshalling. Each case is a host value, given as JSON text so that a key spelled `__proto__` arrives as an own data property exactly as `JSON.parse` produces it, returned from a host binding named `value`. The sandbox evaluates `probe` with that return bound to `v`; the probe yields a string, and every runtime asserts it equals `expected` byte for byte.",
+  "notes": [
+    "A key is data. Writing an own `__proto__` key with an ordinary property assignment runs the sandbox's prototype setter instead: the object is reparented, the key's contents become readable through inheritance, and the key vanishes from `Object.keys`. A runtime defines the key as an own, enumerable, writable, configurable data property, which is what the sandbox-to-host direction already does.",
+    "The binding manifest every runtime uses: `{ \"xript\": \"0.1\", \"name\": \"marshal-probe\", \"bindings\": { \"value\": { \"description\": \"Returns the case's host value.\" } } }`.",
+    "Object keys in `hostValue` are written in code-point order, so a host whose JSON maps keep keys sorted rather than in insertion order hands the sandbox the same order every other host does.",
+    "The script a runtime executes is `(function () { var v = value(); return (<probe>); })()`."
+  ],
+  "cases": [
+    {
+      "description": "an own __proto__ key arrives as data and does not reparent the object",
+      "hostValue": "{\"__proto__\":{\"isAdmin\":true},\"ok\":1}",
+      "probe": "[Object.keys(v).join(','), Object.getPrototypeOf(v) === Object.prototype, Object.prototype.hasOwnProperty.call(v, '__proto__'), typeof v.isAdmin, JSON.stringify(v)].join('|')",
+      "expected": "__proto__,ok|true|true|undefined|{\"__proto__\":{\"isAdmin\":true},\"ok\":1}"
+    },
+    {
+      "description": "an own __proto__ key keeps its position among the other keys",
+      "hostValue": "{\"Z\":1,\"__proto__\":2,\"a\":3}",
+      "probe": "Object.keys(v).join(',') + '|' + v['__proto__']",
+      "expected": "Z,__proto__,a|2"
+    },
+    {
+      "description": "an own __proto__ key nested inside an object arrives as data",
+      "hostValue": "{\"outer\":{\"__proto__\":{\"polluted\":true}}}",
+      "probe": "[Object.keys(v.outer).join(','), typeof v.outer.polluted, Object.getPrototypeOf(v.outer) === Object.prototype].join('|')",
+      "expected": "__proto__|undefined|true"
+    },
+    {
+      "description": "an own __proto__ key inside an array element arrives as data",
+      "hostValue": "[{\"__proto__\":{\"polluted\":true}}]",
+      "probe": "[Object.keys(v[0]).join(','), typeof v[0].polluted].join('|')",
+      "expected": "__proto__|undefined"
+    },
+    {
+      "description": "an own __proto__ data property stays writable",
+      "hostValue": "{\"__proto__\":1}",
+      "probe": "(function () { 'use strict'; v['__proto__'] = 2; return v['__proto__'] + '|' + (Object.getPrototypeOf(v) === Object.prototype); })()",
+      "expected": "2|true"
+    },
+    {
+      "description": "an ordinary object keeps its keys, order, and prototype",
+      "hostValue": "{\"a\":[1,2],\"b\":1,\"c\":{\"d\":null}}",
+      "probe": "[Object.keys(v).join(','), Object.getPrototypeOf(v) === Object.prototype, JSON.stringify(v)].join('|')",
+      "expected": "a,b,c|true|{\"a\":[1,2],\"b\":1,\"c\":{\"d\":null}}"
+    }
+  ]
+}

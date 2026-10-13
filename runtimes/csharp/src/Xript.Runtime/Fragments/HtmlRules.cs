@@ -52,6 +52,19 @@ public static class HtmlRules
         "noscript", "iframe", "xmp", "noembed", "noframes",
     };
 
+    /// <summary>
+    /// SVG's text-content metadata elements. <c>title</c> is stripped as HTML's document
+    /// title, but inside an SVG it is the accessible name and tooltip primitive, and
+    /// <c>desc</c> is its longer description. Both are admitted only under an
+    /// <c>&lt;svg&gt;</c>, hold text alone, and carry only <see cref="SvgTextAttributes"/>.
+    /// </summary>
+    public static readonly HashSet<string> SvgTextElements =
+        new(["title", "desc"], StringComparer.Ordinal);
+
+    /// <summary>The attributes an SVG <c>title</c>/<c>desc</c> keeps, beyond the inert <c>data-*</c> and <c>aria-*</c>.</summary>
+    public static readonly HashSet<string> SvgTextAttributes =
+        new(["id", "class", "lang", "dir"], StringComparer.Ordinal);
+
     public static readonly HashSet<string> UnwrappedElements =
         new(["html", "head", "body"], StringComparer.Ordinal);
 

@@ -40,7 +40,16 @@ import {
 } from "./fragment.js";
 import { finalizeOps, type FragmentDiagnosticListener, type RuntimeDiagnostic } from "./ops.js";
 import { BUILTIN_PROFILES } from "@xriptjs/sanitize";
-import { MissingBindingsError, ManifestValidationError, CapabilityDeniedError, CommandInputError, ModuleUnsupportedError, AmbiguousExportError } from "./errors.js";
+import {
+	MissingBindingsError, ManifestValidationError, CapabilityDeniedError, CommandInputError, ModuleUnsupportedError, AmbiguousExportError,
+	CancellationError, ModEntryError, MissingEntryScriptError, CommonJSDetectedError, ImportDeniedError,
+	LibraryUnavailableError, BindingError, ExecutionLimitError } from "./errors.js";
+import {
+	suppliedSource,
+	type EntryErrorPolicy,
+	type ModDiagnostic,
+	type ModDiagnosticListener,
+} from "./mod-diagnostics.js";
 import { assertNoCommonJS } from "./module-support.js";
 import { resolveExtends, type ManifestLoader } from "./extends.js";
 import { resolveSlotContributions, type SlotContribution } from "./slots.js";
@@ -56,8 +65,12 @@ import { grantedSatisfies } from "./capabilities.js";
 import type { DebugOptions, DebugSession } from "./debug-types.js";
 
 export { MissingBindingsError } from "./errors.js";
-export { AmbiguousExportError, BindingError, CapabilityDeniedError, CommandInputError, ExecutionLimitError, CancellationError, InvokeError, ManifestValidationError, ModEntryError, ImportDeniedError, CommonJSDetectedError, ModuleUnsupportedError, LibraryUnavailableError, LibraryRegistrationError } from "./errors.js";
+export type { CallbackFailure } from "./errors.js";
+export { AmbiguousExportError, BindingError, CallbackError, CapabilityDeniedError, CommandInputError, ExecutionLimitError, CancellationError, InvokeError, ManifestValidationError, ModEntryError, MissingEntryScriptError, ImportDeniedError, CommonJSDetectedError, ModuleUnsupportedError, LibraryUnavailableError, LibraryRegistrationError } from "./errors.js";
 export { ModManifestValidationError } from "./fragment.js";
+export { modEntryScripts, modEntryExports, modEntryFormat } from "./fragment.js";
+export { looksLikeMarkup } from "./mod-diagnostics.js";
+export type { EntryErrorPolicy, ModDiagnostic, ModDiagnosticCode, ModDiagnosticListener } from "./mod-diagnostics.js";
 export { FragmentFormatError, FragmentSanitizeError, createFragmentInstance, createModInstance, normalizeModFills, sanitizeSource, processTree, parseNodeRef, TREE_CONTRACT_VERSION, BUILTIN_PROFILES, DEFAULT_URI_SCHEMES, DEFAULT_URI_SCHEME_SET, PROHIBITED_URI_SCHEMES, URI_SCHEME_NAME_PATTERN } from "./fragment.js";
 export { treeToHtml, treeToJsml } from "@xriptjs/sanitize";
 export { finalizeOps } from "./ops.js";
@@ -116,9 +129,12 @@ export type {
 	DiscoveredMod,
 } from "./shapes.js";
 export type { HostBindings, HostFunction, HostNamespace, ExecutionResult, FireHookOptions, FragmentOp, FragmentOpName, RawFragmentOp, ConsoleHandler, LogSeverity, AuditEvent, AuditDecision, HardLimits } from "./sandbox.js";
-export type { ModManifest, ModEntry, ExportDeclaration, ModInstance, FragmentInstance, FragmentUpdateResult, FragmentHandler, FragmentHandlerDeclaration, FragmentEvent, FragmentEventDeclaration, FragmentDeclaration, SlotDeclaration, ModContributions, ProviderRole, NodeRef, FragmentContentType, FragmentTree, FragmentNode, FragmentElement, PropValue, FormatProfile, FragmentDiagnostic, FragmentOptions } from "./fragment.js";
+export type { ModManifest, ModEntry, ExportDeclaration, ModInstance, FragmentInstance, FragmentUpdateResult, FragmentHandler, FragmentHandlerDeclaration, FragmentEvent, FragmentEventDeclaration, FragmentDeclaration, SlotDeclaration, ModContributions, ProviderRole, NodeRef, FragmentContentType, FragmentTree, FragmentNode, FragmentElement, PropValue, FormatProfile, FragmentDiagnostic, FragmentOptions, FragmentRepeat, RepeatKey, RepeatMode, RepeatPatchOp, RepeatSite, RepeatState, FragmentBinding, FragmentCondition, BoundTree, ModInstanceOptions, ModManifestIssue, NormalizedMod, HookFill } from "./fragment.js";
+export type { FragmentText, SanitizedFragment } from "@xriptjs/sanitize";
+export type { ParsedCapability } from "./capabilities.js";
 
-interface Manifest {
+/** The host manifest a runtime was created from, as `XriptRuntime.manifest` exposes it. */
+export interface Manifest {
 	xript: string;
 	name: string;
 	version?: string;
@@ -180,6 +196,18 @@ export interface RuntimeOptions {
 	strictBindings?: boolean;
 	/** Push channel for sanitization findings, at load and at op time. */
 	onFragmentDiagnostic?: FragmentDiagnosticListener;
+	/**
+	 * What `loadMod` does when a mod's entry cannot run (a script that was not supplied, or
+	 * one that throws). Defaults to `"throw"`. `"report"` records the failure on
+	 * `ModInstance.diagnostics` and loads the mod anyway, for a host that would rather boot
+	 * with one broken mod than not boot.
+	 */
+	entryErrors?: EntryErrorPolicy;
+	/**
+	 * Push channel for load-time mod findings (`ModDiagnostic`), raised under either entry
+	 * error policy. The same findings land on `ModInstance.diagnostics`.
+	 */
+	onModDiagnostic?: ModDiagnosticListener;
 }
 
 export interface XriptRuntime {
@@ -229,6 +257,59 @@ export interface XriptRuntime {
 	dispose(): void;
 }
 
+/**
+ * `slots` must be an array of `{ id, accepts }` declarations. An object keyed by slot id is the
+ * likeliest wrong shape, and without this check it surfaces later as an iteration error inside
+ * hook injection that names neither `slots` nor the shape it wanted. Pinned by
+ * `spec/manifest-shape-tests.json`.
+ */
+function slotShapeIssues(slots: unknown): Array<{ path: string; message: string }> {
+	if (slots === undefined) return [];
+	if (!Array.isArray(slots)) {
+		return [{ path: "/slots", message: "'slots' must be an array of { id, accepts } slot declarations, not an object or other value" }];
+	}
+	const issues: Array<{ path: string; message: string }> = [];
+	slots.forEach((slot, index) => {
+		const s = slot as { id?: unknown; accepts?: unknown } | null;
+		const wellFormed =
+			typeof s === "object" &&
+			s !== null &&
+			!Array.isArray(s) &&
+			typeof s.id === "string" &&
+			Array.isArray(s.accepts) &&
+			s.accepts.every((entry) => typeof entry === "string");
+		if (!wellFormed) {
+			issues.push({
+				path: `/slots/${index}`,
+				message: "each 'slots' entry must be an object { id, accepts } with a string 'id' and an array of strings 'accepts'",
+			});
+		}
+	});
+	return issues;
+}
+
+const TYPED_ENTRY_ERRORS = [
+	ModEntryError,
+	CommonJSDetectedError,
+	ImportDeniedError,
+	LibraryUnavailableError,
+	CapabilityDeniedError,
+	BindingError,
+	ExecutionLimitError,
+];
+
+/** An error that already says what went wrong, so an entry failure passes it through instead of wrapping it. */
+function isTypedEntryError(err: unknown): err is Error {
+	return TYPED_ENTRY_ERRORS.some((type) => err instanceof type);
+}
+
+function errorMessage(err: unknown): string {
+	if (typeof err === "object" && err !== null && typeof (err as { message?: unknown }).message === "string") {
+		return (err as { message: string }).message;
+	}
+	return String(err);
+}
+
 function checkBasicStructure(manifest: unknown): Manifest {
 	if (typeof manifest !== "object" || manifest === null) {
 		throw new ManifestValidationError([{ path: "/", message: "manifest must be a non-null object" }]);
@@ -272,6 +353,8 @@ function checkBasicStructure(manifest: unknown): Manifest {
 		}
 	}
 
+	issues.push(...slotShapeIssues(m.slots));
+
 	if (issues.length > 0) {
 		throw new ManifestValidationError(issues);
 	}
@@ -309,6 +392,73 @@ export function createRuntime(manifest: unknown, options: RuntimeOptions): Xript
 			}
 		}
 		return mod;
+	}
+
+	const entryErrors: EntryErrorPolicy = options.entryErrors ?? "throw";
+
+	function sendModDiagnostic(diagnostic: ModDiagnostic): void {
+		const listener = options.onModDiagnostic;
+		if (!listener) return;
+		try {
+			listener(diagnostic);
+		} catch {
+			// a throwing listener never changes whether a mod loads
+		}
+	}
+
+	function emitModDiagnostics(mod: ModInstance): void {
+		for (const diagnostic of mod.diagnostics) sendModDiagnostic(diagnostic);
+	}
+
+	function recordModDiagnostic(mod: ModInstance, diagnostic: ModDiagnostic): void {
+		mod.diagnostics.push(diagnostic);
+		sendModDiagnostic(diagnostic);
+	}
+
+	/**
+	 * Checks every entry script is supplied before any of them runs, so a mod never half-runs
+	 * because its second script is missing. Returns the error for the first missing script.
+	 */
+	function missingEntryScript(
+		mod: ModInstance,
+		scripts: string[],
+		sources: Record<string, string>,
+	): Error | null {
+		let first: Error | null = null;
+		for (const script of scripts) {
+			if (suppliedSource(sources, script) !== undefined) continue;
+			const error = new MissingEntryScriptError(mod.name, script);
+			recordModDiagnostic(mod, {
+				code: "missing-entry-script",
+				severity: "error",
+				mod: mod.name,
+				script,
+				message: error.message,
+			});
+			first ??= error;
+		}
+		return first;
+	}
+
+	/**
+	 * Records an entry that threw. An error thrown by the mod's own code (which in a vm
+	 * context belongs to another realm) becomes a `ModEntryError` naming the mod; a typed
+	 * xript error keeps its type. A cancellation and a module entry the host cannot evaluate
+	 * are host decisions, not mod failures, and always propagate.
+	 */
+	function entryFailure(mod: ModInstance, script: string, err: unknown): Error {
+		if (err instanceof CancellationError || err instanceof ModuleUnsupportedError) throw err;
+		const error = isTypedEntryError(err)
+			? err
+			: new ModEntryError(mod.name, errorMessage(err));
+		recordModDiagnostic(mod, {
+			code: "entry-failed",
+			severity: "error",
+			mod: mod.name,
+			script,
+			message: error.message,
+		});
+		return error;
 	}
 
 	function fragmentProfile(fragmentId: string) {
@@ -498,6 +648,7 @@ export function createRuntime(manifest: unknown, options: RuntimeOptions): Xript
 			}
 			const sources = modOptions?.fragmentSources || {};
 			const mod = createModInstance(validated, sources, { ...fragmentOptions, dataFills, commandFills });
+			emitModDiagnostics(mod);
 
 			if (modEntryFormat(validated.entry) === "module") {
 				throw new ModuleUnsupportedError(
@@ -507,18 +658,26 @@ export function createRuntime(manifest: unknown, options: RuntimeOptions): Xript
 
 			registerExportCapabilities(validated.name, validated.entry);
 
-			sandbox.setExportOwner(validated.name);
-			try {
-				for (const entryScript of modEntryScripts(validated.entry)) {
-					const code = sources[entryScript];
-					if (code) {
-						assertNoCommonJS(code);
-						sandbox.execute(code);
+			const scripts = modEntryScripts(validated.entry);
+			let failure: Error | null = missingEntryScript(mod, scripts, sources);
+			if (failure === null) {
+				sandbox.setExportOwner(validated.name);
+				try {
+					for (const script of scripts) {
+						try {
+							const code = suppliedSource(sources, script) as string;
+							assertNoCommonJS(code);
+							sandbox.execute(code);
+						} catch (err) {
+							failure = entryFailure(mod, script, err);
+							break;
+						}
 					}
+				} finally {
+					sandbox.setExportOwner(null);
 				}
-			} finally {
-				sandbox.setExportOwner(null);
 			}
+			if (failure !== null && entryErrors === "throw") throw failure;
 
 			hookFillRegistry.push(...hookFills);
 			loadedMods.push(mod);
@@ -534,25 +693,35 @@ export function createRuntime(manifest: unknown, options: RuntimeOptions): Xript
 			}
 			const sources = modOptions?.fragmentSources || {};
 			const mod = createModInstance(validated, sources, { ...fragmentOptions, dataFills, commandFills });
+			emitModDiagnostics(mod);
 			const format = modEntryFormat(validated.entry);
 
 			registerExportCapabilities(validated.name, validated.entry);
 
-			sandbox.setExportOwner(validated.name);
-			try {
-				for (const entryScript of modEntryScripts(validated.entry)) {
-					const code = sources[entryScript];
-					if (!code) continue;
-					assertNoCommonJS(code);
-					if (format === "module") {
-						await sandbox.evaluateModule(validated.name, code);
-					} else {
-						sandbox.execute(code);
+			const scripts = modEntryScripts(validated.entry);
+			let failure: Error | null = missingEntryScript(mod, scripts, sources);
+			if (failure === null) {
+				sandbox.setExportOwner(validated.name);
+				try {
+					for (const script of scripts) {
+						try {
+							const code = suppliedSource(sources, script) as string;
+							assertNoCommonJS(code);
+							if (format === "module") {
+								await sandbox.evaluateModule(validated.name, code);
+							} else {
+								sandbox.execute(code);
+							}
+						} catch (err) {
+							failure = entryFailure(mod, script, err);
+							break;
+						}
 					}
+				} finally {
+					sandbox.setExportOwner(null);
 				}
-			} finally {
-				sandbox.setExportOwner(null);
 			}
+			if (failure !== null && entryErrors === "throw") throw failure;
 
 			hookFillRegistry.push(...hookFills);
 			loadedMods.push(mod);
@@ -614,7 +783,9 @@ export function createRuntime(manifest: unknown, options: RuntimeOptions): Xript
 			);
 		},
 
-		dispose() {},
+		dispose() {
+			sandbox.dispose();
+		},
 	};
 }
 

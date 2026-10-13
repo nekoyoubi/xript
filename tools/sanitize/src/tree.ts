@@ -158,11 +158,116 @@ export function jsString(value: PropValue): string {
 	return "[object Object]";
 }
 
-export function treeToHtml(tree: FragmentTree): string {
-	return tree.map(nodeToHtml).join("");
+/**
+ * Orders two strings by Unicode code point. JavaScript's default comparison orders
+ * UTF-16 code units, which sorts a character above U+FFFF below one in
+ * U+E000..U+FFFF; remapping each unit before comparing restores code point order.
+ */
+export function compareCodePoints(a: string, b: string): number {
+	const length = Math.min(a.length, b.length);
+	for (let i = 0; i < length; i++) {
+		const left = codePointRank(a.charCodeAt(i));
+		const right = codePointRank(b.charCodeAt(i));
+		if (left !== right) return left < right ? -1 : 1;
+	}
+	return a.length === b.length ? 0 : a.length < b.length ? -1 : 1;
 }
 
-function nodeToHtml(node: FragmentNode): string {
+function codePointRank(unit: number): number {
+	if (unit >= 0xe000) return unit - 0x800;
+	if (unit >= 0xd800) return unit + 0x2000;
+	return unit;
+}
+
+function jsonString(value: string): string {
+	let out = "\"";
+	for (let i = 0; i < value.length; i++) {
+		const unit = value.charCodeAt(i);
+		if (unit === 0x22) out += "\\\"";
+		else if (unit === 0x5c) out += "\\\\";
+		else if (unit === 0x08) out += "\\b";
+		else if (unit === 0x0c) out += "\\f";
+		else if (unit === 0x0a) out += "\\n";
+		else if (unit === 0x0d) out += "\\r";
+		else if (unit === 0x09) out += "\\t";
+		else if (unit < 0x20) out += `\\u${unit.toString(16).padStart(4, "0")}`;
+		else if (unit >= 0xd800 && unit <= 0xdbff) {
+			const next = value.charCodeAt(i + 1);
+			if (next >= 0xdc00 && next <= 0xdfff) {
+				out += value[i] + value[i + 1];
+				i++;
+			} else {
+				out += `\\u${unit.toString(16)}`;
+			}
+		} else if (unit >= 0xdc00 && unit <= 0xdfff) out += `\\u${unit.toString(16)}`;
+		else out += value[i];
+	}
+	return out + "\"";
+}
+
+/**
+ * The canonical JSON encoding a structured prop projects to in an HTML attribute.
+ * Compact, `JSON.stringify` escaping and number formatting, object keys ordered by
+ * Unicode code point. The key order is fixed rather than inherited because an object
+ * prop's member order is not something every runtime can preserve, and the attribute
+ * must be byte-identical on all of them.
+ */
+export function canonicalJson(value: PropValue): string {
+	if (value === null) return "null";
+	if (typeof value === "string") return jsonString(value);
+	if (typeof value === "number") return Number.isFinite(value) ? String(value) : "null";
+	if (typeof value === "boolean") return value ? "true" : "false";
+	if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+	const keys = Object.keys(value).sort(compareCodePoints);
+	return `{${keys.map((key) => `${jsonString(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+}
+
+function containsObject(items: PropValue[]): boolean {
+	return items.some((item) =>
+		Array.isArray(item) ? containsObject(item) : typeof item === "object" && item !== null);
+}
+
+function declaresType(type: string | string[] | undefined, name: string): boolean {
+	if (type === undefined) return false;
+	return Array.isArray(type) ? type.includes(name) : type === name;
+}
+
+/**
+ * The text a prop value contributes as an HTML attribute value.
+ *
+ * Scalars keep `String()` semantics. A plain object is JSON-encoded, since `String()`
+ * would yield `[object Object]`, which is never a useful attribute. An array is
+ * JSON-encoded when the prop is declared `type: "array"` or when it holds an object at
+ * any depth; an undeclared array of scalars keeps its comma-joined `String()` form.
+ *
+ * @param declaredType - the JSON Schema `type` the vocabulary in scope declares for the prop, if any
+ */
+export function propAttributeValue(value: PropValue, declaredType?: string | string[]): string {
+	if (Array.isArray(value)) {
+		return declaresType(declaredType, "array") || containsObject(value)
+			? canonicalJson(value)
+			: jsString(value);
+	}
+	if (typeof value === "object" && value !== null) return canonicalJson(value);
+	return jsString(value);
+}
+
+/**
+ * Looks up the JSON Schema `type` a vocabulary declares for a node's prop, so the HTML
+ * projection can tell a declared array prop from an incidental one.
+ */
+export type PropTypeLookup = (node: string, prop: string) => string | string[] | undefined;
+
+/**
+ * Serializes a tree to HTML.
+ *
+ * @param propType - resolves a prop's declared type; omit for the built-in HTML vocabulary, which declares none
+ */
+export function treeToHtml(tree: FragmentTree, propType?: PropTypeLookup): string {
+	return tree.map((node) => nodeToHtml(node, propType)).join("");
+}
+
+function nodeToHtml(node: FragmentNode, propType: PropTypeLookup | undefined): string {
 	if (node.kind === "text") return escapeHtml(node.value);
 
 	const attrStr = Object.entries(node.props)
@@ -170,7 +275,7 @@ function nodeToHtml(node: FragmentNode): string {
 			if (!isValidAttributeName(key)) return "";
 			if (val === true) return ` ${key}`;
 			if (val === false || val === null || val === undefined) return "";
-			return ` ${key}="${escapeAttrValue(jsString(val))}"`;
+			return ` ${key}="${escapeAttrValue(propAttributeValue(val, propType?.(node.name, key)))}"`;
 		})
 		.join("");
 
@@ -178,7 +283,7 @@ function nodeToHtml(node: FragmentNode): string {
 		return `<${node.name}${attrStr} />`;
 	}
 
-	const childHtml = node.children.map(nodeToHtml).join("");
+	const childHtml = node.children.map((child) => nodeToHtml(child, propType)).join("");
 	return `<${node.name}${attrStr}>${childHtml}</${node.name}>`;
 }
 

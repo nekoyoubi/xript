@@ -13,11 +13,20 @@ fn corpus() -> Value {
 }
 
 fn render(source: &str, format: &str, bindings: &Value, interpolate: bool) -> (String, Value) {
-    let names: Vec<String> = bindings
+    let names: Vec<(String, String)> = bindings
         .as_object()
-        .map(|map| map.keys().cloned().collect())
+        .map(|map| map.keys().map(|name| (name.clone(), name.clone())).collect())
         .unwrap_or_default();
+    render_declared(source, format, bindings, &names, interpolate)
+}
 
+fn render_declared(
+    source: &str,
+    format: &str,
+    bindings: &Value,
+    names: &[(String, String)],
+    interpolate: bool,
+) -> (String, Value) {
     let declaration = FragmentDeclaration {
         id: "corpus".to_string(),
         slot: "corpus".to_string(),
@@ -27,10 +36,11 @@ fn render(source: &str, format: &str, bindings: &Value, interpolate: bool) -> (S
         bindings: Some(
             names
                 .iter()
-                .map(|name| FragmentBinding {
+                .map(|(name, path)| FragmentBinding {
                     name: name.clone(),
-                    path: name.clone(),
+                    path: path.clone(),
                     r#type: None,
+                    extensions: Default::default(),
                 })
                 .collect(),
         ),
@@ -123,6 +133,75 @@ fn a_bare_name_with_no_binding_keeps_its_fallback() {
 }
 
 #[test]
+fn corpus_a_bare_name_renders_as_its_expression_does() {
+    let corpus = corpus();
+    for case in corpus["render"].as_array().unwrap() {
+        let id = case["id"].as_str().unwrap();
+        let names: Vec<(String, String)> = match case.get("declared") {
+            Some(declared) => declared.as_array().unwrap().iter().map(declared_binding).collect(),
+            None => case["bindings"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(|name| (name.clone(), name.clone()))
+                .collect(),
+        };
+        let (html, _) = render_declared(
+            case["source"].as_str().unwrap(),
+            "text/html",
+            &case["bindings"],
+            &names,
+            false,
+        );
+        assert_eq!(html, case["expectedHtml"].as_str().unwrap(), "{id}");
+    }
+}
+
+#[test]
+fn a_declared_binding_with_a_missing_path_keeps_its_fallback() {
+    let names = vec![("hp".to_string(), "hp".to_string())];
+    let (html, _) = render_declared(
+        r#"<p data-bind="hp">fallback</p>"#,
+        "text/html",
+        &json!({ "other": 1 }),
+        &names,
+        false,
+    );
+    assert_eq!(html, r#"<p data-bind="hp">fallback</p>"#);
+}
+
+#[test]
+fn the_deprecated_string_pass_stringifies_the_same_way() {
+    let bindings: HashMap<String, Value> =
+        [("a".to_string(), Value::Null), ("b".to_string(), json!(0))].into_iter().collect();
+    let result = xript_runtime::fragment::process_fragment(
+        "corpus",
+        r#"<p data-bind="a">x</p><input data-bind="b" value="y" />"#,
+        &bindings,
+    );
+    assert_eq!(result.html, r#"<p data-bind="a"></p><input data-bind="b" value="0" />"#);
+}
+
+#[test]
+fn the_deprecated_string_pass_escapes_and_writes_literally() {
+    let bindings: HashMap<String, Value> = [
+        ("a".to_string(), json!("<b>x</b>")),
+        ("b".to_string(), json!("$0\"")),
+    ]
+    .into_iter()
+    .collect();
+    let result = xript_runtime::fragment::process_fragment(
+        "corpus",
+        r#"<p data-bind="a">x</p><input data-bind="b" value="y" />"#,
+        &bindings,
+    );
+    assert_eq!(
+        result.html,
+        r#"<p data-bind="a">&lt;b&gt;x&lt;/b&gt;</p><input data-bind="b" value="$0&quot;" />"#
+    );
+}
+
+#[test]
 fn a_computed_value_cannot_become_markup() {
     let bindings = json!({ "evil": "<script>alert(1)</script>" });
     let (html, _) = render(r#"<p data-bind="evil">x</p>"#, "text/html", &bindings, false);
@@ -169,4 +248,14 @@ fn jsml_gets_interpolation_from_the_same_parse() {
     let mut expr_bindings: HashMap<String, Value> = HashMap::new();
     expr_bindings.insert("hp".to_string(), json!(35));
     assert_eq!(xript_expr::evaluate("hp", &expr_bindings), json!(35));
+}
+
+fn declared_binding(entry: &Value) -> (String, String) {
+    match entry.as_str() {
+        Some(name) => (name.to_string(), name.to_string()),
+        None => (
+            entry["name"].as_str().unwrap().to_string(),
+            entry["path"].as_str().unwrap().to_string(),
+        ),
+    }
 }

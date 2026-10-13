@@ -1,5 +1,77 @@
 # Changelog
 
+## v0.9.0
+
+Most of this release is about the sandbox boundary telling the truth. Values crossing it were quietly changed, callbacks were flattened to strings, mods that failed to load reported themselves healthy, and the tools disagreed about what a valid manifest even was. Chasing all that turned up and closed a full host escape in `@xriptjs/runtime-node` and an eval hole in the other three runtimes, which is reason enough to upgrade on its own.
+
+- **The Node runtime no longer leaks the host realm.** In `@xriptjs/runtime-node`, host objects could reach the sandbox, and a crafted script could use them to get out of it, with no bindings involved. Every Node host on an earlier version should upgrade. The sandbox now keeps its own built-ins, every value crossing in is rebuilt in the sandbox's realm (data, `Date`, `Map`, `Set`, typed arrays, `RegExp`, errors, promises, wrapped host functions), and values coming back out are copied to plain host data
+  - a class instance a host passes in now arrives as a plain object with its own properties, matching the other three runtimes
+- **A Node sandbox can no longer take its host process down.** Node runs the sandbox in the host's own isolate, so an un-awaited rejected promise or a bare `import(...)` in a script reached the process-level unhandled-rejection handler and, under Node's default policy, killed the host. Sandbox rejections are now contained by a shared listener that still lets the host's own unhandled rejections crash as before, and dynamic `import()` is refused with a catchable `ImportDeniedError`
+- **A function never crosses out of the sandbox as a callable.** Node used to hand a script function back to the host live, where calling it ran outside every budget, and JS returned a bare one as its source text. Every runtime now applies the JSON rule: `null` at the top level or in an array, omitted from an object, held by a new `spec/marshal-out-tests.json`
+- **No runtime can compile code from a function's constructor anymore.** The JS, Rust, and C# sandboxes are separate engines, so nothing reached the host, but a script could still compile code from a string, which broke the no-eval rule. Every function prototype's `constructor` now throws a `TypeError` in all four runtimes, held by a new `spec/escape-tests.json`
+- **Callbacks cross into host bindings.** A script function passed to a binding used to arrive as a string at the top level and vanish when nested in an object or array, so predicate-shaped bindings (filters, pathfinders, visibility tests) silently answered wrong. A function anywhere in a binding's arguments now arrives as a callable proxy, valid for the duration of that call, running synchronously on the calling script's own budget
+  - a throw inside the callback reaches the host as a catchable error; calling it after the binding returns fails as expired
+  - a callback that returns a promise is refused rather than awaited, and calling an async binding from inside a callback is refused
+  - Rust and C# hosts resolve callbacks from markers that carry a random per-call nonce, so a marker a script types into its own data resolves to nothing
+  - a param declared `function` that receives anything else is a `TypeError` naming the binding and the param, before the host is called
+  - `typegen` and `docgen` render real function types, including declared signatures; `spec/callback-tests.json` holds all four runtimes to it
+- **Templates can repeat.** `data-each="item in items"` (or `"(item, i) in items"`) renders a node once per element, with the item and index in scope for `data-bind`, `data-if`, interpolation, and nested repeats. A non-array or failing expression renders zero copies, the same totality XEG already has
+  - `data-key` turns updates into per-key patches (reuse, move, insert, remove) instead of replacing the list; a bad or duplicate key falls back to index order with a diagnostic
+  - one render produces at most 10,000 copies, and `validate` catches malformed headers and write-back to a repeat item
+  - the "two smart attributes" wall is now three, because repeat is presentation and it is total
+- **Mods that fail to load say so.** An entry naming a script nobody supplied used to load a healthy-looking mod that ran nothing, and a module that threw on evaluation loaded anyway. Both now fail the load by default with an error naming the mod
+  - `entryErrors: "report"` keeps a broken mod loaded and records the failure on `ModInstance.diagnostics`; `onModDiagnostic` sees every load-time finding either way
+  - a fill whose `source` looks like markup but isn't `inline`, a missing fragment source, and the deprecated `events` alias now produce diagnostics at load and findings in `lint`
+  - `modEntryScripts`, `modEntryFormat`, and `modEntryExports` are public in every runtime, along with `FragmentBinding` and the other types that appeared in exported signatures without being exported
+  - extra fields on a fragment binding pass through untouched and are documented as host-defined; `lint` names each one as non-portable
+- **Fragment ops carry what the mod wrote.** `replaceChildren` no longer joins a list of strings into one string, and `[]` stays `[]` and clears. `removeAttr` joins `setAttr` as its inverse, `setAttr(sel, name, false)` removes the attribute instead of writing `"false"`, and an object handed to an attribute sink is refused instead of rendering `[object Object]`
+  - `toggle` is documented as a set, not a flip: appliers read `value`
+  - `spec/fragment-applier-tests.json` and `runFragmentApplierConformance` give host-side appliers a shared table to run against, counting writes as well as final state
+- **The sanitizer stops dropping things in silence.** A `data-bind` write into an undeclared prop and anything `replaceChildren` markup loses to the sanitizer now produce diagnostics. Object and array props project to HTML as canonical JSON instead of `[object Object]`, and SVG `<title>` and `<desc>` survive as text-only accessible names while HTML `<title>` stays stripped
+- **validate, typegen, and docgen agree.** A manifest that validates now produces a `.d.ts` that parses: reserved-word names get a legal shape, the loose type words (`array`, `int`, `function`, `T?`) render as real TypeScript, and `[]` binds tighter than `|`, so `string | number[]` stops meaning an array. One typeRef parser in `@xriptjs/validate` serves all three
+  - params gain `variadic` and an `optional` alias, and `returns` can carry a description
+  - generated docs, scaffolds, and guide topics no longer write em-dashes into a host's pages
+  - `slots` written as an object is refused at load with a message naming it, instead of a `TypeError` from hook injection
+- **The tooling answers for the version you target.** `--spec <version>` on the CLI and `version` on the MCP tools check a manifest against its own declared version, the schemas move to `$id` v0.9 with v0.8 frozen under `spec/history`, and the guide topics carry per-version notes. `xript --version` and `xript_server_info` report which manifest versions the toolchain speaks
+- **The browser default stops breaking Vite dev servers.** Under the `browser` condition `@xriptjs/runtime` now loads the singlefile QuickJS variants with the wasm inlined, so a dev server's dependency pre-bundling has no sibling asset to lose and no `optimizeDeps.exclude` list is needed. Node keeps the wasmfile variants
+  - the QuickJS packages are pinned to one exact version, and a mismatch throws `QuickJSVariantMismatchError` instead of `QuickJSContext had no callback with id 0`
+  - the trade is size: about 27 to 30 percent more gzipped transfer in the browser
+- **The Rust runtime gains an async mode that actually yields.** `RuntimeMode::Async` runs on rquickjs's async runtime, so a script awaiting a slow host binding parks and other calls on the same runtime proceed. The sync mode stays the default and still blocks, and `spec/bindings.md` now says exactly what `await` does in each runtime
+  - adding `mode` to `RuntimeOptions` breaks exhaustive struct literals, as earlier fields did
+  - `spec/execution.md` is new: limits, what each runtime can interrupt, why host bindings can't be, and pool wedge detection
+- **The validator runs in the browser, and the Fragment Workbench uses it.** `@xriptjs/validate/core` is a new entry with no Node builtins: schema validation, `crossValidate`, `lint`, and `validateManifestForVersion` for version pinning against the bundled frozen schemas, all in memory. The Workbench now shows real schema errors and lint findings for the app manifest, cross-validates the mod it assembles from your fragment live as either side changes, and exports a zip of the mod manifest and its fragment sources that `xript validate` accepts
+  - `fragmentReadNames(source, format)` returns the names a fragment's expressions read, which is exactly what a fill's `bindings` has to declare
+  - the built-in examples are rewritten to 0.9 canon, with three `data-each` samples
+- **A bare-name `data-bind` renders exactly like its expression, and a binding path means the same thing everywhere.** `data-bind="hp"` with `hp: null` used to write the word `null` while `data-bind="str(hp)"` wrote nothing; both now render `""`, and only an undeclared binding or a missing path keeps the authored fallback. A path walks an object's own keys and canonical array indexes (`items.0`) and nothing else, so inherited properties, `length`, and string characters resolve as missing in all four runtimes, held by a new `render` section in `spec/expression-tests.json`
+  - Rust and C# replaced the fallback with `""` when a declared path was missing, rendered arrays and objects differently from JS, and wrote deprecated `processFragment` values into HTML unescaped
+- **Smaller fixes found on the way**
+  - a classic-script entry in the Rust runtime ran with no timeout, so an infinite loop hung `load_mod`
+  - Rust and C# formatted numbers differently from JavaScript in the HTML projection
+  - `getContent()` returned empty HTML for host formats made of HTML plus custom elements
+  - `init`'s tier 3 scaffolds produced manifests that failed validation
+  - `version:bump` skipped the `xript-tree` crate
+  - the docs-site Fragment Builder and Workbench evaluated `data-if` with `new Function`; they now render through the runtime
+
+### Test counts
+
+| package | before | after |
+| --- | --- | --- |
+| `@xriptjs/sanitize` | 679 | 737 |
+| `@xriptjs/runtime` | 879 | 1193 |
+| `@xriptjs/runtime-node` | 880 | 1136 |
+| `@xriptjs/validate` | 434 | 532 |
+| `@xriptjs/typegen` | 163 | 198 |
+| `@xriptjs/docgen` | 109 | 175 |
+| `@xriptjs/init` | 53 | 55 |
+| `@xriptjs/cli` | 117 | 135 |
+| `xript-runtime` | 385 | 461 |
+| `xript-tree` | 13 | 22 |
+| `xript-expr` | 13 | 16 |
+| `xript-ratatui` | 58 | 60 |
+| `xript-wiz` | 38 | 38 |
+| `Xript.Runtime` | 1304 | 1572 |
+| **total** | **5125** | **6330** |
+
 ## v0.8.1
 
 A consistency pass on the toolchain: the pieces that judge a manifest now agree with one another, and none of them hard-blocks a key the runtime just ignores.

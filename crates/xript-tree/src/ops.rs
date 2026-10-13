@@ -139,7 +139,9 @@ fn node_at_mut<'a>(tree: &'a mut [FragmentNode], path: &[usize]) -> Option<&'a m
 
 /// Applies a finalized op batch to a tree in list order.
 ///
-/// The four contract ops are handled; anything else is ignored, as §1 requires of
+/// The contract ops (`toggle`, `setText`, `setProp`, `removeAttr`,
+/// `replaceChildren`, plus `setAttr` as the alias of `setProp`) are handled;
+/// anything else is ignored, as §1 requires of
 /// an unknown op name. `toggle` writes `data-if-visible`, which a renderer reads
 /// alongside `conditions` — it is a rendering decision, not a prune, for the same
 /// reason `data-if` is not one.
@@ -163,12 +165,19 @@ pub fn apply_ops(tree: &mut Vec<FragmentNode>, ops: &[FragmentOp]) {
                     element.children = vec![FragmentNode::text(text)];
                 }
             }
-            "setProp" => {
-                let (Some(prop), Some(value)) = (op.prop.as_ref(), op.value.as_ref()) else {
+            "setProp" | "setAttr" => {
+                let (Some(prop), Some(value)) = (op.prop.as_ref().or(op.attr.as_ref()), op.value.as_ref())
+                else {
                     continue;
                 };
                 if let Some(element) = node_at_mut(tree, &path) {
                     element.props.set(prop.clone(), value.clone());
+                }
+            }
+            "removeAttr" => {
+                let Some(prop) = op.prop.as_ref().or(op.attr.as_ref()) else { continue };
+                if let Some(element) = node_at_mut(tree, &path) {
+                    element.props.remove(prop);
                 }
             }
             "replaceChildren" => {
@@ -310,6 +319,41 @@ mod tests {
         );
         let target = node_at(&tree, &[0, 1]).unwrap().as_element().unwrap();
         assert_eq!(target.children, vec![FragmentNode::text("<b>bye</b>")]);
+    }
+
+    #[test]
+    fn remove_attr_removes_the_prop() {
+        let mut tree = tree();
+        apply_ops(
+            &mut tree,
+            &[FragmentOp {
+                op: "removeAttr".into(),
+                selector: "#warn".into(),
+                target: NodeRef::Id("warn".into()),
+                prop: Some("id".into()),
+                attr: Some("id".into()),
+                value: None,
+            }],
+        );
+        let target = node_at(&tree, &[0, 1]).unwrap().as_element().unwrap();
+        assert_eq!(target.props.get("id"), None);
+    }
+
+    #[test]
+    fn replace_children_with_an_empty_list_clears() {
+        let mut tree = tree();
+        apply_ops(
+            &mut tree,
+            &[FragmentOp {
+                op: "replaceChildren".into(),
+                selector: "@0".into(),
+                target: NodeRef::Path(vec![0]),
+                prop: None,
+                attr: None,
+                value: Some(json!([])),
+            }],
+        );
+        assert!(tree[0].as_element().unwrap().children.is_empty());
     }
 
     #[test]

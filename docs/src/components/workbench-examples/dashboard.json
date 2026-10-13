@@ -1,0 +1,66 @@
+{
+	"$schema": "https://xript.dev/schema/manifest/v0.9.json",
+	"xript": "0.9",
+	"name": "dashboard-app",
+	"title": "Dashboard Application",
+	"version": "1.0.0",
+	"description": "A player dashboard that lets mods add panels to its sidebar, header, and overlay.",
+	"bindings": {
+		"player": {
+			"description": "Reads the current player's state.",
+			"members": {
+				"getName": { "description": "Returns the player's display name.", "returns": "string" },
+				"getHealth": { "description": "Returns current health points.", "returns": "number" },
+				"getMaxHealth": { "description": "Returns maximum health points.", "returns": "number" },
+				"getLevel": { "description": "Returns the character level.", "returns": "number" },
+				"getParty": { "description": "Returns the names of the player's party members.", "returns": "string[]" },
+				"getInventory": {
+					"description": "Returns the player's inventory.",
+					"returns": { "array": "Item" },
+					"capability": "read:player.inventory"
+				}
+			}
+		},
+		"log": {
+			"description": "Writes a message to the dashboard console.",
+			"params": [{ "name": "message", "type": "string" }]
+		}
+	},
+	"capabilities": {
+		"ui.mount": { "description": "Mount panels over the main view.", "risk": "low" },
+		"player.inventory": { "description": "Read the player's inventory.", "risk": "low" }
+	},
+	"types": {
+		"Item": {
+			"description": "An item in the player's inventory.",
+			"fields": {
+				"name": { "type": "string", "description": "Display name." },
+				"count": { "type": "number", "description": "Stack count." }
+			}
+		}
+	},
+	"slots": [
+		{
+			"id": "sidebar.left",
+			"description": "Stacked panels down the left edge.",
+			"accepts": ["text/html", "application/j5ml+json"],
+			"multiple": true,
+			"style": "isolated"
+		},
+		{
+			"id": "header.status",
+			"description": "One status line in the header.",
+			"accepts": ["text/html"],
+			"multiple": false,
+			"style": "inherit"
+		},
+		{
+			"id": "main.overlay",
+			"description": "Panels drawn over the main view.",
+			"accepts": ["text/html", "application/j5ml+json"],
+			"capability": "ui.mount",
+			"multiple": true,
+			"style": "scoped"
+		}
+	]
+}

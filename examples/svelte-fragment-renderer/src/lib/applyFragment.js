@@ -13,10 +13,11 @@
  * @typedef {Object} FragmentResult
  * @property {string} fragmentId
  * @property {string} html        Runtime-sanitized markup.
- * @property {Record<string, boolean>} visibility  Keyed by `data-if` expression.
+ * @property {Record<string, boolean>} visibility  Keyed by `data-if` expression. Deprecated.
+ * @property {{ path: number[], expression: string, visible: boolean }[]} [conditions]  Keyed by tree position.
  *
  * @typedef {Object} FragmentOp
- * @property {"toggle"|"addClass"|"removeClass"|"setText"|"setProp"|"setAttr"|"replaceChildren"} op
+ * @property {"toggle"|"addClass"|"removeClass"|"setText"|"setProp"|"setAttr"|"removeAttr"|"replaceChildren"} op
  * @property {string} selector
  * @property {unknown} [value]
  * @property {string} [prop]
@@ -56,8 +57,50 @@ export function applyVisibility(root, visibility) {
 }
 
 /**
+ * Apply `data-if` results by tree position, the successor to `applyVisibility`.
+ *
+ * Expression-keyed visibility cannot tell two nodes with the same `data-if`
+ * apart, and every copy of a `data-each` template carries the same expression
+ * with a different answer. `conditions` addresses each node by its child-index
+ * path, which this walks against the mounted `html`'s child nodes. That holds
+ * for markup an HTML parser does not restructure; a `table` without `tbody`
+ * is the known exception, and a host rendering tables builds its DOM from
+ * `tree` instead.
+ *
+ * @param {Element} root
+ * @param {{ path: number[], visible: boolean }[]} conditions
+ */
+export function applyConditions(root, conditions) {
+	if (!root || !Array.isArray(conditions)) return;
+	for (const condition of conditions) {
+		let node = root;
+		for (const index of condition.path) {
+			node = node?.childNodes?.[index];
+		}
+		if (node && typeof node.setAttribute === "function") setHidden(node, !condition.visible);
+	}
+}
+
+/**
+ * Apply whichever visibility report the result carries: path-keyed
+ * `conditions` when present, the deprecated `visibility` map otherwise.
+ *
+ * @param {Element} root
+ * @param {FragmentResult} fragment
+ */
+export function applyFragmentVisibility(root, fragment) {
+	if (Array.isArray(fragment?.conditions)) applyConditions(root, fragment.conditions);
+	else applyVisibility(root, fragment?.visibility ?? {});
+}
+
+/**
  * Apply a single command-buffer op to the DOM. Unknown ops are ignored
  * (forward-compatible with op kinds a newer runtime might emit).
+ *
+ * Every write reads first: setting a value an element already holds still
+ * fires mutation observers and restarts transitions, so an op that would not
+ * change anything does not touch the DOM. `toggle` is a set, not a flip; it
+ * reads `op.value` and never the element's current state.
  *
  * @param {Element} root
  * @param {FragmentOp} op
@@ -68,31 +111,25 @@ export function applyOp(root, op) {
 	for (const el of targets) {
 		switch (op.op) {
 			case "toggle":
-				setHidden(el, !op.value);
+				if (typeof op.value === "boolean") setHidden(el, !op.value);
 				break;
 			case "addClass":
-				el.classList.add(String(op.value));
+				if (!el.classList.contains(String(op.value))) el.classList.add(String(op.value));
 				break;
 			case "removeClass":
-				el.classList.remove(String(op.value));
+				if (el.classList.contains(String(op.value))) el.classList.remove(String(op.value));
 				break;
-			case "setText":
-				el.textContent = stringifyValue(op.value);
+			case "setText": {
+				const text = stringifyValue(op.value);
+				if (el.textContent !== text) el.textContent = text;
 				break;
+			}
 			case "setProp":
-				// `setProp` is the canonical op; a prop on an HTML node is an attribute.
-				if (typeof op.prop === "string") {
-					el.setAttribute(op.prop, stringifyValue(op.value));
-				}
-				break;
 			case "setAttr":
-				// Deprecated alias of `setProp`; emits `prop` alongside `attr`, so read either.
-				{
-					const name = typeof op.prop === "string" ? op.prop : op.attr;
-					if (typeof name === "string") {
-						el.setAttribute(name, stringifyValue(op.value));
-					}
-				}
+				setAttribute(el, attributeName(op), op.value);
+				break;
+			case "removeAttr":
+				setAttribute(el, attributeName(op), null);
 				break;
 			case "replaceChildren":
 				el.innerHTML = childrenToHtml(op.value);
@@ -153,11 +190,32 @@ export function wireHandlers(root, handlers, dispatch) {
 }
 
 function setHidden(el, hidden) {
-	if (hidden) {
+	if (hidden && !el.hasAttribute("hidden")) {
 		el.setAttribute("hidden", "");
-	} else {
+	} else if (!hidden && el.hasAttribute("hidden")) {
 		el.removeAttribute("hidden");
 	}
+}
+
+/** `setAttr` is the deprecated alias of `setProp` and emits `prop` alongside `attr`, so read either. */
+function attributeName(op) {
+	return typeof op.prop === "string" ? op.prop : op.attr;
+}
+
+/**
+ * An attribute has no `false`: HTML reads presence, so `false`, `null`, and a
+ * missing value remove it rather than writing the string "false". Event-handler
+ * attributes are refused here too, since a host can hand this applier ops the
+ * runtime never filtered.
+ */
+function setAttribute(el, name, value) {
+	if (typeof name !== "string" || /^on/i.test(name)) return;
+	if (value === false || value === null || value === undefined) {
+		if (el.hasAttribute(name)) el.removeAttribute(name);
+		return;
+	}
+	const text = String(value);
+	if (el.getAttribute(name) !== text) el.setAttribute(name, text);
 }
 
 function normalizeExpr(expr) {
@@ -169,7 +227,35 @@ function stringifyValue(value) {
 	return String(value);
 }
 
+/**
+ * `replaceChildren` carries markup, a list of markup strings (concatenated in
+ * order), or a J5ML node list. The runtime already sanitized all three; a node
+ * list still has to be serialized with its text and attribute values escaped.
+ */
 function childrenToHtml(value) {
-	if (Array.isArray(value)) return value.map(stringifyValue).join("");
-	return stringifyValue(value);
+	if (typeof value === "string") return value;
+	if (!Array.isArray(value)) return "";
+	if (value.every((item) => typeof item === "string")) return value.join("");
+	return value.map(jsmlToHtml).join("");
+}
+
+function jsmlToHtml(node) {
+	if (typeof node === "string") return escapeText(node);
+	if (!Array.isArray(node) || typeof node[0] !== "string") return "";
+	const [name, ...rest] = node;
+	const hasAttrs = rest.length > 0 && rest[0] !== null && typeof rest[0] === "object" && !Array.isArray(rest[0]);
+	const attrs = Object.entries(hasAttrs ? rest[0] : {})
+		.filter(([, value]) => value !== false && value !== null && value !== undefined)
+		.map(([key, value]) => ` ${key}="${escapeAttr(value === true ? "" : String(value))}"`)
+		.join("");
+	const children = (hasAttrs ? rest.slice(1) : rest).map(jsmlToHtml).join("");
+	return `<${name}${attrs}>${children}</${name}>`;
+}
+
+function escapeText(text) {
+	return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function escapeAttr(text) {
+	return escapeText(text).replace(/"/g, "&quot;");
 }

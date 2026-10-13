@@ -1,12 +1,19 @@
 ---
 title: Fragment Workbench
-description: Interactive authoring environment for building and testing xript UI fragments.
+description: Interactive authoring environment for building, validating, and exporting xript UI fragments.
 tableOfContents: false
 editUrl: false
 ---
 
 import FragmentWorkbench from '../../../components/FragmentWorkbench.astro';
 
-Build and test UI fragments against real manifest contracts. Load an app manifest (or paste your own), see available slots and bindings, author fragments with live validation, and export mod manifests when you're done.
+Build and test UI fragments against a real manifest contract. Load an example app manifest or paste your own, author a fragment in HTML or J5ML, watch it render through the real runtime against simulated host data, and download a mod that validates.
+
+The checks are the real toolchain running in your browser, through `@xriptjs/validate/core`:
+
+- **The app manifest** is validated against the schema of the version it targets (its `$schema`, else its `xript` field) and linted, on every edit.
+- **Your fragment** is assembled into a mod manifest that fills the selected slot, then cross-validated against the app manifest and linted as a pair: unknown bindings, a format the slot does not accept, a capability the slot needs, invalid expressions, and anything the sanitizer will strip. Edits to either side re-run the checks.
+- **The fill's `bindings`** are derived from the names your expressions read, each mapped to its path in the host's data. The host data is sampled from the manifest's readers (`player.getHealth` becomes `player.health`) and its `types`, and you can change it on the Author tab to see the fragment respond.
+- **Export** downloads a zip holding `mod-manifest.json` and the fragment file it points at (or a single manifest with the source inlined), with copy buttons for each piece. Run `xript validate --cross app.json mod-manifest.json` on the result and it passes the same checks the workbench showed.
 
 <FragmentWorkbench />

@@ -262,6 +262,24 @@ describe("fragment vocabulary types", () => {
 		assert.doesNotMatch(out, /id\?: number;/);
 	});
 
+	it("types data-each and data-key as protocol props on every node", () => {
+		const host = {
+			xript: "0.8",
+			name: "repeat-host",
+			slots: [{ id: "s", accepts: ["application/x-r+json"] }],
+			formats: {
+				"application/x-r+json": {
+					syntax: "j5ml",
+					nodes: { Row: { props: { label: { type: "string" } } } },
+				},
+			},
+		};
+		const out = generateTypes(host);
+		assert.deepEqual(typeCheck(out), []);
+		assert.match(out, /"data-each"\?: string;/);
+		assert.match(out, /"data-key"\?: string;/);
+	});
+
 	it("keeps type identifiers unique when node names pascal-case alike", () => {
 		// `my-widget` and `my_widget` both pascal-case to `MyWidget`; a node named `Node` would
 		// otherwise collide its props with the vocabulary protocol interface. All three must emit
@@ -304,8 +322,191 @@ describe("typeRef rendering corpus", () => {
 
 	for (const testCase of corpus.cases) {
 		it(testCase.name, () => {
-			const rendered = (generateTypes(manifestFor(testCase.ref)).match(/function f\(\): ([^;]+);/) || [])[1];
+			const out = generateTypes(manifestFor(testCase.ref));
+			const rendered = (out.match(/function f\(\): (.+);$/m) || [])[1];
 			assert.equal(rendered, testCase.typescript, testCase.name);
+			assert.deepEqual(typeCheck(out), [], `${testCase.name} type-checks`);
 		});
 	}
+
+	it("compiles every corpus case as a declaration", () => {
+		const bindings = Object.fromEntries(
+			corpus.cases.map((testCase, i) => [`f${i}`, { description: "F.", params: [], returns: testCase.ref }]),
+		);
+		assert.deepEqual(typeCheck(generateTypes({ ...base, bindings })), []);
+	});
+});
+
+describe("function parameters", () => {
+	const corpus = JSON.parse(readFileSync(new URL("../../../spec/callback-tests.json", import.meta.url), "utf-8"));
+
+	it("types callback parameters and compiles", () => {
+		const output = generateTypes(corpus.manifest);
+		assert.match(output, /function typed\(fn: \(\.\.\.args: any\[\]\) => any\): void;/);
+		assert.match(output, /function typedOptional\(fn: \(\(\.\.\.args: any\[\]\) => any\) \| undefined\): void;/);
+		assert.match(output, /function typedSignature\(test: \(cell: number\) => boolean\): void;/);
+		assert.deepEqual(typeCheck(output), []);
+	});
+});
+
+/**
+ * One manifest exercising every shape that once produced a declaration file that does not parse
+ * or silently means something else: reserved words as binding, namespace, member, hook, phase and
+ * parameter names; non-identifier names; every accepted type word; string unions mixing arrays;
+ * variadic parameters; the `optional` alias; an optional parameter before a required one; and the
+ * `{ type, description }` return form.
+ */
+const STRESS = {
+	xript: "0.9",
+	name: "stress-host",
+	capabilities: { fs: { description: "Files." } },
+	types: {
+		Item: {
+			description: "An item.",
+			fields: {
+				"display-name": { type: "string", description: "Hyphenated field." },
+				count: { type: "int" },
+				tags: { type: "string[]?" },
+				meta: { type: "object" },
+				callback: { type: "function", optional: true },
+			},
+		},
+		Kind: { description: "A kind.", values: ["a", "b"] },
+	},
+	bindings: {
+		if: { description: "A reserved top-level function.", params: [{ name: "cond", type: "bool" }], returns: "bool" },
+		delete: {
+			description: "A reserved top-level namespace.",
+			members: { all: { description: "Deletes all.", params: [] } },
+		},
+		"my-tool": { description: "A non-identifier binding.", params: [{ name: "x", type: "int" }] },
+		class: { description: "Another reserved name.", params: [] },
+		fs: {
+			description: "A namespace with reserved members.",
+			members: {
+				delete: { description: "Removes a path.", capability: "fs", params: [{ name: "path", type: "string" }] },
+				new: { description: "Creates.", params: [{ name: "class", type: "string" }] },
+				nested: {
+					description: "Nested namespace.",
+					members: { return: { description: "Reserved nested member.", params: [], returns: "array" } },
+				},
+			},
+		},
+		ok: {
+			description: "A clean namespace.",
+			members: { read: { description: "Reads.", params: [{ name: "p", type: "string" }], returns: "string" } },
+		},
+		log: {
+			description: "Variadic logger.",
+			params: [
+				{ name: "level", type: "string" },
+				{ name: "args", type: "string | number[]", variadic: true },
+			],
+		},
+		sum: {
+			description: "Variadic numbers.",
+			params: [{ name: "values", type: "float", variadic: true }],
+			returns: { type: "number", description: "The total." },
+		},
+		pick: {
+			description: "Optional before required.",
+			params: [
+				{ name: "a", type: "string", optional: true },
+				{ name: "b", type: "Item" },
+				{ name: "c", type: "Kind", required: false },
+			],
+			returns: { type: "Item?", description: "The picked item, if any." },
+		},
+		call: {
+			description: "Takes functions.",
+			params: [
+				{ name: "fns", type: "function[]" },
+				{ name: "either", type: { union: ["function", "integer"] } },
+				{ name: "grid", type: "(int | bool)[][]" },
+				{ name: "map", type: { map: "array" } },
+				{ name: "default", type: "unknown", default: null },
+			],
+			returns: "any",
+		},
+	},
+	hooks: {
+		"on-save": { description: "Non-identifier hook.", params: [{ name: "item", type: "Item" }] },
+		switch: { description: "Reserved hook name.", phases: ["pre", "post"], params: [{ name: "rest", type: "int", variadic: true }] },
+		ready: { description: "Plain hook.", params: [] },
+	},
+	slots: [{ id: "panel", accepts: ["text/html"], description: "Panel.", capability: "fs" }],
+};
+
+describe("stress manifest", () => {
+	it("generates host-facing types that type-check", () => {
+		assert.deepEqual(typeCheck(generateTypes(STRESS)), []);
+	});
+
+	it("generates ambient types that type-check", () => {
+		assert.deepEqual(typeCheck(generateAmbientTypes(STRESS)), []);
+	});
+
+	it("emits reserved and non-identifier names in shapes that still carry their types", () => {
+		const out = generateTypes(STRESS);
+		assert.match(out, /interface XriptGlobals \{/);
+		assert.match(out, /\tif\(cond: boolean\): boolean;/);
+		assert.match(out, /\t"my-tool"\(x: number\): void;/);
+		assert.match(out, /declare const fs: \{/);
+		assert.match(out, /\tdelete\(path: string\): void;/);
+		assert.match(out, /\tnew\(class_: string\): void;/);
+		assert.match(out, /declare namespace ok \{/);
+		assert.match(out, /declare const hooks: \{/);
+		assert.match(out, /\t"on-save"\(handler: \(item: Item\) => void\): void;/);
+		assert.match(out, /\tswitch: \{/);
+	});
+
+	it("renders variadic parameters as rest parameters", () => {
+		const out = generateTypes(STRESS);
+		assert.match(out, /declare function log\(level: string, \.\.\.args: \(string \| number\[\]\)\[\]\): void;/);
+		assert.match(out, /declare function sum\(\.\.\.values: number\[\]\): number;/);
+	});
+
+	it("keeps an optional parameter that a required one follows as an explicit undefined", () => {
+		assert.match(generateTypes(STRESS), /declare function pick\(a: string \| undefined, b: Item, c\?: Kind\): Item \| undefined;/);
+	});
+
+	it("writes no em-dash into generated output", () => {
+		for (const out of [generateTypes(STRESS, { intent: true, includeGrantShapes: true }), generateAmbientTypes(STRESS)]) {
+			assert.ok(!out.includes("—"), "generated output contains U+2014");
+		}
+	});
+
+	it("carries a return description into @returns", () => {
+		const out = generateTypes(STRESS);
+		assert.match(out, /@returns The total\./);
+		assert.match(out, /@returns The picked item, if any\./);
+	});
+
+	it("passes the real TypeScript compiler with --noEmit", async () => {
+		const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+		const { join } = await import("node:path");
+		const { tmpdir } = await import("node:os");
+		const { spawnSync } = await import("node:child_process");
+		const { createRequire } = await import("node:module");
+		const tsc = createRequire(import.meta.url).resolve("typescript/bin/tsc");
+		const dir = mkdtempSync(join(tmpdir(), "xript-typegen-"));
+		try {
+			writeFileSync(join(dir, "host.d.ts"), generateTypes(STRESS));
+			writeFileSync(join(dir, "ambient.d.ts"), generateAmbientTypes(STRESS));
+			const run = (file) => {
+				const project = join(dir, `${file}.tsconfig.json`);
+				writeFileSync(
+					project,
+					JSON.stringify({ compilerOptions: { strict: true, noEmit: true, target: "ES2022", types: [] }, files: [file] }),
+				);
+				return spawnSync(process.execPath, [tsc, "--noEmit", "-p", project], { encoding: "utf-8" });
+			};
+			for (const file of ["host.d.ts", "ambient.d.ts"]) {
+				const result = run(file);
+				assert.equal(result.status, 0, `${file}: ${result.stdout}${result.stderr}`);
+			}
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
 });

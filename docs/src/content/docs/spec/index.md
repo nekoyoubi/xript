@@ -10,11 +10,12 @@ The specification is the contract every runtime, tool, and host implements. The 
 - [Manifest](/spec/manifest/) — the app manifest: bindings, capabilities, types, slots, events, libraries
 - [Manifest Inheritance](/spec/extends/) — `extends`: add-new, fill, refine, and the collision rules
 - [Mod Manifest](/spec/mod-manifest/) — what a mod declares: capabilities, entry, and `fills` keyed by host slot id
-- [Fragments](/spec/fragments/) — the inert-template protocol: `data-bind`, `data-if`, handlers, and the command buffer
+- [Fragments](/spec/fragments/): the inert-template protocol (`data-bind`, `data-if`, `data-each`, handlers, and the command buffer)
 - [Fragment Formats](/spec/fragment-formats/) — the format catalog a slot's `accepts` names
 - [Capabilities](/spec/capabilities/) — default-deny grants, prefix subsumption, and the read/write mode lattice
 - [Bindings](/spec/bindings/) — host functions and namespaces, error vocabulary, naming grammars
 - [Hooks](/spec/hooks/) — event-typed slots and the dispatch contract
+- [Execution Limits](/spec/execution/): what bounds a running script, what xript can interrupt, and what it cannot
 - [Commands](/spec/commands/) — command-typed slots: the fill shape, bound arguments, resolution, and invocation
 - [Module-Format Mods](/spec/modules/) — ES module entries, the import deny, and approved libraries
 - [Host Harness](/spec/harness/) — synthetic hosts: stub bindings, journals, and replayable step scenarios
@@ -26,9 +27,11 @@ The specification is the contract every runtime, tool, and host implements. The 
 
 Every schema is served at its `$id` URL, with prior version ids resolving as aliases:
 
-- [`/schema/manifest/v0.7.json`](/schema/manifest/v0.7.json) — the app manifest schema
-- [`/schema/mod-manifest/v0.8.json`](/schema/mod-manifest/v0.8.json) — the mod manifest schema
-- [`/schema/harness/v0.7.json`](/schema/harness/v0.7.json) and [`/schema/harness-steps/v0.7.json`](/schema/harness-steps/v0.7.json) — the harness descriptor and scenario shapes
-- [`/schema/capability-prompt/v0.5.json`](/schema/capability-prompt/v0.5.json), [`/schema/install-descriptor/v0.5.json`](/schema/install-descriptor/v0.5.json), [`/schema/discovery-result/v0.5.json`](/schema/discovery-result/v0.5.json), [`/schema/debug-messages/v0.5.json`](/schema/debug-messages/v0.5.json) — the host-side data shapes
+- [`/schema/manifest/v0.9.json`](/schema/manifest/v0.9.json): the app manifest schema
+- [`/schema/mod-manifest/v0.9.json`](/schema/mod-manifest/v0.9.json): the mod manifest schema
+- [`/schema/harness/v0.7.json`](/schema/harness/v0.7.json) and [`/schema/harness-steps/v0.8.json`](/schema/harness-steps/v0.8.json): the harness descriptor and scenario shapes
+- [`/schema/capability-prompt/v0.5.json`](/schema/capability-prompt/v0.5.json), [`/schema/install-descriptor/v0.5.json`](/schema/install-descriptor/v0.5.json), [`/schema/discovery-result/v0.5.json`](/schema/discovery-result/v0.5.json), [`/schema/debug-messages/v0.5.json`](/schema/debug-messages/v0.5.json): the host-side data shapes
+
+Earlier manifest and mod-manifest versions (`v0.8`, `v0.7`, `v0.6`, `v0.3`) keep serving the exact documents they published, and the toolchain validates a manifest against the version it declares.
 
 Point a manifest's `$schema` at the matching URL and editors pick up validation and autocomplete.

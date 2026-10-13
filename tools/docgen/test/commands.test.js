@@ -68,7 +68,7 @@ describe("summarizeSchema", () => {
 	it("falls back to the type, the enum, or a dash", () => {
 		assert.equal(summarizeSchema({ type: "string" }), "`string`");
 		assert.equal(summarizeSchema({ enum: ["a", "b"] }), '`"a" | "b"`');
-		assert.equal(summarizeSchema(undefined), "—");
+		assert.equal(summarizeSchema(undefined), "-");
 	});
 });
 
@@ -134,9 +134,9 @@ describe("mod command catalog", () => {
 		assert.match(content, /## Commands/);
 		assert.match(content, /### `palette\.commands`/);
 		assert.match(content, /\| Id \| Title \| Handler \| Requires \| Bound args \| Input \| Output \|/);
-		assert.match(content, /\| `wrap\.double` \| Wrap in double quotes \| `wrapSelection` \| `write:editor\.text` \| `open`, `close` \| — \| — \|/);
-		assert.match(content, /\| `wrap\.custom` \| Wrap in… \| `wrapSelection` \| `write:editor\.text` \| — \| `\{open, close\}` \| `\{changed\?\}` \|/);
-		assert.match(content, /\| `strip\.formatting` \| Strip all formatting \| `stripFormatting` \| `write:editor-destructive` \| — \| — \| — \|/);
+		assert.match(content, /\| `wrap\.double` \| Wrap in double quotes \| `wrapSelection` \| `write:editor\.text` \| `open`, `close` \| - \| - \|/);
+		assert.match(content, /\| `wrap\.custom` \| Wrap in… \| `wrapSelection` \| `write:editor\.text` \| - \| `\{open, close\}` \| `\{changed\?\}` \|/);
+		assert.match(content, /\| `strip\.formatting` \| Strip all formatting \| `stripFormatting` \| `write:editor-destructive` \| - \| - \| - \|/);
 	});
 
 	it("reports the slot's gate when the handler declares no export capability", () => {
@@ -149,7 +149,7 @@ describe("mod command catalog", () => {
 		const host = { xript: "0.8", name: "h", slots: [{ id: "acts", accepts: ["application/x-xript-command"], multiple: true }] };
 		const mod = { xript: "0.8", name: "m", fills: { acts: [{ id: "a", title: "A", handler: "run" }] } };
 		const content = index(generateDocs(mod, { host }));
-		assert.match(content, /\| `a` \| A \| `run` \| — \| — \| — \| — \|/);
+		assert.match(content, /\| `a` \| A \| `run` \| - \| - \| - \| - \|/);
 	});
 
 	it("notes an unexposed command without implying it is denied", () => {
@@ -161,8 +161,8 @@ describe("mod command catalog", () => {
 
 	it("sniffs command fills when no host manifest is supplied, reporting only the export gate", () => {
 		const content = index(generateDocs(MOD));
-		assert.match(content, /\| `wrap\.double` \| Wrap in double quotes \| `wrapSelection` \| — \| `open`, `close` \| — \| — \|/);
-		assert.match(content, /\| `strip\.formatting` \| Strip all formatting \| `stripFormatting` \| `write:editor-destructive` \| — \| — \| — \|/);
+		assert.match(content, /\| `wrap\.double` \| Wrap in double quotes \| `wrapSelection` \| - \| `open`, `close` \| - \| - \|/);
+		assert.match(content, /\| `strip\.formatting` \| Strip all formatting \| `stripFormatting` \| `write:editor-destructive` \| - \| - \| - \|/);
 	});
 
 	it("omits the Commands section for a mod contributing only fragments", () => {

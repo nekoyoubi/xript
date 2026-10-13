@@ -59,11 +59,15 @@ function renderFrame(label) {
 	}
 
 	const invResult = inventory.updateBindings({
-		player: { name: gameState.player.name },
+		player: { name: gameState.player.name, inventory: gameState.player.inventory },
 	});
 	for (const result of invResult) {
 		console.log(`  [${result.fragmentId}] HTML:`);
 		console.log(`    ${result.html.replace(/\n\t*/g, " ").trim()}`);
+		for (const repeat of result.repeats) {
+			const patch = repeat.patch.map((step) => `${step.op} ${JSON.stringify(step.key)}`).join(", ");
+			console.log(`    Repeat "${repeat.expression}" (${repeat.mode}): ${patch}`);
+		}
 	}
 
 	const fragOps = runtime.fireFragmentHook("health-display", "update", {
@@ -72,13 +76,6 @@ function renderFrame(label) {
 	});
 	if (fragOps.length > 0) {
 		console.log(`  Fragment ops: ${JSON.stringify(fragOps)}`);
-	}
-
-	const invOps = runtime.fireFragmentHook("inventory-list", "update", {
-		inventory: gameState.player.inventory,
-	});
-	if (invOps.length > 0) {
-		console.log(`  Inventory ops: ${JSON.stringify(invOps)}`);
 	}
 
 	console.log("");

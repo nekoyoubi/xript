@@ -1,0 +1,286 @@
+{
+  "description": "Conformance table for fragment op appliers: the host-side code that turns a finalized command buffer into DOM. Each case is plain data, `(dom, ops) -> (expected.dom, expected.writes)`, and names in `because` the applier defect it exists to catch. The runtime's op corpus (`fragment-op-tests.json`) holds the runtime to what it emits; this table holds a host to what it does with it.",
+  "notes": [
+    "`dom` and `expected.dom` are the children of a container element, written as J5ML: `[name, {attributes}?, ...children]`, a string being a text node.",
+    "`ops` are finalized ops exactly as a host receives them from `fireFragmentHook`, including the parsed `target`. A few cases carry an op shape the runtime no longer emits (`setAttr` with `false` or `null`), because an applier also meets op lists a host assembled itself or received from an older runtime.",
+    "Snapshots compare after normalization: attributes are compared as a set, the `class` attribute as a set of tokens with an empty `class` the same as an absent one, the `hidden` attribute by presence alone, and adjacent text nodes merged with empty ones dropped.",
+    "A write is a mutating call on the DOM: setting an attribute, removing an attribute that is present, adding or removing a class, setting text content, or replacing children. Setting an attribute to the value it already holds is a write, and so is adding a class already present or removing one already absent, because a DOM still runs its update steps for those; removing an attribute that is absent is not. An applier stays at the expected count by reading before it writes. `expected.writes` is the exact count: an applier that writes more re-runs observers, transitions, and input state for nothing, and one that writes less skipped real work.",
+    "`toggle` is a set, not a flip. `value` is the strict boolean condition; `true` shows the target (no `hidden` attribute) and `false` hides it (`hidden` present). Toggle cases repeat an even number of times, because an applier that flips on every op lands on the right state after an odd number of repeats and on the wrong one after an even number.",
+    "`replaceChildren` carries a markup string, a list of markup strings (concatenated in order), or a J5ML node list. The empty list is an explicit clear.",
+    "Every op name in the vocabulary has at least one case: `toggle`, `setText`, `replaceChildren`, `setProp`, `setAttr`, `removeAttr`, `addClass`, `removeClass`."
+  ],
+  "cases": [
+    {
+      "description": "setAttr writes the attribute",
+      "because": "an applier that ignores setAttr, or reads only the deprecated `attr` key, drops the write",
+      "dom": [["button", { "id": "go" }, "Go"]],
+      "ops": [{ "op": "setAttr", "selector": "#go", "target": { "by": "id", "id": "go" }, "prop": "title", "attr": "title", "value": "Start" }],
+      "expected": { "dom": [["button", { "id": "go", "title": "Start" }, "Go"]], "writes": 1 }
+    },
+    {
+      "description": "setAttr repeated with the same value writes once",
+      "because": "an applier that re-writes identical values fires a mutation for every repeat",
+      "dom": [["button", { "id": "go" }, "Go"]],
+      "ops": [
+        { "op": "setAttr", "selector": "#go", "target": { "by": "id", "id": "go" }, "prop": "title", "attr": "title", "value": "Start" },
+        { "op": "setAttr", "selector": "#go", "target": { "by": "id", "id": "go" }, "prop": "title", "attr": "title", "value": "Start" }
+      ],
+      "expected": { "dom": [["button", { "id": "go", "title": "Start" }, "Go"]], "writes": 1 }
+    },
+    {
+      "description": "setAttr to the value already present does not write",
+      "because": "an applier that never compares against the current value re-writes state the fragment already has",
+      "dom": [["button", { "id": "go", "title": "Start" }, "Go"]],
+      "ops": [{ "op": "setAttr", "selector": "#go", "target": { "by": "id", "id": "go" }, "prop": "title", "attr": "title", "value": "Start" }],
+      "expected": { "dom": [["button", { "id": "go", "title": "Start" }, "Go"]], "writes": 0 }
+    },
+    {
+      "description": "setAttr stringifies a number",
+      "because": "an applier that writes only string values drops numeric attributes",
+      "dom": [["input", { "id": "n" }]],
+      "ops": [{ "op": "setAttr", "selector": "#n", "target": { "by": "id", "id": "n" }, "prop": "maxlength", "attr": "maxlength", "value": 12 }],
+      "expected": { "dom": [["input", { "id": "n", "maxlength": "12" }]], "writes": 1 }
+    },
+    {
+      "description": "setAttr false does not leave a present attribute",
+      "because": "an applier that stringifies every value writes disabled=\"false\", which HTML reads as disabled",
+      "dom": [["button", { "id": "go", "disabled": "" }, "Go"]],
+      "ops": [{ "op": "setAttr", "selector": "#go", "target": { "by": "id", "id": "go" }, "prop": "disabled", "attr": "disabled", "value": false }],
+      "expected": { "dom": [["button", { "id": "go" }, "Go"]], "writes": 1 }
+    },
+    {
+      "description": "setAttr null removes the attribute",
+      "because": "an applier that stringifies null writes the literal text \"null\"",
+      "dom": [["button", { "id": "go", "title": "Start" }, "Go"]],
+      "ops": [{ "op": "setAttr", "selector": "#go", "target": { "by": "id", "id": "go" }, "prop": "title", "attr": "title", "value": null }],
+      "expected": { "dom": [["button", { "id": "go" }, "Go"]], "writes": 1 }
+    },
+    {
+      "description": "setAttr true writes the string true",
+      "because": "an applier that treats true as a removal, or writes an empty value, loses a string-boolean attribute such as aria-pressed",
+      "dom": [["button", { "id": "go" }, "Go"]],
+      "ops": [{ "op": "setAttr", "selector": "#go", "target": { "by": "id", "id": "go" }, "prop": "aria-pressed", "attr": "aria-pressed", "value": true }],
+      "expected": { "dom": [["button", { "id": "go", "aria-pressed": "true" }, "Go"]], "writes": 1 }
+    },
+    {
+      "description": "removeAttr removes a present attribute",
+      "because": "an applier that does not know removeAttr has no way to undo a setAttr",
+      "dom": [["button", { "id": "go", "disabled": "" }, "Go"]],
+      "ops": [{ "op": "removeAttr", "selector": "#go", "target": { "by": "id", "id": "go" }, "prop": "disabled", "attr": "disabled" }],
+      "expected": { "dom": [["button", { "id": "go" }, "Go"]], "writes": 1 }
+    },
+    {
+      "description": "removeAttr on an absent attribute does not write",
+      "because": "removing what is not there is not a change",
+      "dom": [["button", { "id": "go" }, "Go"]],
+      "ops": [{ "op": "removeAttr", "selector": "#go", "target": { "by": "id", "id": "go" }, "prop": "disabled", "attr": "disabled" }],
+      "expected": { "dom": [["button", { "id": "go" }, "Go"]], "writes": 0 }
+    },
+    {
+      "description": "setAttr then removeAttr applies in list order",
+      "because": "an applier that batches or reorders ops lands on the wrong final state",
+      "dom": [["button", { "id": "go" }, "Go"]],
+      "ops": [
+        { "op": "setAttr", "selector": "#go", "target": { "by": "id", "id": "go" }, "prop": "disabled", "attr": "disabled", "value": "" },
+        { "op": "removeAttr", "selector": "#go", "target": { "by": "id", "id": "go" }, "prop": "disabled", "attr": "disabled" }
+      ],
+      "expected": { "dom": [["button", { "id": "go" }, "Go"]], "writes": 2 }
+    },
+    {
+      "description": "setProp on an HTML node writes the attribute",
+      "because": "an applier that handles only the deprecated setAttr drops the canonical op",
+      "dom": [["div", { "id": "bar" }]],
+      "ops": [{ "op": "setProp", "selector": "#bar", "target": { "by": "id", "id": "bar" }, "prop": "data-level", "value": 3 }],
+      "expected": { "dom": [["div", { "id": "bar", "data-level": "3" }]], "writes": 1 }
+    },
+    {
+      "description": "setProp repeated with the same value writes once",
+      "because": "an applier that re-writes identical values fires a mutation for every repeat",
+      "dom": [["div", { "id": "bar" }]],
+      "ops": [
+        { "op": "setProp", "selector": "#bar", "target": { "by": "id", "id": "bar" }, "prop": "data-level", "value": 3 },
+        { "op": "setProp", "selector": "#bar", "target": { "by": "id", "id": "bar" }, "prop": "data-level", "value": 3 },
+        { "op": "setProp", "selector": "#bar", "target": { "by": "id", "id": "bar" }, "prop": "data-level", "value": "3" }
+      ],
+      "expected": { "dom": [["div", { "id": "bar", "data-level": "3" }]], "writes": 1 }
+    },
+    {
+      "description": "toggle false repeated twice hides",
+      "because": "an applier that flips visibility on each op ends visible after an even number of repeats",
+      "dom": [["p", { "id": "warn" }, "low"]],
+      "ops": [
+        { "op": "toggle", "selector": "#warn", "target": { "by": "id", "id": "warn" }, "value": false },
+        { "op": "toggle", "selector": "#warn", "target": { "by": "id", "id": "warn" }, "value": false }
+      ],
+      "expected": { "dom": [["p", { "id": "warn", "hidden": "" }, "low"]], "writes": 1 }
+    },
+    {
+      "description": "toggle true repeated twice on a hidden node shows it",
+      "because": "an applier that flips visibility on each op ends hidden after an even number of repeats",
+      "dom": [["p", { "id": "warn", "hidden": "" }, "low"]],
+      "ops": [
+        { "op": "toggle", "selector": "#warn", "target": { "by": "id", "id": "warn" }, "value": true },
+        { "op": "toggle", "selector": "#warn", "target": { "by": "id", "id": "warn" }, "value": true }
+      ],
+      "expected": { "dom": [["p", { "id": "warn" }, "low"]], "writes": 1 }
+    },
+    {
+      "description": "toggle true repeated four times on a visible node does not write",
+      "because": "a flipping applier toggles four times and an unconditional one writes four times; the set is already true",
+      "dom": [["p", { "id": "warn" }, "low"]],
+      "ops": [
+        { "op": "toggle", "selector": "#warn", "target": { "by": "id", "id": "warn" }, "value": true },
+        { "op": "toggle", "selector": "#warn", "target": { "by": "id", "id": "warn" }, "value": true },
+        { "op": "toggle", "selector": "#warn", "target": { "by": "id", "id": "warn" }, "value": true },
+        { "op": "toggle", "selector": "#warn", "target": { "by": "id", "id": "warn" }, "value": true }
+      ],
+      "expected": { "dom": [["p", { "id": "warn" }, "low"]], "writes": 0 }
+    },
+    {
+      "description": "toggle false then true then false then true lands on the last condition",
+      "because": "an applier that reads anything but the op's value drifts from the condition the mod set",
+      "dom": [["p", { "id": "warn" }, "low"]],
+      "ops": [
+        { "op": "toggle", "selector": "#warn", "target": { "by": "id", "id": "warn" }, "value": false },
+        { "op": "toggle", "selector": "#warn", "target": { "by": "id", "id": "warn" }, "value": true },
+        { "op": "toggle", "selector": "#warn", "target": { "by": "id", "id": "warn" }, "value": false },
+        { "op": "toggle", "selector": "#warn", "target": { "by": "id", "id": "warn" }, "value": true }
+      ],
+      "expected": { "dom": [["p", { "id": "warn" }, "low"]], "writes": 4 }
+    },
+    {
+      "description": "addClass adds an absent class",
+      "because": "an applier that replaces the class attribute instead of adding a token drops the classes already there",
+      "dom": [["div", { "id": "bar", "class": "meter" }]],
+      "ops": [{ "op": "addClass", "selector": "#bar", "target": { "by": "id", "id": "bar" }, "value": "critical" }],
+      "expected": { "dom": [["div", { "id": "bar", "class": "meter critical" }]], "writes": 1 }
+    },
+    {
+      "description": "addClass on a class already present does not write",
+      "because": "an applier that adds without checking re-writes the class attribute",
+      "dom": [["div", { "id": "bar", "class": "meter critical" }]],
+      "ops": [
+        { "op": "addClass", "selector": "#bar", "target": { "by": "id", "id": "bar" }, "value": "critical" },
+        { "op": "addClass", "selector": "#bar", "target": { "by": "id", "id": "bar" }, "value": "critical" }
+      ],
+      "expected": { "dom": [["div", { "id": "bar", "class": "meter critical" }]], "writes": 0 }
+    },
+    {
+      "description": "removeClass removes a present class and skips an absent one",
+      "because": "an applier that removes without checking re-writes the class attribute",
+      "dom": [["div", { "id": "bar", "class": "meter critical" }]],
+      "ops": [
+        { "op": "removeClass", "selector": "#bar", "target": { "by": "id", "id": "bar" }, "value": "critical" },
+        { "op": "removeClass", "selector": "#bar", "target": { "by": "id", "id": "bar" }, "value": "critical" }
+      ],
+      "expected": { "dom": [["div", { "id": "bar", "class": "meter" }]], "writes": 1 }
+    },
+    {
+      "description": "a selector target applies to every match",
+      "because": "an applier that resolves only the first match leaves the rest stale",
+      "dom": [["li", { "class": "item" }, "a"], ["li", { "class": "item" }, "b"]],
+      "ops": [{ "op": "addClass", "selector": ".item", "target": { "by": "selector", "selector": ".item" }, "value": "done" }],
+      "expected": { "dom": [["li", { "class": "item done" }, "a"], ["li", { "class": "item done" }, "b"]], "writes": 2 }
+    },
+    {
+      "description": "setText writes markup as literal text",
+      "because": "an applier that assigns innerHTML turns mod text into markup",
+      "dom": [["span", { "id": "v" }, "old"]],
+      "ops": [{ "op": "setText", "selector": "#v", "target": { "by": "id", "id": "v" }, "value": "<b>new</b>" }],
+      "expected": { "dom": [["span", { "id": "v" }, "<b>new</b>"]], "writes": 1 }
+    },
+    {
+      "description": "setText to the text already present does not write",
+      "because": "an applier that never compares re-writes text and resets selection inside it",
+      "dom": [["span", { "id": "v" }, "same"]],
+      "ops": [
+        { "op": "setText", "selector": "#v", "target": { "by": "id", "id": "v" }, "value": "same" },
+        { "op": "setText", "selector": "#v", "target": { "by": "id", "id": "v" }, "value": "same" }
+      ],
+      "expected": { "dom": [["span", { "id": "v" }, "same"]], "writes": 0 }
+    },
+    {
+      "description": "replaceChildren with a markup string replaces the children",
+      "because": "an applier that writes markup as text shows tags instead of nodes",
+      "dom": [["ul", { "id": "list" }, ["li", "old"]]],
+      "ops": [{ "op": "replaceChildren", "selector": "#list", "target": { "by": "id", "id": "list" }, "value": "<li>a</li><li>b</li>" }],
+      "expected": { "dom": [["ul", { "id": "list" }, ["li", "a"], ["li", "b"]]], "writes": 1 }
+    },
+    {
+      "description": "replaceChildren with a list of markup strings concatenates them in order",
+      "because": "an applier that expects a single string stringifies the list with commas between the items",
+      "dom": [["ul", { "id": "list" }]],
+      "ops": [{ "op": "replaceChildren", "selector": "#list", "target": { "by": "id", "id": "list" }, "value": ["<li>a</li>", "<li>b</li>"] }],
+      "expected": { "dom": [["ul", { "id": "list" }, ["li", "a"], ["li", "b"]]], "writes": 1 }
+    },
+    {
+      "description": "replaceChildren with an empty list clears",
+      "because": "an applier that skips an empty value as nothing-to-do leaves the old children in place",
+      "dom": [["ul", { "id": "list" }, ["li", "a"], ["li", "b"]]],
+      "ops": [{ "op": "replaceChildren", "selector": "#list", "target": { "by": "id", "id": "list" }, "value": [] }],
+      "expected": { "dom": [["ul", { "id": "list" }]], "writes": 1 }
+    },
+    {
+      "description": "replaceChildren with an empty string clears",
+      "because": "an applier that skips a falsy value leaves the old children in place",
+      "dom": [["ul", { "id": "list" }, ["li", "a"]]],
+      "ops": [{ "op": "replaceChildren", "selector": "#list", "target": { "by": "id", "id": "list" }, "value": "" }],
+      "expected": { "dom": [["ul", { "id": "list" }]], "writes": 1 }
+    },
+    {
+      "description": "replaceChildren with a J5ML node list builds the nodes",
+      "because": "an applier that stringifies a node list writes its JSON, or its comma-joined parts, as text",
+      "dom": [["ul", { "id": "list" }]],
+      "ops": [{ "op": "replaceChildren", "selector": "#list", "target": { "by": "id", "id": "list" }, "value": [["li", { "class": "x" }, "a & b"], ["li", "<c>"]] }],
+      "expected": { "dom": [["ul", { "id": "list" }, ["li", { "class": "x" }, "a & b"], ["li", "<c>"]]], "writes": 1 }
+    },
+    {
+      "description": "an unresolvable target is a no-op",
+      "because": "an applier that throws on a missing node abandons the rest of the batch",
+      "dom": [["span", { "id": "v" }, "old"]],
+      "ops": [
+        { "op": "setText", "selector": "#missing", "target": { "by": "id", "id": "missing" }, "value": "x" },
+        { "op": "setText", "selector": "#v", "target": { "by": "id", "id": "v" }, "value": "new" }
+      ],
+      "expected": { "dom": [["span", { "id": "v" }, "new"]], "writes": 1 }
+    },
+    {
+      "description": "an unknown op name is ignored and the batch continues",
+      "because": "an applier that throws on an op a newer runtime emits abandons the ops after it",
+      "dom": [["span", { "id": "v" }, "old"]],
+      "ops": [
+        { "op": "somethingNew", "selector": "#v", "target": { "by": "id", "id": "v" } },
+        { "op": "setText", "selector": "#v", "target": { "by": "id", "id": "v" }, "value": "new" }
+      ],
+      "expected": { "dom": [["span", { "id": "v" }, "new"]], "writes": 1 }
+    },
+    {
+      "description": "setAttr with the string \"false\" writes the word",
+      "because": "an applier that reads the string \"false\" as a boolean removes an attribute like aria-expanded that needs the literal word",
+      "dom": [["button", { "id": "go" }, "Go"]],
+      "ops": [{ "op": "setAttr", "selector": "#go", "target": { "by": "id", "id": "go" }, "prop": "aria-expanded", "attr": "aria-expanded", "value": "false" }],
+      "expected": { "dom": [["button", { "id": "go", "aria-expanded": "false" }, "Go"]], "writes": 1 }
+    },
+    {
+      "description": "toggle with no value changes nothing",
+      "because": "an applier that treats a missing condition as a flip brings flipping back for host-built op lists that omit the value",
+      "dom": [["div", { "id": "panel" }, "Body"]],
+      "ops": [{ "op": "toggle", "selector": "#panel", "target": { "by": "id", "id": "panel" } }],
+      "expected": { "dom": [["div", { "id": "panel" }, "Body"]], "writes": 0 }
+    },
+    {
+      "description": "setAttr on an event-handler attribute is refused",
+      "because": "an applier is the last floor for op lists a host assembled itself, and writing an on* attribute turns data into script",
+      "dom": [["button", { "id": "go" }, "Go"]],
+      "ops": [{ "op": "setAttr", "selector": "#go", "target": { "by": "id", "id": "go" }, "prop": "onclick", "attr": "onclick", "value": "x()" }],
+      "expected": { "dom": [["button", { "id": "go" }, "Go"]], "writes": 0 }
+    },
+    {
+      "description": "setAttr with no value key removes the attribute",
+      "because": "a missing value means absent, and an applier that writes the string \"undefined\" leaves a present attribute",
+      "dom": [["button", { "id": "go", "disabled": "" }, "Go"]],
+      "ops": [{ "op": "setAttr", "selector": "#go", "target": { "by": "id", "id": "go" }, "prop": "disabled", "attr": "disabled" }],
+      "expected": { "dom": [["button", { "id": "go" }, "Go"]], "writes": 1 }
+    }
+  ]
+}

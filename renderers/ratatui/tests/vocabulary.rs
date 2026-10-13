@@ -249,6 +249,35 @@ fn a_compound_condition_agrees_with_every_other_runtime() {
     assert!(!draw(&fragment, 40, 3).contains("Hurt"));
 }
 
+/// `data-each` arrives expanded. The renderer draws the copies it is handed and never
+/// sees the template, the item name, or the list it came from.
+#[test]
+fn a_repeat_arrives_expanded() {
+    let source = r#"["Paragraph",{},["Line",{"data-each":"name in party"},["Span",{"data-bind":"name"},"?"]]]"#;
+    let fragment = rendered(source, &serde_json::json!({ "party": ["Ada", "Grace", "Linus"] }));
+    let drawn = draw(&fragment, 40, 5);
+    for name in ["Ada", "Grace", "Linus"] {
+        assert!(drawn.contains(name), "{name} missing from {drawn}");
+    }
+    assert!(!drawn.contains('?'));
+    assert_eq!(fragment.repeats.len(), 1);
+    assert_eq!(fragment.repeats[0].count, 3);
+}
+
+/// A `data-if` on a template is evaluated per copy, so a path lookup hides exactly
+/// the copies whose item failed it.
+#[test]
+fn a_repeat_with_a_condition_hides_copies_by_path() {
+    let source = r#"["Paragraph",{},["Line",{"data-each":"m in members","data-if":"m.up"},["Span",{"data-bind":"m.name"},""]]]"#;
+    let members = serde_json::json!({ "members": [
+        { "name": "Ada", "up": true },
+        { "name": "Grace", "up": false }
+    ] });
+    let drawn = draw(&rendered(source, &members), 40, 5);
+    assert!(drawn.contains("Ada"));
+    assert!(!drawn.contains("Grace"));
+}
+
 /// Interpolation is resolved before the tree leaves the runtime. The renderer has
 /// no segment structure to walk, and printing a text node's value is correct.
 #[test]

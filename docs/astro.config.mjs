@@ -83,6 +83,7 @@ export default defineConfig({
 						{ label: "Capabilities", slug: "spec/capabilities" },
 						{ label: "Bindings", slug: "spec/bindings" },
 						{ label: "Hooks", slug: "spec/hooks" },
+						{ label: "Execution Limits", slug: "spec/execution" },
 						{ label: "Commands", slug: "spec/commands" },
 						{ label: "Module-Format Mods", slug: "spec/modules" },
 						{ label: "Host Harness", slug: "spec/harness" },
@@ -167,17 +168,6 @@ export default defineConfig({
 			},
 		}),
 	],
-	vite: {
-		optimizeDeps: {
-			exclude: [
-				"@xriptjs/runtime",
-				"@xriptjs/sanitize",
-				"quickjs-emscripten-core",
-				"@jitl/quickjs-wasmfile-release-sync",
-				"@jitl/quickjs-wasmfile-release-asyncify",
-			],
-		},
-	},
 	server: {
 		port: 4351,
 	},

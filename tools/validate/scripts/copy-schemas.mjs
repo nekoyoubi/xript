@@ -1,4 +1,4 @@
-import { mkdir, copyFile } from "node:fs/promises";
+import { mkdir, copyFile, readdir } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -18,4 +18,13 @@ const schemas = [
 await mkdir(outDir, { recursive: true });
 for (const name of schemas) {
 	await copyFile(resolve(specDir, name), resolve(outDir, name));
+}
+
+for (const family of ["manifest", "mod-manifest"]) {
+	const from = resolve(specDir, "history", family);
+	const to = resolve(outDir, "history", family);
+	await mkdir(to, { recursive: true });
+	for (const file of await readdir(from)) {
+		if (file.endsWith(".json")) await copyFile(resolve(from, file), resolve(to, file));
+	}
 }

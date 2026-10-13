@@ -1,5 +1,7 @@
 import {
 	FormatProfileError,
+	REPEAT_INDEX_NAME,
+	parseRepeatHeader,
 	resolveFormatProfile,
 	sanitizeFragment,
 	tryParseExpression,
@@ -14,13 +16,18 @@ import type { Finding } from "./lint.js";
  * the location has to be carried by hand for the message to be a fix rather than a riddle.
  */
 export interface ExpressionSite {
-	/** `data-if`, `data-bind`, or `{{ }}`. */
-	surface: "data-if" | "data-bind" | "interpolation";
+	/** `data-if`, `data-bind`, `data-each`, `data-key`, or `{{ }}`. */
+	surface: "data-if" | "data-bind" | "data-each" | "data-key" | "interpolation";
 	/** Index path into the fragment tree, e.g. `/0/2/1`. */
 	path: string;
 	source: string;
 	parsed: ParsedExpression | null;
 	error: string | null;
+	/**
+	 * Names an enclosing `data-each` binds at this site: item names, index names, and
+	 * `$index`. They shadow the fill's bindings, so a read of one is not a binding read.
+	 */
+	scope: ReadonlySet<string>;
 }
 
 export interface ExpressionAnalysisOptions {
@@ -103,6 +110,7 @@ export function analyzeExpressions(
 			}
 
 			for (const name of site.parsed.names) {
+				if (site.scope.has(name)) continue;
 				read.add(name);
 				if (declared.has(name)) continue;
 				findings.push({
@@ -125,15 +133,49 @@ export function analyzeExpressions(
 				severity: "info",
 				code: "expression-unused-binding",
 				message: `${fill.label} fill "${fill.fillId}" declares binding "${binding.name}" that no expression reads`,
-				suggestion: `Reference "${binding.name}" from a \`data-bind\`, \`data-if\`, or interpolation site, or drop the declaration.`,
+				suggestion: `Reference "${binding.name}" from a \`data-bind\`, \`data-if\`, \`data-each\`, or interpolation site, or drop the declaration.`,
 			});
 		}
 
+		findings.push(...orphanKeyFindings(fill, tree));
 		findings.push(...writeBackFindings(fill, tree));
 		if (!fill.interpolate) findings.push(...dormantSiteFindings(fill, tree));
 	}
 
 	return findings;
+}
+
+export interface FragmentReadOptions {
+	/** Whether `{{ }}` in text is an expression site, as the fill's `interpolate` flag says. */
+	interpolate?: boolean;
+	formats?: Record<string, unknown> | null;
+	vocabularies?: Record<string, unknown> | null;
+}
+
+/**
+ * The binding names a fragment's expressions read, in first-read order: every free identifier
+ * across `data-bind`, `data-if`, `data-each`, `data-key`, and (when interpolating) `{{ }}`, minus
+ * the names a `data-each` binds in its own scope. These are exactly the names a fill's `bindings`
+ * must declare, so an editor can derive a fill's binding list from its markup. Unparseable
+ * expressions contribute nothing; an unknown format or unparseable source yields an empty list.
+ */
+export function fragmentReadNames(source: string, format: string, options: FragmentReadOptions = {}): string[] {
+	const interpolate = options.interpolate === true;
+	let tree: FragmentTree;
+	try {
+		const profile = resolveFormatProfile(format, options.formats ?? null, options.vocabularies ?? null);
+		if (!profile) return [];
+		tree = sanitizeFragment(source, profile, { interpolate }).tree;
+	} catch {
+		return [];
+	}
+	const read = new Set<string>();
+	for (const site of collectSites(tree, interpolate)) {
+		for (const name of site.parsed?.names ?? []) {
+			if (!site.scope.has(name)) read.add(name);
+		}
+	}
+	return [...read];
 }
 
 /**
@@ -145,13 +187,15 @@ function writeBackFindings(fill: FragmentFill, tree: FragmentTree): Finding[] {
 	const findings: Finding[] = [];
 	const computedIds = new Set<string>();
 
-	walk(tree, (node) => {
+	walkScoped(tree, (node, scope) => {
 		if (node.kind !== "element") return;
 		const bind = node.props["data-bind"];
 		const id = node.props.id;
 		if (typeof bind !== "string" || typeof id !== "string") return;
 		const parsed = tryParseExpression(bind);
-		if (parsed.ok && parsed.expression.kind === "expression") computedIds.add(id);
+		if (!parsed.ok) return;
+		const readsRepeatName = parsed.expression.kind === "name" && scope.has(parsed.expression.names[0]);
+		if (parsed.expression.kind === "expression" || readsRepeatName) computedIds.add(id);
 	});
 
 	for (const handler of fill.handlers) {
@@ -162,11 +206,27 @@ function writeBackFindings(fill: FragmentFill, tree: FragmentTree): Finding[] {
 		findings.push({
 			severity: "error",
 			code: "expression-readonly-writeback",
-			message: `${fill.label} fill "${fill.fillId}" binds a "${handler.on}" handler to "${handler.selector}", whose \`data-bind\` is a computed expression`,
-			suggestion: `A computed value has no inverse, so the write has nowhere to land. Bind the handler to a node whose \`data-bind\` is a bare binding name, or handle the write in "${handler.handler}" explicitly.`,
+			message: `${fill.label} fill "${fill.fillId}" binds a "${handler.on}" handler to "${handler.selector}", whose \`data-bind\` is a computed expression or a repeat item`,
+			suggestion: `A computed value has no inverse and a repeat item has no binding path, so the write has nowhere to land. Bind the handler to a node whose \`data-bind\` is a bare binding name, or handle the write in "${handler.handler}" explicitly.`,
 		});
 	}
 
+	return findings;
+}
+
+/** `data-key` only means something on a `data-each` template; anywhere else it does nothing. */
+function orphanKeyFindings(fill: FragmentFill, tree: FragmentTree): Finding[] {
+	const findings: Finding[] = [];
+	walkScoped(tree, (node, _scope, path) => {
+		if (node.kind !== "element") return;
+		if (typeof node.props["data-key"] !== "string" || typeof node.props["data-each"] === "string") return;
+		findings.push({
+			severity: "warn",
+			code: "expression-orphan-key",
+			message: `${fill.label} fill "${fill.fillId}" sets \`data-key\` at ${path} on a node with no \`data-each\``,
+			suggestion: "Move `data-key` onto the `data-each` template it identifies, or drop it.",
+		});
+	});
 	return findings;
 }
 
@@ -203,7 +263,9 @@ function typeFindings(
 
 	const typeOf = (node: unknown): ExpressionType => {
 		const ast = node as { t: string; name?: string };
-		if (ast.t === "name" && ast.name) return types[ast.name] ?? "unknown";
+		if (ast.t === "name" && ast.name) {
+			return site.scope.has(ast.name) ? "unknown" : types[ast.name] ?? "unknown";
+		}
 		if (ast.t === "num") return "number";
 		if (ast.t === "str") return "string";
 		if (ast.t === "bool") return "boolean";
@@ -264,10 +326,30 @@ function typeFindings(
 	return findings;
 }
 
+const NO_SCOPE: ReadonlySet<string> = new Set();
+
+/**
+ * The names a node's `data-each` brings into scope for the node itself and its subtree.
+ * A header that does not parse brings none: the runtime renders zero copies of it, and the
+ * header is reported as invalid on its own.
+ */
+function repeatScopeOf(node: FragmentNode, outer: ReadonlySet<string>): ReadonlySet<string> {
+	if (node.kind !== "element") return outer;
+	const each = node.props["data-each"];
+	if (typeof each !== "string") return outer;
+	const parsed = parseRepeatHeader(each);
+	if (!parsed.ok) return outer;
+	const scope = new Set(outer);
+	scope.add(REPEAT_INDEX_NAME);
+	scope.add(parsed.header.item);
+	if (parsed.header.index !== null) scope.add(parsed.header.index);
+	return scope;
+}
+
 function collectSites(tree: FragmentTree, interpolate: boolean): ExpressionSite[] {
 	const sites: ExpressionSite[] = [];
 
-	const visit = (nodes: FragmentTree, path: string): void => {
+	const visit = (nodes: FragmentTree, path: string, outer: ReadonlySet<string>): void => {
 		nodes.forEach((node, index) => {
 			const nodePath = `${path}/${index}`;
 
@@ -275,30 +357,52 @@ function collectSites(tree: FragmentTree, interpolate: boolean): ExpressionSite[
 				if (!interpolate || !node.segments) return;
 				for (const segment of node.segments) {
 					if (segment.kind !== "expr") continue;
-					sites.push(site("interpolation", nodePath, segment.source));
+					sites.push(site("interpolation", nodePath, segment.source, outer));
 				}
 				return;
 			}
 
+			const each = node.props["data-each"];
+			if (typeof each === "string") sites.push(repeatSite(nodePath, each, outer));
+			const scope = repeatScopeOf(node, outer);
+
+			if (typeof each === "string") {
+				const key = node.props["data-key"];
+				if (typeof key === "string") sites.push(site("data-key", nodePath, key, scope));
+			}
+
 			const condition = node.props["data-if"];
-			if (typeof condition === "string") sites.push(site("data-if", nodePath, condition));
+			if (typeof condition === "string") sites.push(site("data-if", nodePath, condition, scope));
 
 			const bind = node.props["data-bind"];
-			if (typeof bind === "string") sites.push(site("data-bind", nodePath, bind));
+			if (typeof bind === "string") sites.push(site("data-bind", nodePath, bind, scope));
 
-			visit(node.children, nodePath);
+			visit(node.children, nodePath, scope);
 		});
 	};
 
-	visit(tree, "");
+	visit(tree, "", NO_SCOPE);
 	return sites;
 }
 
-function site(surface: ExpressionSite["surface"], path: string, source: string): ExpressionSite {
+/** A `data-each` header's expression is evaluated in the enclosing scope, not its own. */
+function repeatSite(path: string, source: string, outer: ReadonlySet<string>): ExpressionSite {
+	const parsed = parseRepeatHeader(source);
+	return parsed.ok
+		? { surface: "data-each", path, source, parsed: parsed.header.expression, error: null, scope: outer }
+		: { surface: "data-each", path, source, parsed: null, error: parsed.message, scope: outer };
+}
+
+function site(
+	surface: ExpressionSite["surface"],
+	path: string,
+	source: string,
+	scope: ReadonlySet<string>,
+): ExpressionSite {
 	const parsed = tryParseExpression(source);
 	return parsed.ok
-		? { surface, path, source, parsed: parsed.expression, error: null }
-		: { surface, path, source, parsed: null, error: parsed.error.message };
+		? { surface, path, source, parsed: parsed.expression, error: null, scope }
+		: { surface, path, source, parsed: null, error: parsed.error.message, scope };
 }
 
 function walk(tree: FragmentTree, visitor: (node: FragmentNode) => void): void {
@@ -306,6 +410,21 @@ function walk(tree: FragmentTree, visitor: (node: FragmentNode) => void): void {
 		visitor(node);
 		if (node.kind === "element") walk(node.children, visitor);
 	}
+}
+
+/** Walks the tree with the repeat names in scope at each node, and its source path. */
+function walkScoped(
+	tree: FragmentTree,
+	visitor: (node: FragmentNode, scope: ReadonlySet<string>, path: string) => void,
+	outer: ReadonlySet<string> = NO_SCOPE,
+	path = "",
+): void {
+	tree.forEach((node, index) => {
+		const nodePath = `${path}/${index}`;
+		const scope = repeatScopeOf(node, outer);
+		visitor(node, scope, nodePath);
+		if (node.kind === "element") walkScoped(node.children, visitor, scope, nodePath);
+	});
 }
 
 function visitAst(node: unknown, visitor: (node: unknown) => void): void {

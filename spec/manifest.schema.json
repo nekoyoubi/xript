@@ -1,6 +1,6 @@
 {
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
-	"$id": "https://xript.dev/schema/manifest/v0.8.json",
+	"$id": "https://xript.dev/schema/manifest/v0.9.json",
 	"title": "xript Manifest",
 	"description": "Declarative manifest for xript-enabled applications. Defines the API surface, capabilities, and documentation for modders.",
 	"type": "object",
@@ -327,7 +327,7 @@
 					"additionalProperties": {
 						"$ref": "#/$defs/fragmentProp"
 					},
-					"description": "The props this node accepts. Default-deny: an undeclared prop is dropped and reported. Three protocol props are legal on every node of every vocabulary and need not be declared: 'id', 'data-bind', 'data-if'. A prop name beginning with 'on' is always rejected."
+					"description": "The props this node accepts. Default-deny: an undeclared prop is dropped and reported. Five protocol props are legal on every node of every vocabulary and need not be declared: 'id', 'data-bind', 'data-if', 'data-each', 'data-key'. A prop name beginning with 'on' is always rejected."
 				},
 				"children": {
 					"description": "What may appear as this node's children. 'any' (default), 'none' (a void node), 'text' (text nodes only), or an explicit list of permitted child node names.",
@@ -414,17 +414,18 @@
 			"description": "A capability name: an optional 'read:'/'write:' mode prefix followed by a dot-delimited scope. Each scope segment is lowercase-hyphen (e.g. 'modify-player'). Absent prefix means write (full access). Examples: 'fs.addon', 'read:fs.addon', 'write:run.command'."
 		},
 		"typeRef": {
-			"description": "A reference to a type. Can be a primitive, a custom type name, an array type, or a union.",
+			"description": "A reference to a type. Can be a primitive, a custom type name, an array type, a union, or a function. A parameter typed as a function receives a script callback that is callable only while the binding call runs.",
 			"oneOf": [
 				{
 					"type": "string",
-					"description": "A primitive type name, custom type reference, or shorthand.",
+					"description": "A primitive type name, custom type reference, or shorthand. `function` is a script callback with no declared signature.",
 					"examples": [
 						"string",
 						"number",
 						"boolean",
 						"void",
 						"null",
+						"function",
 						"Player",
 						"string[]",
 						"number[]"
@@ -453,6 +454,10 @@
 						"optional": {
 							"$ref": "#/$defs/typeRef",
 							"description": "An optional (nullable) version of this type."
+						},
+						"function": {
+							"$ref": "#/$defs/functionSignature",
+							"description": "A script callback with a declared signature."
 						}
 					},
 					"oneOf": [
@@ -475,11 +480,34 @@
 							"required": [
 								"optional"
 							]
+						},
+						{
+							"required": [
+								"function"
+							]
 						}
 					],
 					"additionalProperties": false
 				}
 			]
+		},
+		"functionSignature": {
+			"description": "The signature of a script callback: the arguments the host calls it with and what it returns. Documentation and typing only; the runtime checks only that a function arrived.",
+			"type": "object",
+			"properties": {
+				"params": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/parameter"
+					},
+					"description": "The arguments the host passes to the callback, in order. Omit for a callback that takes none."
+				},
+				"returns": {
+					"$ref": "#/$defs/typeRef",
+					"description": "What the callback returns. Omit for a callback whose return value the host ignores."
+				}
+			},
+			"additionalProperties": false
 		},
 		"parameter": {
 			"description": "A function parameter with a name, type, and optional description.",
@@ -508,9 +536,43 @@
 					"type": "boolean",
 					"description": "Whether this parameter is required. Defaults to true unless a default value is provided.",
 					"default": true
+				},
+				"optional": {
+					"type": "boolean",
+					"description": "The inverse alias of 'required': 'optional': true means 'required': false. Giving both with values that disagree is an error."
+				},
+				"variadic": {
+					"type": "boolean",
+					"description": "Marks a rest parameter: it absorbs every remaining argument, and 'type' names the type of each one. Only the last parameter may be variadic.",
+					"default": false
 				}
 			},
 			"additionalProperties": false
+		},
+		"returnsDecl": {
+			"description": "A return type: a bare type reference, or an object pairing the type with a description of the returned value.",
+			"oneOf": [
+				{
+					"$ref": "#/$defs/typeRef"
+				},
+				{
+					"type": "object",
+					"required": [
+						"type"
+					],
+					"properties": {
+						"type": {
+							"$ref": "#/$defs/typeRef",
+							"description": "The return type."
+						},
+						"description": {
+							"type": "string",
+							"description": "What the returned value represents. Shown in generated docs and editor tooltips."
+						}
+					},
+					"additionalProperties": false
+				}
+			]
 		},
 		"binding": {
 			"description": "A function or namespace exposed to scripts.",
@@ -542,8 +604,8 @@
 					"description": "The function's parameters, in order."
 				},
 				"returns": {
-					"$ref": "#/$defs/typeRef",
-					"description": "The return type. Omit for void functions."
+					"$ref": "#/$defs/returnsDecl",
+					"description": "The return type, as a type reference or as { type, description }. Omit for void functions."
 				},
 				"async": {
 					"type": "boolean",

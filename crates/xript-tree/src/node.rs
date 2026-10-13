@@ -38,6 +38,12 @@ impl Props {
         }
     }
 
+    /// Removes a prop, returning its value when it was present.
+    pub fn remove(&mut self, key: &str) -> Option<Value> {
+        let index = self.0.iter().position(|(existing, _)| existing == key)?;
+        Some(self.0.remove(index).1)
+    }
+
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.0.iter().find(|(existing, _)| existing == key).map(|(_, value)| value)
     }
@@ -176,19 +182,33 @@ pub fn js_number_to_string(n: f64) -> String {
     if n == 0.0 {
         return "0".to_string();
     }
-    if n.fract() == 0.0 && n.abs() < 1e21 {
-        return format!("{}", n as i128);
-    }
-    if n.abs() >= 1e21 {
-        let rendered = format!("{:e}", n);
-        return match rendered.split_once('e') {
-            Some((mantissa, exponent)) if !exponent.starts_with('-') => {
-                format!("{}e+{}", mantissa, exponent)
-            }
-            _ => rendered,
-        };
-    }
-    format!("{}", n)
+
+    // ECMAScript Number::toString over the shortest round-trip digits: with the
+    // value written as digits x 10^(n - k), plain notation for -6 < n <= 21 and
+    // exponent notation outside it.
+    let sign = if n < 0.0 { "-" } else { "" };
+    let scientific = format!("{:e}", n.abs());
+    let (mantissa, exponent) = scientific.split_once('e').unwrap_or((&scientific, "0"));
+    let digits: String = mantissa.chars().filter(|c| c.is_ascii_digit()).collect();
+    let k = digits.len() as i32;
+    let point = exponent.parse::<i32>().unwrap_or(0) + 1;
+
+    let body = if k <= point && point <= 21 {
+        format!("{digits}{}", "0".repeat((point - k) as usize))
+    } else if 0 < point && point <= 21 {
+        format!("{}.{}", &digits[..point as usize], &digits[point as usize..])
+    } else if -6 < point && point <= 0 {
+        format!("0.{}{digits}", "0".repeat((-point) as usize))
+    } else {
+        let power = point - 1;
+        let power_sign = if power < 0 { "-" } else { "+" };
+        if k == 1 {
+            format!("{digits}e{power_sign}{}", power.abs())
+        } else {
+            format!("{}.{}e{power_sign}{}", &digits[..1], &digits[1..], power.abs())
+        }
+    };
+    format!("{sign}{body}")
 }
 
 pub fn matches_json_type(value: &Value, types: &[String]) -> bool {
@@ -203,4 +223,34 @@ pub fn matches_json_type(value: &Value, types: &[String]) -> bool {
         "object" => matches!(value, Value::Object(_)),
         _ => true,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::js_number_to_string;
+
+    #[test]
+    fn numbers_render_as_javascript_does() {
+        let cases: [(f64, &str); 16] = [
+            (0.0, "0"),
+            (-0.0, "0"),
+            (1.0, "1"),
+            (-5.0, "-5"),
+            (0.1, "0.1"),
+            (123.456, "123.456"),
+            (0.000001, "0.000001"),
+            (0.0000001, "1e-7"),
+            (1.5e-7, "1.5e-7"),
+            (-2.5e-10, "-2.5e-10"),
+            (1e15, "1000000000000000"),
+            (1e16, "10000000000000000"),
+            (123456789012345680000.0, "123456789012345680000"),
+            (1e21, "1e+21"),
+            (1.2345e22, "1.2345e+22"),
+            (f64::INFINITY, "Infinity"),
+        ];
+        for (value, expected) in cases {
+            assert_eq!(js_number_to_string(value), expected, "{value}");
+        }
+    }
 }

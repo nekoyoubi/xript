@@ -29,6 +29,17 @@ export const STRIPPED_ELEMENTS = new Set([
 	"foreignobject", "animate", "set",
 ]);
 
+/**
+ * SVG's text-content metadata elements. `title` is stripped as HTML's document
+ * title, but inside an SVG it is the accessible name and tooltip primitive, and
+ * `desc` is its longer description. Both are admitted only under an `<svg>`,
+ * hold text alone, and carry only `SVG_TEXT_ATTRIBUTES`.
+ */
+export const SVG_TEXT_ELEMENTS = new Set(["title", "desc"]);
+
+/** The attributes an SVG `title`/`desc` keeps, beyond the inert `data-*` and `aria-*`. */
+export const SVG_TEXT_ATTRIBUTES = new Set(["id", "class", "lang", "dir"]);
+
 export const UNWRAPPED_ELEMENTS = new Set([
 	"html", "head", "body",
 ]);

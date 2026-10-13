@@ -266,6 +266,10 @@ public record FragmentDeclaration
     public List<FragmentHandlerDeclaration> ResolveHandlers() => Handlers ?? Events ?? [];
 }
 
+/// <summary>
+/// One entry of a fragment fill's <c>bindings</c>: a local name the fragment's expressions read,
+/// resolved from a host data path.
+/// </summary>
 public record FragmentBinding
 {
     [JsonPropertyName("name")]
@@ -273,6 +277,21 @@ public record FragmentBinding
 
     [JsonPropertyName("path")]
     public string Path { get; init; } = "";
+
+    /// <summary>
+    /// Optional value type, for tooling that type-checks the expressions reading this binding.
+    /// Not consulted at runtime.
+    /// </summary>
+    [JsonPropertyName("type")]
+    public string? Type { get; init; }
+
+    /// <summary>
+    /// Host-defined extension fields (a value transform, a formatting hint), carried through
+    /// untouched and never interpreted by the runtime. A mod that uses one only works on hosts
+    /// that implement it.
+    /// </summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? Extensions { get; init; }
 }
 
 public record FragmentHandlerDeclaration

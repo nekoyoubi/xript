@@ -50,7 +50,7 @@ pub enum XriptError {
     /// The worker a call was routed to has an in-flight call past its
     /// threshold and a stalled heartbeat: its thread is inside host code and
     /// nothing xript owns can get it back.
-    #[error("worker {worker} has been inside host binding `{}` for {stalled_ms}ms and is not responding{}. xript cannot interrupt a host binding \u{2014} see spec/execution.md", .binding.as_deref().unwrap_or("<unknown>"), if .homed_mods.is_empty() { String::new() } else { format!("; mod{} {} {} homed there and cannot be reached", if .homed_mods.len() == 1 { "" } else { "s" }, .homed_mods.join(", "), if .homed_mods.len() == 1 { "is" } else { "are" }) })]
+    #[error("worker {worker} has been inside host binding `{}` for {stalled_ms}ms and is not responding{}. xript cannot interrupt a host binding; see spec/execution.md", .binding.as_deref().unwrap_or("<unknown>"), if .homed_mods.is_empty() { String::new() } else { format!("; mod{} {} {} homed there and cannot be reached", if .homed_mods.len() == 1 { "" } else { "s" }, .homed_mods.join(", "), if .homed_mods.len() == 1 { "is" } else { "are" }) })]
     WorkerWedged {
         worker: String,
         stalled_ms: u64,
@@ -86,6 +86,11 @@ pub enum XriptError {
 
     #[error("mod entry script error in `{mod_name}`: {message}")]
     ModEntry { mod_name: String, message: String },
+
+    /// The mod's `entry` names a script the host did not supply, either as the
+    /// explicit entry source or in the fragment sources.
+    #[error("mod \"{mod_name}\" names entry script \"{script}\", which was not supplied (pass it as entry_source or in fragment_sources)")]
+    MissingEntryScript { mod_name: String, script: String },
 
     #[error("import of \"{specifier}\" is not permitted; xript mods cannot import external modules (see security guarantee: no sandbox escape)")]
     ImportDenied { mod_name: String, specifier: String },

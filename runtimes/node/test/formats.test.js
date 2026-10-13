@@ -395,10 +395,10 @@ describe("fragment ops", () => {
 		assert.equal(ops[0].value, "<li>ok</li>");
 	});
 
-	it("joins a string array for replaceChildren exactly as before", () => {
+	it("keeps a string array for replaceChildren a list, sanitizing each element", () => {
 		const runtime = makeRuntime();
-		const ops = fireOn(runtime, "html-panel", `fragment.replaceChildren(".list", ["<li>a</li>", "<li>b</li>"]);`);
-		assert.equal(ops[0].value, "<li>a</li><li>b</li>");
+		const ops = fireOn(runtime, "html-panel", `fragment.replaceChildren(".list", ["<li onclick='x()'>a</li>", "<li>b</li>"]);`);
+		assert.deepEqual(ops[0].value, ["<li>a</li>", "<li>b</li>"]);
 	});
 
 	it("preserves a node array for replaceChildren on a tree vocabulary", () => {

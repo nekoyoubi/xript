@@ -1,6 +1,6 @@
 ---
 title: "UI Dashboard"
-description: "A dashboard application demonstrating the xript UI Fragment Protocol with slots, mod manifests, data-bind, data-if, and the sandbox fragment API."
+description: "A dashboard application demonstrating the xript UI Fragment Protocol with slots, mod manifests, data-bind, data-if, data-each, and the sandbox fragment API."
 ---
 
 The full fragment protocol in one shot: an app declares slots, mods fill them with fragments, and everything binds to live host data.
@@ -11,7 +11,7 @@ A fragment is a *fill* of a fragment-format slot, not a separate top-level mod c
 
 - **Host app** with three slots (`sidebar.left`, `header.status`, `main.overlay`)
 - **Health panel mod** that `fills` a slot, using `data-bind` for values and `data-if` for conditional warnings
-- **Inventory panel mod** using the sandbox fragment API for iteration
+- **Inventory panel mod** that renders a keyed list with `data-each`, and ships no script at all
 - **Fragment lifecycle** with `hooks.fragment.update` handlers
 - **Cross-validation** ensuring each fill targets a valid slot, matches its `accepts` format, and (when the slot declares a `payload`) satisfies the slot's payload schema
 
@@ -112,20 +112,21 @@ hooks.fragment.update("health-display", function (bindings, fragment) {
 });
 ```
 
-## Inventory Panel — Sandbox Iteration
+## Inventory Panel: a Keyed List
 
-Since `data-bind` handles values and `data-if` handles visibility, iteration over arrays uses the sandbox fragment API:
+A list is presentation, so it lives in the template. `data-each` renders the `li` once per inventory item, and `data-key` names each copy so an update patches the list instead of replacing it:
 
-```javascript
-hooks.fragment.update("inventory-list", function (bindings, fragment) {
-  var items = bindings.inventory || [];
-  var html = items.map(function (item) {
-    return "<li>" + item.name + " (x" + item.count + ")</li>";
-  });
-  fragment.replaceChildren(".item-list", html);
-  fragment.toggle(".empty-message", items.length === 0);
-});
+```html
+<div class="inventory-panel">
+  <div class="panel-title"><span data-bind="playerName">Player</span>'s Inventory</div>
+  <ul class="item-list">
+    <li data-each="item in inventory" data-key="item.name">{{ item.name }} (x{{ item.count }})</li>
+  </ul>
+  <div data-if="len(inventory) == 0" class="empty-message">No items yet.</div>
+</div>
 ```
+
+The fill declares `inventory` as a binding and turns on `interpolate`. There is no entry script: nothing about rendering a list needs the sandbox. Each result carries a `repeats` entry describing the expansion; when a new item arrives, its `patch` reads `reuse "Iron Sword", reuse "Health Potion", insert "Magic Shield"`, so a host that keeps its DOM nodes alive inserts one `li` and touches nothing else.
 
 ## Loading Mods
 
@@ -146,6 +147,6 @@ Fragment sources are provided as a `Record<string, string>`; the runtime sanitiz
 
 1. **Full health (80/100):** `data-if="health < 50"` evaluates to `false`, so warnings stay hidden. The fragment API sets color to green.
 2. **After damage (40/100):** `data-if="health < 50"` flips to `true`, so the warning shows. Color becomes yellow.
-3. **Critical (15/100):** both warnings visible, color becomes red, and a new item appears in inventory via `replaceChildren`.
+3. **Critical (15/100):** both warnings visible, color becomes red, and a new item appears in inventory as a keyed `insert`.
 
 See the [source code](https://github.com/nekoyoubi/xript/tree/main/examples/ui-dashboard) for the complete example.

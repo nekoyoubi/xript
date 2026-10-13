@@ -49,25 +49,193 @@ public abstract record PropValue
     };
 
     /// <summary>
-    /// Formats a double the way <c>Number.prototype.toString</c> does: shortest
-    /// round-trip, integral values without a decimal point, lower-case exponent.
+    /// Formats a double the way <c>Number.prototype.toString</c> does: the shortest
+    /// round-trip digits, written plainly when the decimal exponent sits in JavaScript's
+    /// plain range (<c>1e-7 &lt; |v| &lt; 1e21</c>) and in lower-case exponent form outside it.
+    /// .NET's own round-trip format switches to exponent form at different thresholds, so
+    /// only its digits are used.
     /// </summary>
     public static string NumberToString(double value)
     {
         if (double.IsNaN(value)) return "NaN";
         if (double.IsPositiveInfinity(value)) return "Infinity";
         if (double.IsNegativeInfinity(value)) return "-Infinity";
+        if (value == 0) return "0";
 
-        var text = value.ToString("R", CultureInfo.InvariantCulture);
-        var exponent = text.IndexOf('E');
-        if (exponent < 0) return text;
+        var sign = value < 0 ? "-" : "";
+        var shortest = Math.Abs(value).ToString("R", CultureInfo.InvariantCulture);
+        var (digits, point) = DecimalDigits(shortest);
+        var k = digits.Length;
 
-        var mantissa = text[..exponent];
-        var power = text[(exponent + 1)..];
-        if (power.StartsWith('+')) power = "+" + power[1..].TrimStart('0');
-        else if (power.StartsWith('-')) power = "-" + power[1..].TrimStart('0');
-        return mantissa + "e" + power;
+        string body;
+        if (k <= point && point <= 21)
+            body = digits + new string('0', point - k);
+        else if (0 < point && point <= 21)
+            body = digits[..point] + "." + digits[point..];
+        else if (-6 < point && point <= 0)
+            body = "0." + new string('0', -point) + digits;
+        else
+        {
+            var power = point - 1;
+            var powerText = (power < 0 ? "-" : "+") + Math.Abs(power).ToString(CultureInfo.InvariantCulture);
+            body = k == 1 ? digits + "e" + powerText : digits[..1] + "." + digits[1..] + "e" + powerText;
+        }
+        return sign + body;
     }
+
+    /// <summary>
+    /// Splits a round-trip number string into its significant digits and the position of
+    /// the decimal point relative to them, so the value is <c>0.digits x 10^point</c>.
+    /// </summary>
+    private static (string Digits, int Point) DecimalDigits(string roundTrip)
+    {
+        var exponentIndex = roundTrip.IndexOfAny(['E', 'e']);
+        var mantissa = exponentIndex < 0 ? roundTrip : roundTrip[..exponentIndex];
+        var exponent = exponentIndex < 0
+            ? 0
+            : int.Parse(roundTrip[(exponentIndex + 1)..], NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture);
+
+        var dot = mantissa.IndexOf('.');
+        var integerPart = dot < 0 ? mantissa : mantissa[..dot];
+        var fractionPart = dot < 0 ? "" : mantissa[(dot + 1)..];
+        var allDigits = integerPart + fractionPart;
+        var point = integerPart.Length + exponent;
+
+        var leading = 0;
+        while (leading < allDigits.Length - 1 && allDigits[leading] == '0') leading++;
+        allDigits = allDigits[leading..];
+        point -= leading;
+        allDigits = allDigits.TrimEnd('0');
+        if (allDigits.Length == 0) allDigits = "0";
+        return (allDigits, point);
+    }
+
+    /// <summary>
+    /// The text a prop value contributes as an HTML attribute value. Scalars keep
+    /// <see cref="Stringify"/> semantics. A plain object is JSON-encoded, since
+    /// <c>String()</c> would yield <c>[object Object]</c>. An array is JSON-encoded when the
+    /// prop is declared <c>type: "array"</c> or when it holds an object at any depth; an
+    /// undeclared array of scalars keeps its comma-joined form.
+    /// </summary>
+    /// <param name="value">the prop value</param>
+    /// <param name="declaredType">the JSON Schema <c>type</c> the vocabulary declares for the prop, if any</param>
+    public static string AttributeValue(PropValue value, IReadOnlyList<string>? declaredType = null) => value switch
+    {
+        Obj => CanonicalJson(value),
+        Arr array when (declaredType?.Contains("array") ?? false) || ContainsObject(array.Items) => CanonicalJson(value),
+        _ => Stringify(value),
+    };
+
+    private static bool ContainsObject(IReadOnlyList<PropValue> items) =>
+        items.Any(item => item is Obj || (item is Arr nested && ContainsObject(nested.Items)));
+
+    /// <summary>
+    /// The canonical JSON encoding a structured prop projects to: compact,
+    /// <c>JSON.stringify</c> escaping and number formatting, and object keys ordered by
+    /// Unicode code point, so the attribute is byte-identical on every runtime.
+    /// </summary>
+    public static string CanonicalJson(PropValue value)
+    {
+        var builder = new System.Text.StringBuilder();
+        WriteCanonicalJson(value, builder);
+        return builder.ToString();
+    }
+
+    private static void WriteCanonicalJson(PropValue value, System.Text.StringBuilder builder)
+    {
+        switch (value)
+        {
+            case Str s:
+                WriteJsonString(s.Value, builder);
+                break;
+            case Num n:
+                builder.Append(double.IsFinite(n.Value) ? NumberToString(n.Value) : "null");
+                break;
+            case Bool b:
+                builder.Append(b.Value ? "true" : "false");
+                break;
+            case Arr a:
+                builder.Append('[');
+                for (var i = 0; i < a.Items.Count; i++)
+                {
+                    if (i > 0) builder.Append(',');
+                    WriteCanonicalJson(a.Items[i], builder);
+                }
+                builder.Append(']');
+                break;
+            case Obj o:
+            {
+                var keys = o.Entries.Keys.ToList();
+                keys.Sort(CompareCodePoints);
+                builder.Append('{');
+                for (var i = 0; i < keys.Count; i++)
+                {
+                    if (i > 0) builder.Append(',');
+                    WriteJsonString(keys[i], builder);
+                    builder.Append(':');
+                    WriteCanonicalJson(o.Entries.Get(keys[i])!, builder);
+                }
+                builder.Append('}');
+                break;
+            }
+            default:
+                builder.Append("null");
+                break;
+        }
+    }
+
+    private static void WriteJsonString(string value, System.Text.StringBuilder builder)
+    {
+        builder.Append('"');
+        for (var i = 0; i < value.Length; i++)
+        {
+            var c = value[i];
+            switch (c)
+            {
+                case '"': builder.Append("\\\""); break;
+                case '\\': builder.Append("\\\\"); break;
+                case '\b': builder.Append("\\b"); break;
+                case '\f': builder.Append("\\f"); break;
+                case '\n': builder.Append("\\n"); break;
+                case '\r': builder.Append("\\r"); break;
+                case '\t': builder.Append("\\t"); break;
+                default:
+                    if (c < 0x20)
+                        builder.Append("\\u").Append(((int)c).ToString("x4", CultureInfo.InvariantCulture));
+                    else if (char.IsHighSurrogate(c) && i + 1 < value.Length && char.IsLowSurrogate(value[i + 1]))
+                    {
+                        builder.Append(c).Append(value[i + 1]);
+                        i++;
+                    }
+                    else if (char.IsSurrogate(c))
+                        builder.Append("\\u").Append(((int)c).ToString("x4", CultureInfo.InvariantCulture));
+                    else
+                        builder.Append(c);
+                    break;
+            }
+        }
+        builder.Append('"');
+    }
+
+    /// <summary>
+    /// Orders two strings by Unicode code point. Ordinal comparison orders UTF-16 code
+    /// units, which sorts a character above U+FFFF below one in U+E000..U+FFFF; remapping
+    /// each unit before comparing restores code point order.
+    /// </summary>
+    public static int CompareCodePoints(string a, string b)
+    {
+        var length = Math.Min(a.Length, b.Length);
+        for (var i = 0; i < length; i++)
+        {
+            var left = CodePointRank(a[i]);
+            var right = CodePointRank(b[i]);
+            if (left != right) return left < right ? -1 : 1;
+        }
+        return a.Length.CompareTo(b.Length);
+    }
+
+    private static int CodePointRank(char unit) =>
+        unit >= 0xE000 ? unit - 0x800 : unit >= 0xD800 ? unit + 0x2000 : unit;
 
     /// <summary>
     /// Deep-copies a JSON value into the <see cref="PropValue"/> domain, dropping

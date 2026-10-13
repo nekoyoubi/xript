@@ -28,7 +28,7 @@ xript-runtime = "0.8"
 use xript_runtime::{create_runtime, RuntimeOptions, HostBindings, ConsoleHandler};
 
 let manifest_json = r#"{
-    "xript": "0.8",
+    "xript": "0.9",
     "name": "my-app",
     "bindings": {
         "greet": {
@@ -79,7 +79,7 @@ let runtime = create_runtime_from_file(
 use xript_runtime::{create_runtime_from_value, RuntimeOptions, HostBindings, ConsoleHandler};
 
 let manifest = serde_json::json!({
-    "xript": "0.8",
+    "xript": "0.9",
     "name": "my-app"
 });
 
@@ -106,6 +106,7 @@ let runtime = create_runtime_from_value(manifest, RuntimeOptions {
 | `role_preferences` | `HashMap<String, String>` | Per-role provider preference (`role` → preferred mod name) for `resolve_role` |
 | `command_preferences` | `HashMap<String, String>` | Per-command or per-slot preference (command id or slot id → preferred mod name) for `resolve_command` |
 | `debug` | `Option<DebugOptions>` | DAP-shaped debug session options; `None` for zero-overhead off |
+| `mode` | `RuntimeMode` | `Sync` (default) settles async bindings on the interpreter thread; `Async` hands script pending promises and yields. See [Async Host Bindings](#async-host-bindings) |
 
 ### Host Bindings
 
@@ -255,11 +256,15 @@ pub struct ModInstance {
 
 ## Threading
 
-`XriptRuntime` holds a QuickJS context that is `!Send`. It can only be used from the thread that created it. For multi-threaded hosts (Tauri, Actix, Axum, etc.), use `XriptHandle` instead; it owns the runtime on a dedicated thread and exposes the same API over channels. See [XriptHandle](#xripthandle-send--sync) below.
+`XriptRuntime` is `Send + Sync`, but it drives one interpreter, and every call takes that interpreter's lock for as long as it runs bytecode. For multi-threaded hosts (Tauri, Actix, Axum, etc.), use `XriptHandle`; it owns the runtime on a dedicated thread and exposes the same API without blocking the caller. See [XriptHandle](#xripthandle-send--sync) below.
 
 ## Async Host Bindings
 
-`add_async_function()` registers an async host function. From the script's perspective the binding returns a `Promise`, so scripts can `await` it. The bridge uses `pollster::block_on()` internally to drive the future.
+`add_async_function()` registers an async host function. From the script's perspective the binding returns a `Promise`, so scripts can `await` it. What that `await` does depends on the runtime's mode.
+
+**`RuntimeMode::Sync`, the default.** The bridge drives the host future to completion with `pollster::block_on()` on the interpreter thread and hands the script an already-settled promise. `await` never suspends, and a slow binding holds the interpreter, and every other call waiting on it, for its full duration. Limits and cancellation do not reach a call while it is inside the binding.
+
+**`RuntimeMode::Async`.** Built on rquickjs's `AsyncRuntime`, the binding returns a genuinely pending promise. The host future runs on the runtime's own executor and settles the promise when it completes; the awaiting script yields, and other calls on the same runtime run in the meantime.
 
 ```rust
 use xript_runtime::{HostBindings};
@@ -280,6 +285,34 @@ const data = await fetchData("users");
 
 `Promise` is available in the sandbox; standard QuickJS async/await works without any extra setup.
 
+### Async mode
+
+Opt in with `create_async_runtime` (or `RuntimeOptions { mode: RuntimeMode::Async, .. }`) and drive calls with the `*_async` methods, which return futures:
+
+```rust
+use xript_runtime::{create_async_runtime, RuntimeOptions};
+
+let rt = create_async_runtime(manifest_json, RuntimeOptions { host_bindings: bindings, ..Default::default() })?;
+
+// Both calls are in flight at once; the second finishes while the first awaits its binding.
+let (slow, quick) = futures::join!(
+    rt.execute_async("(async () => await fetchData('users'))()"),
+    rt.execute_async("40 + 2"),
+);
+```
+
+The async surface is `execute_async`, `execute_within_async`, `load_mod_async`, `invoke_export_async`, `invoke_mod_export_async`, `invoke_mod_export_within_async`, `invoke_command_async`, `fire_hook_async`, `fire_hook_tagged_async`, `emit_async`, `emit_tagged_async` and `fire_fragment_hook_async`, plus `idle()`, which settles work a script started without awaiting it. The plain methods still work in async mode; each drives its one call to completion on the calling thread. `XriptHandle` and `XriptPool` built over async-mode options run calls concurrently on their runtime thread.
+
+What carries over, and what changes:
+
+- **Limits.** `timeout_ms` bounds the whole call, time spent awaiting a host future included; a call that outlives it settles with `ExecutionLimit`. Memory and stack limits apply unchanged.
+- **Cancellation.** A `CancellationToken`, a handle's per-call token, and dropping an in-flight future all reach a call parked on a host future, observed within a few milliseconds.
+- **Capabilities, hooks, events, fragments, exports, commands, roles and slots** behave as in sync mode. Async exports and command handlers are awaited; hook and event handlers' return values are collected unawaited, as in the JS runtime.
+- **Executor.** Host futures are polled by whichever thread drives the call. A future that needs a specific executor's reactor (a `tokio` timer, say) must be driven from inside that executor, or be executor-agnostic.
+- **Shared interrupt accounting.** Promise jobs from one call can run while another call is being polled, and count against that call's budget for that slice. Budgets stay bounded; attribution across interleaved calls is approximate.
+- **Debugging.** A paused debug session still holds the interpreter thread, as in sync mode.
+- **Sync bindings** still run in line and block; only async bindings yield.
+
 ## Loading Mods
 
 `load_mod()` validates a mod manifest against the app manifest, sanitizes any fragment HTML, and optionally executes the mod's entry script before returning.
@@ -299,7 +332,7 @@ let mod_instance = rt.load_mod(
 )?;
 ```
 
-Fragments declared `inline: true` carry their HTML in the manifest directly; non-inline fragments resolve their `source` path against the `fragment_sources` map. `entry_source` runs after validation but before `load_mod` returns; if it throws, `load_mod` returns `XriptError::ModEntry { mod_name, message }`. The returned `ModInstance` exposes the mod's `id`, `name`, `version`, sanitized `fragments`, and any `provides` (provider-role declarations; see [Slot & Role Resolution](#slot--role-resolution)).
+Fragments declared `inline: true` carry their HTML in the manifest directly; non-inline fragments resolve their `source` path against the `fragment_sources` map. `entry_source` runs after validation but before `load_mod` returns; if it throws, `load_mod` returns `XriptError::ModEntry { mod_name, message }`. Pass `None` to have the runtime look every script the entry names (`ModManifest::entry_scripts()`) up in `fragment_sources`; a script it cannot find is `XriptError::MissingEntryScript { mod_name, script }`, checked before any script runs. Setting `RuntimeOptions::entry_errors` to `EntryErrorPolicy::Report` loads such a mod anyway and records the failure on `ModInstance::diagnostics`; every load-time finding (including warnings like markup in a non-inline `source`) also reaches the optional `on_mod_diagnostic` sink. The returned `ModInstance` exposes the mod's `id`, `name`, `version`, sanitized `fragments`, and any `provides` (provider-role declarations; see [Slot & Role Resolution](#slot--role-resolution)).
 
 A mod entry may be a classic script (using `xript.exports.register(...)`) or an ES module (`entry.format: "module"`); top-level named function exports auto-register as host-invokable. A mod that attempts an external `import` fails with `XriptError::ImportDenied`, and a mod entry carrying CommonJS (`require` / `module.exports`) fails with `XriptError::CommonJsDetected`.
 
@@ -326,6 +359,7 @@ for handler_ops in &ops_per_handler {
             Some("removeClass")     => { /* op["selector"], op["value"] (class) */ }
             Some("setText")         => { /* op["selector"], op["value"] (text) */ }
             Some("setAttr")         => { /* op["selector"], op["attr"], op["value"] */ }
+            Some("removeAttr")      => { /* op["selector"], op["attr"] */ }
             Some("replaceChildren") => { /* op["selector"], op["value"] (html) */ }
             _ => {}
         }

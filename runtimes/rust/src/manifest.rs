@@ -471,6 +471,46 @@ impl ModManifest {
         aggregate
     }
 
+    /// The script names the mod's `entry` asks the host to supply, in evaluation
+    /// order. A bare string names one script, an array names several, the
+    /// object form names its `script`, and an absent entry names none. A name
+    /// the host does not supply is a load error
+    /// ([`XriptError::MissingEntryScript`](crate::XriptError::MissingEntryScript)).
+    pub fn entry_scripts(&self) -> Vec<String> {
+        match &self.entry {
+            Some(serde_json::Value::String(s)) => vec![s.clone()],
+            Some(serde_json::Value::Array(arr)) => arr
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect(),
+            Some(serde_json::Value::Object(obj)) => obj
+                .get("script")
+                .and_then(|v| v.as_str())
+                .map(|s| vec![s.to_string()])
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// How the mod's entry is evaluated: `"module"` only when the object form
+    /// says `format: "module"`, `"script"` for every other form.
+    pub fn entry_format(&self) -> &'static str {
+        match &self.entry {
+            Some(serde_json::Value::Object(obj))
+                if obj.get("format").and_then(|v| v.as_str()) == Some("module") =>
+            {
+                "module"
+            }
+            _ => "script",
+        }
+    }
+
+    /// The exports the mod's entry declares, keyed by export name. Only the
+    /// object form declares exports; a bare string or array declares none.
+    pub fn entry_exports(&self) -> HashMap<String, ExportDecl> {
+        self.entry_block().map(|e| e.exports).unwrap_or_default()
+    }
+
     /// Parses the `entry` field into a normalized `EntryBlock` whether it is a
     /// bare script string, an array of scripts, or the richer object form with
     /// declared exports. Returns `None` when no entry is declared.
@@ -525,6 +565,8 @@ impl FragmentDeclaration {
     }
 }
 
+/// One entry of a fragment fill's `bindings`: a local name the fragment's
+/// expressions read, resolved from a host data path.
 #[derive(Debug, Clone, Deserialize)]
 pub struct FragmentBinding {
     pub name: String,
@@ -533,6 +575,11 @@ pub struct FragmentBinding {
     /// binding. Not consulted at runtime.
     #[serde(default)]
     pub r#type: Option<String>,
+    /// Host-defined extension fields (a value transform, a formatting hint),
+    /// carried through untouched and never interpreted by the runtime. A mod that
+    /// uses one only works on hosts that implement it.
+    #[serde(flatten)]
+    pub extensions: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -610,6 +657,44 @@ pub struct Limits {
 impl Binding {
     pub fn is_namespace(&self) -> bool {
         matches!(self, Binding::Namespace(_))
+    }
+}
+
+/// Structural checks that must run on the raw JSON, before typed deserialization would turn a
+/// wrong shape into a generic serde error that names neither the field nor the shape it wanted.
+///
+/// `slots` must be an array of `{ id, accepts }` declarations; an object keyed by slot id is the
+/// likeliest wrong shape. Pinned by `spec/manifest-shape-tests.json`.
+pub fn check_raw_shape(raw: &serde_json::Value) -> crate::error::Result<()> {
+    let mut issues = Vec::new();
+    match raw.get("slots") {
+        None => {}
+        Some(serde_json::Value::Array(slots)) => {
+            for (index, slot) in slots.iter().enumerate() {
+                let well_formed = slot.as_object().is_some_and(|entry| {
+                    entry.get("id").is_some_and(|id| id.is_string())
+                        && entry
+                            .get("accepts")
+                            .and_then(|accepts| accepts.as_array())
+                            .is_some_and(|accepts| accepts.iter().all(|value| value.is_string()))
+                });
+                if !well_formed {
+                    issues.push(ValidationIssue {
+                        path: format!("/slots/{index}"),
+                        message: "each 'slots' entry must be an object { id, accepts } with a string 'id' and an array of strings 'accepts'".into(),
+                    });
+                }
+            }
+        }
+        Some(_) => issues.push(ValidationIssue {
+            path: "/slots".into(),
+            message: "'slots' must be an array of { id, accepts } slot declarations, not an object or other value".into(),
+        }),
+    }
+    if issues.is_empty() {
+        Ok(())
+    } else {
+        Err(crate::error::XriptError::ManifestValidation { issues })
     }
 }
 

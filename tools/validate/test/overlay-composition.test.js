@@ -5,7 +5,7 @@ const { validateManifest, validateModManifest } = await import("../dist/index.js
 
 const CORE_ID = "https://xript.dev/schema/manifest/v0.6.json";
 const LEGACY_CORE_ID = "https://xript.dev/schema/manifest/v0.3.json";
-const MOD_CORE_ID = "https://xript.dev/schema/mod-manifest/v0.8.json";
+const MOD_CORE_ID = "https://xript.dev/schema/mod-manifest/v0.9.json";
 
 const overlay = {
 	$schema: "https://json-schema.org/draft/2020-12/schema",

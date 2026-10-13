@@ -2,6 +2,7 @@ import { tokenize, type Token, type Attribute } from "./tokenizer.js";
 import {
 	ALLOWED_ELEMENTS,
 	STRIPPED_ELEMENTS,
+	SVG_TEXT_ELEMENTS,
 	UNWRAPPED_ELEMENTS,
 	VOID_ELEMENTS,
 	isAllowedAttribute,
@@ -119,7 +120,8 @@ export function htmlToTree(input: string, profile?: FormatProfile): FragmentTree
 				parent.children.push(element);
 
 				const rawText = htmlRulesApply(token.rawTag)
-					&& (token.tag === "style" || STRIPPED_ELEMENTS.has(token.tag));
+					&& (token.tag === "style" || STRIPPED_ELEMENTS.has(token.tag))
+					&& !(SVG_TEXT_ELEMENTS.has(token.tag) && insideSvg(stack));
 
 				if (rawText) {
 					if (token.tag === "style") {
@@ -149,6 +151,15 @@ export function htmlToTree(input: string, profile?: FormatProfile): FragmentTree
 	}
 
 	return root.children;
+}
+
+/**
+ * Whether an open `<svg>` encloses the insertion point. Inside SVG the HTML parser
+ * reads `<title>` as a foreign element with ordinary content, not as the document
+ * title's raw-text region.
+ */
+function insideSvg(stack: FragmentElement[]): boolean {
+	return stack.some((element) => element.name.toLowerCase() === "svg");
 }
 
 /**

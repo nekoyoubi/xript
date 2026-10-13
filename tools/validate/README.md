@@ -66,6 +66,20 @@ Validates a manifest object against the xript JSON Schema.
 
 Reads a JSON file from disk and validates it.
 
+### Browser and edge runtimes: `@xriptjs/validate/core`
+
+The main entry reads manifests, `extends` bases, and `$schema` overlays from disk and the network, so it imports Node builtins. `@xriptjs/validate/core` is the same validator with none of that: every schema (including the frozen ones for earlier manifest versions) is bundled in, and nothing in its import graph touches `node:*`. It exports `validateManifest`, `validateModManifest`, `crossValidate`, `lintManifests`, `scoreManifests`, the capability and type-reference helpers, and everything else the main entry does except the file and network resolvers.
+
+```javascript
+import { validateManifestForVersion, crossValidate, lintManifests } from "@xriptjs/validate/core";
+
+const host = await validateManifestForVersion(appManifest); // pinned by $schema or the xript field
+const pair = await crossValidate(appManifest, modManifest);
+const { findings } = lintManifests(appManifest, [modManifest]);
+```
+
+`validateManifestForVersion(manifest, { kind?, version?, schema? })` picks the schema the way the main entry's `validateManifestVersioned` does, minus fetching: a `$schema` naming something other than an xript schema is an overlay it cannot resolve, so pass the overlay as `schema` or it validates against bundled core with a `schema-fallback` warning.
+
 ### `ValidationResult`
 
 ```typescript

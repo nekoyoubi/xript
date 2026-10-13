@@ -644,7 +644,7 @@ impl Worker {
     /// thread parked in a host binding will never dequeue the command it would
     /// otherwise have skipped.
     fn answer_queued(&self, limit: usize, error: impl Fn(&Worker) -> XriptError) -> usize {
-        let running = self.handle.in_flight_token();
+        let running = self.handle.in_flight_tokens();
         let mut answered = 0;
         loop {
             if answered >= limit {
@@ -653,10 +653,7 @@ impl Worker {
             let mut queue = self.queue.lock().unwrap_or_else(|p| p.into_inner());
             let Some(position) = queue.iter().position(|call| {
                 !call.settled.load(Ordering::SeqCst)
-                    && !running
-                        .as_ref()
-                        .map(|r| r.same_call(&call.token))
-                        .unwrap_or(false)
+                    && !running.iter().any(|r| r.same_call(&call.token))
             }) else {
                 break;
             };
@@ -1759,6 +1756,9 @@ struct FanState {
 /// heartbeat is bumped by the interrupt handler, which fires only while
 /// bytecode runs, so a script legitimately grinding for a minute keeps ticking
 /// and is never marked wedged. Only a thread parked inside host code stalls it.
+/// On a yielding worker a call awaiting an async binding stalls the heartbeat
+/// without occupying the thread, so there a third condition applies: the
+/// thread must actually be inside a sync binding.
 fn spawn_supervisor(inner: &Arc<PoolInner>) -> std::thread::JoinHandle<()> {
     let weak: Weak<PoolInner> = Arc::downgrade(inner);
     let stop = inner.supervisor_stop.clone();
@@ -1803,8 +1803,14 @@ fn spawn_supervisor(inner: &Arc<PoolInner>) -> std::thread::JoinHandle<()> {
                 };
                 let running_for = call.dispatched_at.elapsed();
 
+                // A yielding worker parked on an async binding runs no
+                // bytecode and holds no thread, so its stalled heartbeat
+                // means nothing unless the thread is inside a sync binding.
+                let parked_not_stuck =
+                    worker.handle.probe().yielding() && health.current_binding.is_none();
                 let wedged = running_for >= threshold
-                    && stalled_for >= inner.config.health.heartbeat_stall;
+                    && stalled_for >= inner.config.health.heartbeat_stall
+                    && !parked_not_stuck;
 
                 if !wedged {
                     if worker.state() != WorkerState::Unhealthy {

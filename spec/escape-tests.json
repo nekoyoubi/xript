@@ -1,0 +1,95 @@
+{
+  "description": "Conformance corpus for code generation reached through a constructor chain. Every value a script can touch (a literal function, a built-in, a binding, a value a binding returned, an error a binding threw, an argument a callback received) leads by `.constructor` to some realm's `Function`. That `Function` must refuse to compile a string, in every runtime, whatever realm it belongs to.",
+  "notes": [
+    "Each case's `expr` is spliced into `template` at `EXPR`, and the script must evaluate to `\"blocked\"`: the constructor it reached threw a `TypeError`. `reached:...` means a string compiled (an eval hole, and a host escape if the reached `Function` belongs to the host realm). `threw:...` means something other than a `TypeError` stopped it, which is a conformance failure even though nothing escaped.",
+    "`probe.data` returns `{ \"list\": [1, { \"k\": \"v\" }] }`. `probe.fail` throws a host error. `probe.call(path, callArgs, ...payload)` is the callback probe from `callback-tests.json`: it calls the callback at `path` with `callArgs`.",
+    "A runtime whose sandbox is a separate engine (QuickJS, Jint) reaches only its own engine's `Function`, so a hole there is an eval violation rather than a host escape. A runtime that shares the host's engine (Node's `vm`) reaches the host's `Function` from any host-realm value, which is a full escape; that is why values crossing into a `vm` context must be re-created in the context's realm."
+  ],
+  "template": "(function () { try { var make = EXPR; if (typeof make === 'string') return 'reached:' + make; var made = make('return typeof process'); if (typeof made === 'function') made = made(); return 'reached:' + String(made); } catch (e) { return e && e.name === 'TypeError' ? 'blocked' : 'threw:' + (e && e.name); } })()",
+  "manifest": {
+    "xript": "0.8",
+    "name": "escape-probe",
+    "bindings": {
+      "probe": {
+        "description": "Escape conformance probe.",
+        "members": {
+          "data": {
+            "description": "Returns a nested data value."
+          },
+          "fail": {
+            "description": "Throws a host error."
+          },
+          "call": {
+            "description": "Calls the callback at path with callArgs."
+          }
+        }
+      }
+    }
+  },
+  "cases": [
+    {
+      "name": "a function literal",
+      "expr": "(function () {}).constructor"
+    },
+    {
+      "name": "an async function literal",
+      "expr": "(async function () {}).constructor"
+    },
+    {
+      "name": "a generator function literal",
+      "expr": "(function* () {}).constructor"
+    },
+    {
+      "name": "an async generator function literal",
+      "expr": "(async function* () {}).constructor"
+    },
+    {
+      "name": "the global Function",
+      "expr": "Function"
+    },
+    {
+      "name": "a built-in function",
+      "expr": "Math.max.constructor"
+    },
+    {
+      "name": "a built-in constructor",
+      "expr": "Object.constructor"
+    },
+    {
+      "name": "JSON.parse",
+      "expr": "JSON.parse.constructor"
+    },
+    {
+      "name": "console.log",
+      "expr": "console.log.constructor"
+    },
+    {
+      "name": "a binding function",
+      "expr": "probe.data.constructor"
+    },
+    {
+      "name": "a binding namespace object",
+      "expr": "probe.constructor.constructor"
+    },
+    {
+      "name": "an object a binding returned",
+      "expr": "probe.data().constructor.constructor"
+    },
+    {
+      "name": "an array a binding returned",
+      "expr": "probe.data().list.constructor.constructor"
+    },
+    {
+      "name": "a nested object a binding returned",
+      "expr": "probe.data().list[1].constructor.constructor"
+    },
+    {
+      "name": "an error a binding threw",
+      "expr": "(function () { try { probe.fail(); } catch (e) { return e; } })().constructor.constructor"
+    },
+    {
+      "name": "an argument a callback received",
+      "expr": "probe.call([0], [{ 'a': [1] }], function (o) { return String(o.a.constructor.constructor('return typeof process')()); })"
+    }
+  ]
+}

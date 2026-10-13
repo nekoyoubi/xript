@@ -1,6 +1,6 @@
 {
 	"name": "@xriptjs/runtime",
-	"version": "0.8.1",
+	"version": "0.9.0",
 	"description": "Universal JavaScript runtime for xript — QuickJS WASM sandbox for browser, Node, Deno, and more.",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -9,6 +9,32 @@
 		".": {
 			"types": "./dist/index.d.ts",
 			"default": "./dist/index.js"
+		},
+		"./quickjs-sync": {
+			"types": "./dist/quickjs-sync.d.ts",
+			"workerd": "./dist/quickjs-sync.js",
+			"browser": "./dist/quickjs-sync.browser.js",
+			"default": "./dist/quickjs-sync.js"
+		},
+		"./quickjs-async": {
+			"types": "./dist/quickjs-async.d.ts",
+			"workerd": "./dist/quickjs-async.js",
+			"browser": "./dist/quickjs-async.browser.js",
+			"default": "./dist/quickjs-async.js"
+		}
+	},
+	"imports": {
+		"#quickjs-sync": {
+			"types": "./dist/quickjs-sync.d.ts",
+			"workerd": "./dist/quickjs-sync.js",
+			"browser": "./dist/quickjs-sync.browser.js",
+			"default": "./dist/quickjs-sync.js"
+		},
+		"#quickjs-async": {
+			"types": "./dist/quickjs-async.d.ts",
+			"workerd": "./dist/quickjs-async.js",
+			"browser": "./dist/quickjs-async.browser.js",
+			"default": "./dist/quickjs-async.js"
 		}
 	},
 	"files": [
@@ -21,7 +47,7 @@
 	},
 	"homepage": "https://xript.dev",
 	"scripts": {
-		"build": "tsc",
+		"build": "node scripts/embed-applier-corpus.mjs && tsc",
 		"test": "node --test test/*.test.js",
 		"prepublishOnly": "npm run build"
 	},
@@ -40,14 +66,18 @@
 		"provenance": true
 	},
 	"dependencies": {
-		"quickjs-emscripten-core": "^0.31.0",
-		"@jitl/quickjs-wasmfile-release-sync": "^0.31.0",
-		"@jitl/quickjs-wasmfile-release-asyncify": "^0.31.0",
-		"@xriptjs/sanitize": "^0.8.1"
+		"@jitl/quickjs-singlefile-browser-release-asyncify": "0.31.0",
+		"@jitl/quickjs-singlefile-browser-release-sync": "0.31.0",
+		"@jitl/quickjs-wasmfile-release-asyncify": "0.31.0",
+		"@jitl/quickjs-wasmfile-release-sync": "0.31.0",
+		"@xriptjs/sanitize": "^0.9.0",
+		"quickjs-emscripten-core": "0.31.0"
 	},
 	"devDependencies": {
-		"typescript": "^5.7.0",
+		"@jitl/quickjs-wasmfile-debug-asyncify": "0.31.0",
 		"@types/node": "^22.0.0",
-		"@jitl/quickjs-wasmfile-debug-asyncify": "^0.31.0"
+		"playwright-core": "^1.59.1",
+		"typescript": "^5.7.0",
+		"vite": "^6.4.1"
 	}
 }

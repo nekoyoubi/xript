@@ -1,0 +1,2962 @@
+{
+	"$comment": "data-each conformance corpus. Every xript runtime runs this file. Expected values were generated from the reference implementation (@xriptjs/runtime) and are normative; see spec/fragments.md#repeat-data-each.",
+	"maxCopies": 10000,
+	"headers": [
+		{
+			"id": "header-bare",
+			"source": "item in items",
+			"expected": {
+				"item": "item",
+				"index": null,
+				"expression": "items"
+			}
+		},
+		{
+			"id": "header-indexed",
+			"source": "(item, i) in items",
+			"expected": {
+				"item": "item",
+				"index": "i",
+				"expression": "items"
+			}
+		},
+		{
+			"id": "header-parenthesized-item-only",
+			"source": "(item) in items",
+			"expected": {
+				"item": "item",
+				"index": null,
+				"expression": "items"
+			}
+		},
+		{
+			"id": "header-tight-parens",
+			"source": "(item,i)in items",
+			"expected": {
+				"item": "item",
+				"index": "i",
+				"expression": "items"
+			}
+		},
+		{
+			"id": "header-expression-right-side",
+			"source": "row in grid[0]",
+			"expected": {
+				"item": "row",
+				"index": null,
+				"expression": "grid[0]"
+			}
+		},
+		{
+			"id": "header-member-right-side",
+			"source": "p in player.party",
+			"expected": {
+				"item": "p",
+				"index": null,
+				"expression": "player.party"
+			}
+		},
+		{
+			"id": "header-whitespace-tolerant",
+			"source": "  ( item ,  i )  in   items  ",
+			"expected": {
+				"item": "item",
+				"index": "i",
+				"expression": "items"
+			}
+		},
+		{
+			"id": "header-dollar-name",
+			"source": "$row in rows",
+			"expected": {
+				"item": "$row",
+				"index": null,
+				"expression": "rows"
+			}
+		},
+		{
+			"id": "reject-missing-in",
+			"source": "items",
+			"expected": null
+		},
+		{
+			"id": "reject-of-keyword",
+			"source": "item of items",
+			"expected": null
+		},
+		{
+			"id": "reject-no-space-before-in",
+			"source": "itemin items",
+			"expected": null
+		},
+		{
+			"id": "reject-no-space-after-in",
+			"source": "item initems",
+			"expected": null
+		},
+		{
+			"id": "reject-empty-right-side",
+			"source": "item in ",
+			"expected": null
+		},
+		{
+			"id": "reject-bad-expression",
+			"source": "item in items +",
+			"expected": null
+		},
+		{
+			"id": "reject-reserved-binder",
+			"source": "null in items",
+			"expected": null
+		},
+		{
+			"id": "reject-same-names",
+			"source": "(a, a) in items",
+			"expected": null
+		},
+		{
+			"id": "reject-unclosed-binder",
+			"source": "(a, b in items",
+			"expected": null
+		},
+		{
+			"id": "reject-assignment-right-side",
+			"source": "item in items = 1",
+			"expected": null
+		},
+		{
+			"id": "reject-empty",
+			"source": "",
+			"expected": null
+		}
+	],
+	"render": [
+		{
+			"id": "simple",
+			"source": "<ul><li data-each=\"item in items\" data-bind=\"item\"></li></ul>",
+			"bindings": {
+				"items": [
+					"a",
+					"b",
+					"c"
+				]
+			},
+			"expected": {
+				"html": "<ul><li data-bind=\"item\">a</li><li data-bind=\"item\">b</li><li data-bind=\"item\">c</li></ul>",
+				"conditions": [],
+				"repeats": [
+					{
+						"site": {
+							"template": [
+								0,
+								0
+							],
+							"within": []
+						},
+						"path": [
+							0
+						],
+						"start": 0,
+						"count": 3,
+						"expression": "item in items",
+						"key": null,
+						"mode": "replace",
+						"keys": [
+							0,
+							1,
+							2
+						],
+						"patch": [
+							{
+								"op": "insert",
+								"key": 0,
+								"to": 0
+							},
+							{
+								"op": "insert",
+								"key": 1,
+								"to": 1
+							},
+							{
+								"op": "insert",
+								"key": 2,
+								"to": 2
+							}
+						]
+					}
+				],
+				"diagnostics": []
+			}
+		},
+		{
+			"id": "template-not-rendered-on-empty",
+			"source": "<ul><li data-each=\"item in items\" data-bind=\"item\">template</li></ul>",
+			"bindings": {
+				"items": []
+			},
+			"expected": {
+				"html": "<ul></ul>",
+				"conditions": [],
+				"repeats": [
+					{
+						"site": {
+							"template": [
+								0,
+								0
+							],
+							"within": []
+						},
+						"path": [
+							0
+						],
+						"start": 0,
+						"count": 0,
+						"expression": "item in items",
+						"key": null,
+						"mode": "replace",
+						"keys": [],
+						"patch": []
+					}
+				],
+				"diagnostics": []
+			}
+		},
+		{
+			"id": "indexed-name",
+			"source": "<ul><li data-each=\"(item, i) in items\">{{ i }}: {{ item }}</li></ul>",
+			"interpolate": true,
+			"bindings": {
+				"items": [
+					"a",
+					"b"
+				]
+			},
+			"expected": {
+				"html": "<ul><li>0: a</li><li>1: b</li></ul>",
+				"conditions": [],
+				"repeats": [
+					{
+						"site": {
+							"template": [
+								0,
+								0
+							],
+							"within": []
+						},
+						"path": [
+							0
+						],
+						"start": 0,
+						"count": 2,
+						"expression": "(item, i) in items",
+						"key": null,
+						"mode": "replace",
+						"keys": [
+							0,
+							1
+						],
+						"patch": [
+							{
+								"op": "insert",
+								"key": 0,
+								"to": 0
+							},
+							{
+								"op": "insert",
+								"key": 1,
+								"to": 1
+							}
+						]
+					}
+				],
+				"diagnostics": []
+			}
+		},
+		{
+			"id": "dollar-index-always-bound",
+			"source": "<p data-each=\"x in xs\" data-bind=\"$index + 1\"></p>",
+			"bindings": {
+				"xs": [
+					"a",
+					"b"
+				]
+			},
+			"expected": {
+				"html": "<p data-bind=\"$index + 1\">1</p><p data-bind=\"$index + 1\">2</p>",
+				"conditions": [],
+				"repeats": [
+					{
+						"site": {
+							"template": [
+								0
+							],
+							"within": []
+						},
+						"path": [],
+						"start": 0,
+						"count": 2,
+						"expression": "x in xs",
+						"key": null,
+						"mode": "replace",
+						"keys": [
+							0,
+							1
+						],
+						"patch": [
+							{
+								"op": "insert",
+								"key": 0,
+								"to": 0
+							},
+							{
+								"op": "insert",
+								"key": 1,
+								"to": 1
+							}
+						]
+					}
+				],
+				"diagnostics": []
+			}
+		},
+		{
+			"id": "member-of-item",
+			"source": "<ul><li data-each=\"row in rows\" data-bind=\"row.name\"></li></ul>",
+			"bindings": {
+				"rows": [
+					{
+						"name": "Ada"
+					},
+					{
+						"name": "Grace"
+					}
+				]
+			},
+			"expected": {
+				"html": "<ul><li data-bind=\"row.name\">Ada</li><li data-bind=\"row.name\">Grace</li></ul>",
+				"conditions": [],
+				"repeats": [
+					{
+						"site": {
+							"template": [
+								0,
+								0
+							],
+							"within": []
+						},
+						"path": [
+							0
+						],
+						"start": 0,
+						"count": 2,
+						"expression": "row in rows",
+						"key": null,
+						"mode": "replace",
+						"keys": [
+							0,
+							1
+						],
+						"patch": [
+							{
+								"op": "insert",
+								"key": 0,
+								"to": 0
+							},
+							{
+								"op": "insert",
+								"key": 1,
+								"to": 1
+							}
+						]
+					}
+				],
+				"diagnostics": []
+			}
+		},
+		{
+			"id": "siblings-keep-position",
+			"source": "<ul><li>head</li><li data-each=\"x in xs\" data-bind=\"x\"></li><li>tail</li></ul>",
+			"bindings": {
+				"xs": [
+					1,
+					2
+				]
+			},
+			"expected": {
+				"html": "<ul><li>head</li><li data-bind=\"x\">1</li><li data-bind=\"x\">2</li><li>tail</li></ul>",
+				"conditions": [],
+				"repeats": [
+					{
+						"site": {
+							"template": [
+								0,
+								1
+							],
+							"within": []
+						},
+						"path": [
+							0
+						],
+						"start": 1,
+						"count": 2,
+						"expression": "x in xs",
+						"key": null,
+						"mode": "replace",
+						"keys": [
+							0,
+							1
+						],
+						"patch": [
+							{
+								"op": "insert",
+								"key": 0,
+								"to": 0
+							},
+							{
+								"op": "insert",
+								"key": 1,
+								"to": 1
+							}
+						]
+					}
+				],
+				"diagnostics": []
+			}
+		},
+		{
+			"id": "root-level-repeat",
+			"source": "<p data-each=\"x in xs\" data-bind=\"x\"></p><p>after</p>",
+			"bindings": {
+				"xs": [
+					"a",
+					"b"
+				]
+			},
+			"expected": {
+				"html": "<p data-bind=\"x\">a</p><p data-bind=\"x\">b</p><p>after</p>",
+				"conditions": [],
+				"repeats": [
+					{
+						"site": {
+							"template": [
+								0
+							],
+							"within": []
+						},
+						"path": [],
+						"start": 0,
+						"count": 2,
+						"expression": "x in xs",
+						"key": null,
+						"mode": "replace",
+						"keys": [
+							0,
+							1
+						],
+						"patch": [
+							{
+								"op": "insert",
+								"key": 0,
+								"to": 0
+							},
+							{
+								"op": "insert",
+								"key": 1,
+								"to": 1
+							}
+						]
+					}
+				],
+				"diagnostics": []
+			}
+		},
+		{
+			"id": "nested",
+			"source": "<div data-each=\"row in grid\"><span data-each=\"cell in row\" data-bind=\"cell\"></span></div>",
+			"bindings": {
+				"grid": [
+					[
+						1,
+						2
+					],
+					[
+						3
+					]
+				]
+			},
+			"expected": {
+				"html": "<div><span data-bind=\"cell\">1</span><span data-bind=\"cell\">2</span></div><div><span data-bind=\"cell\">3</span></div>",
+				"conditions": [],
+				"repeats": [
+					{
+						"site": {
+							"template": [
+								0
+							],
+							"within": []
+						},
+						"path": [],
+						"start": 0,
+						"count": 2,
+						"expression": "row in grid",
+						"key": null,
+						"mode": "replace",
+						"keys": [
+							0,
+							1
+						],
+						"patch": [
+							{
+								"op": "insert",
+								"key": 0,
+								"to": 0
+							},
+							{
+								"op": "insert",
+								"key": 1,
+								"to": 1
+							}
+						]
+					},
+					{
+						"site": {
+							"template": [
+								0,
+								0
+							],
+							"within": [
+								0
+							]
+						},
+						"path": [
+							0
+						],
+						"start": 0,
+						"count": 2,
+						"expression": "cell in row",
+						"key": null,
+						"mode": "replace",
+						"keys": [
+							0,
+							1
+						],
+						"patch": [
+							{
+								"op": "insert",
+								"key": 0,
+								"to": 0
+							},
+							{
+								"op": "insert",
+								"key": 1,
+								"to": 1
+							}
+						]
+					},
+					{
+						"site": {
+							"template": [
+								0,
+								0
+							],
+							"within": [
+								1
+							]
+						},
+						"path": [
+							1
+						],
+						"start": 0,
+						"count": 1,
+						"expression": "cell in row",
+						"key": null,
+						"mode": "replace",
+						"keys": [
+							0
+						],
+						"patch": [
+							{
+								"op": "insert",
+								"key": 0,
+								"to": 0
+							}
+						]
+					}
+				],
+				"diagnostics": []
+			}
+		},
+		{
+			"id": "nested-index-shadowing",
+			"source": "<div data-each=\"(row, r) in grid\"><b data-each=\"cell in row\" data-bind=\"r + '.' + $index\"></b></div>",
+			"bindings": {
+				"grid": [
+					[
+						"x",
+						"y"
+					],
+					[
+						"z"
+					]
+				]
+			},
+			"expected": {
+				"html": "<div><b data-bind=\"r + &#39;.&#39; + $index\">0.0</b><b data-bind=\"r + &#39;.&#39; + $index\">0.1</b></div><div><b data-bind=\"r + &#39;.&#39; + $index\">1.0</b></div>",
+				"conditions": [],
+				"repeats": [
+					{
+						"site": {
+							"template": [
+								0
+							],
+							"within": []
+						},
+						"path": [],
+						"start": 0,
+						"count": 2,
+						"expression": "(row, r) in grid",
+						"key": null,
+						"mode": "replace",
+						"keys": [
+							0,
+							1
+						],
+						"patch": [
+							{
+								"op": "insert",
+								"key": 0,
+								"to": 0
+							},
+							{
+								"op": "insert",
+								"key": 1,
+								"to": 1
+							}
+						]
+					},
+					{
+						"site": {
+							"template": [
+								0,
+								0
+							],
+							"within": [
+								0
+							]
+						},
+						"path": [
+							0
+						],
+						"start": 0,
+						"count": 2,
+						"expression": "cell in row",
+						"key": null,
+						"mode": "replace",
+						"keys": [
+							0,
+							1
+						],
+						"patch": [
+							{
+								"op": "insert",
+								"key": 0,
+								"to": 0
+							},
+							{
+								"op": "insert",
+								"key": 1,
+								"to": 1
+							}
+						]
+					},
+					{
+						"site": {
+							"template": [
+								0,
+								0
+							],
+							"within": [
+								1
+							]
+						},
+						"path": [
+							1
+						],
+						"start": 0,
+						"count": 1,
+						"expression": "cell in row",
+						"key": null,
+						"mode": "replace",
+						"keys": [
+							0
+						],
+						"patch": [
+							{
+								"op": "insert",
+								"key": 0,
+								"to": 0
+							}
+						]
+					}
+				],
+				"diagnostics": []
+			}
+		},
+		{
+			"id": "item-shadows-binding",
+			"source": "<p data-bind=\"item\"></p><p data-each=\"item in items\" data-bind=\"item\"></p><p data-bind=\"item\"></p>",
+			"bindings": {
+				"item": "outer",
+				"items": [
+					"inner"
+				]
+			},
+			"expected": {
+				"html": "<p data-bind=\"item\">outer</p><p data-bind=\"item\">inner</p><p data-bind=\"item\">outer</p>",
+				"conditions": [],
+				"repeats": [
+					{
+						"site": {
+							"template": [
+								1
+							],
+							"within": []
+						},
+						"path": [],
+						"start": 1,
+						"count": 1,
+						"expression": "item in items",
+						"key": null,
+						"mode": "replace",
+						"keys": [
+							0
+						],
+						"patch": [
+							{
+								"op": "insert",
+								"key": 0,
+								"to": 0
+							}
+						]
+					}
+				],
+				"diagnostics": []
+			}
+		},
+		{
+			"id": "non-array-string",
+			"source": "<p data-each=\"x in xs\" data-bind=\"x\"></p>",
+			"bindings": {
+				"xs": "abc"
+			},
+			"expected": {
+				"html": "",
+				"conditions": [],
+				"repeats": [
+					{
+						"site": {
+							"template": [
+								0
+							],
+							"within": []
+						},
+						"path": [],
+						"start": 0,
+						"count": 0,
+						"expression": "x in xs",
+						"key": null,
+						"mode": "replace",
+						"keys": [],
+						"patch": []
+					}
+				],
+				"diagnostics": []
+			}
+		},
+		{
+			"id": "non-array-object",
+			"source": "<p data-each=\"x in xs\" data-bind=\"x\"></p>",
+			"bindings": {
+				"xs": {
+					"a": 1
+				}
+			},
+			"expected": {
+				"html": "",
+				"conditions": [],
+				"repeats": [
+					{
+						"site": {
+							"template": [
+								0
+							],
+							"within": []
+						},
+						"path": [],
+						"start": 0,
+						"count": 0,
+						"expression": "x in xs",
+						"key": null,
+						"mode": "replace",
+						"keys": [],
+						"patch": []
+					}
+				],
+				"diagnostics": []
+			}
+		},
+		{
+			"id": "missing-binding",
+			"source": "<p data-each=\"x in xs\" data-bind=\"x\"></p>",
+			"bindings": {},
+			"expected": {
+				"html": "",
+				"conditions": [],
+				"repeats": [
+					{
+						"site": {
+							"template": [
+								0
+							],
+							"within": []
+						},
+						"path": [],
+						"start": 0,
+						"count": 0,
+						"expression": "x in xs",
+						"key": null,
+						"mode": "replace",
+						"keys": [],
+						"patch": []
+					}
+				],
+				"diagnostics": []
+			}
+		},
+		{
+			"id": "failing-expression",
+			"source": "<p data-each=\"x in xs.nope.deeper\" data-bind=\"x\"></p>",
+			"bindings": {
+				"xs": [
+					1
+				]
+			},
+			"expected": {
+				"html": "",
+				"conditions": [],
+				"repeats": [
+					{
+						"site": {
+							"template": [
+								0
+							],
+							"within": []
+						},
+						"path": [],
+						"start": 0,
+						"count": 0,
+						"expression": "x in xs.nope.deeper",
+						"key": null,
+						"mode": "replace",
+						"keys": [],
+						"patch": []
+					}
+				],
+				"diagnostics": []
+			}
+		},
+		{
+			"id": "malformed-header",
+			"source": "<p data-each=\"x of xs\" data-bind=\"x\"></p>",
+			"bindings": {
+				"xs": [
+					1
+				]
+			},
+			"expected": {
+				"html": "",
+				"conditions": [],
+				"repeats": [
+					{
+						"site": {
+							"template": [
+								0
+							],
+							"within": []
+						},
+						"path": [],
+						"start": 0,
+						"count": 0,
+						"expression": "x of xs",
+						"key": null,
+						"mode": "replace",
+						"keys": [],
+						"patch": []
+					}
+				],
+				"diagnostics": []
+			}
+		},
+		{
+			"id": "data-if-per-copy",
+			"source": "<ul><li data-each=\"n in nums\" data-if=\"n > 1\" data-bind=\"n\"></li></ul>",
+			"bindings": {
+				"nums": [
+					1,
+					2,
+					3
+				]
+			},
+			"expected": {
+				"html": "<ul><li data-if=\"n &gt; 1\" data-bind=\"n\">1</li><li data-if=\"n &gt; 1\" data-bind=\"n\">2</li><li data-if=\"n &gt; 1\" data-bind=\"n\">3</li></ul>",
+				"conditions": [
+					{
+						"path": [
+							0,
+							0
+						],
+						"expression": "n > 1",
+						"visible": false
+					},
+					{
+						"path": [
+							0,
+							1
+						],
+						"expression": "n > 1",
+						"visible": true
+					},
+					{
+						"path": [
+							0,
+							2
+						],
+						"expression": "n > 1",
+						"visible": true
+					}
+				],
+				"repeats": [
+					{
+						"site": {
+							"template": [
+								0,
+								0
+							],
+							"within": []
+						},
+						"path": [
+							0
+						],
+						"start": 0,
+						"count": 3,
+						"expression": "n in nums",
+						"key": null,
+						"mode": "replace",
+						"keys": [
+							0,
+							1,
+							2
+						],
+						"patch": [
+							{
+								"op": "insert",
+								"key": 0,
+								"to": 0
+							},
+							{
+								"op": "insert",
+								"key": 1,
+								"to": 1
+							},
+							{
+								"op": "insert",
+								"key": 2,
+								"to": 2
+							}
+						]
+					}
+				],
+				"diagnostics": []
+			}
+		},
+		{
+			"id": "data-if-inside-copy",
+			"source": "<ul><li data-each=\"n in nums\"><b data-if=\"n % 2 == 0\">even</b></li></ul>",
+			"bindings": {
+				"nums": [
+					1,
+					2
+				]
+			},
+			"expected": {
+				"html": "<ul><li><b data-if=\"n % 2 == 0\">even</b></li><li><b data-if=\"n % 2 == 0\">even</b></li></ul>",
+				"conditions": [
+					{
+						"path": [
+							0,
+							0,
+							0
+						],
+						"expression": "n % 2 == 0",
+						"visible": false
+					},
+					{
+						"path": [
+							0,
+							1,
+							0
+						],
+						"expression": "n % 2 == 0",
+						"visible": true
+					}
+				],
+				"repeats": [
+					{
+						"site": {
+							"template": [
+								0,
+								0
+							],
+							"within": []
+						},
+						"path": [
+							0
+						],
+						"start": 0,
+						"count": 2,
+						"expression": "n in nums",
+						"key": null,
+						"mode": "replace",
+						"keys": [
+							0,
+							1
+						],
+						"patch": [
+							{
+								"op": "insert",
+								"key": 0,
+								"to": 0
+							},
+							{
+								"op": "insert",
+								"key": 1,
+								"to": 1
+							}
+						]
+					}
+				],
+				"diagnostics": []
+			}
+		},
+		{
+			"id": "keyed",
+			"source": "<ul><li data-each=\"u in users\" data-key=\"u.id\" data-bind=\"u.name\"></li></ul>",
+			"bindings": {
+				"users": [
+					{
+						"id": "a",
+						"name": "Ada"
+					},
+					{
+						"id": "g",
+						"name": "Grace"
+					}
+				]
+			},
+			"expected": {
+				"html": "<ul><li data-bind=\"u.name\">Ada</li><li data-bind=\"u.name\">Grace</li></ul>",
+				"conditions": [],
+				"repeats": [
+					{
+						"site": {
+							"template": [
+								0,
+								0
+							],
+							"within": []
+						},
+						"path": [
+							0
+						],
+						"start": 0,
+						"count": 2,
+						"expression": "u in users",
+						"key": "u.id",
+						"mode": "keyed",
+						"keys": [
+							"a",
+							"g"
+						],
+						"patch": [
+							{
+								"op": "insert",
+								"key": "a",
+								"to": 0
+							},
+							{
+								"op": "insert",
+								"key": "g",
+								"to": 1
+							}
+						]
+					}
+				],
+				"diagnostics": []
+			}
+		},
+		{
+			"id": "keyed-numeric",
+			"source": "<ul><li data-each=\"u in users\" data-key=\"u.id\" data-bind=\"u.name\"></li></ul>",
+			"bindings": {
+				"users": [
+					{
+						"id": 7,
+						"name": "Ada"
+					},
+					{
+						"id": 9,
+						"name": "Grace"
+					}
+				]
+			},
+			"expected": {
+				"html": "<ul><li data-bind=\"u.name\">Ada</li><li data-bind=\"u.name\">Grace</li></ul>",
+				"conditions": [],
+				"repeats": [
+					{
+						"site": {
+							"template": [
+								0,
+								0
+							],
+							"within": []
+						},
+						"path": [
+							0
+						],
+						"start": 0,
+						"count": 2,
+						"expression": "u in users",
+						"key": "u.id",
+						"mode": "keyed",
+						"keys": [
+							7,
+							9
+						],
+						"patch": [
+							{
+								"op": "insert",
+								"key": 7,
+								"to": 0
+							},
+							{
+								"op": "insert",
+								"key": 9,
+								"to": 1
+							}
+						]
+					}
+				],
+				"diagnostics": []
+			}
+		},
+		{
+			"id": "duplicate-keys-fall-back-to-index",
+			"source": "<ul><li data-each=\"u in users\" data-key=\"u.id\" data-bind=\"u.name\"></li></ul>",
+			"bindings": {
+				"users": [
+					{
+						"id": "a",
+						"name": "Ada"
+					},
+					{
+						"id": "a",
+						"name": "Grace"
+					}
+				]
+			},
+			"expected": {
+				"html": "<ul><li data-bind=\"u.name\">Ada</li><li data-bind=\"u.name\">Grace</li></ul>",
+				"conditions": [],
+				"repeats": [
+					{
+						"site": {
+							"template": [
+								0,
+								0
+							],
+							"within": []
+						},
+						"path": [
+							0
+						],
+						"start": 0,
+						"count": 2,
+						"expression": "u in users",
+						"key": "u.id",
+						"mode": "index",
+						"keys": [
+							0,
+							1
+						],
+						"patch": [
+							{
+								"op": "insert",
+								"key": 0,
+								"to": 0
+							},
+							{
+								"op": "insert",
+								"key": 1,
+								"to": 1
+							}
+						]
+					}
+				],
+				"diagnostics": [
+					{
+						"code": "duplicate-key",
+						"path": "/0/0",
+						"node": "li",
+						"prop": "data-key"
+					}
+				]
+			}
+		},
+		{
+			"id": "invalid-key-falls-back-to-index",
+			"source": "<ul><li data-each=\"u in users\" data-key=\"u.id\" data-bind=\"u.name\"></li></ul>",
+			"bindings": {
+				"users": [
+					{
+						"id": "a",
+						"name": "Ada"
+					},
+					{
+						"name": "Grace"
+					}
+				]
+			},
+			"expected": {
+				"html": "<ul><li data-bind=\"u.name\">Ada</li><li data-bind=\"u.name\">Grace</li></ul>",
+				"conditions": [],
+				"repeats": [
+					{
+						"site": {
+							"template": [
+								0,
+								0
+							],
+							"within": []
+						},
+						"path": [
+							0
+						],
+						"start": 0,
+						"count": 2,
+						"expression": "u in users",
+						"key": "u.id",
+						"mode": "index",
+						"keys": [
+							0,
+							1
+						],
+						"patch": [
+							{
+								"op": "insert",
+								"key": 0,
+								"to": 0
+							},
+							{
+								"op": "insert",
+								"key": 1,
+								"to": 1
+							}
+						]
+					}
+				],
+				"diagnostics": [
+					{
+						"code": "invalid-key",
+						"path": "/0/0",
+						"node": "li",
+						"prop": "data-key"
+					}
+				]
+			}
+		},
+		{
+			"id": "string-and-number-keys-are-distinct",
+			"source": "<ul><li data-each=\"k in ks\" data-key=\"k\" data-bind=\"k\"></li></ul>",
+			"bindings": {
+				"ks": [
+					1,
+					"1"
+				]
+			},
+			"expected": {
+				"html": "<ul><li data-bind=\"k\">1</li><li data-bind=\"k\">1</li></ul>",
+				"conditions": [],
+				"repeats": [
+					{
+						"site": {
+							"template": [
+								0,
+								0
+							],
+							"within": []
+						},
+						"path": [
+							0
+						],
+						"start": 0,
+						"count": 2,
+						"expression": "k in ks",
+						"key": "k",
+						"mode": "keyed",
+						"keys": [
+							1,
+							"1"
+						],
+						"patch": [
+							{
+								"op": "insert",
+								"key": 1,
+								"to": 0
+							},
+							{
+								"op": "insert",
+								"key": "1",
+								"to": 1
+							}
+						]
+					}
+				],
+				"diagnostics": []
+			}
+		},
+		{
+			"id": "copies-cannot-become-markup",
+			"source": "<ul><li data-each=\"x in xs\" data-bind=\"x\"></li></ul>",
+			"bindings": {
+				"xs": [
+					"<script>alert(1)</script>"
+				]
+			},
+			"expected": {
+				"html": "<ul><li data-bind=\"x\">&lt;script&gt;alert(1)&lt;/script&gt;</li></ul>",
+				"conditions": [],
+				"repeats": [
+					{
+						"site": {
+							"template": [
+								0,
+								0
+							],
+							"within": []
+						},
+						"path": [
+							0
+						],
+						"start": 0,
+						"count": 1,
+						"expression": "x in xs",
+						"key": null,
+						"mode": "replace",
+						"keys": [
+							0
+						],
+						"patch": [
+							{
+								"op": "insert",
+								"key": 0,
+								"to": 0
+							}
+						]
+					}
+				],
+				"diagnostics": []
+			}
+		},
+		{
+			"id": "copy-limit",
+			"source": "<div data-each=\"row in rows\"><i data-each=\"c in cols\" data-bind=\"c\"></i></div>",
+			"generate": {
+				"rows": 101,
+				"cols": 100
+			},
+			"bindings": {},
+			"expected": {
+				"copies": 10000,
+				"repeats": 102,
+				"diagnostics": [
+					{
+						"code": "repeat-limit",
+						"path": "/0/0",
+						"node": "i",
+						"prop": "data-each"
+					},
+					{
+						"code": "repeat-limit",
+						"path": "/0/0",
+						"node": "i",
+						"prop": "data-each"
+					},
+					{
+						"code": "repeat-limit",
+						"path": "/0/0",
+						"node": "i",
+						"prop": "data-each"
+					}
+				]
+			}
+		}
+	],
+	"updates": [
+		{
+			"id": "keyed-reorder",
+			"source": "<ul><li data-each=\"u in users\" data-key=\"u\" data-bind=\"u\"></li></ul>",
+			"steps": [
+				{
+					"bindings": {
+						"users": [
+							"a",
+							"b",
+							"c"
+						]
+					},
+					"expected": {
+						"html": "<ul><li data-bind=\"u\">a</li><li data-bind=\"u\">b</li><li data-bind=\"u\">c</li></ul>",
+						"repeats": [
+							{
+								"site": {
+									"template": [
+										0,
+										0
+									],
+									"within": []
+								},
+								"path": [
+									0
+								],
+								"start": 0,
+								"count": 3,
+								"expression": "u in users",
+								"key": "u",
+								"mode": "keyed",
+								"keys": [
+									"a",
+									"b",
+									"c"
+								],
+								"patch": [
+									{
+										"op": "insert",
+										"key": "a",
+										"to": 0
+									},
+									{
+										"op": "insert",
+										"key": "b",
+										"to": 1
+									},
+									{
+										"op": "insert",
+										"key": "c",
+										"to": 2
+									}
+								]
+							}
+						]
+					}
+				},
+				{
+					"bindings": {
+						"users": [
+							"c",
+							"a",
+							"b"
+						]
+					},
+					"expected": {
+						"html": "<ul><li data-bind=\"u\">c</li><li data-bind=\"u\">a</li><li data-bind=\"u\">b</li></ul>",
+						"repeats": [
+							{
+								"site": {
+									"template": [
+										0,
+										0
+									],
+									"within": []
+								},
+								"path": [
+									0
+								],
+								"start": 0,
+								"count": 3,
+								"expression": "u in users",
+								"key": "u",
+								"mode": "keyed",
+								"keys": [
+									"c",
+									"a",
+									"b"
+								],
+								"patch": [
+									{
+										"op": "move",
+										"key": "c",
+										"from": 2,
+										"to": 0
+									},
+									{
+										"op": "reuse",
+										"key": "a",
+										"from": 0,
+										"to": 1
+									},
+									{
+										"op": "reuse",
+										"key": "b",
+										"from": 1,
+										"to": 2
+									}
+								]
+							}
+						]
+					}
+				}
+			]
+		},
+		{
+			"id": "keyed-insert",
+			"source": "<ul><li data-each=\"u in users\" data-key=\"u\" data-bind=\"u\"></li></ul>",
+			"steps": [
+				{
+					"bindings": {
+						"users": [
+							"a",
+							"b"
+						]
+					},
+					"expected": {
+						"html": "<ul><li data-bind=\"u\">a</li><li data-bind=\"u\">b</li></ul>",
+						"repeats": [
+							{
+								"site": {
+									"template": [
+										0,
+										0
+									],
+									"within": []
+								},
+								"path": [
+									0
+								],
+								"start": 0,
+								"count": 2,
+								"expression": "u in users",
+								"key": "u",
+								"mode": "keyed",
+								"keys": [
+									"a",
+									"b"
+								],
+								"patch": [
+									{
+										"op": "insert",
+										"key": "a",
+										"to": 0
+									},
+									{
+										"op": "insert",
+										"key": "b",
+										"to": 1
+									}
+								]
+							}
+						]
+					}
+				},
+				{
+					"bindings": {
+						"users": [
+							"a",
+							"x",
+							"b"
+						]
+					},
+					"expected": {
+						"html": "<ul><li data-bind=\"u\">a</li><li data-bind=\"u\">x</li><li data-bind=\"u\">b</li></ul>",
+						"repeats": [
+							{
+								"site": {
+									"template": [
+										0,
+										0
+									],
+									"within": []
+								},
+								"path": [
+									0
+								],
+								"start": 0,
+								"count": 3,
+								"expression": "u in users",
+								"key": "u",
+								"mode": "keyed",
+								"keys": [
+									"a",
+									"x",
+									"b"
+								],
+								"patch": [
+									{
+										"op": "reuse",
+										"key": "a",
+										"from": 0,
+										"to": 0
+									},
+									{
+										"op": "insert",
+										"key": "x",
+										"to": 1
+									},
+									{
+										"op": "reuse",
+										"key": "b",
+										"from": 1,
+										"to": 2
+									}
+								]
+							}
+						]
+					}
+				}
+			]
+		},
+		{
+			"id": "keyed-remove",
+			"source": "<ul><li data-each=\"u in users\" data-key=\"u\" data-bind=\"u\"></li></ul>",
+			"steps": [
+				{
+					"bindings": {
+						"users": [
+							"a",
+							"b",
+							"c"
+						]
+					},
+					"expected": {
+						"html": "<ul><li data-bind=\"u\">a</li><li data-bind=\"u\">b</li><li data-bind=\"u\">c</li></ul>",
+						"repeats": [
+							{
+								"site": {
+									"template": [
+										0,
+										0
+									],
+									"within": []
+								},
+								"path": [
+									0
+								],
+								"start": 0,
+								"count": 3,
+								"expression": "u in users",
+								"key": "u",
+								"mode": "keyed",
+								"keys": [
+									"a",
+									"b",
+									"c"
+								],
+								"patch": [
+									{
+										"op": "insert",
+										"key": "a",
+										"to": 0
+									},
+									{
+										"op": "insert",
+										"key": "b",
+										"to": 1
+									},
+									{
+										"op": "insert",
+										"key": "c",
+										"to": 2
+									}
+								]
+							}
+						]
+					}
+				},
+				{
+					"bindings": {
+						"users": [
+							"a",
+							"c"
+						]
+					},
+					"expected": {
+						"html": "<ul><li data-bind=\"u\">a</li><li data-bind=\"u\">c</li></ul>",
+						"repeats": [
+							{
+								"site": {
+									"template": [
+										0,
+										0
+									],
+									"within": []
+								},
+								"path": [
+									0
+								],
+								"start": 0,
+								"count": 2,
+								"expression": "u in users",
+								"key": "u",
+								"mode": "keyed",
+								"keys": [
+									"a",
+									"c"
+								],
+								"patch": [
+									{
+										"op": "remove",
+										"key": "b",
+										"from": 1
+									},
+									{
+										"op": "reuse",
+										"key": "a",
+										"from": 0,
+										"to": 0
+									},
+									{
+										"op": "reuse",
+										"key": "c",
+										"from": 2,
+										"to": 1
+									}
+								]
+							}
+						]
+					}
+				}
+			]
+		},
+		{
+			"id": "keyed-remove-first-moves-nothing",
+			"source": "<ul><li data-each=\"u in users\" data-key=\"u\" data-bind=\"u\"></li></ul>",
+			"steps": [
+				{
+					"bindings": {
+						"users": [
+							"a",
+							"b",
+							"c"
+						]
+					},
+					"expected": {
+						"html": "<ul><li data-bind=\"u\">a</li><li data-bind=\"u\">b</li><li data-bind=\"u\">c</li></ul>",
+						"repeats": [
+							{
+								"site": {
+									"template": [
+										0,
+										0
+									],
+									"within": []
+								},
+								"path": [
+									0
+								],
+								"start": 0,
+								"count": 3,
+								"expression": "u in users",
+								"key": "u",
+								"mode": "keyed",
+								"keys": [
+									"a",
+									"b",
+									"c"
+								],
+								"patch": [
+									{
+										"op": "insert",
+										"key": "a",
+										"to": 0
+									},
+									{
+										"op": "insert",
+										"key": "b",
+										"to": 1
+									},
+									{
+										"op": "insert",
+										"key": "c",
+										"to": 2
+									}
+								]
+							}
+						]
+					}
+				},
+				{
+					"bindings": {
+						"users": [
+							"b",
+							"c"
+						]
+					},
+					"expected": {
+						"html": "<ul><li data-bind=\"u\">b</li><li data-bind=\"u\">c</li></ul>",
+						"repeats": [
+							{
+								"site": {
+									"template": [
+										0,
+										0
+									],
+									"within": []
+								},
+								"path": [
+									0
+								],
+								"start": 0,
+								"count": 2,
+								"expression": "u in users",
+								"key": "u",
+								"mode": "keyed",
+								"keys": [
+									"b",
+									"c"
+								],
+								"patch": [
+									{
+										"op": "remove",
+										"key": "a",
+										"from": 0
+									},
+									{
+										"op": "reuse",
+										"key": "b",
+										"from": 1,
+										"to": 0
+									},
+									{
+										"op": "reuse",
+										"key": "c",
+										"from": 2,
+										"to": 1
+									}
+								]
+							}
+						]
+					}
+				}
+			]
+		},
+		{
+			"id": "keyed-unchanged-reuses-everything",
+			"source": "<ul><li data-each=\"u in users\" data-key=\"u\" data-bind=\"u\"></li></ul>",
+			"steps": [
+				{
+					"bindings": {
+						"users": [
+							"a",
+							"b"
+						]
+					},
+					"expected": {
+						"html": "<ul><li data-bind=\"u\">a</li><li data-bind=\"u\">b</li></ul>",
+						"repeats": [
+							{
+								"site": {
+									"template": [
+										0,
+										0
+									],
+									"within": []
+								},
+								"path": [
+									0
+								],
+								"start": 0,
+								"count": 2,
+								"expression": "u in users",
+								"key": "u",
+								"mode": "keyed",
+								"keys": [
+									"a",
+									"b"
+								],
+								"patch": [
+									{
+										"op": "insert",
+										"key": "a",
+										"to": 0
+									},
+									{
+										"op": "insert",
+										"key": "b",
+										"to": 1
+									}
+								]
+							}
+						]
+					}
+				},
+				{
+					"bindings": {
+						"users": [
+							"a",
+							"b"
+						]
+					},
+					"expected": {
+						"html": "<ul><li data-bind=\"u\">a</li><li data-bind=\"u\">b</li></ul>",
+						"repeats": [
+							{
+								"site": {
+									"template": [
+										0,
+										0
+									],
+									"within": []
+								},
+								"path": [
+									0
+								],
+								"start": 0,
+								"count": 2,
+								"expression": "u in users",
+								"key": "u",
+								"mode": "keyed",
+								"keys": [
+									"a",
+									"b"
+								],
+								"patch": [
+									{
+										"op": "reuse",
+										"key": "a",
+										"from": 0,
+										"to": 0
+									},
+									{
+										"op": "reuse",
+										"key": "b",
+										"from": 1,
+										"to": 1
+									}
+								]
+							}
+						]
+					}
+				}
+			]
+		},
+		{
+			"id": "unkeyed-replaces-range",
+			"source": "<ul><li data-each=\"u in users\" data-bind=\"u\"></li></ul>",
+			"steps": [
+				{
+					"bindings": {
+						"users": [
+							"a",
+							"b"
+						]
+					},
+					"expected": {
+						"html": "<ul><li data-bind=\"u\">a</li><li data-bind=\"u\">b</li></ul>",
+						"repeats": [
+							{
+								"site": {
+									"template": [
+										0,
+										0
+									],
+									"within": []
+								},
+								"path": [
+									0
+								],
+								"start": 0,
+								"count": 2,
+								"expression": "u in users",
+								"key": null,
+								"mode": "replace",
+								"keys": [
+									0,
+									1
+								],
+								"patch": [
+									{
+										"op": "insert",
+										"key": 0,
+										"to": 0
+									},
+									{
+										"op": "insert",
+										"key": 1,
+										"to": 1
+									}
+								]
+							}
+						]
+					}
+				},
+				{
+					"bindings": {
+						"users": [
+							"a",
+							"b",
+							"c"
+						]
+					},
+					"expected": {
+						"html": "<ul><li data-bind=\"u\">a</li><li data-bind=\"u\">b</li><li data-bind=\"u\">c</li></ul>",
+						"repeats": [
+							{
+								"site": {
+									"template": [
+										0,
+										0
+									],
+									"within": []
+								},
+								"path": [
+									0
+								],
+								"start": 0,
+								"count": 3,
+								"expression": "u in users",
+								"key": null,
+								"mode": "replace",
+								"keys": [
+									0,
+									1,
+									2
+								],
+								"patch": [
+									{
+										"op": "remove",
+										"key": 0,
+										"from": 0
+									},
+									{
+										"op": "remove",
+										"key": 1,
+										"from": 1
+									},
+									{
+										"op": "insert",
+										"key": 0,
+										"to": 0
+									},
+									{
+										"op": "insert",
+										"key": 1,
+										"to": 1
+									},
+									{
+										"op": "insert",
+										"key": 2,
+										"to": 2
+									}
+								]
+							}
+						]
+					}
+				}
+			]
+		},
+		{
+			"id": "duplicate-keys-patch-by-index",
+			"source": "<ul><li data-each=\"u in users\" data-key=\"u\" data-bind=\"u\"></li></ul>",
+			"steps": [
+				{
+					"bindings": {
+						"users": [
+							"a",
+							"a"
+						]
+					},
+					"expected": {
+						"html": "<ul><li data-bind=\"u\">a</li><li data-bind=\"u\">a</li></ul>",
+						"repeats": [
+							{
+								"site": {
+									"template": [
+										0,
+										0
+									],
+									"within": []
+								},
+								"path": [
+									0
+								],
+								"start": 0,
+								"count": 2,
+								"expression": "u in users",
+								"key": "u",
+								"mode": "index",
+								"keys": [
+									0,
+									1
+								],
+								"patch": [
+									{
+										"op": "insert",
+										"key": 0,
+										"to": 0
+									},
+									{
+										"op": "insert",
+										"key": 1,
+										"to": 1
+									}
+								]
+							}
+						]
+					}
+				},
+				{
+					"bindings": {
+						"users": [
+							"a",
+							"a",
+							"b"
+						]
+					},
+					"expected": {
+						"html": "<ul><li data-bind=\"u\">a</li><li data-bind=\"u\">a</li><li data-bind=\"u\">b</li></ul>",
+						"repeats": [
+							{
+								"site": {
+									"template": [
+										0,
+										0
+									],
+									"within": []
+								},
+								"path": [
+									0
+								],
+								"start": 0,
+								"count": 3,
+								"expression": "u in users",
+								"key": "u",
+								"mode": "index",
+								"keys": [
+									0,
+									1,
+									2
+								],
+								"patch": [
+									{
+										"op": "reuse",
+										"key": 0,
+										"from": 0,
+										"to": 0
+									},
+									{
+										"op": "reuse",
+										"key": 1,
+										"from": 1,
+										"to": 1
+									},
+									{
+										"op": "insert",
+										"key": 2,
+										"to": 2
+									}
+								]
+							}
+						]
+					}
+				}
+			]
+		},
+		{
+			"id": "mode-change-replaces",
+			"source": "<ul><li data-each=\"u in users\" data-key=\"u\" data-bind=\"u\"></li></ul>",
+			"steps": [
+				{
+					"bindings": {
+						"users": [
+							"a",
+							"b"
+						]
+					},
+					"expected": {
+						"html": "<ul><li data-bind=\"u\">a</li><li data-bind=\"u\">b</li></ul>",
+						"repeats": [
+							{
+								"site": {
+									"template": [
+										0,
+										0
+									],
+									"within": []
+								},
+								"path": [
+									0
+								],
+								"start": 0,
+								"count": 2,
+								"expression": "u in users",
+								"key": "u",
+								"mode": "keyed",
+								"keys": [
+									"a",
+									"b"
+								],
+								"patch": [
+									{
+										"op": "insert",
+										"key": "a",
+										"to": 0
+									},
+									{
+										"op": "insert",
+										"key": "b",
+										"to": 1
+									}
+								]
+							}
+						]
+					}
+				},
+				{
+					"bindings": {
+						"users": [
+							"a",
+							"a"
+						]
+					},
+					"expected": {
+						"html": "<ul><li data-bind=\"u\">a</li><li data-bind=\"u\">a</li></ul>",
+						"repeats": [
+							{
+								"site": {
+									"template": [
+										0,
+										0
+									],
+									"within": []
+								},
+								"path": [
+									0
+								],
+								"start": 0,
+								"count": 2,
+								"expression": "u in users",
+								"key": "u",
+								"mode": "index",
+								"keys": [
+									0,
+									1
+								],
+								"patch": [
+									{
+										"op": "remove",
+										"key": "a",
+										"from": 0
+									},
+									{
+										"op": "remove",
+										"key": "b",
+										"from": 1
+									},
+									{
+										"op": "insert",
+										"key": 0,
+										"to": 0
+									},
+									{
+										"op": "insert",
+										"key": 1,
+										"to": 1
+									}
+								]
+							}
+						]
+					}
+				}
+			]
+		},
+		{
+			"id": "nested-site-follows-outer-key",
+			"source": "<div data-each=\"g in groups\" data-key=\"g.id\"><i data-each=\"m in g.members\" data-key=\"m\" data-bind=\"m\"></i></div>",
+			"steps": [
+				{
+					"bindings": {
+						"groups": [
+							{
+								"id": "x",
+								"members": [
+									"a",
+									"b"
+								]
+							},
+							{
+								"id": "y",
+								"members": [
+									"c"
+								]
+							}
+						]
+					},
+					"expected": {
+						"html": "<div><i data-bind=\"m\">a</i><i data-bind=\"m\">b</i></div><div><i data-bind=\"m\">c</i></div>",
+						"repeats": [
+							{
+								"site": {
+									"template": [
+										0
+									],
+									"within": []
+								},
+								"path": [],
+								"start": 0,
+								"count": 2,
+								"expression": "g in groups",
+								"key": "g.id",
+								"mode": "keyed",
+								"keys": [
+									"x",
+									"y"
+								],
+								"patch": [
+									{
+										"op": "insert",
+										"key": "x",
+										"to": 0
+									},
+									{
+										"op": "insert",
+										"key": "y",
+										"to": 1
+									}
+								]
+							},
+							{
+								"site": {
+									"template": [
+										0,
+										0
+									],
+									"within": [
+										"x"
+									]
+								},
+								"path": [
+									0
+								],
+								"start": 0,
+								"count": 2,
+								"expression": "m in g.members",
+								"key": "m",
+								"mode": "keyed",
+								"keys": [
+									"a",
+									"b"
+								],
+								"patch": [
+									{
+										"op": "insert",
+										"key": "a",
+										"to": 0
+									},
+									{
+										"op": "insert",
+										"key": "b",
+										"to": 1
+									}
+								]
+							},
+							{
+								"site": {
+									"template": [
+										0,
+										0
+									],
+									"within": [
+										"y"
+									]
+								},
+								"path": [
+									1
+								],
+								"start": 0,
+								"count": 1,
+								"expression": "m in g.members",
+								"key": "m",
+								"mode": "keyed",
+								"keys": [
+									"c"
+								],
+								"patch": [
+									{
+										"op": "insert",
+										"key": "c",
+										"to": 0
+									}
+								]
+							}
+						]
+					}
+				},
+				{
+					"bindings": {
+						"groups": [
+							{
+								"id": "y",
+								"members": [
+									"c"
+								]
+							},
+							{
+								"id": "x",
+								"members": [
+									"b",
+									"a"
+								]
+							}
+						]
+					},
+					"expected": {
+						"html": "<div><i data-bind=\"m\">c</i></div><div><i data-bind=\"m\">b</i><i data-bind=\"m\">a</i></div>",
+						"repeats": [
+							{
+								"site": {
+									"template": [
+										0
+									],
+									"within": []
+								},
+								"path": [],
+								"start": 0,
+								"count": 2,
+								"expression": "g in groups",
+								"key": "g.id",
+								"mode": "keyed",
+								"keys": [
+									"y",
+									"x"
+								],
+								"patch": [
+									{
+										"op": "move",
+										"key": "y",
+										"from": 1,
+										"to": 0
+									},
+									{
+										"op": "reuse",
+										"key": "x",
+										"from": 0,
+										"to": 1
+									}
+								]
+							},
+							{
+								"site": {
+									"template": [
+										0,
+										0
+									],
+									"within": [
+										"y"
+									]
+								},
+								"path": [
+									0
+								],
+								"start": 0,
+								"count": 1,
+								"expression": "m in g.members",
+								"key": "m",
+								"mode": "keyed",
+								"keys": [
+									"c"
+								],
+								"patch": [
+									{
+										"op": "reuse",
+										"key": "c",
+										"from": 0,
+										"to": 0
+									}
+								]
+							},
+							{
+								"site": {
+									"template": [
+										0,
+										0
+									],
+									"within": [
+										"x"
+									]
+								},
+								"path": [
+									1
+								],
+								"start": 0,
+								"count": 2,
+								"expression": "m in g.members",
+								"key": "m",
+								"mode": "keyed",
+								"keys": [
+									"b",
+									"a"
+								],
+								"patch": [
+									{
+										"op": "move",
+										"key": "b",
+										"from": 1,
+										"to": 0
+									},
+									{
+										"op": "reuse",
+										"key": "a",
+										"from": 0,
+										"to": 1
+									}
+								]
+							}
+						]
+					}
+				}
+			]
+		}
+	],
+	"diff": [
+		{
+			"id": "first-render-inserts",
+			"previous": null,
+			"next": {
+				"mode": "keyed",
+				"keys": [
+					"a",
+					"b"
+				]
+			},
+			"patch": [
+				{
+					"op": "insert",
+					"key": "a",
+					"to": 0
+				},
+				{
+					"op": "insert",
+					"key": "b",
+					"to": 1
+				}
+			]
+		},
+		{
+			"id": "swap-two",
+			"previous": {
+				"mode": "keyed",
+				"keys": [
+					"a",
+					"b"
+				]
+			},
+			"next": {
+				"mode": "keyed",
+				"keys": [
+					"b",
+					"a"
+				]
+			},
+			"patch": [
+				{
+					"op": "move",
+					"key": "b",
+					"from": 1,
+					"to": 0
+				},
+				{
+					"op": "reuse",
+					"key": "a",
+					"from": 0,
+					"to": 1
+				}
+			]
+		},
+		{
+			"id": "swap-ends",
+			"previous": {
+				"mode": "keyed",
+				"keys": [
+					"a",
+					"b",
+					"c",
+					"d"
+				]
+			},
+			"next": {
+				"mode": "keyed",
+				"keys": [
+					"d",
+					"b",
+					"c",
+					"a"
+				]
+			},
+			"patch": [
+				{
+					"op": "move",
+					"key": "d",
+					"from": 3,
+					"to": 0
+				},
+				{
+					"op": "reuse",
+					"key": "b",
+					"from": 1,
+					"to": 1
+				},
+				{
+					"op": "reuse",
+					"key": "c",
+					"from": 2,
+					"to": 2
+				},
+				{
+					"op": "move",
+					"key": "a",
+					"from": 0,
+					"to": 3
+				}
+			]
+		},
+		{
+			"id": "reverse",
+			"previous": {
+				"mode": "keyed",
+				"keys": [
+					"a",
+					"b",
+					"c"
+				]
+			},
+			"next": {
+				"mode": "keyed",
+				"keys": [
+					"c",
+					"b",
+					"a"
+				]
+			},
+			"patch": [
+				{
+					"op": "move",
+					"key": "c",
+					"from": 2,
+					"to": 0
+				},
+				{
+					"op": "move",
+					"key": "b",
+					"from": 1,
+					"to": 1
+				},
+				{
+					"op": "reuse",
+					"key": "a",
+					"from": 0,
+					"to": 2
+				}
+			]
+		},
+		{
+			"id": "replace-everything",
+			"previous": {
+				"mode": "keyed",
+				"keys": [
+					"a",
+					"b"
+				]
+			},
+			"next": {
+				"mode": "keyed",
+				"keys": [
+					"c",
+					"d"
+				]
+			},
+			"patch": [
+				{
+					"op": "remove",
+					"key": "a",
+					"from": 0
+				},
+				{
+					"op": "remove",
+					"key": "b",
+					"from": 1
+				},
+				{
+					"op": "insert",
+					"key": "c",
+					"to": 0
+				},
+				{
+					"op": "insert",
+					"key": "d",
+					"to": 1
+				}
+			]
+		},
+		{
+			"id": "to-empty",
+			"previous": {
+				"mode": "keyed",
+				"keys": [
+					"a",
+					"b"
+				]
+			},
+			"next": {
+				"mode": "keyed",
+				"keys": []
+			},
+			"patch": [
+				{
+					"op": "remove",
+					"key": "a",
+					"from": 0
+				},
+				{
+					"op": "remove",
+					"key": "b",
+					"from": 1
+				}
+			]
+		},
+		{
+			"id": "from-empty",
+			"previous": {
+				"mode": "keyed",
+				"keys": []
+			},
+			"next": {
+				"mode": "keyed",
+				"keys": [
+					"a"
+				]
+			},
+			"patch": [
+				{
+					"op": "insert",
+					"key": "a",
+					"to": 0
+				}
+			]
+		},
+		{
+			"id": "number-and-string-keys-differ",
+			"previous": {
+				"mode": "keyed",
+				"keys": [
+					1
+				]
+			},
+			"next": {
+				"mode": "keyed",
+				"keys": [
+					"1"
+				]
+			},
+			"patch": [
+				{
+					"op": "remove",
+					"key": 1,
+					"from": 0
+				},
+				{
+					"op": "insert",
+					"key": "1",
+					"to": 0
+				}
+			]
+		},
+		{
+			"id": "index-shrink",
+			"previous": {
+				"mode": "index",
+				"keys": [
+					0,
+					1,
+					2
+				]
+			},
+			"next": {
+				"mode": "index",
+				"keys": [
+					0,
+					1
+				]
+			},
+			"patch": [
+				{
+					"op": "remove",
+					"key": 2,
+					"from": 2
+				},
+				{
+					"op": "reuse",
+					"key": 0,
+					"from": 0,
+					"to": 0
+				},
+				{
+					"op": "reuse",
+					"key": 1,
+					"from": 1,
+					"to": 1
+				}
+			]
+		},
+		{
+			"id": "replace-mode",
+			"previous": {
+				"mode": "replace",
+				"keys": [
+					0,
+					1
+				]
+			},
+			"next": {
+				"mode": "replace",
+				"keys": [
+					0
+				]
+			},
+			"patch": [
+				{
+					"op": "remove",
+					"key": 0,
+					"from": 0
+				},
+				{
+					"op": "remove",
+					"key": 1,
+					"from": 1
+				},
+				{
+					"op": "insert",
+					"key": 0,
+					"to": 0
+				}
+			]
+		},
+		{
+			"id": "mode-change",
+			"previous": {
+				"mode": "keyed",
+				"keys": [
+					0,
+					1
+				]
+			},
+			"next": {
+				"mode": "index",
+				"keys": [
+					0,
+					1
+				]
+			},
+			"patch": [
+				{
+					"op": "remove",
+					"key": 0,
+					"from": 0
+				},
+				{
+					"op": "remove",
+					"key": 1,
+					"from": 1
+				},
+				{
+					"op": "insert",
+					"key": 0,
+					"to": 0
+				},
+				{
+					"op": "insert",
+					"key": 1,
+					"to": 1
+				}
+			]
+		},
+		{
+			"id": "interleaved",
+			"previous": {
+				"mode": "keyed",
+				"keys": [
+					"a",
+					"b",
+					"c",
+					"d",
+					"e"
+				]
+			},
+			"next": {
+				"mode": "keyed",
+				"keys": [
+					"e",
+					"a",
+					"x",
+					"c",
+					"b"
+				]
+			},
+			"patch": [
+				{
+					"op": "remove",
+					"key": "d",
+					"from": 3
+				},
+				{
+					"op": "move",
+					"key": "e",
+					"from": 4,
+					"to": 0
+				},
+				{
+					"op": "reuse",
+					"key": "a",
+					"from": 0,
+					"to": 1
+				},
+				{
+					"op": "insert",
+					"key": "x",
+					"to": 2
+				},
+				{
+					"op": "move",
+					"key": "c",
+					"from": 2,
+					"to": 3
+				},
+				{
+					"op": "reuse",
+					"key": "b",
+					"from": 1,
+					"to": 4
+				}
+			]
+		}
+	]
+}

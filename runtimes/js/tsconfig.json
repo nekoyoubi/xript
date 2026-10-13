@@ -10,7 +10,11 @@
 		"esModuleInterop": true,
 		"skipLibCheck": true,
 		"forceConsistentCasingInFileNames": true,
-		"resolveJsonModule": true
+		"resolveJsonModule": true,
+		"paths": {
+			"#quickjs-sync": ["./src/quickjs-sync.ts"],
+			"#quickjs-async": ["./src/quickjs-async.ts"]
+		}
 	},
 	"include": ["src/**/*"]
 }

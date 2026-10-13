@@ -178,7 +178,17 @@ console.log(mod.name, mod.version);
 console.log(mod.fragments.length);
 ```
 
-`fragmentSources` is an object mapping fragment IDs to their raw HTML strings. The runtime sanitizes each source before attaching it to the mod.
+`fragmentSources` maps file names to their contents: every entry script the mod's `entry` names (`modEntryScripts(modManifest.entry)` lists them) and every non-inline fragment `source`. The runtime sanitizes each fragment source before attaching it to the mod.
+
+An entry script missing from `fragmentSources` throws `MissingEntryScriptError`, and an entry that throws while loading throws `ModEntryError`. A host that would rather load the mod anyway passes `entryErrors: "report"` to `createRuntime`; the failure then lands on `mod.diagnostics` instead. Every load-time finding, including warnings such as markup in a `source` that is not marked `inline`, also reaches the optional `onModDiagnostic` callback:
+
+```javascript
+const runtime = createRuntime(manifest, {
+  hostBindings,
+  entryErrors: "report",
+  onModDiagnostic: (d) => console.warn(`[${d.mod}] ${d.code}: ${d.message}`),
+});
+```
 
 A mod contributes through a single `fills` object keyed by host slot id. A fragment is a fill of a fragment-format slot, a provider role is a fill of a role-typed slot, and a lifecycle-hook handler is a fill of an event-typed slot. The runtime checks that each filled slot exists and that the mod holds the slot's capability, and leaves the inner fill shape to the slot's type. Legacy `fragments[]` and `contributions` shapes still load (with a deprecation warning) for migration.
 

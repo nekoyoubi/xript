@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { analyzeExpressions, lintManifests } from "../dist/index.js";
+import { analyzeExpressions, fragmentReadNames, lintManifests } from "../dist/index.js";
 
 function mod(fill) {
 	return {
@@ -193,5 +193,97 @@ describe("lint wiring", () => {
 			result.findings.filter((finding) => finding.code.startsWith("expression-")),
 			[],
 		);
+	});
+});
+
+describe("expressions analyzer: data-each", () => {
+	it("puts the item, the index name, and $index in scope inside the template", () => {
+		const findings = analyzeExpressions([mod({
+			source: '<ul><li data-each="(row, i) in rows" data-key="row.id" data-if="row.alive"><b data-bind="i + $index"></b>{{ row.name }}</li></ul>',
+			interpolate: true,
+			bindings: [{ name: "rows", path: "party" }],
+		})]);
+		assert.deepEqual(findings, []);
+	});
+
+	it("evaluates the header in the enclosing scope, not its own", () => {
+		const findings = analyzeExpressions([mod({
+			source: '<li data-each="row in row.children" data-bind="row"></li>',
+			bindings: [],
+		})]);
+		assert.deepEqual(codes(findings), ["expression-unknown-binding"]);
+		assert.match(findings[0].message, /"row"/);
+	});
+
+	it("keeps a repeat name out of scope after the template", () => {
+		const findings = analyzeExpressions([mod({
+			source: '<li data-each="row in rows" data-bind="row"></li><p data-bind="row"></p>',
+			bindings: [{ name: "rows", path: "party" }],
+		})]);
+		assert.deepEqual(codes(findings), ["expression-unknown-binding"]);
+		assert.match(findings[0].message, /\/1/);
+	});
+
+	it("scopes nested repeats", () => {
+		const findings = analyzeExpressions([mod({
+			source: '<div data-each="row in grid"><i data-each="cell in row" data-bind="cell + $index"></i></div>',
+			bindings: [{ name: "grid", path: "g" }],
+		})]);
+		assert.deepEqual(findings, []);
+	});
+
+	it("does not count a shadowing item as a read of the binding it shadows", () => {
+		const findings = analyzeExpressions([mod({
+			source: '<li data-each="item in items" data-bind="item"></li>',
+			bindings: [{ name: "items", path: "list" }, { name: "item", path: "one" }],
+		})]);
+		assert.deepEqual(codes(findings), ["expression-unused-binding"]);
+	});
+
+	it("reports a malformed header as an invalid expression", () => {
+		const findings = analyzeExpressions([mod({
+			source: '<li data-each="item of items"></li>',
+			bindings: [{ name: "items", path: "list" }],
+		})]);
+		assert.equal(codes(findings)[0], "expression-invalid");
+		assert.match(findings[0].message, /data-each/);
+	});
+
+	it("warns on a data-key with no data-each", () => {
+		const findings = analyzeExpressions([mod({
+			source: '<li data-key="id"></li>',
+			bindings: [],
+		})]);
+		assert.deepEqual(codes(findings), ["expression-orphan-key"]);
+	});
+
+	it("refuses write-back to a repeat item, which has no binding path", () => {
+		const findings = analyzeExpressions([mod({
+			source: '<div data-each="name in names"><input id="n" data-bind="name" /></div>',
+			bindings: [{ name: "names", path: "list" }],
+			handlers: [{ selector: "#n", on: "input", handler: "onName" }],
+		})]);
+		assert.deepEqual(codes(findings), ["expression-readonly-writeback"]);
+	});
+});
+
+describe("fragmentReadNames", () => {
+	it("lists every free name in first-read order, minus repeat-scoped names", () => {
+		const source = '<p data-if="hp < max"><span data-bind="name"></span></p><li data-each="(m, i) in party" data-key="m">{{ i }} {{ m }} {{ title }}</li>';
+		assert.deepEqual(fragmentReadNames(source, "text/html", { interpolate: true }), ["hp", "max", "name", "party", "title"]);
+	});
+
+	it("skips {{ }} unless the fill interpolates", () => {
+		assert.deepEqual(fragmentReadNames("<p>{{ greeting }}</p>", "text/html"), []);
+	});
+
+	it("reads j5ml sources", () => {
+		const source = JSON.stringify(["div", { "data-bind": "score" }]);
+		assert.deepEqual(fragmentReadNames(source, "application/j5ml+json"), ["score"]);
+	});
+
+	it("returns nothing for an unknown format or an unparseable expression", () => {
+		assert.deepEqual(fragmentReadNames('<p data-bind="x"></p>', "text/x-unknown"), []);
+		assert.deepEqual(fragmentReadNames('<p data-if="a +"></p><p data-bind="b"></p>', "text/html"), ["b"]);
 	});
 });

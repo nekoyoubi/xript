@@ -16,31 +16,31 @@ The boundary is one-directional: a host drives the runtime and consumes what it 
 1. **Initialize the factory.** `const xript = await initXript()` (or `initXriptAsync()`). The runtime factory is the only import a host needs from `@xriptjs/runtime`.
 2. **Create a runtime per app manifest.** `xript.createRuntime(manifest, options)`.
 3. **Load mods into it.** `runtime.loadMod(modManifest, { fragmentSources })` for each mod, returning a `ModInstance`.
-4. **Drive it.** `invokeExport`, `fireHook`, `fireFragmentHook`, `resolveSlot`, `resolveRole` — the verbs each concept record covers.
+4. **Drive it.** `invokeExport`, `fireHook`, `fireFragmentHook`, `resolveSlot`, `resolveRole`: the verbs each concept record covers.
 5. **Dispose.** `runtime.dispose()` tears down the sandbox. A runtime is per app manifest; create one, load many mods, dispose when done.
 
 ## RuntimeOptions at a glance
 
 `createRuntime(manifest, options)` takes:
 
-- `hostBindings` — the functions and namespaces mods may call. The mod-to-host direction.
-- `capabilities?` — the allow-list of capabilities this runtime grants. Default-deny: omitted means nothing. See [granting capabilities](/guidance/host-capabilities/).
-- `console?` — where sandbox console output is routed.
-- `onFragmentDiagnostic?` — a callback fired for every node, prop, or op the fragment sanitizer drops, cleans, or refuses. See [declaring a fragment format](/guidance/host-formats/).
-- `strictHtmlVocabulary?` — promotes an undeclared node in an HTML fragment from a warning to a load error. Off by default; HTML is an open language.
-- `audit?` — a callback fired on every gated binding call. See [limits, cancellation & audit](/guidance/host-safety/).
-- `hardLimits?` — `timeout_ms`, `memory_mb`, `max_stack_depth`. The runtime enforces them.
-- `cancellation?` — a `CancellationToken` for cooperative cancellation.
-- `rolePreferences?` — preferred provider addon per role. See [resolving roles](/guidance/host-roles/).
-- `debug?` — debug-protocol options.
+- `hostBindings`: the functions and namespaces mods may call. The mod-to-host direction.
+- `capabilities?`: the allow-list of capabilities this runtime grants. Default-deny: omitted means nothing. See [granting capabilities](/guidance/host-capabilities/).
+- `console?`: where sandbox console output is routed.
+- `onFragmentDiagnostic?`: a callback fired for every node, prop, or op the fragment sanitizer drops, cleans, or refuses. See [declaring a fragment format](/guidance/host-formats/).
+- `strictHtmlVocabulary?`: promotes an undeclared node in an HTML fragment from a warning to a load error. Off by default; HTML is an open language.
+- `audit?`: a callback fired on every gated binding call. See [limits, cancellation & audit](/guidance/host-safety/).
+- `hardLimits?`: `timeout_ms`, `memory_mb`, `max_stack_depth`. The runtime enforces them.
+- `cancellation?`: a `CancellationToken` for cooperative cancellation.
+- `rolePreferences?`: preferred provider addon per role. See [resolving roles](/guidance/host-roles/).
+- `debug?`: debug-protocol options.
 
 ## The host-side records
 
-- [Rendering fragments](/guidance/host-fragments/) — the inert-output seam, and why you never call the processor directly.
-- [Declaring a fragment format](/guidance/host-formats/) — the node vocabulary your renderer speaks, and the sink model that decides what gets sanitized.
-- [Granting capabilities](/guidance/host-capabilities/) — default-deny, what granting means, and why the grant decision is the host's.
-- [Mounting slots](/guidance/host-slots/) — `resolveSlot`, the `SlotContribution` shape, and honoring `priority` and `multiple`.
-- [Resolving roles](/guidance/host-roles/) — `resolveRole`, the `RoleResolution` shape, and picking among providers.
-- [Firing hooks & events](/guidance/host-hooks/) — `fireHook`, event-typed slots, and how they differ from the `events` catalog.
-- [Offering commands](/guidance/host-commands/) — command slots, `resolveCommands` / `invokeCommand`, bound arguments, and where per-action authority lives.
-- [Limits, cancellation & audit](/guidance/host-safety/) — the caps the runtime enforces and the signals it hands back.
+- [Rendering fragments](/guidance/host-fragments/): the inert-output seam, and why you never call the processor directly.
+- [Declaring a fragment format](/guidance/host-formats/): the node vocabulary your renderer speaks, and the sink model that decides what gets sanitized.
+- [Granting capabilities](/guidance/host-capabilities/): default-deny, what granting means, and why the grant decision is the host's.
+- [Mounting slots](/guidance/host-slots/): `resolveSlot`, the `SlotContribution` shape, and honoring `priority` and `multiple`.
+- [Resolving roles](/guidance/host-roles/): `resolveRole`, the `RoleResolution` shape, and picking among providers.
+- [Firing hooks & events](/guidance/host-hooks/): `fireHook`, event-typed slots, and how they differ from the `events` catalog.
+- [Offering commands](/guidance/host-commands/): command slots, `resolveCommands` / `invokeCommand`, bound arguments, and where per-action authority lives.
+- [Limits, cancellation & audit](/guidance/host-safety/): the caps the runtime enforces and the signals it hands back.

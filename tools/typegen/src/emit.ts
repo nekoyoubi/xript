@@ -44,6 +44,8 @@ export function generateJSDoc(
 		remarks?: string | string[];
 		/** Raw `@tag value` lines, emitted after the description and before any remark. */
 		tags?: string[];
+		/** What the returned value represents, emitted as `@returns`. */
+		returns?: string;
 	},
 ): string {
 	const body: string[] = [];
@@ -70,6 +72,9 @@ export function generateJSDoc(
 				body.push(` * @param ${param.name} - ${escapeJsdoc(param.description)}`);
 			}
 		}
+	}
+	if (extras?.returns) {
+		body.push(` * @returns ${escapeJsdoc(extras.returns)}`);
 	}
 
 	if (body.length === 0) return "";

@@ -88,7 +88,7 @@ describe("generateProjectFiles", () => {
 		assert.ok(manifest.bindings.counter);
 		assert.ok(manifest.bindings.counter.members);
 		assert.ok(Array.isArray(manifest.slots));
-		assert.ok(manifest.slots.some((slot) => slot.id === "onStart" && slot.accepts.includes("application/x-xript-hook")));
+		assert.ok(manifest.slots.some((slot) => slot.id === "start" && slot.accepts.includes("application/x-xript-hook")));
 		assert.ok(manifest.capabilities);
 		assert.ok(manifest.capabilities["modify-state"]);
 	});
@@ -100,7 +100,7 @@ describe("generateProjectFiles", () => {
 
 	it("tier 3 demo registers a hook handler", () => {
 		const files = generateProjectFiles({ name: "test", tier: 3, language: "javascript" });
-		assert.ok(files["src/demo.js"].includes("hooks.onStart"));
+		assert.ok(files["src/demo.js"].includes("hooks.start("));
 	});
 
 	it("TypeScript project includes tsconfig.json", () => {
@@ -194,7 +194,7 @@ describe("generateProjectFiles", () => {
 		assert.ok(manifest.bindings);
 		assert.ok(manifest.bindings.counter);
 		assert.ok(Array.isArray(manifest.slots));
-		assert.ok(manifest.slots.some((slot) => slot.id === "onStart" && slot.accepts.includes("application/x-xript-hook")));
+		assert.ok(manifest.slots.some((slot) => slot.id === "start" && slot.accepts.includes("application/x-xript-hook")));
 		assert.ok(manifest.capabilities);
 		assert.ok(manifest.capabilities["modify-state"]);
 		assert.ok(manifest.capabilities["ui-mount"]);
@@ -455,5 +455,41 @@ describe("a scaffolded typescript project type-checks", () => {
 		const pkg = JSON.parse(files["package.json"]);
 		const usesNodeBuiltin = Object.entries(files).some(([p, b]) => p.endsWith(".ts") && b.includes('"node:'));
 		if (usesNodeBuiltin) assert.ok(pkg.devDependencies["@types/node"], "node: imports need @types/node");
+	});
+});
+
+describe("scaffold schema references and copy", () => {
+	const specId = async (file) =>
+		JSON.parse(await readFile(new URL(`../../../spec/${file}`, import.meta.url), "utf-8")).$id;
+	const allScaffolds = () => [
+		...[2, 3, 4].flatMap((tier) =>
+			["typescript", "javascript"].map((language) => generateProjectFiles({ name: "app", tier, language })),
+		),
+		...["typescript", "javascript"].map((language) => generateModProjectFiles({ name: "app", tier: 2, language })),
+	];
+
+	it("points every $schema at a URL the current spec actually serves", async () => {
+		const served = new Set(
+			await Promise.all(["manifest.schema.json", "mod-manifest.schema.json", "harness-steps.schema.json"].map(specId)),
+		);
+		let checked = 0;
+		for (const files of allScaffolds()) {
+			for (const [path, body] of Object.entries(files)) {
+				if (!path.endsWith(".json")) continue;
+				const declared = JSON.parse(body).$schema;
+				if (declared === undefined) continue;
+				checked++;
+				assert.ok(served.has(declared), `${path} names ${declared}, which no current schema $id serves`);
+			}
+		}
+		assert.ok(checked > 0);
+	});
+
+	it("writes no em-dash into any scaffolded file", () => {
+		for (const files of allScaffolds()) {
+			for (const [path, body] of Object.entries(files)) {
+				assert.ok(!body.includes("—"), `${path} contains U+2014`);
+			}
+		}
 	});
 });

@@ -116,6 +116,21 @@ describe("harness session — binding stubs", () => {
 		}
 	});
 
+	it("lets a script stub call a callback the script passed, and journals it as a placeholder", async () => {
+		const session = await createHarnessSession({
+			appManifest: HOST,
+			harness: { bindings: { ping: { script: "return args[0].test(21);" } } },
+		});
+		try {
+			const value = await session.execute("return await ping({ test: (n) => n * 2 });");
+			assert.equal(value, 42);
+			const call = session.journal().find((entry) => entry.kind === "binding" && entry.binding === "ping");
+			assert.deepEqual(call.args, [{ test: "[callback]" }]);
+		} finally {
+			session.dispose();
+		}
+	});
+
 	it("applies the * default to unnamed bindings", async () => {
 		const session = await createHarnessSession({
 			appManifest: HOST,

@@ -9,7 +9,7 @@
 		{
 			"id": "surfaces",
 			"title": "Choosing an extensibility surface",
-			"summary": "Two surfaces — bindings you call and slots you fill — the slot kinds you will meet, and how to pick.",
+			"summary": "Two surfaces (bindings you call and slots you fill), the slot kinds you will meet, and how to pick.",
 			"file": "surfaces.md"
 		},
 		{
@@ -45,7 +45,7 @@
 		{
 			"id": "host-fragments",
 			"title": "Rendering fragments",
-			"summary": "The inert-output seam — mount the tree or the html, apply the command buffer, and never call the processor directly.",
+			"summary": "The inert-output seam: mount the tree or the html, apply the command buffer, and never call the processor directly.",
 			"file": "host-fragments.md"
 		},
 		{
@@ -87,7 +87,7 @@
 		{
 			"id": "host-safety",
 			"title": "Limits, cancellation & audit",
-			"summary": "hardLimits, CancellationToken, the audit channel, and the console handler — the caps and signals the runtime gives a host.",
+			"summary": "hardLimits, CancellationToken, the audit channel, and the console handler: the caps and signals the runtime gives a host.",
 			"file": "host-safety.md"
 		},
 		{

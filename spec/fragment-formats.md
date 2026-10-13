@@ -221,7 +221,7 @@ Two consequences follow, and both are load-bearing:
 
 Node names are **case-sensitive** and matched verbatim. `Panel` and `panel` are different nodes. One optional namespace segment is permitted (`svg:rect`).
 
-Three **protocol props** are legal on every node of every vocabulary and never need declaring: `id`, `data-bind`, and `data-if`. They are always strings, they are never sanitized (they are inert by construction), and they are never dropped. `id` is universal because it anchors the [node-reference model](#node-references); without it, a component node could not be targeted by an op or a handler.
+Five **protocol props** are legal on every node of every vocabulary and never need declaring: `id`, `data-bind`, `data-if`, `data-each`, and `data-key`. They are always strings, they are never sanitized (they are inert by construction), and they are never dropped. `id` is universal because it anchors the [node-reference model](#node-references); without it, a component node could not be targeted by an op or a handler.
 
 One prop name is universally *illegal*: any prop beginning with `on`. That is a hard floor, not an allow-list decision. `xript validate` errors if a vocabulary declares one, and the runtime rejects one at every layer.
 
@@ -352,6 +352,16 @@ A host-declared vocabulary is a **closed contract the host authored**. There is 
 
 Undeclared *props* are dropped in both worlds, never fatal, always reported.
 
+### An Element's Reachable Props
+
+The props a fragment can set on a node are the ones the vocabulary lists for it, plus the protocol props (`id`, `data-bind`, `data-if`) and the inert `data-*`/`aria-*` prefixes. They are **not** the attribute surface of whatever component the host eventually renders. A host that maps `x-chart` onto a charting widget with forty options has exposed exactly the options its vocabulary declares; the other thirty-odd are unreachable from a fragment until the host names them. That is the closed-props rule below applied at authoring time, and it is what keeps a renderer from receiving a value nobody reviewed.
+
+Every path a prop value can take is held to that list, and every refusal is reported rather than silent:
+
+- **In the source.** An undeclared prop is dropped with an `unknown-prop` warning.
+- **Through `data-bind`.** A bound value aimed at a prop the node does not declare (a `bindTo` naming an undeclared prop, or the implicit `value` target of a void node that declares none) writes nothing and raises `unknown-prop` on the `getContent()` result. A bound value the prop's sink rejects raises `unsafe-prop`. Bind-time diagnostics follow the sanitizer's own in the result's `diagnostics`, with a path into the bound tree.
+- **Through `replaceChildren`.** The markup or node list an op carries is sanitized against the same vocabulary, and every finding the nested pass makes is reported through `onFragmentDiagnostic`, its path prefixed with the op's (`/0` + `/1/0` = `/0/1/0`). For a list of markup strings the item's index sits between them: `/0/2/1` is node `/1` of item 2 of op 0. A nested finding keeps the severity the sanitizer gave it; the op still applies with the offending node or prop removed.
+
 ### Diagnostics
 
 Everything the sanitizer drops, cleans, or refuses is reported. A diagnostic carries a code, a severity, an index path into the tree (`/0/2/1`), the node name, and the prop name where one applies.
@@ -407,9 +417,10 @@ The element is **tagged** rather than JsonML's positional array because the arra
   fragmentId: string;
   format: string;
   contentType: "html" | "tree";
-  html: string;                        // the bound HTML serialization; "" when contentType is "tree"
+  html: string;                        // the bound HTML serialization; "" when the format has no HTML projection
   tree: FragmentNode[];                // always present
   conditions: FragmentCondition[];     // every data-if, keyed by tree position
+  repeats: FragmentRepeat[];           // every data-each expansion, with keys and an update patch
   visibility: Record<string, boolean>; // DEPRECATED, text-keyed, collides. Read `conditions`.
   diagnostics: FragmentDiagnostic[];
 }
@@ -417,9 +428,26 @@ The element is **tagged** rather than JsonML's positional array because the arra
 
 `html` stays a required, non-optional string. Existing hosts read `.html` and mount it, and they keep working byte-for-byte. A host that renders components reads `.tree` and walks it. `contentType` says which one is meaningful.
 
+A host-declared format that is HTML plus custom elements (the built-in `html` vocabulary in scope, and every declared node a valid custom element name) has an HTML projection even though its `contentType` is `"tree"`, and `getContent()` fills `html` from the bound tree for it exactly as it does for a built-in format. Any other declared format leaves `html` empty.
+
+### Structured Props in the HTML Projection
+
+A prop keeps its JSON type in the tree. When the tree is projected to HTML, a structured value has to become attribute text, and JavaScript's `String()` turns an object into `[object Object]`, which is never what anyone meant. So the projection encodes it instead:
+
+| Value | Prop declared `type: "array"` or `"object"` | Otherwise |
+|-------|-------------------------------------------|-----------|
+| a plain object | JSON | JSON |
+| an array holding an object at any depth | JSON | JSON |
+| an array of scalars | JSON if the declared type includes `array` | comma-joined `String()` form (`1,2,3`), as before |
+| a scalar | `String()` | `String()` |
+
+Declared types come from the vocabulary in scope (props are JSON Schema bodies, so `type` may be a name or a list of names). A built-in HTML node declares no types, so its props follow the right-hand column.
+
+The JSON is canonical so every runtime writes the same bytes: compact, `JSON.stringify` string escaping and number formatting, and **object keys ordered by Unicode code point**. Key order is fixed rather than inherited from the source because not every runtime's JSON object type remembers insertion order, and a projection that varied by runtime would break the parity the corpora hold. The encoded text is then attribute-escaped like any other value.
+
 ### Binding into a Vocabulary
 
-`data-bind` and `data-if` work the same in every vocabulary. What changes is *where* a bound value lands, and the node's `bindTo` says so.
+`data-bind`, `data-if`, and `data-each` work the same in every vocabulary. A repeat copies whatever node carries it, `Row` as readily as `li`, and each copy is held to the same vocabulary as the template. What changes is *where* a bound value lands, and the node's `bindTo` says so.
 
 - **`bindTo: "children"` (the default)** — the node's children are replaced with a single text node. This is the HTML `<span data-bind="health">` behavior.
 - **`bindTo: "<prop>"`** — the value is written to that prop, **through that prop's sink**. This is the HTML `<input data-bind="name">` behavior generalized: an `<input>` binds to `value` because it is void, and a `Progress` binds to `value` because its vocabulary says so.
@@ -707,6 +735,7 @@ The corpus at [`extends-tests.json`](./extends-tests.json) carries the canonical
 | Bindings | `{ "name": "health", "path": "player.health" }` |
 | `data-bind` | a prop on the node that displays the value; the node's `bindTo` says where it lands |
 | `data-if` | a prop controlling visibility; the host applies it, the tree is never pruned |
+| `data-each` | a prop that repeats its node once per element; `data-key` identifies the copies across updates |
 | Handlers | `{ "selector": "...", "on": "...", "handler": "..." }` in the fill's `handlers` array |
 | Node references | `#id` in any vocabulary; a CSS selector in HTML vocabularies |
 | Lifecycle | mount, unmount, update, suspend, resume |

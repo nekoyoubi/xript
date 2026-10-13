@@ -8,62 +8,59 @@ Fragment renderer for [xript](https://github.com/nekoyoubi/xript): turns `applic
 
 ```toml
 [dependencies]
-xript-ratatui = "0.5"
+xript-ratatui = "0.9"
 ```
 
 ## Usage
 
+The renderer draws an `xript-tree/1` fragment, the value a host gets from a fragment instance's `get_content(data).to_rendered()` in `xript-runtime`. By the time it arrives, the tree is sanitized against the host's vocabulary, `data-bind` is resolved, `{{ }}` interpolation is substituted, every `data-each` is expanded into its copies, and every `data-if` is evaluated into `conditions`.
+
 ```rust
-use std::collections::HashMap;
-use xript_ratatui::render_json_fragment;
-use serde_json::json;
+use xript_ratatui::render_fragment;
 
-let fragment = json!(["Block", {"title": "Status", "borders": "ALL"},
-    ["Layout", {"direction": "Vertical", "constraints": ["Length:1", "Length:1"]},
-        ["Paragraph", {},
-            ["Line", {}, ["Span", {"data-bind": "name"}, "Unknown"]]
-        ],
-        ["Gauge", {
-            "data-bind": "health",
-            "ratio_bind": {"numerator": "health", "denominator": "maxHealth"},
-            "gauge_style": {"fg": "Green"}
-        }]
-    ]
-]);
+let fragment = instance.get_content(&data).to_rendered();
 
-let mut bindings = HashMap::new();
-bindings.insert("name".into(), json!("Hero"));
-bindings.insert("health".into(), json!(75));
-bindings.insert("maxHealth".into(), json!(100));
-
-// Inside your Ratatui draw closure:
 terminal.draw(|frame| {
-    render_json_fragment(frame, frame.area(), &fragment, &bindings);
+    render_fragment(frame, frame.area(), &fragment);
 })?;
+```
+
+A source like this draws one `Line` per party member, with no script involved:
+
+```json
+["Paragraph", {},
+    ["Line", {"data-each": "member in party", "data-if": "member.alive"},
+        ["Span", {"data-bind": "member.name"}, "?"]
+    ]
+]
 ```
 
 ## What it does
 
-- Parses `application/x-ratatui+json` fragments (J5ML format) into a widget tree
-- Renders the tree as native Ratatui widgets (Block, Paragraph, Gauge, Layout, List, Table, Sparkline)
-- Resolves `data-bind` attributes against a bindings map at render time
-- Supports `data-if` for conditional widget visibility
+- Draws the tree as native Ratatui widgets (Block, Paragraph, Line, Span, Gauge, Layout, List, Table, Sparkline)
+- Hides a node when a false `data-if` sits on it or on an ancestor, by a path-prefix lookup against `conditions`
+- Draws repeats as the copies the runtime already expanded; it never sees a template or a list
 - Handles nested layouts with directional constraints (`Length`, `Percentage`, `Fill`, `Min`, `Max`, `Ratio`)
-- No runtime JavaScript; this is pure Rust parsing and rendering
+- Refuses a fragment whose `contract` it does not recognize
+- Evaluates nothing: there is no bindings map and no expression parser anywhere in its API
 
 ## API
 
-### `render_json_fragment(frame, area, json, bindings)`
+### `render_fragment(frame, area, fragment)`
 
-One-call render. Parses a JSON fragment and renders it into the given frame area. Bindings are resolved during parsing.
+Draws a `RenderedFragment` into the frame area.
 
-### `parse_fragment(json, bindings) -> Option<WidgetNode>`
+### `build_widgets(fragment) -> Vec<WidgetNode>`
 
-Parses a `serde_json::Value` into a widget tree. Returns `None` for unrecognized or empty input.
+Turns a `RenderedFragment` into widget nodes, skipping hidden subtrees.
 
-### `render_fragment(frame, area, node, bindings)`
+### `render_widget_node(frame, area, node)`
 
-Renders a previously parsed `WidgetNode` tree into the frame.
+Draws one widget node.
+
+### `apply_ops(tree, ops)`
+
+Re-exported from `xript-tree`: applies a command-buffer batch to a tree before redrawing.
 
 ### `parse_style(value) -> Style`
 
@@ -75,19 +72,23 @@ Parses a constraint string (`"Length:1"`, `"Percentage:50"`, `"Fill:1"`) into a 
 
 ## Supported widgets
 
-| Widget | Attributes | Children |
+| Widget | Props | Children |
 |---|---|---|
 | `Block` | `title`, `borders`, `border_type`, `border_style` | Any widget |
-| `Paragraph` | `alignment`, `style`, `data-if` | `Line` elements |
-| `Gauge` | `data-bind`, `ratio_bind`, `gauge_style`, `label`, `data-if` | None |
-| `Layout` | `direction`, `constraints`, `data-if` | Any widget |
-| `List` | `style`, `data-if` | String items |
-| `Table` | `header`, `widths`, `style`, `data-if` | Row arrays |
-| `Sparkline` | `data`, `data-bind`, `style`, `data-if` | None |
+| `Paragraph` | `alignment`, `style` | `Line` elements |
+| `Line` | `style` | `Span` elements |
+| `Span` | `style` | Text |
+| `Gauge` | `ratio`, `gauge_style`, `label` | None |
+| `Layout` | `direction`, `constraints` | Any widget |
+| `List` | `style` | String items |
+| `Table` | `header`, `widths`, `style` | Row arrays |
+| `Sparkline` | `data`, `style` | None |
+
+Every node also takes the protocol props `id`, `data-bind`, `data-if`, `data-each`, and `data-key`. Which prop a `data-bind` writes is the host vocabulary's `bindTo`, not the renderer's choice.
 
 ## Documentation
 
-[xript.dev](https://xript.dev): full docs, fragment specification, and format catalog.
+[xript.dev](https://xript.dev): full docs, fragment specification, and the renderer contract.
 
 ## License
 

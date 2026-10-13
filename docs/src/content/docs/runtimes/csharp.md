@@ -22,7 +22,7 @@ using Xript.Runtime;
 
 var manifestJson = """
 {
-    "xript": "0.8",
+    "xript": "0.9",
     "name": "my-app",
     "bindings": {
         "greet": {
@@ -217,7 +217,7 @@ As of v0.6 the canonical mod contribution surface is a single `fills` object key
 ```csharp
 var modManifestJson = """
 {
-    "xript": "0.8",
+    "xript": "0.9",
     "name": "health-ui-mod",
     "version": "1.0.0",
     "fragments": [
@@ -248,6 +248,8 @@ var sources = new Dictionary<string, string>
 var modInstance = runtime.LoadMod(modManifestJson, sources);
 ```
 
+The same dictionary carries every entry script the mod's `entry` names (`ModEntry.Scripts(mod.Entry)` lists them). A script missing from it throws `MissingEntryScriptException` before any script runs, and an entry that throws while loading throws `ModEntryException`. Setting `RuntimeOptions.EntryErrors = EntryErrorPolicy.Report` loads such a mod anyway and records the failure on `ModInstance.Diagnostics`; every load-time finding (including warnings like markup in a non-inline `source`) also reaches the optional `RuntimeOptions.OnModDiagnostic` callback.
+
 `ModInstance` exposes:
 
 | Member | Type | Description |
@@ -256,8 +258,9 @@ var modInstance = runtime.LoadMod(modManifestJson, sources);
 | `Name` | `string` | Mod name from the manifest |
 | `Version` | `string` | Mod version from the manifest |
 | `Fragments` | `List<FragmentInstance>` | Sanitized, ready-to-render fragments |
+| `Diagnostics` | `IReadOnlyList<ModDiagnostic>` | Findings raised while loading the mod |
 
-`FragmentInstance` exposes `Id`, `Slot`, `Format`, and `Priority`. Call `UpdateBindings(data)` on the `ModInstance` to apply live data against all fragment templates at once:
+`FragmentInstance` exposes `Id`, `Slot`, `Format`, `Priority`, and the `Declaration` the mod wrote. Call `UpdateBindings(data)` on the `ModInstance` to apply live data against all fragment templates at once:
 
 ```csharp
 var results = modInstance.UpdateBindings(new Dictionary<string, object?>
@@ -281,7 +284,7 @@ A mod can declare named exports the host calls and whose return value it honors.
 ```csharp
 runtime.LoadMod("""
 {
-    "xript": "0.8",
+    "xript": "0.9",
     "name": "transcriber",
     "version": "1.0.0",
     "entry": {
@@ -309,7 +312,7 @@ Mods advertise logical capabilities through `contributions.provides`, mapping a 
 ```csharp
 var modJson = """
 {
-    "xript": "0.8",
+    "xript": "0.9",
     "name": "deepl-translator",
     "version": "1.0.0",
     "entry": {
@@ -367,7 +370,7 @@ Setting `entry.format` to `"module"` evaluates the mod entry as a real ES module
 ```csharp
 runtime.LoadMod("""
 {
-    "xript": "0.8",
+    "xript": "0.9",
     "name": "transcriber",
     "version": "1.0.0",
     "entry": { "script": "main.js", "format": "module" }
@@ -453,10 +456,10 @@ The `bindings` parameter is optional. When provided, it is serialized and passed
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `Op` | `string` | Operation name: `toggle`, `addClass`, `removeClass`, `setText`, `setAttr`, `replaceChildren` |
+| `Op` | `string` | Operation name: `toggle`, `addClass`, `removeClass`, `setText`, `setProp`, `setAttr`, `removeAttr`, `replaceChildren` |
 | `Selector` | `string` | CSS-style target selector within the fragment |
 | `Value` | `object?` | Value for the operation (text content, class name, boolean for toggle, etc.) |
-| `Attr` | `string?` | Attribute name, only present for `setAttr` operations |
+| `Attr` | `string?` | Attribute name, only present for `setAttr` and `removeAttr` operations |
 
 `FireFragmentHook` returns an empty array if no handlers are registered for the given fragment/lifecycle pair or if the sandbox call fails.
 

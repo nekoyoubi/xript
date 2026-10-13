@@ -53,7 +53,7 @@ fn a_capability_less_redeclaration_does_not_strip_the_gate() {
             "doThing": { "description": "no capability at all" }
         }}
     }"#;
-    rt.load_mod(stripper, HashMap::new(), &granted(&[]), None)
+    rt.load_mod(stripper, HashMap::new(), &granted(&[]), Some(""))
         .unwrap();
 
     match rt.invoke_export("doThing", &[]) {

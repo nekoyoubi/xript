@@ -329,22 +329,40 @@ const result = runtime.execute("greet('World')");
 runtime.dispose();
 ```
 
-Bundle with any standard bundler (Vite, webpack, esbuild, Rollup). The WASM binary is loaded automatically from `@jitl/quickjs-wasmfile-release-sync`.
+Bundle with any standard bundler (Vite, webpack, esbuild, Rollup). No bundler configuration is needed: under the `browser` export condition the WASM ships inlined in the JavaScript, so there is no separate `.wasm` asset for a bundler or dev server to lose. In particular, Vite's dev server needs no `optimizeDeps` entries for the runtime or its QuickJS dependencies.
 
 ### Choosing a WASM build
 
-The runtime defaults to the release builds: `@jitl/quickjs-wasmfile-release-sync` for `initXript()` and `@jitl/quickjs-wasmfile-release-asyncify` for `initXriptAsync()`. Each lives in its own module, so a host that only ever calls `initXript()` never pulls the asyncify build into its sync bundle.
+Which QuickJS build the runtime loads by default depends on where it is resolved:
 
-Pass `variant` to override. The main reason to do so is a `singlefile-*` build, which inlines the WASM as base64 rather than resolving a separate `.wasm` asset — useful when shipping into a bundler configuration you do not control:
+| Resolved under | `initXript()` | `initXriptAsync()` |
+| --- | --- | --- |
+| the `browser` condition (Vite, webpack, esbuild and Rollup browser builds) | `@jitl/quickjs-singlefile-browser-release-sync` | `@jitl/quickjs-singlefile-browser-release-asyncify` |
+| everything else (Node, Deno, Bun, Cloudflare Workers via `workerd`) | `@jitl/quickjs-wasmfile-release-sync` | `@jitl/quickjs-wasmfile-release-asyncify` |
+
+The browser default trades size for robustness. A `wasmfile` build fetches its `.wasm` relative to its own module URL, and anything that moves the JavaScript without the asset breaks that fetch; Vite's dependency pre-bundling is the common case, and it only shows up in dev. A `singlefile` build has no sibling to lose. The cost is transfer size and startup: base64 inflates the binary by a third (roughly 312 KB gzipped for the sync build against 246 KB for the `wasmfile` pair, and 496 KB against 382 KB for asyncify), and an inlined module cannot use streaming compilation. Each build still lives in its own module, so a host that only ever calls `initXript()` never pulls the asyncify build into its bundle.
+
+Pass `variant` to override the default, for example to serve the separate `.wasm` from a browser host that has a bundler configuration it controls:
 
 ```javascript
 import { initXript } from "@xriptjs/runtime";
-import RELEASE_SYNC_SINGLEFILE from "@jitl/quickjs-singlefile-browser-release-sync";
+import RELEASE_SYNC_WASMFILE from "@jitl/quickjs-wasmfile-release-sync";
 
-const xript = await initXript({ variant: RELEASE_SYNC_SINGLEFILE });
+const xript = await initXript({ variant: RELEASE_SYNC_WASMFILE });
 ```
 
-Install any variant you name; only the two release builds ship as dependencies.
+The four release builds above ship as dependencies; install any other variant you name (a `debug` build, say).
+
+#### Variants must match the core version exactly
+
+A variant's FFI and `quickjs-emscripten-core` share a callback protocol that is not versioned, so a variant published at a different version than the core fails on the first host call, deep inside the FFI. The runtime pins the core and its own variants to one exact version, exported as `QUICKJS_CORE_VERSION`, and checks any variant it loads with a single host-call round trip. A mismatched variant throws `QuickJSVariantMismatchError` from `initXript()` (or from the first `createRuntime()` of an `initXriptAsync()` factory), naming the version to install, rather than failing later with an opaque `QuickJSContext had no callback with id 0`.
+
+```javascript
+import { QUICKJS_CORE_VERSION } from "@xriptjs/runtime";
+// npm install @jitl/quickjs-wasmfile-debug-sync@<QUICKJS_CORE_VERSION>
+```
+
+The loaders are also importable directly as `@xriptjs/runtime/quickjs-sync` and `@xriptjs/runtime/quickjs-async`, each resolving to the browser or default build by the same conditions.
 
 ## Loading Mods
 
@@ -356,7 +374,17 @@ console.log(mod.name, mod.version);
 console.log(mod.fragments.length);
 ```
 
-`fragmentSources` is an object mapping fragment IDs to their raw HTML strings. The runtime sanitizes each source before attaching it to the mod.
+`fragmentSources` maps file names to their contents: every entry script the mod's `entry` names (`modEntryScripts(modManifest.entry)` lists them) and every non-inline fragment `source`. The runtime sanitizes each fragment source before attaching it to the mod.
+
+An entry script missing from `fragmentSources` throws `MissingEntryScriptError`, and an entry that throws while loading throws `ModEntryError`. A host that would rather load the mod anyway passes `entryErrors: "report"` to `createRuntime`; the failure then lands on `mod.diagnostics` instead. Every load-time finding, including warnings such as markup in a `source` that is not marked `inline`, also reaches the optional `onModDiagnostic` callback:
+
+```javascript
+const runtime = xript.createRuntime(manifest, {
+  hostBindings,
+  entryErrors: "report",
+  onModDiagnostic: (d) => console.warn(`[${d.mod}] ${d.code}: ${d.message}`),
+});
+```
 
 Mods authored as ES modules (`entry.format: "module"`) must be loaded with the async variant, which runs on the asyncified sandbox:
 

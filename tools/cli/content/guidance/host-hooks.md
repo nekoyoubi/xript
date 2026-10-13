@@ -6,7 +6,7 @@ A hook is an extension point the host *fires*; every mod that filled it runs. Th
 
 `runtime.fireHook(hookName, { phase, data })` fires the named hook and returns the array of fill return values. `phase` and `data` are both optional; `data` is the payload handlers receive, and `phase` names a sub-stage when a hook has more than one.
 
-Hooks are modeled as **event-typed slots**: the host declares a slot whose `accepts` type is `application/x-xript-hook`, a mod fills it with a handler export, and firing the slot calls every fill. Resolving and firing go together — see [mounting slots](/guidance/host-slots/). There is no separate top-level "hook" primitive; a hook is an event slot the host fires.
+Hooks are modeled as **event-typed slots**: the host declares a slot whose `accepts` type is `application/x-xript-hook`, a mod fills it with a handler export, and firing the slot calls every fill. Resolving and firing go together; see [mounting slots](/guidance/host-slots/). There is no separate top-level "hook" primitive; a hook is an event slot the host fires.
 
 ## Hooks vs the events catalog
 
