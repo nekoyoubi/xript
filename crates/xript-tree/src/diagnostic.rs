@@ -14,7 +14,11 @@ pub enum DiagnosticCode {
     UnsupportedOp,
     UnsupportedTarget,
     OpUnknownProp,
+    OpInvalidValue,
     PropSinkConflict,
+    DuplicateKey,
+    InvalidKey,
+    RepeatLimit,
 }
 
 impl DiagnosticCode {
@@ -31,7 +35,11 @@ impl DiagnosticCode {
             DiagnosticCode::UnsupportedOp => "unsupported-op",
             DiagnosticCode::UnsupportedTarget => "unsupported-target",
             DiagnosticCode::OpUnknownProp => "op-unknown-prop",
+            DiagnosticCode::OpInvalidValue => "op-invalid-value",
             DiagnosticCode::PropSinkConflict => "prop-sink-conflict",
+            DiagnosticCode::DuplicateKey => "duplicate-key",
+            DiagnosticCode::InvalidKey => "invalid-key",
+            DiagnosticCode::RepeatLimit => "repeat-limit",
         }
     }
 }

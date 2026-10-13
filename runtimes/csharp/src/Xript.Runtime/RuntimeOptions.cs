@@ -41,4 +41,17 @@ public class RuntimeOptions
 
     /// <summary>Receives every vocabulary finding from fragment sanitization and from the command buffer.</summary>
     public Action<FragmentDiagnosticEvent>? OnFragmentDiagnostic { get; set; }
+
+    /// <summary>
+    /// What <c>LoadMod</c> does when a mod's entry cannot run (a script that was not supplied,
+    /// or one that throws). Defaults to <see cref="EntryErrorPolicy.Throw"/>.
+    /// </summary>
+    public EntryErrorPolicy EntryErrors { get; set; } = EntryErrorPolicy.Throw;
+
+    /// <summary>
+    /// Receives every load-time <see cref="ModDiagnostic"/>, under either entry error policy.
+    /// The same findings land on <see cref="ModInstance.Diagnostics"/>. A throwing callback is
+    /// contained and does not change whether a mod loads.
+    /// </summary>
+    public Action<ModDiagnostic>? OnModDiagnostic { get; set; }
 }

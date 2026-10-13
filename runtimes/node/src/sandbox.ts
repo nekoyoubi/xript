@@ -5,7 +5,25 @@ import type { DebugOptions, DebugSession } from "./debug-types.js";
 import { createDebugController } from "./debug-session.js";
 import { instrumentSource } from "./debug-instrument.js";
 import { grantedSatisfies } from "./capabilities.js";
+import { RealmBridge } from "./realm.js";
+import { CallbackScope, functionParamChecks, functionParamViolation, type CallbackTracker } from "./callbacks.js";
+import { trackContextRejections } from "./rejection-sink.js";
 import type { NodeRef } from "./fragment.js";
+
+/**
+ * Refuses a dynamic `import(...)` from sandbox code with a branded error. The refusal is a
+ * rejected promise rather than a synchronous throw: a throw here escapes a bare, un-awaited
+ * `import(...)` as an uncaught exception, while a rejection makes the import's own promise
+ * reject, so an awaited import throws a catchable `ImportDeniedError` and a floating one is a
+ * sandbox-realm rejection the sink contains. Node honors the callback only under
+ * `--experimental-vm-modules`; without the flag it refuses the import with its own error, and
+ * the sink still keeps any floating rejection off the host process.
+ */
+function denyDynamicImport(specifier: string): Promise<never> {
+	return Promise.reject(new ImportDeniedError(specifier));
+}
+
+const DENY_IMPORT = { importModuleDynamically: denyDynamicImport } as unknown as vm.ScriptOptions;
 
 interface Manifest {
 	xript: string;
@@ -253,7 +271,49 @@ function emitAudit(
 	}
 }
 
-function buildSandboxGlobal(options: SandboxOptions): Record<string, unknown> {
+/**
+ * Runs inside the context before any script. The context keeps its own realm's built-ins; this
+ * defines the xript error classes in that realm, and refuses code generation everywhere a
+ * script could reach a `Function` (the global, and the `.constructor` of every kind of function).
+ */
+const CONTEXT_PRELUDE = `"use strict";
+(function () {
+	var refuse = function () {
+		throw new TypeError("Function() is not permitted. Dynamic code generation is disabled in xript.");
+	};
+	var prototypes = [
+		Object.getPrototypeOf(function () {}),
+		Object.getPrototypeOf(async function () {}),
+		Object.getPrototypeOf(function* () {}),
+		Object.getPrototypeOf(async function* () {}),
+	];
+	for (var i = 0; i < prototypes.length; i++) {
+		Object.defineProperty(prototypes[i], "constructor", { value: refuse, writable: true, configurable: true });
+	}
+	globalThis.Function = refuse;
+	globalThis.eval = function () {
+		throw new TypeError("eval() is not permitted. Dynamic code generation is disabled in xript.");
+	};
+	class BindingError extends Error {
+		constructor(binding, message) {
+			super(binding + "(): " + message);
+			this.name = "BindingError";
+			this.binding = binding;
+		}
+	}
+	class CapabilityDeniedError extends Error {
+		constructor(binding, capability) {
+			super(binding + '() requires the "' + capability + '" capability, which hasn\\'t been granted to this script. Ask the app developer to enable it.');
+			this.name = "CapabilityDeniedError";
+			this.capability = capability;
+			this.binding = binding;
+		}
+	}
+	globalThis.BindingError = BindingError;
+	globalThis.CapabilityDeniedError = CapabilityDeniedError;
+})();`;
+
+function buildSandboxGlobal(options: SandboxOptions, tracker: CallbackTracker): Record<string, unknown> {
 	const { manifest, hostBindings, capabilities = [] } = options;
 	const grantedCapabilities = new Set(capabilities);
 	const audit = options.audit;
@@ -269,69 +329,6 @@ function buildSandboxGlobal(options: SandboxOptions): Record<string, unknown> {
 	}
 	globals.console = consoleObj;
 
-	globals.JSON = { parse: JSON.parse, stringify: JSON.stringify };
-	globals.Math = Math;
-	globals.Date = Date;
-	globals.Number = Number;
-	globals.String = String;
-	globals.Boolean = Boolean;
-	globals.Array = Array;
-	globals.Object = Object;
-	globals.Map = Map;
-	globals.Set = Set;
-	globals.WeakMap = WeakMap;
-	globals.WeakSet = WeakSet;
-	globals.Promise = Promise;
-	globals.Error = Error;
-	globals.TypeError = TypeError;
-	globals.RangeError = RangeError;
-	globals.SyntaxError = SyntaxError;
-	globals.ReferenceError = ReferenceError;
-	globals.RegExp = RegExp;
-	globals.Symbol = Symbol;
-	globals.ArrayBuffer = ArrayBuffer;
-	globals.DataView = DataView;
-	globals.Int8Array = Int8Array;
-	globals.Uint8Array = Uint8Array;
-	globals.Int16Array = Int16Array;
-	globals.Uint16Array = Uint16Array;
-	globals.Int32Array = Int32Array;
-	globals.Uint32Array = Uint32Array;
-	globals.Float32Array = Float32Array;
-	globals.Float64Array = Float64Array;
-	globals.BigInt64Array = BigInt64Array;
-	globals.BigUint64Array = BigUint64Array;
-	globals.BigInt = BigInt;
-	globals.Proxy = Proxy;
-	globals.Reflect = Reflect;
-
-	globals.isNaN = isNaN;
-	globals.isFinite = isFinite;
-	globals.parseInt = parseInt;
-	globals.parseFloat = parseFloat;
-	globals.undefined = undefined;
-	globals.NaN = NaN;
-	globals.Infinity = Infinity;
-
-	globals.BindingError = BindingError;
-	globals.CapabilityDeniedError = CapabilityDeniedError;
-
-	globals.eval = () => {
-		throw new TypeError("eval() is not permitted. Dynamic code generation is disabled in xript.");
-	};
-	globals.Function = new Proxy(Function, {
-		construct() {
-			throw new TypeError(
-				"new Function() is not permitted. Dynamic code generation is disabled in xript.",
-			);
-		},
-		apply() {
-			throw new TypeError(
-				"Function() is not permitted. Dynamic code generation is disabled in xript.",
-			);
-		},
-	});
-
 	if (manifest.bindings) {
 		for (const [name, binding] of Object.entries(manifest.bindings)) {
 			if (isNamespace(binding)) {
@@ -341,6 +338,7 @@ function buildSandboxGlobal(options: SandboxOptions): Record<string, unknown> {
 					hostBindings[name] as HostNamespace | undefined,
 					grantedCapabilities,
 					audit,
+					tracker,
 				);
 			} else {
 				globals[name] = buildFunction(
@@ -349,6 +347,7 @@ function buildSandboxGlobal(options: SandboxOptions): Record<string, unknown> {
 					hostBindings[name] as HostFunction | undefined,
 					grantedCapabilities,
 					audit,
+					tracker,
 				);
 			}
 		}
@@ -363,7 +362,9 @@ function buildFunction(
 	hostFn: HostFunction | undefined,
 	grantedCapabilities: Set<string>,
 	audit?: (event: AuditEvent) => void,
+	tracker: CallbackTracker = { depth: 0 },
 ): HostFunction {
+	const functionChecks = functionParamChecks(binding.params);
 	return (...args: unknown[]) => {
 		if (binding.capability && !grantedSatisfies(grantedCapabilities, binding.capability)) {
 			throw new CapabilityDeniedError(qualifiedName, binding.capability);
@@ -373,17 +374,48 @@ function buildFunction(
 			throw new BindingError(qualifiedName, "not implemented by the app");
 		}
 
+		const refusal = functionParamViolation(qualifiedName, functionChecks, args);
+		if (refusal) throw new TypeError(refusal);
+
+		if (binding.async && tracker.depth > 0) {
+			throw new BindingError(qualifiedName, ASYNC_IN_CALLBACK_MESSAGE);
+		}
+
 		emitAudit(audit, qualifiedName, binding.capability ?? null);
 
+		const scope = new CallbackScope(qualifiedName, tracker);
+		let result: unknown;
 		try {
-			return hostFn(...args);
+			result = hostFn(...scope.wrapArgs(args));
 		} catch (e) {
+			const original = scope.original(e);
+			scope.close();
+			if (original) throw original.value;
 			if (e instanceof CapabilityDeniedError || e instanceof BindingError) throw e;
 			const message = e instanceof Error ? e.message : String(e);
 			throw new BindingError(qualifiedName, message);
 		}
+
+		if (result !== null && typeof result === "object" && typeof (result as { then?: unknown }).then === "function") {
+			return (result as Promise<unknown>).then(
+				(value) => {
+					scope.close();
+					return value;
+				},
+				(e) => {
+					const original = scope.original(e);
+					scope.close();
+					throw original ? original.value : e;
+				},
+			);
+		}
+		scope.close();
+		return result;
 	};
 }
+
+const ASYNC_IN_CALLBACK_MESSAGE =
+	"cannot be called from inside a callback passed to a binding: it is async, and a callback runs synchronously";
 
 function buildNamespace(
 	namespaceName: string,
@@ -391,6 +423,7 @@ function buildNamespace(
 	hostNs: HostNamespace | undefined,
 	grantedCapabilities: Set<string>,
 	audit?: (event: AuditEvent) => void,
+	tracker: CallbackTracker = { depth: 0 },
 ): Record<string, unknown> {
 	const ns: Record<string, unknown> = {};
 
@@ -398,10 +431,10 @@ function buildNamespace(
 		const qualifiedName = `${namespaceName}.${memberName}`;
 		if (isNamespace(memberBinding)) {
 			const nestedHostNs = hostNs ? (hostNs[memberName] as HostNamespace | undefined) : undefined;
-			ns[memberName] = buildNamespace(qualifiedName, memberBinding, nestedHostNs, grantedCapabilities, audit);
+			ns[memberName] = buildNamespace(qualifiedName, memberBinding, nestedHostNs, grantedCapabilities, audit, tracker);
 		} else {
 			const hostFn = hostNs ? (hostNs[memberName] as HostFunction | undefined) : undefined;
-			ns[memberName] = buildFunction(qualifiedName, memberBinding, hostFn, grantedCapabilities, audit);
+			ns[memberName] = buildFunction(qualifiedName, memberBinding, hostFn, grantedCapabilities, audit, tracker);
 		}
 	}
 
@@ -419,6 +452,7 @@ export type FragmentOpName =
 	| "replaceChildren"
 	| "setProp"
 	| "setAttr"
+	| "removeAttr"
 	| "addClass"
 	| "removeClass";
 
@@ -432,10 +466,11 @@ export interface FragmentOp {
 	op: FragmentOpName;
 	selector: string;
 	target: NodeRef;
-	/** `setProp` / `setAttr`. */
+	/** `setProp` / `setAttr` / `removeAttr`. */
 	prop?: string;
-	/** @deprecated Alias of `prop`, populated only for `setAttr`. */
+	/** @deprecated Alias of `prop`, populated only for `setAttr` and `removeAttr`. */
 	attr?: string;
+	/** Absent on `removeAttr`. */
 	value?: unknown;
 }
 
@@ -567,7 +602,8 @@ function emitFromRegistry(
 	eventRegistry: HandlerRegistry,
 	manifest: Manifest,
 	eventId: string,
-	payload?: unknown,
+	payload: unknown,
+	toContext: (value: unknown) => unknown,
 ): unknown[] {
 	const declared = manifest.events?.some((def) => def.id === eventId) ?? false;
 	if (!declared) return [];
@@ -584,7 +620,7 @@ function emitFromRegistry(
 	const results: unknown[] = [];
 	for (const entry of entries) {
 		try {
-			results.push(entry.fn(...args));
+			results.push(entry.fn(...args.map((arg) => toContext(arg))));
 		} catch {
 			results.push(undefined);
 		}
@@ -596,7 +632,8 @@ function fireHookFromRegistry(
 	hookRegistry: HandlerRegistry,
 	manifest: Manifest,
 	hookName: string,
-	options?: FireHookOptions,
+	options: FireHookOptions | undefined,
+	toContext: (value: unknown) => unknown,
 ): unknown[] {
 	const hookDef = effectiveHooks(manifest)[hookName];
 	if (!hookDef) return [];
@@ -624,7 +661,7 @@ function fireHookFromRegistry(
 	const results: unknown[] = [];
 	for (const entry of entries) {
 		try {
-			results.push(entry.fn(...args));
+			results.push(entry.fn(...args.map((arg) => toContext(arg))));
 		} catch {
 			results.push(undefined);
 		}
@@ -636,7 +673,8 @@ function fireFragmentHookFromRegistry(
 	fragmentRegistry: HandlerRegistry,
 	fragmentId: string,
 	lifecycle: string,
-	bindings?: Record<string, unknown>,
+	bindings: Record<string, unknown> | undefined,
+	toContext: (value: unknown) => unknown,
 ): RawFragmentOp[] {
 	const registryKey = `fragment:${lifecycle}:${fragmentId}`;
 	const entries = fragmentRegistry.handlers.get(registryKey);
@@ -652,15 +690,11 @@ function fireFragmentHookFromRegistry(
 			setText(target: string, text: string) { ops.push({ op: "setText", selector: target, value: text }); },
 			setProp(target: string, prop: string, value: unknown) { ops.push({ op: "setProp", selector: target, prop, value }); },
 			setAttr(target: string, attr: string, value: unknown) { ops.push({ op: "setAttr", selector: target, attr, prop: attr, value }); },
-			replaceChildren(target: string, content: unknown) {
-				const value = Array.isArray(content) && content.every((c) => typeof c === "string")
-					? content.join("")
-					: content;
-				ops.push({ op: "replaceChildren", selector: target, value });
-			},
+			removeAttr(target: string, attr: string) { ops.push({ op: "removeAttr", selector: target, attr, prop: attr }); },
+			replaceChildren(target: string, content: unknown) { ops.push({ op: "replaceChildren", selector: target, value: content }); },
 		};
 		try {
-			entry.fn(bindings, fragmentProxy);
+			entry.fn(toContext(bindings), toContext(fragmentProxy));
 		} catch {
 			// swallow errors from individual handlers
 		}
@@ -707,6 +741,8 @@ export interface SandboxResult {
 	emit: (eventId: string, payload?: unknown) => unknown[];
 	fireFragmentHook: (fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>) => RawFragmentOp[];
 	debugSession: () => DebugSession | null;
+	/** Releases the process-level rejection containment this sandbox registered. */
+	dispose: () => void;
 }
 
 interface SourceTextModuleInstance {
@@ -752,7 +788,7 @@ function makeLibraryResolver(
 }
 
 interface SourceTextModuleCtor {
-	new (code: string, options: { context: vm.Context; identifier?: string }): SourceTextModuleInstance;
+	new (code: string, options: { context: vm.Context; identifier?: string; importModuleDynamically?: unknown }): SourceTextModuleInstance;
 }
 
 function getSourceTextModule(): SourceTextModuleCtor | null {
@@ -798,7 +834,8 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 		ownerBucket(exportOwner);
 	}
 
-	const sandboxGlobals = buildSandboxGlobal(options);
+	const tracker: CallbackTracker = { depth: 0 };
+	const sandboxGlobals = buildSandboxGlobal(options, tracker);
 	sandboxGlobals.hooks = buildHooksGlobal(manifest, grantedCapabilities, hookRegistry, fragmentRegistry);
 	sandboxGlobals.events = buildEventsGlobal(manifest, grantedCapabilities, eventRegistry);
 
@@ -821,14 +858,22 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 	});
 	sandboxGlobals.xript = Object.freeze({ exports: exportsApi });
 
-	const context = vm.createContext(sandboxGlobals, {
+	const contextGlobal: Record<string, unknown> = {};
+	const context = vm.createContext(contextGlobal, {
 		codeGeneration: {
 			strings: false,
 			wasm: false,
 		},
 	});
-
-	sandboxGlobals.globalThis = context;
+	const releaseRejectionSink = trackContextRejections(context);
+	const realm = new RealmBridge(context);
+	vm.runInContext(CONTEXT_PRELUDE, context, { filename: "xript-prelude.js" });
+	const toContext = (value: unknown): unknown => realm.toContext(value);
+	tracker.toContext = toContext;
+	tracker.toHost = (value) => realm.toHost(value);
+	for (const [name, value] of Object.entries(sandboxGlobals)) {
+		contextGlobal[name] = realm.toContext(value);
+	}
 
 	function cleanStack(err: Error): void {
 		if (!err.stack) return;
@@ -853,17 +898,36 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 			);
 		}
 		if (e instanceof Error) cleanStack(e);
-		throw e;
+		throw toHostError(e);
+	}
+
+	/**
+	 * Inside the sandbox the xript error classes are the context realm's own; an uncaught one
+	 * leaving `execute` becomes the host's class again, so `instanceof` works for the host.
+	 */
+	function toHostError(e: unknown): unknown {
+		if (e === null || typeof e !== "object" || e instanceof Error) return e;
+		const err = e as { name?: unknown; message?: unknown; binding?: unknown; capability?: unknown };
+		if (typeof err.binding !== "string") return e;
+		let converted: Error | null = null;
+		if (err.name === "CapabilityDeniedError" && typeof err.capability === "string") {
+			converted = new CapabilityDeniedError(err.binding, err.capability);
+		} else if (err.name === "BindingError") {
+			converted = new BindingError(err.binding, "");
+		}
+		if (!converted) return e;
+		converted.message = String(err.message);
+		return converted;
 	}
 
 	function execute(code: string): ExecutionResult {
 		if (cancellation?.cancelled) throw new CancellationError();
 		const start = performance.now();
-		const script = new vm.Script(code, { filename: "xript-script.js" });
+		const script = new vm.Script(code, { filename: "xript-script.js", ...DENY_IMPORT });
 		try {
 			const value = script.runInContext(context, { timeout: timeoutMs });
 			const duration_ms = performance.now() - start;
-			return { value, duration_ms };
+			return { value: realm.toHost(value), duration_ms };
 		} catch (e) {
 			return wrapTimeoutError(e);
 		}
@@ -873,12 +937,12 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 		if (cancellation?.cancelled) throw new CancellationError();
 		const start = performance.now();
 		const wrappedCode = `(async () => { ${code} })()`;
-		const script = new vm.Script(wrappedCode, { filename: "xript-script.js" });
+		const script = new vm.Script(wrappedCode, { filename: "xript-script.js", ...DENY_IMPORT });
 		try {
 			const promise = script.runInContext(context, { timeout: timeoutMs });
 			const value = await promise;
 			const duration_ms = performance.now() - start;
-			return { value, duration_ms };
+			return { value: realm.toHost(value), duration_ms };
 		} catch (e) {
 			return wrapTimeoutError(e);
 		}
@@ -896,6 +960,7 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 
 	const invokeScript = new vm.Script("__xript_call_fn.apply(undefined, __xript_call_args)", {
 		filename: "xript-invoke.js",
+		...DENY_IMPORT,
 	});
 
 	/**
@@ -907,9 +972,9 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 	 * settles is not something `vm` can interrupt.
 	 */
 	function callWithBudget(fn: HostFunction, args: unknown[], budgetMs: number): unknown {
-		const globals = sandboxGlobals as unknown as Record<string, unknown>;
+		const globals = contextGlobal;
 		globals.__xript_call_fn = fn;
-		globals.__xript_call_args = args;
+		globals.__xript_call_args = toContext(args);
 		try {
 			return invokeScript.runInContext(context, { timeout: budgetMs });
 		} finally {
@@ -923,7 +988,7 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 		const fn = resolveExport(name, owner);
 		if (!fn) throw new InvokeError(name, `export ${name} not found`);
 		try {
-			return callWithBudget(fn, args, callTimeoutMs(timeoutOverrideMs));
+			return realm.toHost(callWithBudget(fn, args, callTimeoutMs(timeoutOverrideMs)));
 		} catch (e) {
 			if (isTimeoutError(e)) return wrapTimeoutError(e);
 			const message = e instanceof Error ? e.message : String(e);
@@ -941,7 +1006,7 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 		const fn = resolveExport(name, owner);
 		if (!fn) throw new InvokeError(name, `export ${name} not found`);
 		try {
-			return await callWithBudget(fn, args, callTimeoutMs(timeoutOverrideMs));
+			return realm.toHost(await callWithBudget(fn, args, callTimeoutMs(timeoutOverrideMs)));
 		} catch (e) {
 			if (isTimeoutError(e)) return wrapTimeoutError(e);
 			const message = e instanceof Error ? e.message : String(e);
@@ -958,13 +1023,13 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 		debugController.setBreakableLines("xript-script.js", breakableLines);
 		const start = performance.now();
 		const wrappedCode = `(async () => { ${instrumented} })()`;
-		const script = new vm.Script(wrappedCode, { filename: "xript-script.js" });
+		const script = new vm.Script(wrappedCode, { filename: "xript-script.js", ...DENY_IMPORT });
 		try {
 			const promise = script.runInContext(context);
 			const value = await promise;
 			const duration_ms = performance.now() - start;
 			debugController.session.resume();
-			return { value, duration_ms };
+			return { value: realm.toHost(value), duration_ms };
 		} catch (e) {
 			return wrapTimeoutError(e);
 		}
@@ -989,12 +1054,12 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 		function linkLibrary(spec: string): SourceTextModuleInstance {
 			const cached = libraryModules.get(spec);
 			if (cached) return cached;
-			const library = new ModuleCtor(resolveLibrary(spec), { context, identifier: `xript-lib-${spec}` });
+			const library = new ModuleCtor(resolveLibrary(spec), { context, identifier: `xript-lib-${spec}`, ...DENY_IMPORT });
 			libraryModules.set(spec, library);
 			return library;
 		}
 
-		const mod = new SourceTextModule(code, { context, identifier: `xript-mod-${modName}` });
+		const mod = new SourceTextModule(code, { context, identifier: `xript-mod-${modName}`, ...DENY_IMPORT });
 		try {
 			await mod.link(linkLibrary);
 			await mod.evaluate();
@@ -1006,9 +1071,16 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 
 		const namespace = mod.namespace;
 		const harvested: string[] = [];
-		for (const name of Object.keys(namespace)) {
-			if (name === "default") continue;
-			const value = namespace[name];
+		const exported: Array<[string, unknown]> = [];
+		try {
+			for (const name of Object.keys(namespace)) {
+				if (name !== "default") exported.push([name, namespace[name]]);
+			}
+		} catch (e) {
+			const message = e instanceof Error ? e.message : String(e);
+			throw new ModEntryError(modName, `could not read the module's exports: ${message}`);
+		}
+		for (const [name, value] of exported) {
 			if (typeof value !== "function") continue;
 			const bucket = ownerBucket(exportOwner);
 			if (bucket.has(name)) continue;
@@ -1019,20 +1091,24 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 	}
 
 	function fireHook(hookName: string, opts?: FireHookOptions): unknown[] {
-		return fireHookFromRegistry(hookRegistry, manifest, hookName, opts);
+		return fireHookFromRegistry(hookRegistry, manifest, hookName, opts, toContext).map((result) => realm.toHost(result));
 	}
 
 	function emit(eventId: string, payload?: unknown): unknown[] {
-		return emitFromRegistry(eventRegistry, manifest, eventId, payload);
+		return emitFromRegistry(eventRegistry, manifest, eventId, payload, toContext).map((result) => realm.toHost(result));
 	}
 
 	function fireFragmentHook(fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>): RawFragmentOp[] {
-		return fireFragmentHookFromRegistry(fragmentRegistry, fragmentId, lifecycle, bindings);
+		return fireFragmentHookFromRegistry(fragmentRegistry, fragmentId, lifecycle, bindings, toContext);
 	}
 
 	function debugSession(): DebugSession | null {
 		return debugController ? debugController.session : null;
 	}
 
-	return { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, setExportOwner, fireHook, emit, fireFragmentHook, debugSession };
+	function dispose(): void {
+		releaseRejectionSink();
+	}
+
+	return { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, setExportOwner, fireHook, emit, fireFragmentHook, debugSession, dispose };
 }

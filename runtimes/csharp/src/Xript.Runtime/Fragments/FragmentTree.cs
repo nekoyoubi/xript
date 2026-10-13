@@ -69,14 +69,23 @@ public static class FragmentTree
              .Replace("<", "&lt;")
              .Replace(">", "&gt;");
 
-    public static string ToHtml(IReadOnlyList<FragmentNode> tree)
+    /// <summary>
+    /// Serializes a tree to HTML.
+    /// </summary>
+    /// <param name="tree">the tree to serialize</param>
+    /// <param name="profile">
+    /// the vocabulary in scope, read for each prop's declared JSON Schema <c>type</c> so a
+    /// declared <c>array</c> prop projects as JSON; omit for the built-in HTML vocabulary,
+    /// which declares none
+    /// </param>
+    public static string ToHtml(IReadOnlyList<FragmentNode> tree, FormatProfile? profile = null)
     {
         var builder = new StringBuilder();
-        foreach (var node in tree) AppendHtml(builder, node);
+        foreach (var node in tree) AppendHtml(builder, node, profile);
         return builder.ToString();
     }
 
-    private static void AppendHtml(StringBuilder builder, FragmentNode node)
+    private static void AppendHtml(StringBuilder builder, FragmentNode node, FormatProfile? profile)
     {
         if (node is FragmentNode.Text text)
         {
@@ -86,6 +95,7 @@ public static class FragmentTree
 
         var element = (FragmentNode.Element)node;
         builder.Append('<').Append(element.Name);
+        var definition = profile?.NodeDefinition(element.Name);
 
         foreach (var (key, value) in element.Props)
         {
@@ -96,8 +106,11 @@ public static class FragmentTree
                 continue;
             }
             if (value is PropValue.Bool { Value: false } or PropValue.Nul) continue;
+            var declaredType = definition is not null && definition.Props.TryGetValue(key, out var prop)
+                ? prop.Type
+                : null;
             builder.Append(' ').Append(key).Append("=\"")
-                .Append(EscapeAttrValue(PropValue.Stringify(value))).Append('"');
+                .Append(EscapeAttrValue(PropValue.AttributeValue(value, declaredType))).Append('"');
         }
 
         if (HtmlRules.VoidElements.Contains(element.Name)
@@ -108,7 +121,7 @@ public static class FragmentTree
         }
 
         builder.Append('>');
-        foreach (var child in element.Children) AppendHtml(builder, child);
+        foreach (var child in element.Children) AppendHtml(builder, child, profile);
         builder.Append("</").Append(element.Name).Append('>');
     }
 

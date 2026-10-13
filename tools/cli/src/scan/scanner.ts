@@ -3,7 +3,7 @@ import type { ScanResult, ScanDiagnostic, ScannedCapability } from "./index.js";
 
 interface ScannedBinding {
 	description: string;
-	params?: Array<{ name: string; type: string; description?: string; required?: boolean }>;
+	params?: Array<{ name: string; type: string; description?: string; required?: boolean; variadic?: boolean }>;
 	returns?: string;
 	async?: boolean;
 	capability?: string;
@@ -73,6 +73,22 @@ function typeToString(typeNode: any): string {
 	return typeNode.getText();
 }
 
+/**
+ * A variadic parameter's manifest `type` names one argument, so a rest parameter's array type
+ * gives up one level: `string[]` becomes `string`, `Array<T>` becomes `T`, and
+ * `(string | number)[]` becomes `string | number`.
+ */
+function restElementType(text: string): string {
+	const trimmed = text.trim();
+	const generic = /^(?:Readonly)?Array\s*<([\s\S]+)>$/.exec(trimmed);
+	if (generic) return generic[1].trim();
+	if (trimmed.endsWith("[]")) {
+		const element = trimmed.slice(0, -2).trim();
+		return element.startsWith("(") && element.endsWith(")") ? element.slice(1, -1).trim() : element;
+	}
+	return trimmed;
+}
+
 function isPromiseType(text: string): boolean {
 	return /^Promise\s*</.test(text);
 }
@@ -134,6 +150,9 @@ export async function scanDirectoryImpl(dir: string): Promise<ScanResult> {
 			const name = p.getName();
 			const type = typeToString(p.getTypeNode());
 			const jsdocParam = jsdocParams.find((jp) => jp.name === name);
+			if (p.isRestParameter()) {
+				return { name, type: restElementType(type), description: jsdocParam?.description, variadic: true };
+			}
 			const isOptional = p.isOptional() || p.hasInitializer();
 			return { name, type, description: jsdocParam?.description, ...(!isOptional ? {} : { required: false }) };
 		});

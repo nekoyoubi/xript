@@ -1,3 +1,4 @@
+pub mod callback;
 pub mod cap_match;
 pub mod capability;
 pub mod commands;
@@ -6,10 +7,12 @@ mod error;
 pub mod fragment;
 pub mod handle;
 mod manifest;
+pub mod mod_load;
 pub mod module;
 pub mod pending;
 pub mod pool;
 mod sandbox;
+mod yielding;
 
 pub use capability::{
     CapabilityPrompt, DiscoveredMod, DiscoveryResult, InstallDescriptor, InstallSource,
@@ -19,6 +22,7 @@ pub use debug::{
     instrument_source, Breakpoint, DebugFidelity, DebugOptions, DebugSession, Scope, SourceBreakpoint,
     StackFrame, StopReason, StoppedEvent, Variable, DEBUG_THREAD_ID,
 };
+pub use callback::{Callback, CallbackError, CALLBACK_MARKER};
 pub use cap_match::{granted_satisfies, satisfies};
 pub use commands::{
     classify_fill, is_valid_command_id, merge_command_args, resolve_command, resolve_commands,
@@ -26,14 +30,19 @@ pub use commands::{
     ResolvedCommand, COMMAND_SLOT_ACCEPT,
 };
 pub use error::{Result, ValidationIssue, XriptError};
+pub use mod_load::{
+    looks_like_markup, EntryErrorPolicy, ModDiagnostic, ModDiagnosticCode, ModDiagnosticSeverity,
+    ModDiagnosticSink,
+};
 pub use fragment::{
     FragmentCondition, FragmentInstance, FragmentOptions, FragmentResult, ModInstance,
     NormalizedFills,
 };
 pub use fragment::ops::{finalize_ops, to_contract_ops, FragmentOp, NodeRef};
 pub use xript_tree::{
-    apply_ops, node_at, parse_node_ref, path_reference, resolve_target, ContentType,
-    RenderedFragment, CONTRACT_VERSION,
+    apply_ops, diff_repeat, node_at, parse_node_ref, path_reference, resolve_target, ContentType,
+    FragmentRepeat, RenderedFragment, RepeatKey, RepeatMode, RepeatPatchKind, RepeatPatchOp,
+    RepeatSite, CONTRACT_VERSION,
 };
 pub use fragment::profiles::{
     any_vocabulary_declares, resolve_format_profile, speaks_html, ChildrenConstraint, FormatProfile,
@@ -46,7 +55,8 @@ pub use fragment::rules::{
 };
 pub use fragment::sanitize::{sanitize_fragment, FragmentContentType, SanitizedFragment};
 pub use fragment::tree::{
-    node_to_j5ml, tree_to_html, tree_to_j5ml, tree_to_jsml, FragmentElement, FragmentNode,
+    canonical_json, node_to_j5ml, prop_attribute_value, tree_to_html, tree_to_html_for,
+    tree_to_j5ml, tree_to_jsml, FragmentElement, FragmentNode,
     FragmentTree, Props,
 };
 pub use fragment::vocabulary::{
@@ -74,19 +84,20 @@ pub use sandbox::{
     AsyncHostFn, AuditDecision, AuditEvent, AuditSink, CancellationToken, ConsoleHandler, ExecutionResult,
     HardLimits, HostBindings, HostFn, HostNamespaceMember, LogSeverity, NamespaceBuilder,
     resolve_role_all_from, resolve_role_from, resolve_slot_from, CallTokenScope, RoleResolution,
-    RuntimeOptions, RuntimeProbe, SharedMods, SlotContribution, TaggedResult, HandlerIndex,
+    RuntimeMode, RuntimeOptions, RuntimeProbe, SharedMods, SlotContribution, TaggedResult, HandlerIndex,
     XriptRuntime,
 };
 
 pub fn create_runtime(manifest_json: &str, options: RuntimeOptions) -> Result<XriptRuntime> {
-    let manifest: Manifest = serde_json::from_str(manifest_json)?;
-    XriptRuntime::new(manifest, options)
+    let raw: serde_json::Value = serde_json::from_str(manifest_json)?;
+    create_runtime_from_value(raw, options)
 }
 
 pub fn create_runtime_from_value(
     manifest: serde_json::Value,
     options: RuntimeOptions,
 ) -> Result<XriptRuntime> {
+    manifest::check_raw_shape(&manifest)?;
     let manifest: Manifest =
         serde_json::from_value(manifest).map_err(XriptError::Json)?;
     XriptRuntime::new(manifest, options)
@@ -101,6 +112,47 @@ pub fn create_runtime_from_file(
     let base_dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
     let resolved = resolve_extends(&raw, base_dir)?;
     create_runtime_from_value(resolved, options)
+}
+
+/// [`create_runtime`] in [`RuntimeMode::Async`]: async host bindings hand
+/// script a genuinely pending promise, and a script awaiting one yields so
+/// other calls on the runtime proceed. Drive it with the `*_async` methods.
+pub fn create_async_runtime(manifest_json: &str, options: RuntimeOptions) -> Result<XriptRuntime> {
+    create_runtime(
+        manifest_json,
+        RuntimeOptions {
+            mode: RuntimeMode::Async,
+            ..options
+        },
+    )
+}
+
+/// [`create_runtime_from_value`] in [`RuntimeMode::Async`].
+pub fn create_async_runtime_from_value(
+    manifest: serde_json::Value,
+    options: RuntimeOptions,
+) -> Result<XriptRuntime> {
+    create_runtime_from_value(
+        manifest,
+        RuntimeOptions {
+            mode: RuntimeMode::Async,
+            ..options
+        },
+    )
+}
+
+/// [`create_runtime_from_file`] in [`RuntimeMode::Async`].
+pub fn create_async_runtime_from_file(
+    path: &std::path::Path,
+    options: RuntimeOptions,
+) -> Result<XriptRuntime> {
+    create_runtime_from_file(
+        path,
+        RuntimeOptions {
+            mode: RuntimeMode::Async,
+            ..options
+        },
+    )
 }
 
 #[cfg(test)]
@@ -131,6 +183,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         );
         assert!(rt.is_ok());
@@ -154,6 +207,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         );
         assert!(result.is_err());
@@ -181,6 +235,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         );
         assert!(result.is_err());
@@ -204,6 +259,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -231,6 +287,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -257,6 +314,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -286,6 +344,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -312,6 +371,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -338,6 +398,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -364,6 +425,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -390,6 +452,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -429,6 +492,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -458,6 +522,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -484,6 +549,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         );
         assert!(result.is_err());
@@ -507,6 +573,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -558,6 +625,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -599,6 +667,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -647,6 +716,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -696,6 +766,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -722,6 +793,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -757,6 +829,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -798,6 +871,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1020,6 +1094,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1068,6 +1143,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1116,6 +1192,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1174,6 +1251,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1214,6 +1292,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1290,6 +1369,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1348,6 +1428,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1403,6 +1484,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1456,6 +1538,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1482,6 +1565,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1507,6 +1591,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1537,6 +1622,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1572,6 +1658,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1637,6 +1724,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1680,6 +1768,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1741,6 +1830,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1817,6 +1907,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1871,6 +1962,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -1916,6 +2008,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -2667,6 +2760,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap()
@@ -2855,6 +2949,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         );
         assert!(rt.is_ok());
@@ -2977,6 +3072,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap()
@@ -3000,6 +3096,7 @@ mod tests {
                 strict_html_vocabulary: false,
                 strict_bindings: false,
                 on_fragment_diagnostic: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -3101,18 +3198,20 @@ mod tests {
 
         let resume_session = session.clone();
         let watchdog = std::thread::spawn(move || {
-            for _ in 0..200 {
+            // Waits for the pause however long a loaded machine takes to reach
+            // it: resuming before the breakpoint is hit would leave the
+            // execution paused forever.
+            while !exec.is_finished() {
                 std::thread::sleep(std::time::Duration::from_millis(5));
                 if !resume_session.stack_trace().is_empty() {
                     resume_session.resume();
-                    return;
+                    break;
                 }
             }
-            resume_session.resume();
+            exec
         });
 
-        let result = exec.join().unwrap();
-        watchdog.join().unwrap();
+        let result = watchdog.join().unwrap().join().unwrap();
         assert!(result.is_ok(), "execution failed: {:?}", result.err());
         assert!(stop_count.load(Ordering::SeqCst) >= 1);
     }
@@ -3133,7 +3232,7 @@ mod tests {
 
         let probe_session = session.clone();
         let checker = std::thread::spawn(move || {
-            for _ in 0..200 {
+            while !exec.is_finished() {
                 std::thread::sleep(std::time::Duration::from_millis(5));
                 let frames = probe_session.stack_trace();
                 if !frames.is_empty() {
@@ -3145,15 +3244,14 @@ mod tests {
                     assert!(probe_session.variables(0).is_empty());
                     assert!(probe_session.variables(scopes[0].variables_reference).is_empty());
                     probe_session.resume();
-                    return true;
+                    return (exec, true);
                 }
             }
-            probe_session.resume();
-            false
+            (exec, false)
         });
 
+        let (exec, paused) = checker.join().unwrap();
         let result = exec.join().unwrap();
-        let paused = checker.join().unwrap();
         assert!(result.is_ok());
         assert!(paused, "never observed a paused frame");
     }

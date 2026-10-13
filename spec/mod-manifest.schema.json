@@ -1,6 +1,6 @@
 {
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
-	"$id": "https://xript.dev/schema/mod-manifest/v0.8.json",
+	"$id": "https://xript.dev/schema/mod-manifest/v0.9.json",
 	"title": "xript Mod Manifest",
 	"description": "Declarative manifest for xript mods. Declares metadata, required capabilities, entry scripts, and UI fragment contributions.",
 	"type": "object",
@@ -253,8 +253,8 @@
 					}
 				},
 				"returns": {
-					"description": "The return type. Omit for void exports.",
-					"$ref": "#/$defs/typeRef"
+					"description": "The return type, as a type reference or as { type, description }. Omit for void exports.",
+					"$ref": "#/$defs/returnsDecl"
 				},
 				"capability": {
 					"description": "Capability required to invoke this export. If omitted, the export is always invokable. Must be one of the mod's declared capabilities.",
@@ -340,9 +340,41 @@
 				"required": {
 					"type": "boolean",
 					"default": true
+				},
+				"optional": {
+					"type": "boolean",
+					"description": "The inverse alias of 'required': 'optional': true means 'required': false. Giving both with values that disagree is an error."
+				},
+				"variadic": {
+					"type": "boolean",
+					"description": "Marks a rest parameter: it absorbs every remaining argument, and 'type' names the type of each one. Only the last parameter may be variadic.",
+					"default": false
 				}
 			},
 			"additionalProperties": false
+		},
+		"returnsDecl": {
+			"description": "A return type: a bare type reference, or an object pairing the type with a description of the returned value.",
+			"oneOf": [
+				{
+					"$ref": "#/$defs/typeRef"
+				},
+				{
+					"type": "object",
+					"required": [
+						"type"
+					],
+					"properties": {
+						"type": {
+							"$ref": "#/$defs/typeRef"
+						},
+						"description": {
+							"type": "string"
+						}
+					},
+					"additionalProperties": false
+				}
+			]
 		},
 		"fragment": {
 			"description": "A UI fragment that targets a host-declared slot.",
@@ -414,7 +446,7 @@
 			"additionalProperties": false
 		},
 		"fragmentBinding": {
-			"description": "A named data binding that resolves a host data path to a local name for use in data-bind attributes.",
+			"description": "A named data binding that resolves a host data path to a local name for use in data-bind attributes. Fields beyond 'name', 'path', and 'type' are host-defined extensions (a value transform, a formatting hint): runtimes carry them through untouched and never interpret them, and a mod that uses one only works on hosts that implement it.",
 			"type": "object",
 			"required": [
 				"name",
@@ -434,7 +466,7 @@
 					"type": "string"
 				}
 			},
-			"additionalProperties": false
+			"additionalProperties": true
 		},
 		"fragmentHandler": {
 			"description": "A declarative event-to-handler mapping. The runtime resolves the node reference against the mounted fragment and delegates matching events to the named handler in the mod's sandboxed script.",

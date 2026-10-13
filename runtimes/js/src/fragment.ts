@@ -12,6 +12,8 @@ import {
 	escapeHtml,
 	isAllowedAttribute,
 	nodeDefinition,
+	propTypeLookup,
+	projectsToHtml,
 	resolveFormatProfile,
 	sanitizeFragment,
 	sanitizeHTML,
@@ -24,6 +26,19 @@ import {
 	evaluateExpression,
 	evaluateCondition as evaluateXegCondition,
 	renderValue,
+	toExprValue,
+	parseRepeatHeaderCached,
+	evaluateRepeatItems,
+	repeatScope,
+	resolveRepeatKeys,
+	replaceKeys,
+	diffRepeat,
+	repeatSiteId,
+	MAX_REPEAT_COPIES,
+	type FragmentRepeat,
+	type RepeatKey,
+	type RepeatMode,
+	type RepeatSite,
 	type FormatProfile,
 	type FragmentDiagnostic,
 	type FragmentElement,
@@ -39,8 +54,21 @@ import {
 import { grantedSatisfies } from "./capabilities.js";
 import { exportCapabilityMap, normalizeCommandFill, type CommandFill } from "./commands.js";
 import { slotKindForFill } from "./slot-kinds.js";
+import { fragmentDeclarationDiagnostics, suppliedSource, type ModDiagnostic } from "./mod-diagnostics.js";
 
-export type { FormatProfile, FragmentDiagnostic, FragmentElement, FragmentNode, FragmentTree, PropValue } from "@xriptjs/sanitize";
+export type {
+	FormatProfile,
+	FragmentDiagnostic,
+	FragmentElement,
+	FragmentNode,
+	FragmentRepeat,
+	FragmentTree,
+	PropValue,
+	RepeatKey,
+	RepeatMode,
+	RepeatPatchOp,
+	RepeatSite,
+} from "@xriptjs/sanitize";
 
 /** The content model a fragment's format resolves to: a serialized HTML string, or a node tree. */
 export type FragmentContentType = "html" | "tree";
@@ -134,9 +162,21 @@ export interface FragmentDeclaration {
 	interpolate?: boolean;
 }
 
+/**
+ * One entry of a fragment fill's `bindings`: a local name the fragment's expressions read,
+ * resolved from a host data path.
+ *
+ * Fields beyond `name`, `path`, and `type` are host-defined extensions (a value transform,
+ * a formatting hint). The runtime carries them through untouched and never interprets
+ * them; a mod that uses one only works on hosts that implement it.
+ */
 export interface FragmentBinding {
 	name: string;
+	/** Dot-separated path into the host's data, e.g. `player.health.val`. */
 	path: string;
+	/** Optional value type, for tooling that type-checks the expressions reading this binding. Not consulted at runtime. */
+	type?: string;
+	[extension: string]: unknown;
 }
 
 export interface FragmentHandlerDeclaration {
@@ -226,6 +266,11 @@ export interface FragmentUpdateResult {
 	visibility: Record<string, boolean>;
 	/** Every `data-if` in the bound tree, keyed by tree position rather than by text. */
 	conditions: FragmentCondition[];
+	/**
+	 * Every `data-each` expansion, in document order: where its copies sit, their keys,
+	 * and how to patch the copies of the previous render into these.
+	 */
+	repeats: FragmentRepeat[];
 	diagnostics: FragmentDiagnostic[];
 }
 
@@ -307,6 +352,16 @@ function validateEntry(entry: unknown, issues: ModManifestIssue[]): void {
 	}
 }
 
+/**
+ * The script names a mod's `entry` asks the host to supply, in evaluation order. Each name
+ * is looked up in `ModLoadOptions.fragmentSources`; a name with no source there is a load
+ * error (see `MissingEntryScriptError`).
+ *
+ * - a bare string names one script
+ * - an array names several, evaluated in order
+ * - the object form `{ script, format, exports }` names one, `script`
+ * - an absent `entry` names none
+ */
 export function modEntryScripts(entry: string | string[] | ModEntry | undefined): string[] {
 	if (entry === undefined) return [];
 	if (typeof entry === "string") return [entry];
@@ -314,11 +369,20 @@ export function modEntryScripts(entry: string | string[] | ModEntry | undefined)
 	return [entry.script];
 }
 
+/**
+ * The exports a mod's `entry` declares, keyed by export name. Only the object form can
+ * declare exports; a bare string or array declares none.
+ */
 export function modEntryExports(entry: string | string[] | ModEntry | undefined): Record<string, ExportDeclaration> {
 	if (isEntryObject(entry) && entry.exports) return entry.exports;
 	return {};
 }
 
+/**
+ * How a mod's entry is evaluated. `"module"` only when the object form says
+ * `format: "module"`, which needs the async sandbox (`initXriptAsync` / `loadModAsync`);
+ * every other form is a classic `"script"`.
+ */
 export function modEntryFormat(entry: string | string[] | ModEntry | undefined): "script" | "module" {
 	if (isEntryObject(entry) && entry.format === "module") return "module";
 	return "script";
@@ -622,15 +686,29 @@ export function validateModAgainstApp(
 	return issues;
 }
 
+const CANONICAL_INDEX = /^(?:0|[1-9][0-9]*)$/;
+
+/**
+ * Reads the value at a dotted binding path, or `undefined` when the path resolves to
+ * nothing. A segment walks an own key of an object or a canonical numeric index of an
+ * array (`items.0`), and nothing else: never a primitive's property (`name.length`),
+ * never an array's `length`, never an inherited property.
+ */
 export function resolveBindingPath(data: Record<string, unknown>, path: string): unknown {
-	const parts = path.split(".");
 	let current: unknown = data;
 
-	for (const part of parts) {
-		if (current === null || current === undefined || typeof current !== "object") {
+	for (const part of path.split(".")) {
+		if (Array.isArray(current)) {
+			if (!CANONICAL_INDEX.test(part)) return undefined;
+			const index = Number(part);
+			if (index >= current.length) return undefined;
+			current = current[index];
+		} else if (current !== null && typeof current === "object") {
+			if (!Object.prototype.hasOwnProperty.call(current, part)) return undefined;
+			current = (current as Record<string, unknown>)[part];
+		} else {
 			return undefined;
 		}
-		current = (current as Record<string, unknown>)[part];
 	}
 
 	return current;
@@ -664,16 +742,16 @@ export function processFragment(
 	let html = sanitizedSource.replace(DATA_BIND_PATTERN, (match, openTag, bindName, _content, closeTag) => {
 		const value = bindings[bindName];
 		if (value === undefined) return match;
-		return `${openTag}${escapeHtml(String(value))}${closeTag}`;
+		return `${openTag}${escapeHtml(renderValue(toExprValue(value)))}${closeTag}`;
 	});
 
 	html = html.replace(SELF_CLOSING_DATA_BIND_PATTERN, (match, beforeClose, bindName) => {
 		const value = bindings[bindName];
 		if (value === undefined) return match;
-		const valueAttr = `value="${escapeAttrValue(String(value))}"`;
+		const valueAttr = `value="${escapeAttrValue(renderValue(toExprValue(value)))}"`;
 		const openTag = (beforeClose as string).trimEnd();
 		if (openTag.includes("value=")) {
-			return openTag.replace(/value="[^"]*"/, valueAttr) + " />";
+			return openTag.replace(/value="[^"]*"/, () => valueAttr) + " />";
 		}
 		return `${openTag} ${valueAttr} />`;
 	});
@@ -780,28 +858,50 @@ export function routePropValue(
 	prop: string,
 	value: PropValue,
 ): PropValue | null {
+	const routed = routePropValueDetailed(profile, nodeName, prop, value);
+	return routed.accepted ? routed.value : null;
+}
+
+/**
+ * Why a routed value was refused: the node's vocabulary does not reach the prop at all,
+ * or the prop's sink rejected the value.
+ */
+export type PropRouteResult =
+	| { accepted: true; value: PropValue }
+	| { accepted: false; reason: "undeclared" | "rejected" };
+
+/** `routePropValue`, keeping the reason a value was refused so the caller can report it. */
+export function routePropValueDetailed(
+	profile: FormatProfile,
+	nodeName: string,
+	prop: string,
+	value: PropValue,
+): PropRouteResult {
+	const settle = (routed: PropValue | null): PropRouteResult =>
+		routed === null ? { accepted: false, reason: "rejected" } : { accepted: true, value: routed };
+
 	const definition = nodeDefinition(profile, nodeName);
 	if (definition) {
-		if (PROTOCOL_PROPS.has(prop)) return typeof value === "string" ? value : null;
+		if (PROTOCOL_PROPS.has(prop)) return settle(typeof value === "string" ? value : null);
 		const declared = definition.props
 			&& Object.prototype.hasOwnProperty.call(definition.props, prop)
 			? definition.props[prop]
 			: undefined;
-		if (!declared) return null;
-		return applySink(propSink(declared), value, profile.schemes);
+		if (!declared) return { accepted: false, reason: "undeclared" };
+		return settle(applySink(propSink(declared), value, profile.schemes));
 	}
 
-	if (!speaksHtml(profile)) return null;
+	if (!speaksHtml(profile)) return { accepted: false, reason: "undeclared" };
 
 	const lower = prop.toLowerCase();
-	if (!isAllowedAttribute(nodeName, lower)) return null;
+	if (!isAllowedAttribute(nodeName, lower)) return { accepted: false, reason: "undeclared" };
 	if ((lower === "href" || lower === "src") && typeof value === "string") {
-		return sanitizeUri(value, lower, profile.schemes);
+		return settle(sanitizeUri(value, lower, profile.schemes));
 	}
 	if (lower === "style" && typeof value === "string") {
-		return sanitizeStyleValue(value);
+		return settle(sanitizeStyleValue(value));
 	}
-	return value;
+	return settle(value);
 }
 
 function isVoidNode(profile: FormatProfile, node: FragmentElement): boolean {
@@ -817,44 +917,205 @@ function bindTarget(profile: FormatProfile, node: FragmentElement): string {
 }
 
 /**
- * Resolves `data-bind` and `data-if` against a sanitized tree. Fragments stay inert: a
- * `data-if` node is not pruned, its expression's truth is reported and the host applies
- * visibility. A bound value written into a prop is routed through that prop's sink, so
- * binding is not a way around the vocabulary's safety declarations.
+ * What a repeat site looked like on the previous render, keyed by `repeatSiteId`. A
+ * fragment instance carries it from one `getContent` to the next so each repeat can
+ * report how to patch the copies the host already drew.
+ */
+export type RepeatState = Map<string, { mode: RepeatMode; keys: RepeatKey[] }>;
+
+/**
+ * Resolves `data-each`, `data-bind`, and `data-if` against a sanitized tree. Fragments
+ * stay inert: a `data-if` node is not pruned, its expression's truth is reported and the
+ * host applies visibility. A `data-each` template is replaced by its copies before any
+ * of their own attributes are read, so a `data-if` on the template is evaluated per copy
+ * with the item in scope. A bound value written into a prop is routed through that
+ * prop's sink, so binding is not a way around the vocabulary's safety declarations.
  */
 export interface BoundTree {
 	tree: FragmentTree;
 	/** @deprecated Keyed by expression text; collides. Use `conditions`. */
 	visibility: Record<string, boolean>;
 	conditions: FragmentCondition[];
+	/** Every `data-each` expansion, in document order. */
+	repeats: FragmentRepeat[];
+	/**
+	 * Findings the bind pass made: bound values the vocabulary refused to write, duplicate
+	 * or invalid repeat keys, and the copy ceiling.
+	 */
+	diagnostics: FragmentDiagnostic[];
+	/** This render's repeat sites, to pass back as `previous` on the next render. */
+	repeatState: RepeatState;
 }
 
 interface BindContext {
-	bindings: Record<string, unknown>;
 	profile: FormatProfile;
 	visibility: Record<string, boolean>;
 	conditions: FragmentCondition[];
+	repeats: FragmentRepeat[];
+	diagnostics: FragmentDiagnostic[];
+	previous: RepeatState | null;
+	next: RepeatState;
+	remainingCopies: number;
 }
 
 export function processTree(
 	tree: FragmentTree,
 	bindings: Record<string, unknown>,
 	profile: FormatProfile,
+	previous: RepeatState | null = null,
 ): BoundTree {
-	const visibility: Record<string, boolean> = {};
-	const conditions: FragmentCondition[] = [];
-	const ctx: BindContext = { bindings, profile, visibility, conditions };
-	const bound = tree.map((node, index) => bindNode(node, ctx, [index]));
-	return { tree: bound, visibility, conditions };
+	const ctx: BindContext = {
+		profile,
+		visibility: {},
+		conditions: [],
+		repeats: [],
+		diagnostics: [],
+		previous,
+		next: new Map(),
+		remainingCopies: MAX_REPEAT_COPIES,
+	};
+	const bound = bindChildren(tree, bindings, ctx, [], [], []);
+	return {
+		tree: bound,
+		visibility: ctx.visibility,
+		conditions: ctx.conditions,
+		repeats: ctx.repeats,
+		diagnostics: ctx.diagnostics,
+		repeatState: ctx.next,
+	};
+}
+
+function sourcePointer(path: readonly number[]): string {
+	return path.map((index) => `/${index}`).join("");
+}
+
+function bindChildren(
+	nodes: readonly FragmentNode[],
+	bindings: Record<string, unknown>,
+	ctx: BindContext,
+	parentPath: number[],
+	parentSource: number[],
+	within: RepeatKey[],
+): FragmentNode[] {
+	const out: FragmentNode[] = [];
+	nodes.forEach((node, index) => {
+		const source = [...parentSource, index];
+		if (node.kind === "element" && typeof node.props["data-each"] === "string") {
+			expandRepeat(node, bindings, ctx, parentPath, source, within, out);
+		} else {
+			out.push(bindNode(node, bindings, ctx, [...parentPath, out.length], source, within));
+		}
+	});
+	return out;
+}
+
+function expandRepeat(
+	template: FragmentElement,
+	bindings: Record<string, unknown>,
+	ctx: BindContext,
+	parentPath: number[],
+	source: number[],
+	within: RepeatKey[],
+	out: FragmentNode[],
+): void {
+	const eachSource = template.props["data-each"] as string;
+	const keyProp = template.props["data-key"];
+	const keySource = typeof keyProp === "string" ? keyProp : null;
+	const parsed = parseRepeatHeaderCached(eachSource);
+
+	let items = parsed.ok ? evaluateRepeatItems(parsed.header, bindings) : [];
+	if (items.length > ctx.remainingCopies) {
+		ctx.diagnostics.push({
+			code: "repeat-limit",
+			severity: "warning",
+			path: sourcePointer(source),
+			node: template.name,
+			prop: "data-each",
+			message: `repeat truncated to ${ctx.remainingCopies} of ${items.length} copies; a render produces at most ${MAX_REPEAT_COPIES}`,
+		});
+		items = items.slice(0, ctx.remainingCopies);
+	}
+	ctx.remainingCopies -= items.length;
+
+	const scopes = parsed.ok
+		? items.map((item, index) => repeatScope(bindings, parsed.header, item, index))
+		: [];
+	const resolution = keySource === null
+		? { mode: "replace" as const, keys: replaceKeys(scopes.length), problem: null }
+		: resolveRepeatKeys(scopes.map((scope) => evaluateExpression(keySource, scope)));
+	if (resolution.problem !== null) {
+		ctx.diagnostics.push({
+			code: resolution.problem,
+			severity: "warning",
+			path: sourcePointer(source),
+			node: template.name,
+			prop: "data-key",
+			message: resolution.problem === "duplicate-key"
+				? `data-key "${keySource}" produced a duplicate key; copies are keyed by index`
+				: `data-key "${keySource}" produced a key that is not a string or a number; copies are keyed by index`,
+		});
+	}
+
+	const site: RepeatSite = { template: source, within };
+	const siteId = repeatSiteId(site);
+	const previous = ctx.previous?.get(siteId) ?? null;
+	ctx.next.set(siteId, { mode: resolution.mode, keys: resolution.keys });
+
+	ctx.repeats.push({
+		site,
+		path: parentPath,
+		start: out.length,
+		count: scopes.length,
+		expression: eachSource,
+		key: keySource,
+		mode: resolution.mode,
+		keys: resolution.keys,
+		patch: diffRepeat(previous, resolution),
+	});
+
+	const props: Record<string, PropValue> = {};
+	for (const [name, value] of Object.entries(template.props)) {
+		if (name !== "data-each" && name !== "data-key") props[name] = value;
+	}
+	const copy: FragmentElement = { ...template, props };
+	scopes.forEach((scope, index) => {
+		out.push(bindNode(copy, scope, ctx, [...parentPath, out.length], source, [...within, resolution.keys[index]]));
+	});
+}
+
+/**
+ * A bound value the target prop cannot take. The node's reachable props are the ones
+ * its vocabulary lists, so a `data-bind` aimed at any other prop writes nothing; the
+ * drop is reported rather than silent.
+ */
+function bindRefusal(
+	node: string,
+	prop: string,
+	reason: "undeclared" | "rejected",
+	path: number[],
+): FragmentDiagnostic {
+	return {
+		code: reason === "undeclared" ? "unknown-prop" : "unsafe-prop",
+		severity: "warning",
+		path: `/${path.join("/")}`,
+		node,
+		prop,
+		message: reason === "undeclared"
+			? `data-bind target "${prop}" is not declared on node "${node}"; the bound value was dropped`
+			: `data-bind value for prop "${prop}" on node "${node}" was rejected by its sink`,
+	};
 }
 
 /**
  * Resolves what a `data-bind` writes, or `null` when it writes nothing.
  *
- * A bare name keeps its original contract exactly: an undeclared binding writes nothing,
- * so the fragment's authored fallback content survives. An expression always produces a
- * value — `null` renders as the empty string — because a computed result has no "absent"
- * state to fall back from.
+ * A value renders through `str()` on both paths, so a bare name renders exactly as the
+ * same name inside an expression does: `null` is the empty string, `0` is `"0"`.
+ *
+ * The paths differ only in absence. A bare name whose binding is undeclared, or whose
+ * path resolved to `undefined`, writes nothing, so the fragment's authored fallback
+ * survives. An expression always writes, because a computed result has no absent state
+ * to fall back from.
  */
 function bindValue(source: string, bindings: Record<string, unknown>): string | null {
 	const parsed = parseExpressionCached(source);
@@ -864,36 +1125,45 @@ function bindValue(source: string, bindings: Record<string, unknown>): string | 
 	const name = parsed.ok
 		? (parsed.expression.ast as { t: "name"; name: string }).name
 		: source;
+	if (!Object.prototype.hasOwnProperty.call(bindings, name)) return null;
 	const value = bindings[name];
-	return value === undefined ? null : String(value);
+	return value === undefined ? null : renderValue(toExprValue(value));
 }
 
-function bindNode(node: FragmentNode, ctx: BindContext, path: number[]): FragmentNode {
+function bindNode(
+	node: FragmentNode,
+	bindings: Record<string, unknown>,
+	ctx: BindContext,
+	path: number[],
+	source: number[],
+	within: RepeatKey[],
+): FragmentNode {
 	if (node.kind === "text") {
 		if (!node.segments) return node;
-		return { kind: "text", value: resolveSegments(node.segments, ctx.bindings) };
+		return { kind: "text", value: resolveSegments(node.segments, bindings) };
 	}
 
 	const props: Record<string, PropValue> = { ...node.props };
-	let children = node.children.map((child, index) => bindNode(child, ctx, [...path, index]));
+	let children = bindChildren(node.children, bindings, ctx, path, source, within);
 
 	const condition = props["data-if"];
 	if (typeof condition === "string") {
-		const visible = evaluateXegCondition(condition, ctx.bindings);
+		const visible = evaluateXegCondition(condition, bindings);
 		ctx.visibility[condition] = visible;
 		ctx.conditions.push({ path, expression: condition, visible });
 	}
 
 	const bindSource = props["data-bind"];
 	if (typeof bindSource === "string") {
-		const written = bindValue(bindSource, ctx.bindings);
+		const written = bindValue(bindSource, bindings);
 		if (written !== null) {
 			const target = bindTarget(ctx.profile, node);
 			if (target === "children") {
 				children = [{ kind: "text", value: written }];
 			} else {
-				const routed = routePropValue(ctx.profile, node.name, target, written);
-				if (routed !== null) props[target] = routed;
+				const routed = routePropValueDetailed(ctx.profile, node.name, target, written);
+				if (routed.accepted) props[target] = routed.value;
+				else ctx.diagnostics.push(bindRefusal(node.name, target, routed.reason, path));
 			}
 		}
 	}
@@ -1006,6 +1276,8 @@ export function createFragmentInstance(
 		handler: h.handler,
 	}));
 
+	let repeatState: RepeatState | null = null;
+
 	return {
 		id: declaration.id,
 		slot: declaration.slot,
@@ -1022,17 +1294,21 @@ export function createFragmentInstance(
 			const bindings = declaration.bindings
 				? resolveBindings(declaration.bindings, data)
 				: {};
-			const boundTree = processTree(sanitized.tree, bindings, profile);
+			const boundTree = processTree(sanitized.tree, bindings, profile, repeatState);
+			repeatState = boundTree.repeatState;
 			return {
 				contract: TREE_CONTRACT_VERSION,
 				fragmentId: declaration.id,
 				format: declaration.format,
 				contentType: sanitized.contentType,
-				html: sanitized.contentType === "html" ? treeToHtml(boundTree.tree) : "",
+				html: projectsToHtml(profile)
+					? treeToHtml(boundTree.tree, propTypeLookup(profile))
+					: "",
 				tree: boundTree.tree,
 				visibility: boundTree.visibility,
 				conditions: boundTree.conditions,
-				diagnostics: sanitized.diagnostics,
+				repeats: boundTree.repeats,
+				diagnostics: [...sanitized.diagnostics, ...boundTree.diagnostics],
 			};
 		},
 
@@ -1059,6 +1335,12 @@ export interface ModInstance {
 	 * reading them from there reads this (or `resolveCommands`) instead.
 	 */
 	readonly commandFills: CommandFill[];
+	/**
+	 * Findings raised while loading this mod, in the order they were raised: fragment
+	 * declarations first, then the entry. Under the `report` entry error policy, an entry
+	 * that did not run is recorded here instead of thrown.
+	 */
+	readonly diagnostics: ModDiagnostic[];
 	updateBindings(data: Record<string, unknown>): FragmentUpdateResult[];
 	dispose(): void;
 }
@@ -1070,6 +1352,16 @@ export interface ModInstanceOptions extends FragmentOptions {
 
 let modIdCounter = 0;
 
+/**
+ * What an unsupplied fragment source mounts as: an empty document in the format's own
+ * syntax, so a missing JSON-syntax source mounts empty (with a diagnostic) the same way a
+ * missing HTML source always has, rather than failing to parse an empty string.
+ */
+function emptySource(decl: FragmentDeclaration, options: FragmentOptions): string {
+	const profile = resolveFragmentProfile(decl.format, decl.id, options.formats ?? null, options.vocabularies ?? null);
+	return profile.syntax === "j5ml" ? "[]" : "";
+}
+
 export function createModInstance(
 	modManifest: ModManifest,
 	fragmentSources: Record<string, string>,
@@ -1080,10 +1372,15 @@ export function createModInstance(
 
 	if (modManifest.fragments) {
 		for (const decl of modManifest.fragments) {
-			const source = decl.inline ? decl.source : (fragmentSources[decl.source] ?? "");
+			const source = decl.inline ? decl.source : (suppliedSource(fragmentSources, decl.source) ?? emptySource(decl, options));
 			fragments.push(createFragmentInstance(decl, source, options));
 		}
 	}
+	const diagnostics = fragmentDeclarationDiagnostics(
+		modManifest.name,
+		modManifest.fragments ?? [],
+		fragmentSources,
+	);
 
 	return {
 		id,
@@ -1093,6 +1390,7 @@ export function createModInstance(
 		provides: modProviderRoles(modManifest),
 		data: options.dataFills ?? {},
 		commandFills: options.commandFills ?? [],
+		diagnostics,
 
 		updateBindings(data: Record<string, unknown>): FragmentUpdateResult[] {
 			return fragments.map(f => f.getContent(data));

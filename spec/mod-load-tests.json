@@ -1,0 +1,209 @@
+{
+	"description": "Conformance corpus for load-time mod diagnostics and the entry error policy. Every case loads `mod` against `host` with `sources` as the host-supplied fragment and entry sources, under `entryErrors` (default 'throw'). A case expects either `error` (loading throws; the code maps to each runtime's typed error, and the message mentions every string in `mentions`) or `diagnostics` (loading succeeds; `ModInstance.diagnostics` holds exactly these, in order, each matching on every field the case lists, and every diagnostic names the mod). `bindingField`, when present, asserts a fragment's binding carries a host-defined extension field through untouched. Error codes: 'missing-entry-script' is MissingEntryScriptError (a subtype of the mod entry error); 'entry-failed' is the mod entry error.",
+	"host": {
+		"xript": "0.9",
+		"name": "host",
+		"slots": [
+			{ "id": "panel", "accepts": ["text/html", "application/jsml+json"], "multiple": true }
+		]
+	},
+	"cases": [
+		{
+			"name": "a supplied entry script runs and raises nothing",
+			"mod": { "xript": "0.9", "name": "mod-a", "version": "1.0.0", "entry": "main.js" },
+			"sources": { "main.js": "var loaded = true;" },
+			"diagnostics": []
+		},
+		{
+			"name": "an empty entry script is supplied, not missing",
+			"mod": { "xript": "0.9", "name": "mod-a", "version": "1.0.0", "entry": "main.js" },
+			"sources": { "main.js": "" },
+			"diagnostics": []
+		},
+		{
+			"name": "a bare-string entry naming an unsupplied script is a load error",
+			"mod": { "xript": "0.9", "name": "mod-a", "version": "1.0.0", "entry": "main.js" },
+			"sources": {},
+			"error": "missing-entry-script",
+			"mentions": ["mod-a", "main.js"]
+		},
+		{
+			"name": "an object-form entry naming an unsupplied script is a load error",
+			"mod": { "xript": "0.9", "name": "mod-a", "version": "1.0.0", "entry": { "script": "main.js", "format": "script" } },
+			"sources": {},
+			"error": "missing-entry-script",
+			"mentions": ["mod-a", "main.js"]
+		},
+		{
+			"name": "an array entry with one unsupplied script names that script",
+			"mod": { "xript": "0.9", "name": "mod-a", "version": "1.0.0", "entry": ["a.js", "b.js"] },
+			"sources": { "a.js": "var a = 1;" },
+			"error": "missing-entry-script",
+			"mentions": ["mod-a", "b.js"]
+		},
+		{
+			"name": "under the report policy a missing entry script is a diagnostic and the mod loads",
+			"entryErrors": "report",
+			"mod": { "xript": "0.9", "name": "mod-a", "version": "1.0.0", "entry": ["a.js", "b.js"] },
+			"sources": { "a.js": "var a = 1;" },
+			"diagnostics": [
+				{ "code": "missing-entry-script", "severity": "error", "script": "b.js" }
+			]
+		},
+		{
+			"name": "a throwing entry script is a load error",
+			"mod": { "xript": "0.9", "name": "mod-a", "version": "1.0.0", "entry": "main.js" },
+			"sources": { "main.js": "throw new Error('boom');" },
+			"error": "entry-failed",
+			"mentions": ["boom"]
+		},
+		{
+			"name": "under the report policy a throwing entry script is a diagnostic and the mod loads",
+			"entryErrors": "report",
+			"mod": { "xript": "0.9", "name": "mod-a", "version": "1.0.0", "entry": "main.js" },
+			"sources": { "main.js": "throw new Error('boom');" },
+			"diagnostics": [
+				{ "code": "entry-failed", "severity": "error", "script": "main.js" }
+			]
+		},
+		{
+			"name": "HTML markup in a non-inline source is flagged on the fill's source field",
+			"mod": {
+				"xript": "0.9", "name": "mod-a", "version": "1.0.0",
+				"fills": { "panel": [{ "format": "text/html", "source": "<p>hello</p>" }] }
+			},
+			"sources": {},
+			"diagnostics": [
+				{ "code": "markup-source-not-inline", "severity": "warning", "fragmentId": "panel-fill-0", "field": "source" }
+			]
+		},
+		{
+			"name": "leading whitespace before markup still reads as markup",
+			"mod": {
+				"xript": "0.9", "name": "mod-a", "version": "1.0.0",
+				"fills": { "panel": [{ "format": "text/html", "source": "  \n<p>hello</p>" }] }
+			},
+			"sources": {},
+			"diagnostics": [
+				{ "code": "markup-source-not-inline", "severity": "warning", "fragmentId": "panel-fill-0", "field": "source" }
+			]
+		},
+		{
+			"name": "a JSML tree in a non-inline source is flagged",
+			"mod": {
+				"xript": "0.9", "name": "mod-a", "version": "1.0.0",
+				"fills": { "panel": [{ "id": "card", "format": "application/jsml+json", "source": "[\"p\", {}, \"hello\"]" }] }
+			},
+			"sources": {},
+			"diagnostics": [
+				{ "code": "markup-source-not-inline", "severity": "warning", "fragmentId": "card", "field": "source" }
+			]
+		},
+		{
+			"name": "inline markup raises nothing",
+			"mod": {
+				"xript": "0.9", "name": "mod-a", "version": "1.0.0",
+				"fills": { "panel": [{ "format": "text/html", "source": "<p>hello</p>", "inline": true }] }
+			},
+			"sources": {},
+			"diagnostics": []
+		},
+		{
+			"name": "a file source the host supplied raises nothing",
+			"mod": {
+				"xript": "0.9", "name": "mod-a", "version": "1.0.0",
+				"fills": { "panel": [{ "format": "text/html", "source": "panel.html" }] }
+			},
+			"sources": { "panel.html": "<p>hello</p>" },
+			"diagnostics": []
+		},
+		{
+			"name": "a file source the host did not supply is flagged",
+			"mod": {
+				"xript": "0.9", "name": "mod-a", "version": "1.0.0",
+				"fills": { "panel": [{ "format": "text/html", "source": "panel.html" }] }
+			},
+			"sources": {},
+			"diagnostics": [
+				{ "code": "missing-fragment-source", "severity": "warning", "fragmentId": "panel-fill-0", "field": "source" }
+			]
+		},
+		{
+			"name": "the deprecated events alias is reported once per mod, on the first fill using it",
+			"mod": {
+				"xript": "0.9", "name": "mod-a", "version": "1.0.0",
+				"fills": {
+					"panel": [
+						{ "format": "text/html", "source": "<button id=\"a\">a</button>", "inline": true, "events": [{ "selector": "#a", "on": "click", "handler": "onA" }] },
+						{ "format": "text/html", "source": "<button id=\"b\">b</button>", "inline": true, "events": [{ "selector": "#b", "on": "click", "handler": "onB" }] }
+					]
+				}
+			},
+			"sources": {},
+			"diagnostics": [
+				{ "code": "deprecated-events-alias", "severity": "warning", "fragmentId": "panel-fill-0", "field": "events" }
+			]
+		},
+		{
+			"name": "the events alias is reported on the deprecated fragments surface too",
+			"mod": {
+				"xript": "0.9", "name": "mod-a", "version": "1.0.0",
+				"fragments": [
+					{ "id": "card", "slot": "panel", "format": "text/html", "source": "<button id=\"a\">a</button>", "inline": true, "events": [{ "selector": "#a", "on": "click", "handler": "onA" }] }
+				]
+			},
+			"sources": {},
+			"diagnostics": [
+				{ "code": "deprecated-events-alias", "severity": "warning", "fragmentId": "card", "field": "events" }
+			]
+		},
+		{
+			"name": "handlers raise nothing",
+			"mod": {
+				"xript": "0.9", "name": "mod-a", "version": "1.0.0",
+				"fills": {
+					"panel": [
+						{ "format": "text/html", "source": "<button id=\"a\">a</button>", "inline": true, "handlers": [{ "selector": "#a", "on": "click", "handler": "onA" }] }
+					]
+				}
+			},
+			"sources": {},
+			"diagnostics": []
+		},
+		{
+			"name": "fragment findings come in declaration order, before entry findings",
+			"entryErrors": "report",
+			"mod": {
+				"xript": "0.9", "name": "mod-a", "version": "1.0.0",
+				"entry": "main.js",
+				"fills": {
+					"panel": [
+						{ "format": "text/html", "source": "missing.html", "events": [{ "selector": "#a", "on": "click", "handler": "onA" }] },
+						{ "format": "text/html", "source": "<p>hello</p>" }
+					]
+				}
+			},
+			"sources": {},
+			"diagnostics": [
+				{ "code": "missing-fragment-source", "severity": "warning", "fragmentId": "panel-fill-0", "field": "source" },
+				{ "code": "deprecated-events-alias", "severity": "warning", "fragmentId": "panel-fill-0", "field": "events" },
+				{ "code": "markup-source-not-inline", "severity": "warning", "fragmentId": "panel-fill-1", "field": "source" },
+				{ "code": "missing-entry-script", "severity": "error", "script": "main.js" }
+			]
+		},
+		{
+			"name": "a host-defined binding field is carried through untouched and raises nothing",
+			"mod": {
+				"xript": "0.9", "name": "mod-a", "version": "1.0.0",
+				"fills": {
+					"panel": [
+						{ "format": "text/html", "source": "<span data-bind=\"hp\">0</span>", "inline": true, "bindings": [{ "name": "hp", "path": "player.hp", "transform": "percent" }] }
+					]
+				}
+			},
+			"sources": {},
+			"diagnostics": [],
+			"bindingField": { "fragmentId": "panel-fill-0", "binding": "hp", "field": "transform", "value": "percent" }
+		}
+	]
+}

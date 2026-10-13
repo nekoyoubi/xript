@@ -91,6 +91,8 @@ jobs:
       - run: rm package-lock.json && npm install
       - name: build sanitize
         run: npm run build --workspace=tools/sanitize
+      - name: build validate
+        run: npm run build --workspace=tools/validate
       - name: build runtime
         run: npm run build --workspace=runtimes/js
       - name: build docs

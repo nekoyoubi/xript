@@ -453,15 +453,29 @@ describe("FragmentOp generalization", () => {
 		runtime.dispose();
 	});
 
-	it("joins a string array for replaceChildren exactly as before", () => {
+	it("keeps a string array for replaceChildren a list, sanitizing each element", () => {
 		const runtime = htmlRuntime();
 		runtime.execute(`
 			hooks.fragment.update("inv", function(bindings, fragment) {
-				fragment.replaceChildren(".list", (bindings.items || []).map(function(i) { return "<li>" + i + "</li>"; }));
+				fragment.replaceChildren(".list", (bindings.items || []).map(function(i) { return "<li onclick='x()'>" + i + "</li>"; }));
 			});
 		`);
 		const ops = runtime.fireFragmentHook("inv", "update", { items: ["sword", "shield"] });
-		assert.equal(ops[0].value, "<li>sword</li><li>shield</li>");
+		assert.deepEqual(ops[0].value, ["<li>sword</li>", "<li>shield</li>"]);
+		runtime.dispose();
+	});
+
+	it("keeps a declared prop's false as a typed value rather than a removal", () => {
+		const runtime = componentRuntime();
+		loadPanel(runtime, ["Panel", {}, ["Progress", { id: "gauge", value: 0 }]]);
+		runtime.execute(`
+			hooks.fragment.update("the-panel", function(bindings, fragment) {
+				fragment.setProp("#gauge", "value", false);
+			});
+		`);
+		const ops = runtime.fireFragmentHook("the-panel", "update", {});
+		assert.equal(ops[0].op, "setProp");
+		assert.equal(ops[0].value, false);
 		runtime.dispose();
 	});
 });

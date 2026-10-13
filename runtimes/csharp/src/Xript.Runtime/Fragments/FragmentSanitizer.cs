@@ -71,7 +71,7 @@ public static class FragmentSanitizer
     /// nodes, so a referenced vocabulary cannot smuggle a bare <c>&lt;Panel&gt;</c> into
     /// projected markup.
     /// </remarks>
-    private static bool ProjectsToHtml(FormatProfile profile)
+    public static bool ProjectsToHtml(FormatProfile profile)
     {
         if (profile.Builtin) return true;
         if (!profile.SpeaksHtml) return false;
@@ -102,7 +102,7 @@ public static class FragmentSanitizer
                 interpolate);
             return new SanitizedFragment(
                 jsml.Tree,
-                ProjectsToHtml(profile) ? FragmentTree.ToHtml(jsml.Tree) : "",
+                ProjectsToHtml(profile) ? FragmentTree.ToHtml(jsml.Tree, profile) : "",
                 profile.Builtin ? FragmentContentType.Html : FragmentContentType.Tree,
                 jsml.Diagnostics,
                 jsml.StrippedElements,
@@ -115,7 +115,7 @@ public static class FragmentSanitizer
         if (!profile.Builtin)
             return new SanitizedFragment(
                 parsed.Tree,
-                ProjectsToHtml(profile) ? FragmentTree.ToHtml(parsed.Tree) : "",
+                ProjectsToHtml(profile) ? FragmentTree.ToHtml(parsed.Tree, profile) : "",
                 FragmentContentType.Tree,
                 parsed.Diagnostics, parsed.StrippedElements, parsed.StrippedAttributes);
 

@@ -10,9 +10,11 @@ Editing a file here is a change to a document the world has already consumed. Cu
 
 | Alias | Extracted from |
 | --- | --- |
+| `manifest/v0.8.json` | tag `v0.8.1` |
 | `manifest/v0.7.json` | tag `v0.7.0` |
 | `manifest/v0.6.json` | tag `v0.6.0` |
 | `manifest/v0.3.json` | tag `v0.5.0` |
+| `mod-manifest/v0.8.json` | tag `v0.8.1` |
 | `mod-manifest/v0.7.json` | tag `v0.7.0` |
 | `mod-manifest/v0.6.json` | tag `v0.6.0` |
 | `mod-manifest/v0.3.json` | tag `v0.5.0` |

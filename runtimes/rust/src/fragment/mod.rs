@@ -8,10 +8,18 @@ pub mod tree;
 pub mod vocabulary;
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
 
 use serde_json::Value;
 use regex::Regex;
-use xript_expr::{evaluate_ast, expression_kind, parse_cached, render, ExpressionKind, TextSegment};
+use xript_expr::{
+    evaluate_ast, evaluate_repeat_items, expression_kind, parse_cached, parse_repeat_header,
+    render, repeat_scope, ExpressionKind, TextSegment, MAX_REPEAT_COPIES,
+};
+use xript_tree::{
+    diff_repeat, replace_keys, resolve_repeat_keys, DiagnosticCode, FragmentRepeat, RepeatKey,
+    RepeatKeyProblem, RepeatKeyResolution, RepeatMode, RepeatSite,
+};
 
 use crate::error::{FragmentIssue, Result, XriptError};
 use crate::manifest::{FragmentDeclaration, ModManifest};
@@ -63,6 +71,9 @@ pub struct FragmentResult {
     pub visibility: HashMap<String, bool>,
     /// Every `data-if` in the bound tree, keyed by tree position rather than by text.
     pub conditions: Vec<FragmentCondition>,
+    /// Every `data-each` expansion, in document order: where its copies sit, their
+    /// keys, and how to patch the copies of the previous render into these.
+    pub repeats: Vec<FragmentRepeat>,
     pub diagnostics: Vec<FragmentDiagnostic>,
 }
 
@@ -82,6 +93,7 @@ impl FragmentResult {
             },
             tree: self.tree.clone(),
             conditions: self.conditions.clone(),
+            repeats: self.repeats.clone(),
             diagnostics: self.diagnostics.clone(),
         }
     }
@@ -111,7 +123,7 @@ pub fn process_fragment(
 
         match bindings.get(bind_name) {
             Some(val) => {
-                let text = value_to_string(val);
+                let text = rules::escape_html(&render(val));
                 format!("{}{}{}", open_tag, text, close_tag)
             }
             None => caps[0].to_string(),
@@ -119,16 +131,16 @@ pub fn process_fragment(
     }).to_string();
 
     let html = self_closing_bind_re.replace_all(&html, |caps: &regex::Captures| {
-        let before_close = &caps[1];
+        let before_close = caps[1].trim_end();
         let bind_name = &caps[2];
 
         match bindings.get(bind_name) {
             Some(val) => {
-                let text = value_to_string(val);
+                let text = rules::escape_attr_value(&render(val));
                 let value_attr = format!("value=\"{}\"", text);
                 let value_re = Regex::new(r#"value="[^"]*""#).unwrap();
                 if value_re.is_match(before_close) {
-                    let updated = value_re.replace(before_close, value_attr.as_str());
+                    let updated = value_re.replace(before_close, regex::NoExpand(value_attr.as_str()));
                     format!("{} />", updated)
                 } else {
                     format!("{} {} />", before_close, value_attr)
@@ -153,15 +165,8 @@ pub fn process_fragment(
         tree: Vec::new(),
         visibility,
         conditions: Vec::new(),
+        repeats: Vec::new(),
         diagnostics: Vec::new(),
-    }
-}
-
-fn value_to_string(val: &serde_json::Value) -> String {
-    match val {
-        serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Null => String::new(),
-        other => other.to_string(),
     }
 }
 
@@ -177,18 +182,15 @@ fn evaluate_condition(expression: &str, bindings: &HashMap<String, serde_json::V
 
 /// Resolves what a `data-bind` writes, or `None` when it writes nothing.
 ///
-/// A bare name keeps its original contract exactly: an undeclared binding writes nothing,
-/// so the fragment's authored fallback content survives. An expression always produces a
-/// value — `null` renders as the empty string — because a computed result has no "absent"
-/// state to fall back from.
+/// A value renders through `str()` on both paths, so a bare name renders exactly as the
+/// same name inside an expression does: `null` is the empty string, `0` is `"0"`.
+///
+/// The paths differ only in absence. A bare name whose binding is undeclared, or whose
+/// path resolved to nothing, writes nothing, so the fragment's authored fallback
+/// survives. An expression always writes, because a computed result has no absent state
+/// to fall back from.
 fn bind_value(source: &str, bindings: &HashMap<String, serde_json::Value>) -> Option<String> {
-    let computed = is_computed(source);
-    bind_json(source, bindings).as_ref().map(|value| {
-        // A computed result renders through the expression grammar; a bare name keeps
-        // the older, looser stringification. The two disagree about `null`, and both
-        // spellings are pinned by corpus.
-        if computed { render(value) } else { value_to_string(value) }
-    })
+    bind_json(source, bindings).as_ref().map(render)
 }
 
 /// The bound value with its JSON type intact.
@@ -213,10 +215,6 @@ fn bind_json(source: &str, bindings: &HashMap<String, serde_json::Value>) -> Opt
     }
 }
 
-fn is_computed(source: &str) -> bool {
-    matches!(parse_cached(source), Ok(expression) if expression.kind == ExpressionKind::Expression)
-}
-
 /// Classifies a `data-bind` body. A bare identifier is an lvalue and keeps two-way
 /// write-back; anything else computes a value with no inverse and is read-only.
 pub fn bind_expression_kind(source: &str) -> Option<ExpressionKind> {
@@ -236,38 +234,46 @@ pub fn resolve_segments(
     xript_expr::resolve_segments(segments, bindings)
 }
 
+/// The value at a dotted path, or `Null` when any segment is missing. Use
+/// [`lookup_binding_path`] where a missing path must stay distinguishable from `null`.
 pub fn resolve_binding_path(data: &serde_json::Value, path: &str) -> serde_json::Value {
-    let parts: Vec<&str> = path.split('.').collect();
-    let mut current = data;
-
-    for part in parts {
-        match current {
-            serde_json::Value::Object(map) => {
-                if let Some(val) = map.get(part) {
-                    current = val;
-                } else {
-                    return serde_json::Value::Null;
-                }
-            }
-            _ => return serde_json::Value::Null,
-        }
-    }
-
-    current.clone()
+    lookup_binding_path(data, path).cloned().unwrap_or(serde_json::Value::Null)
 }
 
+/// The value at a dotted path, or `None` when any segment is missing. A present `null`
+/// is `Some(Null)`.
+///
+/// A segment walks a key of an object or a canonical numeric index of an array
+/// (`items.0`), and nothing else: never a primitive's property (`name.length`) and never
+/// an array's `length`.
+pub fn lookup_binding_path<'a>(data: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    path.split('.').try_fold(data, |current, part| match current {
+        serde_json::Value::Object(map) => map.get(part),
+        serde_json::Value::Array(items) => canonical_index(part).and_then(|index| items.get(index)),
+        _ => None,
+    })
+}
+
+fn canonical_index(part: &str) -> Option<usize> {
+    let canonical = !part.is_empty()
+        && part.bytes().all(|byte| byte.is_ascii_digit())
+        && (part == "0" || !part.starts_with('0'));
+    if canonical { part.parse().ok() } else { None }
+}
+
+/// Resolves each declared binding against `data`. A binding whose path is missing is left
+/// out of the map rather than set to `null`, so a bare-name `data-bind` on it writes
+/// nothing and the authored fallback survives, while a present `null` renders as empty.
 pub fn resolve_bindings(
     declarations: &[crate::manifest::FragmentBinding],
     data: &serde_json::Value,
 ) -> HashMap<String, serde_json::Value> {
-    let mut resolved = HashMap::new();
-    for binding in declarations {
-        resolved.insert(
-            binding.name.clone(),
-            resolve_binding_path(data, &binding.path),
-        );
-    }
-    resolved
+    declarations
+        .iter()
+        .filter_map(|binding| {
+            lookup_binding_path(data, &binding.path).map(|value| (binding.name.clone(), value.clone()))
+        })
+        .collect()
 }
 
 /// Host-supplied context for resolving and sanitizing a fragment.
@@ -296,6 +302,33 @@ pub struct FragmentInstance {
     pub content_type: FragmentContentType,
     pub profile: FormatProfile,
     pub diagnostics: Vec<FragmentDiagnostic>,
+    repeat_state: RepeatStateCell,
+}
+
+/// What each repeat site looked like on the previous render, keyed by
+/// [`RepeatSite::id`]. Carried from one `get_content` to the next so each repeat can
+/// report how to patch the copies the host already drew.
+pub type RepeatState = HashMap<String, (RepeatMode, Vec<RepeatKey>)>;
+
+#[derive(Debug, Default)]
+struct RepeatStateCell(Mutex<Option<RepeatState>>);
+
+impl Clone for RepeatStateCell {
+    fn clone(&self) -> Self {
+        RepeatStateCell(Mutex::new(self.take_snapshot()))
+    }
+}
+
+impl RepeatStateCell {
+    fn take_snapshot(&self) -> Option<RepeatState> {
+        self.0.lock().map(|state| state.clone()).unwrap_or(None)
+    }
+
+    fn replace(&self, next: RepeatState) {
+        if let Ok(mut state) = self.0.lock() {
+            *state = Some(next);
+        }
+    }
 }
 
 impl FragmentInstance {
@@ -306,17 +339,27 @@ impl FragmentInstance {
             HashMap::new()
         };
 
-        let bound = process_tree(&self.sanitized_tree, &bindings, &self.profile);
+        let previous = self.repeat_state.take_snapshot();
+        let bound = process_tree_with_state(
+            &self.sanitized_tree,
+            &bindings,
+            &self.profile,
+            previous.as_ref(),
+        );
+        self.repeat_state.replace(bound.repeat_state.clone());
 
         // The HTML projection is serialized from the bound tree rather than patched
         // into the sanitized source string. One bind pass feeds both outputs, so an
         // expression-valued `data-bind` and a resolved interpolation site reach `html`
         // and `tree` identically instead of only the one a regex could see.
-        let html = if self.content_type == FragmentContentType::Html {
-            tree::tree_to_html(&bound.tree)
+        let html = if sanitize::projects_to_html(&self.profile) {
+            tree::tree_to_html_for(&bound.tree, &self.profile)
         } else {
             String::new()
         };
+
+        let mut diagnostics = self.diagnostics.clone();
+        diagnostics.extend(bound.diagnostics);
 
         FragmentResult {
             fragment_id: self.id.clone(),
@@ -326,7 +369,8 @@ impl FragmentInstance {
             tree: bound.tree,
             visibility: bound.visibility,
             conditions: bound.conditions,
-            diagnostics: self.diagnostics.clone(),
+            repeats: bound.repeats,
+            diagnostics,
         }
     }
 
@@ -424,6 +468,7 @@ pub fn create_fragment_instance(
         content_type: sanitized.content_type,
         profile,
         diagnostics: sanitized.diagnostics,
+        repeat_state: RepeatStateCell::default(),
     })
 }
 
@@ -438,37 +483,261 @@ pub struct BoundTree {
     pub visibility: HashMap<String, bool>,
     /// Every `data-if` in the bound tree, keyed by tree position rather than by text.
     pub conditions: Vec<FragmentCondition>,
+    /// Every `data-each` expansion, in document order.
+    pub repeats: Vec<FragmentRepeat>,
+    /// Findings the bind pass made: bound values the vocabulary refused to write,
+    /// duplicate or invalid repeat keys, and the copy ceiling.
+    pub diagnostics: Vec<FragmentDiagnostic>,
+    /// This render's repeat sites, to pass back as `previous` on the next render.
+    pub repeat_state: RepeatState,
 }
 
-/// Applies `data-bind` and `data-if` across a sanitized tree.
-///
-/// `data-if` records visibility but never prunes: fragments stay inert and the
-/// host decides what a hidden node means in its own rendering model.
+/// Applies `data-each`, `data-bind`, and `data-if` across a sanitized tree, with no
+/// previous render to patch against.
 pub fn process_tree(
     tree: &[FragmentNode],
     bindings: &HashMap<String, serde_json::Value>,
     profile: &FormatProfile,
 ) -> BoundTree {
-    let mut visibility = HashMap::new();
-    let mut conditions = Vec::new();
-    let bound = tree
-        .iter()
-        .enumerate()
-        .map(|(index, node)| {
-            bind_node(node, bindings, profile, &mut visibility, &mut conditions, &[index])
-        })
-        .collect();
-    BoundTree { tree: bound, visibility, conditions }
+    process_tree_with_state(tree, bindings, profile, None)
+}
+
+struct BindContext<'a> {
+    profile: &'a FormatProfile,
+    visibility: HashMap<String, bool>,
+    conditions: Vec<FragmentCondition>,
+    repeats: Vec<FragmentRepeat>,
+    diagnostics: Vec<FragmentDiagnostic>,
+    previous: Option<&'a RepeatState>,
+    next: RepeatState,
+    remaining_copies: usize,
+}
+
+/// Applies `data-each`, `data-bind`, and `data-if` across a sanitized tree.
+///
+/// `data-if` records visibility but never prunes: fragments stay inert and the
+/// host decides what a hidden node means in its own rendering model. A `data-each`
+/// template is replaced by its copies before any of their own attributes are read,
+/// so a `data-if` on the template is evaluated per copy with the item in scope.
+pub fn process_tree_with_state(
+    tree: &[FragmentNode],
+    bindings: &HashMap<String, serde_json::Value>,
+    profile: &FormatProfile,
+    previous: Option<&RepeatState>,
+) -> BoundTree {
+    let mut ctx = BindContext {
+        profile,
+        visibility: HashMap::new(),
+        conditions: Vec::new(),
+        repeats: Vec::new(),
+        diagnostics: Vec::new(),
+        previous,
+        next: HashMap::new(),
+        remaining_copies: MAX_REPEAT_COPIES,
+    };
+    let bound = bind_children(tree, bindings, &mut ctx, &[], &[], &[]);
+    BoundTree {
+        tree: bound,
+        visibility: ctx.visibility,
+        conditions: ctx.conditions,
+        repeats: ctx.repeats,
+        diagnostics: ctx.diagnostics,
+        repeat_state: ctx.next,
+    }
+}
+
+fn source_pointer(path: &[usize]) -> String {
+    path.iter().map(|index| format!("/{index}")).collect()
+}
+
+fn bind_children(
+    nodes: &[FragmentNode],
+    bindings: &HashMap<String, serde_json::Value>,
+    ctx: &mut BindContext,
+    parent_path: &[usize],
+    parent_source: &[usize],
+    within: &[RepeatKey],
+) -> Vec<FragmentNode> {
+    let mut out = Vec::new();
+    for (index, node) in nodes.iter().enumerate() {
+        let mut source = parent_source.to_vec();
+        source.push(index);
+        if let FragmentNode::Element(element) = node {
+            if let Some(Value::String(each)) = element.props.get("data-each") {
+                let each = each.clone();
+                expand_repeat(element, &each, bindings, ctx, parent_path, &source, within, &mut out);
+                continue;
+            }
+        }
+        let mut path = parent_path.to_vec();
+        path.push(out.len());
+        out.push(bind_node(node, bindings, ctx, &path, &source, within));
+    }
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn expand_repeat(
+    template: &FragmentElement,
+    each_source: &str,
+    bindings: &HashMap<String, serde_json::Value>,
+    ctx: &mut BindContext,
+    parent_path: &[usize],
+    source: &[usize],
+    within: &[RepeatKey],
+    out: &mut Vec<FragmentNode>,
+) {
+    let key_source = template.props.get_str("data-key").map(str::to_string);
+    let header = parse_repeat_header(each_source).ok();
+
+    let mut items = header
+        .as_ref()
+        .map(|header| evaluate_repeat_items(header, bindings))
+        .unwrap_or_default();
+    if items.len() > ctx.remaining_copies {
+        ctx.diagnostics.push(FragmentDiagnostic {
+            code: DiagnosticCode::RepeatLimit,
+            severity: DiagnosticSeverity::Warning,
+            path: source_pointer(source),
+            node: template.name.clone(),
+            prop: Some("data-each".into()),
+            message: format!(
+                "repeat truncated to {} of {} copies; a render produces at most {}",
+                ctx.remaining_copies,
+                items.len(),
+                MAX_REPEAT_COPIES
+            ),
+        });
+        items.truncate(ctx.remaining_copies);
+    }
+    ctx.remaining_copies -= items.len();
+
+    let scopes: Vec<HashMap<String, Value>> = match &header {
+        Some(header) => items
+            .into_iter()
+            .enumerate()
+            .map(|(index, item)| repeat_scope(bindings, header, item, index))
+            .collect(),
+        None => Vec::new(),
+    };
+
+    let resolution = match &key_source {
+        None => RepeatKeyResolution {
+            mode: RepeatMode::Replace,
+            keys: replace_keys(scopes.len()),
+            problem: None,
+        },
+        Some(key) => resolve_repeat_keys(
+            scopes.iter().map(|scope| xript_expr::evaluate(key, scope)).collect(),
+        ),
+    };
+    if let Some(problem) = resolution.problem {
+        let key = key_source.as_deref().unwrap_or_default();
+        let (code, message) = match problem {
+            RepeatKeyProblem::DuplicateKey => (
+                DiagnosticCode::DuplicateKey,
+                format!("data-key \"{key}\" produced a duplicate key; copies are keyed by index"),
+            ),
+            RepeatKeyProblem::InvalidKey => (
+                DiagnosticCode::InvalidKey,
+                format!("data-key \"{key}\" produced a key that is not a string or a number; copies are keyed by index"),
+            ),
+        };
+        ctx.diagnostics.push(FragmentDiagnostic {
+            code,
+            severity: DiagnosticSeverity::Warning,
+            path: source_pointer(source),
+            node: template.name.clone(),
+            prop: Some("data-key".into()),
+            message,
+        });
+    }
+
+    let site = RepeatSite { template: source.to_vec(), within: within.to_vec() };
+    let site_id = site.id();
+    let previous = ctx
+        .previous
+        .and_then(|state| state.get(&site_id))
+        .map(|(mode, keys)| (*mode, keys.as_slice()));
+    let patch = diff_repeat(previous, (resolution.mode, &resolution.keys));
+    ctx.next.insert(site_id, (resolution.mode, resolution.keys.clone()));
+
+    ctx.repeats.push(FragmentRepeat {
+        site,
+        path: parent_path.to_vec(),
+        start: out.len(),
+        count: scopes.len(),
+        expression: each_source.to_string(),
+        key: key_source,
+        mode: resolution.mode,
+        keys: resolution.keys.clone(),
+        patch,
+    });
+
+    let copy = FragmentNode::Element(FragmentElement {
+        name: template.name.clone(),
+        props: template
+            .props
+            .iter()
+            .filter(|(name, _)| name.as_str() != "data-each" && name.as_str() != "data-key")
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect(),
+        children: template.children.clone(),
+        self_closing: template.self_closing,
+    });
+    for (index, scope) in scopes.iter().enumerate() {
+        let mut path = parent_path.to_vec();
+        path.push(out.len());
+        let mut copy_within = within.to_vec();
+        copy_within.push(resolution.keys[index].clone());
+        out.push(bind_node(&copy, scope, ctx, &path, source, &copy_within));
+    }
+}
+
+/// Why a bound value was not written: the node's vocabulary does not reach the
+/// prop at all, or the prop's sink rejected the value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BindRefusal {
+    Undeclared,
+    Rejected,
+}
+
+/// A bound value the target prop cannot take. The node's reachable props are the
+/// ones its vocabulary lists, so a `data-bind` aimed at any other prop writes
+/// nothing; the drop is reported rather than silent.
+fn bind_refusal(node: &str, prop: &str, refusal: BindRefusal, path: &[usize]) -> FragmentDiagnostic {
+    let rendered_path: String = path.iter().map(|index| format!("/{index}")).collect();
+    let (code, message) = match refusal {
+        BindRefusal::Undeclared => (
+            vocabulary::DiagnosticCode::UnknownProp,
+            format!(
+                "data-bind target \"{prop}\" is not declared on node \"{node}\"; the bound value was dropped"
+            ),
+        ),
+        BindRefusal::Rejected => (
+            vocabulary::DiagnosticCode::UnsafeProp,
+            format!("data-bind value for prop \"{prop}\" on node \"{node}\" was rejected by its sink"),
+        ),
+    };
+    FragmentDiagnostic {
+        code,
+        severity: DiagnosticSeverity::Warning,
+        path: rendered_path,
+        node: node.to_string(),
+        prop: Some(prop.to_string()),
+        message,
+    }
 }
 
 fn bind_node(
     node: &FragmentNode,
     bindings: &HashMap<String, serde_json::Value>,
-    profile: &FormatProfile,
-    visibility: &mut HashMap<String, bool>,
-    conditions: &mut Vec<FragmentCondition>,
+    ctx: &mut BindContext,
     path: &[usize],
+    source: &[usize],
+    within: &[RepeatKey],
 ) -> FragmentNode {
+    let profile = ctx.profile;
     let element = match node {
         FragmentNode::Text { value, segments } => {
             return match segments {
@@ -480,22 +749,13 @@ fn bind_node(
     };
 
     let mut props = element.props.clone();
-    let mut children: Vec<FragmentNode> = element
-        .children
-        .iter()
-        .enumerate()
-        .map(|(index, child)| {
-            let mut child_path = path.to_vec();
-            child_path.push(index);
-            bind_node(child, bindings, profile, visibility, conditions, &child_path)
-        })
-        .collect();
+    let mut children = bind_children(&element.children, bindings, ctx, path, source, within);
 
     if let Some(Value::String(expression)) = props.get("data-if") {
         let expression = expression.clone();
         let visible = evaluate_condition(&expression, bindings);
-        visibility.insert(expression.clone(), visible);
-        conditions.push(FragmentCondition { path: path.to_vec(), expression, visible });
+        ctx.visibility.insert(expression.clone(), visible);
+        ctx.conditions.push(FragmentCondition { path: path.to_vec(), expression, visible });
     }
 
     if let Some(Value::String(source)) = props.get("data-bind") {
@@ -510,14 +770,17 @@ fn bind_node(
                 }
                 target => {
                     let typed = bind_json(&source, bindings);
-                    if let Some(routed) = route_prop_value(
+                    match route_prop_value(
                         profile,
                         &element.name,
                         &target,
                         &written,
                         typed.as_ref(),
                     ) {
-                        props.set(target, routed);
+                        Ok(routed) => props.set(target, routed),
+                        Err(refusal) => ctx
+                            .diagnostics
+                            .push(bind_refusal(&element.name, &target, refusal, path)),
                     }
                 }
             }
@@ -562,12 +825,14 @@ fn route_prop_value(
     prop: &str,
     value: &str,
     typed: Option<&Value>,
-) -> Option<Value> {
+) -> std::result::Result<Value, BindRefusal> {
+    let settle = |routed: Option<String>| routed.map(Value::String).ok_or(BindRefusal::Rejected);
+
     if let Some(definition) = profile.node(node_name) {
         if PROTOCOL_PROPS.contains(&prop) {
-            return Some(Value::String(value.to_string()));
+            return Ok(Value::String(value.to_string()));
         }
-        let declared = definition.prop(prop)?;
+        let declared = definition.prop(prop).ok_or(BindRefusal::Undeclared)?;
         if declared.sink == Sink::Text {
             // A vocabulary that types a prop as something other than a string is
             // asking for that type, and stringifying into it hands a renderer
@@ -577,28 +842,28 @@ fn route_prop_value(
                 && !types.iter().any(|candidate| candidate == "string")
                 && tree::matches_json_type(typed, types)
             {
-                return Some(typed.clone());
+                return Ok(typed.clone());
             }
-            return Some(Value::String(value.to_string()));
+            return Ok(Value::String(value.to_string()));
         }
-        return apply_sink(declared.sink, value, &profile.schemes).map(Value::String);
+        return settle(apply_sink(declared.sink, value, &profile.schemes));
     }
 
     if !speaks_html(profile) {
-        return None;
+        return Err(BindRefusal::Undeclared);
     }
 
     let lower = prop.to_lowercase();
     if !is_allowed_attribute(node_name, &lower) {
-        return None;
+        return Err(BindRefusal::Undeclared);
     }
     if lower == "href" || lower == "src" {
-        return sanitize_uri(value, &lower, &profile.schemes).map(Value::String);
+        return settle(sanitize_uri(value, &lower, &profile.schemes));
     }
     if lower == "style" {
-        return Some(Value::String(sanitize_style_value(value)));
+        return Ok(Value::String(sanitize_style_value(value)));
     }
-    Some(Value::String(value.to_string()))
+    Ok(Value::String(value.to_string()))
 }
 
 #[derive(Debug, Clone)]
@@ -608,6 +873,11 @@ pub struct ModInstance {
     pub version: String,
     pub fragments: Vec<FragmentInstance>,
     pub provides: Vec<crate::manifest::ProviderRole>,
+    /// Findings raised while loading this mod, in the order they were raised:
+    /// fragment declarations first, then the entry. Under
+    /// [`EntryErrorPolicy::Report`](crate::EntryErrorPolicy::Report), an entry
+    /// that did not run is recorded here instead of returned as an error.
+    pub diagnostics: Vec<crate::mod_load::ModDiagnostic>,
 }
 
 impl ModInstance {
@@ -632,7 +902,10 @@ pub fn create_mod_instance(
             let source = if decl.inline.unwrap_or(false) {
                 decl.source.clone()
             } else {
-                fragment_sources.get(&decl.source).cloned().unwrap_or_default()
+                match fragment_sources.get(&decl.source) {
+                    Some(supplied) => supplied.clone(),
+                    None => empty_source(decl, options)?,
+                }
             };
             fragments.push(create_fragment_instance(decl, &source, options)?);
         }
@@ -644,12 +917,36 @@ pub fn create_mod_instance(
         .map(|c| c.provides.clone())
         .unwrap_or_default();
 
+    let diagnostics = crate::mod_load::fragment_declaration_diagnostics(
+        &mod_manifest.name,
+        mod_manifest.fragments.as_deref().unwrap_or(&[]),
+        fragment_sources,
+    );
+
     Ok(ModInstance {
         id,
         name: mod_manifest.name.clone(),
         version: mod_manifest.version.clone(),
         fragments,
         provides,
+        diagnostics,
+    })
+}
+
+/// What an unsupplied fragment source mounts as: an empty document in the
+/// format's own syntax, so a missing JSON-syntax source mounts empty (with a
+/// diagnostic) the same way a missing HTML source always has, rather than
+/// failing to parse an empty string.
+fn empty_source(decl: &FragmentDeclaration, options: &FragmentOptions) -> Result<String> {
+    let profile = resolve_fragment_profile(
+        &decl.format,
+        &decl.id,
+        options.formats.as_ref(),
+        options.vocabularies.as_ref(),
+    )?;
+    Ok(match profile.syntax {
+        profiles::FragmentSyntax::J5ml => "[]".to_string(),
+        _ => String::new(),
     })
 }
 

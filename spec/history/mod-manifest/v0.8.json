@@ -1,0 +1,464 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://xript.dev/schema/mod-manifest/v0.8.json",
+	"title": "xript Mod Manifest",
+	"description": "Declarative manifest for xript mods. Declares metadata, required capabilities, entry scripts, and UI fragment contributions.",
+	"type": "object",
+	"required": [
+		"xript",
+		"name",
+		"version"
+	],
+	"properties": {
+		"$schema": {
+			"description": "Optional JSON Schema reference for editor autocomplete.",
+			"type": "string",
+			"format": "uri"
+		},
+		"xript": {
+			"description": "The xript specification version this mod targets.",
+			"type": "string",
+			"pattern": "^\\d+\\.\\d+$",
+			"examples": [
+				"0.6"
+			]
+		},
+		"extends": {
+			"description": "One or more base mod manifests to inherit from. Resolved and deep-merged before validation: maps key-merge, arrays append, scalars are child-wins, and duplicate ids are an error. Paths are filesystem-relative to this manifest. Resolution is transitive with cycle detection.",
+			"oneOf": [
+				{
+					"type": "string"
+				},
+				{
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"minItems": 1
+				}
+			]
+		},
+		"name": {
+			"description": "Machine-readable mod identifier. Used in namespacing and generated package names.",
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9-]*$",
+			"minLength": 1,
+			"maxLength": 64
+		},
+		"family": {
+			"description": "Optional grouping family for host-side organization (e.g. grouping addons in a nav rail). When absent, hosts fall back to name-prefix heuristics.",
+			"type": "string",
+			"pattern": "^[a-z][a-z0-9-]*$",
+			"maxLength": 64
+		},
+		"version": {
+			"description": "The mod's version. Follows semver.",
+			"type": "string",
+			"pattern": "^\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?$",
+			"examples": [
+				"1.0.0",
+				"0.1.0-beta.1"
+			]
+		},
+		"title": {
+			"description": "Human-readable display name for the mod.",
+			"type": "string",
+			"maxLength": 128
+		},
+		"description": {
+			"description": "A brief description of what this mod does.",
+			"type": "string",
+			"maxLength": 1024
+		},
+		"author": {
+			"description": "The mod author's name or handle.",
+			"type": "string",
+			"maxLength": 128
+		},
+		"license": {
+			"description": "The mod's license — an SPDX identifier or a short label (e.g. \"MIT\", \"Apache-2.0\", \"Proprietary\").",
+			"type": "string",
+			"maxLength": 128
+		},
+		"capabilities": {
+			"description": "Capabilities this mod requires from the host application.",
+			"type": "array",
+			"items": {
+				"type": "string"
+			},
+			"uniqueItems": true
+		},
+		"execution": {
+			"$ref": "#/$defs/executionIntent",
+			"description": "The mod-wide default execution intent. Every export that declares no `execution` of its own inherits this one, including an export the entry auto-registers in module mode without a matching `exports` declaration; absent both, the schema defaults apply (`brief` / `any`)."
+		},
+		"entry": {
+			"description": "Script entry point(s) relative to the mod root directory. The bare string/string[] form runs in script mode with no exports. The object form additionally declares named host-invokable exports.",
+			"oneOf": [
+				{
+					"type": "string"
+				},
+				{
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"minItems": 1
+				},
+				{
+					"$ref": "#/$defs/entryBlock"
+				}
+			]
+		},
+		"fills": {
+			"description": "The canonical contribution surface: an object keyed by host slot id, each value an array of fill entries. The inner shape of a fill is governed by the target slot's 'accepts' type (a fragment, a code-renderer entry, a role map, an event handler). Each filled slot id must exist in the host manifest, and the mod must hold the slot's capability if it declares one.",
+			"type": "object",
+			"additionalProperties": {
+				"type": "array",
+				"items": {
+					"$ref": "#/$defs/fill"
+				}
+			}
+		},
+		"fragments": {
+			"description": "DEPRECATED in favor of 'fills': a fragment is a fill of a fragment-format slot. Retained for back-compat; still validated, but emits a deprecation warning.",
+			"type": "array",
+			"items": {
+				"$ref": "#/$defs/fragment"
+			}
+		},
+		"contributions": {
+			"description": "DEPRECATED in favor of 'fills': 'provides' becomes a fill of a role-type slot. Retained for back-compat; still validated, but emits a deprecation warning.",
+			"type": "object",
+			"properties": {
+				"provides": {
+					"description": "Logical roles this mod provides. The host resolves a role to a providing addon and its logical-to-concrete fn map; xript never invokes the named fns.",
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/providerRole"
+					}
+				}
+			},
+			"additionalProperties": false
+		}
+	},
+	"$defs": {
+		"executionIntent": {
+			"description": "How a host should expect this surface to behave in time and where it may run. Advisory routing signal — never enforced, never a capability. Enforcement lives in `limits`.",
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"duration": {
+					"type": "string",
+					"enum": [
+						"instant",
+						"brief",
+						"long",
+						"unbounded"
+					],
+					"default": "brief",
+					"description": "How long a host should expect this to take."
+				},
+				"affinity": {
+					"type": "string",
+					"enum": [
+						"any",
+						"pinned",
+						"isolated"
+					],
+					"default": "any",
+					"description": "Where this may run. `any` is poolable. `pinned` must run on the runtime that owns the calling mod's state. `isolated` wants a runtime nobody else is using."
+				}
+			}
+		},
+		"fill": {
+			"description": "A single fill engaging a host slot. The inner shape is governed by the target slot's 'accepts' type and is not policed here — a fragment fill carries 'format'/'source', a code-renderer fill carries 'kind'/'entry', a role fill carries 'fns', an event/hook fill carries 'handler', a command fill carries 'id' and 'handler' plus optional 'title', 'description', 'icon', 'group', 'keywords', 'args', 'input', 'output', 'priority', and 'exposed'. A command fill may NOT carry 'capability': per-action authority lives on the export it names, as entry.exports[handler].capability. Validation checks only that the slot exists and the mod holds its capability; cross-validation against a host manifest checks the command shape.",
+			"type": "object"
+		},
+		"providerRole": {
+			"description": "A logical role the mod provides, mapping logical method names to concrete export/global fn names the mod registers.",
+			"type": "object",
+			"required": [
+				"role",
+				"fns"
+			],
+			"properties": {
+				"role": {
+					"description": "Logical role identifier. Lowercase-hyphen; shared vocabulary with discovery results.",
+					"type": "string",
+					"pattern": "^[a-z][a-z0-9-]*$",
+					"maxLength": 64
+				},
+				"fns": {
+					"description": "Logical method name to concrete export/global fn name. The host calls e.g. fns.query, never xript.",
+					"type": "object",
+					"additionalProperties": {
+						"type": "string"
+					},
+					"minProperties": 1
+				}
+			},
+			"additionalProperties": false
+		},
+		"entryBlock": {
+			"description": "The richer entry form: a primary script plus optional named exports the host can invoke.",
+			"type": "object",
+			"required": [
+				"script"
+			],
+			"properties": {
+				"script": {
+					"description": "The primary entry script path relative to the mod root.",
+					"type": "string"
+				},
+				"format": {
+					"description": "Execution format. 'script' (default) evaluates the entry as a classic script; 'module' evaluates it as an ES module whose top-level named exports become the mod's host-invokable exports.",
+					"type": "string",
+					"enum": [
+						"script",
+						"module"
+					],
+					"default": "script"
+				},
+				"exports": {
+					"description": "Named callables the entry script registers via xript.exports.register and the host invokes by name.",
+					"type": "object",
+					"propertyNames": {
+						"pattern": "^[A-Za-z_$][A-Za-z0-9_$]*$",
+						"description": "Export names are JavaScript identifiers: in module mode a matching top-level named export satisfies each one, and a named export cannot be a kebab name."
+					},
+					"additionalProperties": {
+						"$ref": "#/$defs/exportDef"
+					}
+				}
+			},
+			"additionalProperties": false
+		},
+		"exportDef": {
+			"description": "A host-invokable export declared by the mod. In script mode, the entry registers a matching function via xript.exports.register; in module mode, a matching top-level named export satisfies this automatically.",
+			"type": "object",
+			"required": [
+				"description"
+			],
+			"properties": {
+				"description": {
+					"description": "What this export does. Shown in generated docs and editor tooltips.",
+					"type": "string"
+				},
+				"params": {
+					"description": "The export's parameters, in order.",
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/parameter"
+					}
+				},
+				"returns": {
+					"description": "The return type. Omit for void exports.",
+					"$ref": "#/$defs/typeRef"
+				},
+				"capability": {
+					"description": "Capability required to invoke this export. If omitted, the export is always invokable. Must be one of the mod's declared capabilities.",
+					"type": "string"
+				},
+				"execution": {
+					"$ref": "#/$defs/executionIntent",
+					"description": "The cost of invoking this export. The host slot this export fills makes its own claim; the two are widened, and the more expensive claim wins. Advisory: a host routes on it, nothing enforces it."
+				}
+			},
+			"additionalProperties": false
+		},
+		"typeRef": {
+			"description": "A reference to a type. Can be a primitive, a custom type name, an array type, or a union.",
+			"oneOf": [
+				{
+					"type": "string"
+				},
+				{
+					"type": "object",
+					"properties": {
+						"array": {
+							"$ref": "#/$defs/typeRef"
+						},
+						"union": {
+							"type": "array",
+							"items": {
+								"$ref": "#/$defs/typeRef"
+							},
+							"minItems": 2
+						},
+						"map": {
+							"$ref": "#/$defs/typeRef"
+						},
+						"optional": {
+							"$ref": "#/$defs/typeRef"
+						}
+					},
+					"oneOf": [
+						{
+							"required": [
+								"array"
+							]
+						},
+						{
+							"required": [
+								"union"
+							]
+						},
+						{
+							"required": [
+								"map"
+							]
+						},
+						{
+							"required": [
+								"optional"
+							]
+						}
+					],
+					"additionalProperties": false
+				}
+			]
+		},
+		"parameter": {
+			"description": "A parameter with a name, type, and optional description.",
+			"type": "object",
+			"required": [
+				"name",
+				"type"
+			],
+			"properties": {
+				"name": {
+					"type": "string"
+				},
+				"type": {
+					"$ref": "#/$defs/typeRef"
+				},
+				"description": {
+					"type": "string"
+				},
+				"default": {},
+				"required": {
+					"type": "boolean",
+					"default": true
+				}
+			},
+			"additionalProperties": false
+		},
+		"fragment": {
+			"description": "A UI fragment that targets a host-declared slot.",
+			"type": "object",
+			"required": [
+				"id",
+				"slot",
+				"format",
+				"source"
+			],
+			"properties": {
+				"id": {
+					"description": "Unique fragment identifier within this mod.",
+					"type": "string",
+					"pattern": "^[a-z][a-z0-9-]*$"
+				},
+				"slot": {
+					"description": "Target slot ID from the host application's manifest.",
+					"type": "string"
+				},
+				"format": {
+					"description": "MIME type of the fragment content.",
+					"type": "string",
+					"examples": [
+						"text/html"
+					]
+				},
+				"source": {
+					"description": "Fragment content: a file path relative to the mod root, or inline markup when 'inline' is true.",
+					"type": "string"
+				},
+				"inline": {
+					"description": "When true, 'source' contains inline markup rather than a file path.",
+					"type": "boolean",
+					"default": false
+				},
+				"interpolate": {
+					"description": "When true, text nodes in this fill's source are parsed for '{{ expression }}' interpolation sites. Off by default so a fragment published before the mode existed keeps its meaning: '{{' in prose or a code sample stays literal. Interpolation applies to text nodes only; attribute values are never segmented, because a prop's sink validates a whole value and cannot judge one assembled from pieces.",
+					"type": "boolean",
+					"default": false
+				},
+				"bindings": {
+					"description": "Data bindings that wire host state to data-bind attributes in the fragment.",
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/fragmentBinding"
+					}
+				},
+				"handlers": {
+					"description": "Event handlers that wire events on this fill to sandboxed script functions. Each entry pairs a node reference, an event name, and a handler function name.",
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/fragmentHandler"
+					}
+				},
+				"events": {
+					"description": "DEPRECATED alias for 'handlers': the array holds event HANDLERS, not events, and was renamed accordingly. Still accepted; if both are present, 'handlers' wins. Migrate by renaming this property to 'handlers'.",
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/fragmentHandler"
+					}
+				},
+				"priority": {
+					"description": "Ordering priority within the target slot. Higher values render earlier. Ties broken alphabetically by fragment ID.",
+					"type": "integer",
+					"default": 0
+				}
+			},
+			"additionalProperties": false
+		},
+		"fragmentBinding": {
+			"description": "A named data binding that resolves a host data path to a local name for use in data-bind attributes.",
+			"type": "object",
+			"required": [
+				"name",
+				"path"
+			],
+			"properties": {
+				"name": {
+					"description": "Local binding name referenced by data-bind attributes in the fragment markup.",
+					"type": "string"
+				},
+				"path": {
+					"description": "Dot-separated path to resolve against the host's data layer (e.g. 'player.health.val').",
+					"type": "string"
+				},
+				"type": {
+					"description": "Optional value type for this binding, so tooling can type-check the expressions that read it. A primitive name ('string', 'int', 'float', 'bool', 'array', 'object') or the name of a type the host manifest declares. Omitted means unknown, and the type-aware expression checks stay silent rather than guessing a shape.",
+					"type": "string"
+				}
+			},
+			"additionalProperties": false
+		},
+		"fragmentHandler": {
+			"description": "A declarative event-to-handler mapping. The runtime resolves the node reference against the mounted fragment and delegates matching events to the named handler in the mod's sandboxed script.",
+			"type": "object",
+			"required": [
+				"selector",
+				"on",
+				"handler"
+			],
+			"properties": {
+				"selector": {
+					"description": "A node reference into the fragment. A string matching '^#[A-Za-z][A-Za-z0-9_.:-]*$' is an ID reference: it resolves to the node whose 'id' prop equals that name, in any vocabulary. Any other string is a CSS selector, which is meaningful only for HTML-vocabulary formats and is ignored on other formats.",
+					"type": "string"
+				},
+				"on": {
+					"description": "Event name to listen for. HTML vocabularies use DOM event names ('click', 'input', 'change'); other vocabularies use the event names their renderer defines.",
+					"type": "string"
+				},
+				"handler": {
+					"description": "Name of a function in the mod's sandboxed script to call when the event fires.",
+					"type": "string"
+				}
+			},
+			"additionalProperties": false
+		}
+	}
+}

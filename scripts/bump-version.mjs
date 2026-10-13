@@ -34,6 +34,7 @@ const internalDeps = {
 
 const rustCrates = [
 	"crates/xript-expr/Cargo.toml",
+	"crates/xript-tree/Cargo.toml",
 	"runtimes/rust/Cargo.toml",
 	"renderers/ratatui/Cargo.toml",
 	"tools/wiz/Cargo.toml",
@@ -86,7 +87,7 @@ for (const rel of rustCrates) {
 		`$1"${version}"`
 	);
 	toml = toml.replace(
-		/^(xript-expr\s*=\s*\{.*?version\s*=\s*)"[^"]*"/gm,
+		/^(xript-(?:expr|tree)\s*=\s*\{.*?version\s*=\s*)"[^"]*"/gm,
 		`$1"${version}"`
 	);
 	writeFileSync(abs, toml);

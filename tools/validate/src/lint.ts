@@ -93,6 +93,7 @@ export interface LintOptions {
 const schemeErrorCodes: ReadonlySet<string> = new Set(["prohibited-scheme", "invalid-schemes"]);
 
 import { analyzeExpressions, type ExpressionType } from "./expressions.js";
+import { fragmentFillFindings } from "./fills.js";
 import { gateCapabilities } from "./manifest-util.js";
 import {
 	compareDuration,
@@ -101,6 +102,7 @@ import {
 	widenExecutionIntent,
 } from "./execution.js";
 import { satisfies } from "./capabilities.js";
+import { nonCanonicalSpellings, parseTypeRef, resolveTypeWords, returnTypeRef, typeRefNames, typeRefToTypeScript, type TypeNode } from "./type-ref.js";
 import {
 	commandDefects,
 	commandFillViews,
@@ -193,35 +195,36 @@ function declaredSatisfiesRef(declared: Set<string>, ref: string): boolean {
 	return false;
 }
 
-/** Type names a `typeRef` bottoms out in, ignoring primitives, arrays and unions. */
-const TYPE_PRIMITIVES = new Set(["string", "number", "boolean", "void", "null"]);
+interface TypeRefSite {
+	ref: unknown;
+	where: string;
+}
 
-function customTypeNames(ref: unknown, out: Set<string>): void {
-	if (typeof ref === "string") {
-		let name = ref;
-		while (name.endsWith("[]")) name = name.slice(0, -2);
-		if (name && !TYPE_PRIMITIVES.has(name)) out.add(name);
-		return;
-	}
-	if (typeof ref !== "object" || ref === null) return;
-	const r = ref as { array?: unknown; union?: unknown[] };
-	if (r.array !== undefined) customTypeNames(r.array, out);
-	if (Array.isArray(r.union)) for (const member of r.union) customTypeNames(member, out);
+interface ParamSite {
+	param: Record<string, unknown>;
+	where: string;
 }
 
 /**
- * Every custom type name the host manifest references, with where it was referenced from.
- * Covers binding params and returns (through nested namespaces), hook params, event payloads,
- * and the fields of a declared type — a type may reference another.
+ * Every `typeRef` the host manifest declares, with where it was declared. Covers binding params
+ * and returns (through nested namespaces), hook params, event payloads, and the fields of a
+ * declared type, since a type may reference another.
  */
-function typeReferences(manifest: HostManifest): Array<{ name: string; ref: string; where: string }> {
-	const found: Array<{ name: string; ref: string; where: string }> = [];
+function typeRefSites(manifest: HostManifest): { refs: TypeRefSite[]; params: ParamSite[] } {
+	const refs: TypeRefSite[] = [];
+	const params: ParamSite[] = [];
 	const add = (ref: unknown, where: string): void => {
-		if (ref === undefined) return;
-		const names = new Set<string>();
-		customTypeNames(ref, names);
-		const printed = typeof ref === "string" ? ref : JSON.stringify(ref);
-		for (const name of names) found.push({ name, ref: printed, where });
+		if (ref !== undefined) refs.push({ ref, where });
+	};
+	const addParams = (list: unknown, owner: string): void => {
+		if (!Array.isArray(list)) return;
+		for (const param of list) {
+			if (typeof param !== "object" || param === null) continue;
+			const p = param as Record<string, unknown>;
+			const where = `${owner} parameter "${typeof p.name === "string" ? p.name : "?"}"`;
+			add(p.type, where);
+			params.push({ param: p, where });
+		}
 	};
 
 	const walk = (bindings: unknown, prefix: string): void => {
@@ -234,22 +237,14 @@ function typeReferences(manifest: HostManifest): Array<{ name: string; ref: stri
 				walk(d.members, qualified);
 				continue;
 			}
-			for (const param of d.params ?? []) {
-				const p = param as { name?: string; type?: unknown };
-				add(p?.type, `binding "${qualified}" parameter "${p?.name ?? "?"}"`);
-			}
-			add(d.returns, `binding "${qualified}" return`);
+			addParams(d.params, `binding "${qualified}"`);
+			add(returnTypeRef(d.returns), `binding "${qualified}" return`);
 		}
 	};
 	walk((manifest as { bindings?: unknown }).bindings, "");
 
 	const hooks = (manifest as { hooks?: Record<string, { params?: unknown[] }> }).hooks ?? {};
-	for (const [hookName, def] of Object.entries(hooks)) {
-		for (const param of def?.params ?? []) {
-			const p = param as { name?: string; type?: unknown };
-			add(p?.type, `hook "${hookName}" parameter "${p?.name ?? "?"}"`);
-		}
-	}
+	for (const [hookName, def] of Object.entries(hooks)) addParams(def?.params, `hook "${hookName}"`);
 
 	for (const event of (manifest as { events?: Array<{ id?: string; payload?: unknown }> }).events ?? []) {
 		add(event?.payload, `event "${event?.id ?? "?"}" payload`);
@@ -262,6 +257,108 @@ function typeReferences(manifest: HostManifest): Array<{ name: string; ref: stri
 		}
 	}
 
+	return { refs, params };
+}
+
+/** Every custom type name the host manifest references, with where it was referenced from. */
+function typeReferences(manifest: HostManifest): Array<{ name: string; ref: string; where: string }> {
+	const found: Array<{ name: string; ref: string; where: string }> = [];
+	for (const { ref, where } of typeRefSites(manifest).refs) {
+		const printed = typeof ref === "string" ? ref : JSON.stringify(ref);
+		for (const name of typeRefNames(ref)) found.push({ name, ref: printed, where });
+	}
+	return found;
+}
+
+/**
+ * Accepted-but-loose spellings: type words (`int`, `bool`, `array`, ...), the `T?` suffix, and
+ * the `optional` alias on a parameter. Every one parses and generates; these findings point at
+ * the one spelling the tools document, so manifests across a project read alike.
+ */
+function spellingFindings(manifest: HostManifest): Finding[] {
+	const findings: Finding[] = [];
+	const { refs, params } = typeRefSites(manifest);
+	for (const { ref, where } of refs) {
+		const seen = new Set<string>();
+		for (const spelling of nonCanonicalSpellings(ref)) {
+			if (seen.has(spelling.word)) continue;
+			seen.add(spelling.word);
+			const rendered = typeRefToTypeScript(ref);
+			findings.push({
+				severity: "info",
+				code: spelling.loose ? "loose-type-word" : "noncanonical-type-spelling",
+				message: spelling.loose
+					? `${where} uses the type word "${spelling.word}", which generates as \`${rendered}\` and leaves its shape unstated`
+					: `${where} spells a type as "${spelling.word}"; it generates as \`${rendered}\``,
+				suggestion: spelling.loose
+					? `Name the shape precisely with ${spelling.canonical}, so generated types and docs carry it.`
+					: `Write \`${spelling.canonical}\`, the canonical spelling.`,
+			});
+		}
+	}
+	for (const { param, where } of params) {
+		if (param.optional === undefined) continue;
+		findings.push({
+			severity: "info",
+			code: "param-optional-alias",
+			message: `${where} uses \`optional\`, an accepted alias of \`required\``,
+			suggestion: `Write \`"required": ${param.optional === true ? "false" : "true"}\` instead, the canonical spelling.`,
+		});
+	}
+	return findings;
+}
+
+function containsFunctionType(ref: unknown): boolean {
+	if (ref === undefined) return false;
+	const walk = (node: TypeNode): boolean => {
+		switch (node.kind) {
+			case "function":
+			case "signature":
+				return true;
+			case "array":
+				return walk(node.element);
+			case "map":
+				return walk(node.value);
+			case "optional":
+				return walk(node.inner);
+			case "union":
+				return node.members.some(walk);
+			default:
+				return false;
+		}
+	};
+	return walk(resolveTypeWords(parseTypeRef(ref)));
+}
+
+/** Where the host manifest declares a function type somewhere no callback can reach. */
+function functionTypesOutsideParams(manifest: HostManifest): string[] {
+	const found: string[] = [];
+	const walk = (bindings: unknown, prefix: string): void => {
+		if (typeof bindings !== "object" || bindings === null) return;
+		for (const [name, def] of Object.entries(bindings as Record<string, unknown>)) {
+			if (typeof def !== "object" || def === null) continue;
+			const qualified = prefix ? `${prefix}.${name}` : name;
+			const d = def as { members?: unknown; returns?: unknown };
+			if (d.members !== undefined) {
+				walk(d.members, qualified);
+				continue;
+			}
+			if (containsFunctionType(returnTypeRef(d.returns))) found.push(`binding "${qualified}" return`);
+		}
+	};
+	walk((manifest as { bindings?: unknown }).bindings, "");
+
+	const hooks = (manifest as { hooks?: Record<string, { params?: unknown[] }> }).hooks ?? {};
+	for (const [hookName, def] of Object.entries(hooks)) {
+		for (const param of def?.params ?? []) {
+			const p = param as { name?: string; type?: unknown };
+			if (containsFunctionType(p?.type)) found.push(`hook "${hookName}" parameter "${p?.name ?? "?"}"`);
+		}
+	}
+
+	for (const event of (manifest as { events?: Array<{ id?: string; payload?: unknown }> }).events ?? []) {
+		if (containsFunctionType(event?.payload)) found.push(`event "${event?.id ?? "?"}" payload`);
+	}
 	return found;
 }
 
@@ -389,7 +486,20 @@ export function lintManifests(host: unknown, mods: unknown[] = [], options: Lint
 			severity: "error",
 			code: "undeclared-type",
 			message: `${where} references type "${name}", which the manifest does not declare`,
-			suggestion: `Declare "${name}" under \`types\`, or use a primitive (\`string\`, \`number\`, \`boolean\`, \`void\`, \`null\`), an array shorthand (\`${name}[]\`), or a \`{ "union": [...] }\`. \`typegen\` emits this reference verbatim, so an undeclared name becomes a declaration file that will not compile.${ref === name ? "" : ` (from \`${ref}\`)`}`,
+			suggestion: `Declare "${name}" under \`types\`, or use a primitive (\`string\`, \`number\`, \`boolean\`, \`void\`, \`null\`, \`undefined\`, \`any\`, \`unknown\`), an array shorthand (\`${name}[]\`), or a \`{ "union": [...] }\`. \`typegen\` emits this reference verbatim, so an undeclared name becomes a declaration file that will not compile.${ref === name ? "" : ` (from \`${ref}\`)`}`,
+		});
+	}
+
+	// A script function crosses the boundary only as an argument to a binding call, where it
+	// arrives as a call-scoped callback. Anywhere else (a binding's return value, a hook's
+	// arguments, an event payload) it is marshalled as data and arrives as nothing, so a
+	// declaration promising one there promises something no runtime delivers.
+	for (const where of functionTypesOutsideParams(hostManifest)) {
+		findings.push({
+			severity: "warn",
+			code: "callback-does-not-cross",
+			message: `${where} declares a function, but only a function passed into a binding call crosses the sandbox boundary`,
+			suggestion: "A function in a return value, hook argument, or event payload arrives as nothing. Pass data there instead, or take the callback as a binding parameter.",
 		});
 	}
 
@@ -513,6 +623,8 @@ export function lintManifests(host: unknown, mods: unknown[] = [], options: Lint
 		}
 	}
 
+	for (const finding of spellingFindings(hostManifest)) findings.push(finding);
+
 	for (const finding of commandFindings(hostManifest, modManifests)) findings.push(finding);
 
 	for (const finding of formatFindings(hostManifest, inheritedFormats, inheritedVocabularies)) {
@@ -520,6 +632,8 @@ export function lintManifests(host: unknown, mods: unknown[] = [], options: Lint
 	}
 
 	for (const finding of escalationFindings(declaredCapabilities)) findings.push(finding);
+
+	for (const finding of fragmentFillFindings(mods, options.fragmentSources)) findings.push(finding);
 
 	for (const finding of executionFindings(host, mods)) findings.push(finding);
 

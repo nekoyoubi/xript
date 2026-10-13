@@ -2,7 +2,7 @@
 
 use super::html::{html_to_tree, StrippedAttribute};
 use super::profiles::{speaks_html, FormatProfile, FragmentSyntax};
-use super::tree::{jsml_to_tree, tree_to_html, FragmentTree, OrderedJson};
+use super::tree::{jsml_to_tree, tree_to_html, tree_to_html_for, FragmentTree, OrderedJson};
 use super::vocabulary::{sanitize_tree, FragmentDiagnostic, VocabularyOptions};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,7 +90,7 @@ fn is_custom_element_name(name: &str) -> bool {
 /// inert markup rather than a component. The scan spans every vocabulary in
 /// scope, not just the format's inline block, so a referenced vocabulary cannot
 /// smuggle a bare `<Panel>` into projected markup.
-fn projects_to_html(profile: &FormatProfile) -> bool {
+pub fn projects_to_html(profile: &FormatProfile) -> bool {
     if profile.builtin {
         return true;
     }
@@ -118,7 +118,7 @@ pub fn sanitize_fragment(
         let nodes = parse_jsml_source(source, &profile.id)?;
         let parsed = sanitize_tree(&jsml_to_tree(&nodes), profile, options);
         return Ok(SanitizedFragment {
-            html: if projects_to_html(profile) { tree_to_html(&parsed.tree) } else { String::new() },
+            html: if projects_to_html(profile) { tree_to_html_for(&parsed.tree, profile) } else { String::new() },
             content_type: if profile.builtin {
                 FragmentContentType::Html
             } else {
@@ -135,7 +135,7 @@ pub fn sanitize_fragment(
 
     if !profile.builtin {
         let html =
-            if projects_to_html(profile) { tree_to_html(&parsed.tree) } else { String::new() };
+            if projects_to_html(profile) { tree_to_html_for(&parsed.tree, profile) } else { String::new() };
         return Ok(SanitizedFragment {
             tree: parsed.tree,
             html,

@@ -26,6 +26,7 @@ public static class FragmentOpNames
     public const string ReplaceChildren = "replaceChildren";
     public const string SetProp = "setProp";
     public const string SetAttr = "setAttr";
+    public const string RemoveAttr = "removeAttr";
     public const string AddClass = "addClass";
     public const string RemoveClass = "removeClass";
 
@@ -93,6 +94,7 @@ public static class FragmentOps
 
                 case FragmentOpNames.SetProp:
                 case FragmentOpNames.SetAttr:
+                case FragmentOpNames.RemoveAttr:
                 {
                     var prop = raw.Prop ?? raw.Attr;
                     if (string.IsNullOrEmpty(prop))
@@ -100,6 +102,31 @@ public static class FragmentOps
                         report?.Invoke(new FragmentDiagnostic(
                             DiagnosticCodes.OpUnknownProp, DiagnosticSeverity.Warning, path, raw.Selector,
                             $"op \"{raw.Op}\" needs a prop name"));
+                        break;
+                    }
+
+                    var isAttribute = raw.Op != FragmentOpNames.SetProp || LandsOnHtmlAttribute(profile, prop);
+                    var removes = raw.Op == FragmentOpNames.RemoveAttr
+                        || (isAttribute && raw.Value is null or PropValue.Nul or PropValue.Bool { Value: false });
+                    if (removes)
+                    {
+                        var refusal = CheckPropName(profile, prop);
+                        if (refusal is not null)
+                        {
+                            report?.Invoke(new FragmentDiagnostic(
+                                refusal.Code!, DiagnosticSeverity.Warning, path, raw.Selector, refusal.Message!, prop));
+                            break;
+                        }
+                        result.Add(new FragmentOp(FragmentOpNames.RemoveAttr, raw.Selector, target, null, prop, prop));
+                        break;
+                    }
+
+                    if (isAttribute && raw.Value is PropValue.Obj or PropValue.Arr)
+                    {
+                        report?.Invoke(new FragmentDiagnostic(
+                            DiagnosticCodes.OpInvalidValue, DiagnosticSeverity.Warning, path, raw.Selector,
+                            $"op \"{raw.Op}\" on \"{raw.Selector}\" cannot write a non-primitive value to attribute \"{prop}\"",
+                            prop));
                         break;
                     }
 
@@ -118,8 +145,15 @@ public static class FragmentOps
                 }
 
                 case FragmentOpNames.ReplaceChildren:
+                    if (raw.Value is not (PropValue.Str or PropValue.Arr))
+                    {
+                        report?.Invoke(new FragmentDiagnostic(
+                            DiagnosticCodes.OpInvalidValue, DiagnosticSeverity.Warning, path, raw.Selector,
+                            $"op \"replaceChildren\" on \"{raw.Selector}\" needs a string or a list of children"));
+                        break;
+                    }
                     result.Add(new FragmentOp(raw.Op, raw.Selector, target,
-                        SanitizeOpChildren(raw.Value, profile)));
+                        SanitizeOpChildren(raw.Value, profile, path, report)));
                     break;
 
                 default:
@@ -196,6 +230,36 @@ public static class FragmentOps
         return new Routed(routed, null, null);
     }
 
+    private static bool IsHtmlOnly(FormatProfile profile) =>
+        profile.Scope.Count == 1 && profile.Scope[0] is ResolvedVocabulary.BuiltinHtml;
+
+    private static bool DeclaredByScope(FormatProfile profile, string prop) =>
+        profile.ScopeNodeOrder.Any(entry =>
+            ((ResolvedVocabulary.Declared)profile.Scope[entry.Item1]).Nodes[entry.Item2].Props.ContainsKey(prop));
+
+    /// <summary>
+    /// Whether a prop write resolves to an HTML attribute rather than to a typed prop a
+    /// declared vocabulary owns. An attribute holds a string, so it has no <c>false</c> to
+    /// hold: <c>false</c> and <c>null</c> there mean "absent", the way a boolean attribute
+    /// does in HTML.
+    /// </summary>
+    private static bool LandsOnHtmlAttribute(FormatProfile profile, string prop) =>
+        IsHtmlOnly(profile) || (profile.SpeaksHtml && !DeclaredByScope(profile, prop));
+
+    /// <summary>The name half of <see cref="RouteOpValue"/>: whether an op may address this prop at all.</summary>
+    private static Routed? CheckPropName(FormatProfile profile, string prop)
+    {
+        var lower = prop.ToLowerInvariant();
+        if (IsHtmlOnly(profile))
+            return HtmlRules.IsAllowedAttribute(lower)
+                ? null
+                : new Routed(null, DiagnosticCodes.UnsafeProp, $"prop \"{prop}\" is not settable on an HTML node");
+        if (DeclaredByScope(profile, prop) || (profile.SpeaksHtml && HtmlRules.IsAllowedAttribute(lower)))
+            return null;
+        return new Routed(null, DiagnosticCodes.OpUnknownProp,
+            $"prop \"{prop}\" is not declared by any node of format \"{profile.Id}\"");
+    }
+
     private static Sink HtmlSinkFor(string lowerProp) => lowerProp switch
     {
         "href" => Sink.Uri,
@@ -222,25 +286,60 @@ public static class FragmentOps
     /// carries nodes the built-in HTML vocabulary knows nothing about, so sanitizing its
     /// markup against built-in HTML alone would strip exactly the custom elements the format
     /// exists to declare. A J5ML node list takes the same route through the tree sanitizer.
+    /// The value keeps the shape the mod gave it: a list of strings under an HTML-speaking
+    /// format is a list of markup strings, each sanitized on its own and the list kept, and
+    /// the empty list is an explicit clear. Any other list is a J5ML node list.
     /// </summary>
-    private static PropValue? SanitizeOpChildren(PropValue? value, FormatProfile profile)
+    /// <remarks>
+    /// Every finding the nested pass makes is forwarded through <paramref name="report"/> with
+    /// its path prefixed by the op's, and for a markup list by the item's index too (<c>/0</c>
+    /// op, <c>/2</c> item, <c>/1</c> node), so a node or prop the markup loses is reported
+    /// rather than dropped silently.
+    /// </remarks>
+    private static PropValue? SanitizeOpChildren(
+        PropValue? value, FormatProfile profile, string opPath, Action<FragmentDiagnostic>? report)
     {
-        if (value is PropValue.Str str)
+        if (value is PropValue.Str str) return PropValue.Of(SanitizeOpMarkup(str.Value, profile, opPath, report));
+
+        if (value is PropValue.Arr markupList && profile.SpeaksHtml && markupList.Items.All(item => item is PropValue.Str))
         {
-            if (!profile.SpeaksHtml) return str;
-            if (profile.Builtin) return PropValue.Of(HtmlReader.Sanitize(str.Value));
-            var parsed = HtmlReader.ToTree(str.Value, profile);
-            var sanitizedHtml = VocabularySanitizer.Sanitize(parsed, profile);
-            return PropValue.Of(FragmentTree.ToHtml(sanitizedHtml.Tree));
+            return new PropValue.Arr(markupList.Items
+                .Select((item, index) => PropValue.Of(
+                    SanitizeOpMarkup(((PropValue.Str)item).Value, profile, $"{opPath}/{index}", report)))
+                .ToList());
         }
 
         if (value is PropValue.Arr array)
         {
             var nodes = FragmentTree.FromJsml(array.Items.Select(item => item.ToJson()));
             var sanitized = VocabularySanitizer.Sanitize(nodes, profile);
+            ForwardDiagnostics(sanitized.Diagnostics, opPath, report);
             return PropValue.FromJson(FragmentTree.ToJsml(sanitized.Tree));
         }
 
         return value;
+    }
+
+    /// <summary>
+    /// Sanitizes one markup string. A built-in format's markup is read as <c>text/html</c>,
+    /// which is what the string sanitizer has always done; a declared format's markup is read
+    /// against its own scope so its custom elements survive.
+    /// </summary>
+    private static string SanitizeOpMarkup(
+        string source, FormatProfile profile, string pathPrefix, Action<FragmentDiagnostic>? report)
+    {
+        if (!profile.SpeaksHtml) return source;
+        var markupProfile = profile.Builtin ? FormatProfiles.Builtins["text/html"] : profile;
+        var sanitized = VocabularySanitizer.Sanitize(HtmlReader.ToTree(source, markupProfile), markupProfile);
+        ForwardDiagnostics(sanitized.Diagnostics, pathPrefix, report);
+        return FragmentTree.ToHtml(sanitized.Tree, markupProfile);
+    }
+
+    private static void ForwardDiagnostics(
+        IEnumerable<FragmentDiagnostic> diagnostics, string pathPrefix, Action<FragmentDiagnostic>? report)
+    {
+        if (report is null) return;
+        foreach (var diagnostic in diagnostics)
+            report(diagnostic with { Path = pathPrefix + diagnostic.Path });
     }
 }

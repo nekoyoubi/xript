@@ -99,7 +99,23 @@
           "value": "<p>hi</p>"
         }
       ],
-      "diagnostics": []
+      "diagnostics": [
+        {
+          "code": "unsafe-prop",
+          "severity": "warning",
+          "node": "p",
+          "prop": "onclick",
+          "message": "stripped attribute \"onclick\" on <p>",
+          "path": "/0/0"
+        },
+        {
+          "code": "stripped-node",
+          "severity": "warning",
+          "node": "script",
+          "message": "stripped dangerous element: <script>",
+          "path": "/0/1"
+        }
+      ]
     }
   },
   {
@@ -592,7 +608,23 @@
           ]
         }
       ],
-      "diagnostics": []
+      "diagnostics": [
+        {
+          "code": "unknown-prop",
+          "severity": "warning",
+          "node": "Gauge",
+          "prop": "bogus",
+          "message": "prop \"bogus\" is not declared on node \"Gauge\"",
+          "path": "/0/0"
+        },
+        {
+          "code": "unknown-node",
+          "severity": "error",
+          "node": "Nope",
+          "message": "node \"Nope\" is not declared by format \"application/x-ratatui+json\"",
+          "path": "/0/1"
+        }
+      ]
     }
   },
   {
@@ -916,7 +948,859 @@
           "value": "<div class=\"c\"><Widget label=\"w\"></Widget></div>"
         }
       ],
+      "diagnostics": [
+        {
+          "code": "stripped-node",
+          "severity": "warning",
+          "node": "script",
+          "message": "stripped dangerous element: <script>",
+          "path": "/0/1"
+        }
+      ]
+    }
+  },
+  {
+    "description": "removeAttr removes an allowed html attribute",
+    "format": "text/html",
+    "ops": [
+      {
+        "op": "removeAttr",
+        "selector": "#go",
+        "attr": "disabled",
+        "prop": "disabled"
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "removeAttr",
+          "selector": "#go",
+          "target": {
+            "by": "id",
+            "id": "go"
+          },
+          "prop": "disabled",
+          "attr": "disabled"
+        }
+      ],
       "diagnostics": []
+    }
+  },
+  {
+    "description": "removeAttr refuses an attribute html never allows",
+    "format": "text/html",
+    "ops": [
+      {
+        "op": "removeAttr",
+        "selector": "#go",
+        "attr": "onclick",
+        "prop": "onclick"
+      }
+    ],
+    "expected": {
+      "ops": [],
+      "diagnostics": [
+        {
+          "code": "unsafe-prop",
+          "severity": "warning",
+          "node": "#go",
+          "prop": "onclick",
+          "message": "prop \"onclick\" is not settable on an HTML node",
+          "path": "/0"
+        }
+      ]
+    }
+  },
+  {
+    "description": "removeAttr without a name is refused",
+    "format": "text/html",
+    "ops": [
+      {
+        "op": "removeAttr",
+        "selector": "#go"
+      }
+    ],
+    "expected": {
+      "ops": [],
+      "diagnostics": [
+        {
+          "code": "op-unknown-prop",
+          "severity": "warning",
+          "node": "#go",
+          "message": "op \"removeAttr\" needs a prop name",
+          "path": "/0"
+        }
+      ]
+    }
+  },
+  {
+    "description": "setAttr false finalizes as removeAttr rather than writing the string false",
+    "format": "text/html",
+    "ops": [
+      {
+        "op": "setAttr",
+        "selector": "#go",
+        "attr": "disabled",
+        "prop": "disabled",
+        "value": false
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "removeAttr",
+          "selector": "#go",
+          "target": {
+            "by": "id",
+            "id": "go"
+          },
+          "prop": "disabled",
+          "attr": "disabled"
+        }
+      ],
+      "diagnostics": []
+    }
+  },
+  {
+    "description": "setAttr null finalizes as removeAttr",
+    "format": "text/html",
+    "ops": [
+      {
+        "op": "setAttr",
+        "selector": "#go",
+        "attr": "title",
+        "prop": "title",
+        "value": null
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "removeAttr",
+          "selector": "#go",
+          "target": {
+            "by": "id",
+            "id": "go"
+          },
+          "prop": "title",
+          "attr": "title"
+        }
+      ],
+      "diagnostics": []
+    }
+  },
+  {
+    "description": "setAttr true and the string false are written, not removed",
+    "format": "text/html",
+    "ops": [
+      {
+        "op": "setAttr",
+        "selector": "#go",
+        "attr": "disabled",
+        "prop": "disabled",
+        "value": true
+      },
+      {
+        "op": "setAttr",
+        "selector": "#go",
+        "attr": "aria-pressed",
+        "prop": "aria-pressed",
+        "value": "false"
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "setAttr",
+          "selector": "#go",
+          "target": {
+            "by": "id",
+            "id": "go"
+          },
+          "prop": "disabled",
+          "attr": "disabled",
+          "value": true
+        },
+        {
+          "op": "setAttr",
+          "selector": "#go",
+          "target": {
+            "by": "id",
+            "id": "go"
+          },
+          "prop": "aria-pressed",
+          "attr": "aria-pressed",
+          "value": "false"
+        }
+      ],
+      "diagnostics": []
+    }
+  },
+  {
+    "description": "setProp false on an html attribute finalizes as removeAttr",
+    "format": "text/html",
+    "ops": [
+      {
+        "op": "setProp",
+        "selector": "#go",
+        "prop": "hidden",
+        "value": false
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "removeAttr",
+          "selector": "#go",
+          "target": {
+            "by": "id",
+            "id": "go"
+          },
+          "prop": "hidden",
+          "attr": "hidden"
+        }
+      ],
+      "diagnostics": []
+    }
+  },
+  {
+    "description": "setAttr refuses an object value at an attribute sink",
+    "format": "text/html",
+    "ops": [
+      {
+        "op": "setAttr",
+        "selector": "#go",
+        "attr": "title",
+        "prop": "title",
+        "value": {
+          "label": "x"
+        }
+      }
+    ],
+    "expected": {
+      "ops": [],
+      "diagnostics": [
+        {
+          "code": "op-invalid-value",
+          "severity": "warning",
+          "node": "#go",
+          "prop": "title",
+          "message": "op \"setAttr\" on \"#go\" cannot write a non-primitive value to attribute \"title\"",
+          "path": "/0"
+        }
+      ]
+    }
+  },
+  {
+    "description": "setProp refuses an array value at an html attribute sink",
+    "format": "text/html",
+    "ops": [
+      {
+        "op": "setProp",
+        "selector": "#go",
+        "prop": "class",
+        "value": [
+          "a",
+          "b"
+        ]
+      }
+    ],
+    "expected": {
+      "ops": [],
+      "diagnostics": [
+        {
+          "code": "op-invalid-value",
+          "severity": "warning",
+          "node": "#go",
+          "prop": "class",
+          "message": "op \"setProp\" on \"#go\" cannot write a non-primitive value to attribute \"class\"",
+          "path": "/0"
+        }
+      ]
+    }
+  },
+  {
+    "description": "setProp false on a declared typed prop stays a typed false",
+    "format": "application/x-ratatui+json",
+    "formats": {
+      "application/x-ratatui+json": {
+        "syntax": "jsml",
+        "nodes": {
+          "Block": {
+            "props": {
+              "title": {
+                "type": "string"
+              },
+              "link": {
+                "type": "string",
+                "sink": "uri"
+              }
+            },
+            "children": "any"
+          },
+          "Gauge": {
+            "props": {
+              "ratio": {
+                "type": "number"
+              },
+              "style": {
+                "type": "string",
+                "sink": "css"
+              }
+            },
+            "children": "none",
+            "bindTo": "ratio"
+          }
+        }
+      }
+    },
+    "ops": [
+      {
+        "op": "setProp",
+        "selector": "#b",
+        "prop": "title",
+        "value": false
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "setProp",
+          "selector": "#b",
+          "target": {
+            "by": "id",
+            "id": "b"
+          },
+          "prop": "title",
+          "value": false
+        }
+      ],
+      "diagnostics": []
+    }
+  },
+  {
+    "description": "setProp keeps an object value on a declared typed prop",
+    "format": "application/x-ratatui+json",
+    "formats": {
+      "application/x-ratatui+json": {
+        "syntax": "jsml",
+        "nodes": {
+          "Block": {
+            "props": {
+              "title": {
+                "type": "string"
+              },
+              "link": {
+                "type": "string",
+                "sink": "uri"
+              }
+            },
+            "children": "any"
+          },
+          "Gauge": {
+            "props": {
+              "ratio": {
+                "type": "number"
+              },
+              "style": {
+                "type": "string",
+                "sink": "css"
+              }
+            },
+            "children": "none",
+            "bindTo": "ratio"
+          }
+        }
+      }
+    },
+    "ops": [
+      {
+        "op": "setProp",
+        "selector": "#b",
+        "prop": "title",
+        "value": {
+          "a": 1
+        }
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "setProp",
+          "selector": "#b",
+          "target": {
+            "by": "id",
+            "id": "b"
+          },
+          "prop": "title",
+          "value": {
+            "a": 1
+          }
+        }
+      ],
+      "diagnostics": []
+    }
+  },
+  {
+    "description": "setAttr refuses an object value even on a declared prop",
+    "format": "application/x-ratatui+json",
+    "formats": {
+      "application/x-ratatui+json": {
+        "syntax": "jsml",
+        "nodes": {
+          "Block": {
+            "props": {
+              "title": {
+                "type": "string"
+              },
+              "link": {
+                "type": "string",
+                "sink": "uri"
+              }
+            },
+            "children": "any"
+          },
+          "Gauge": {
+            "props": {
+              "ratio": {
+                "type": "number"
+              },
+              "style": {
+                "type": "string",
+                "sink": "css"
+              }
+            },
+            "children": "none",
+            "bindTo": "ratio"
+          }
+        }
+      }
+    },
+    "ops": [
+      {
+        "op": "setAttr",
+        "selector": "#b",
+        "attr": "title",
+        "prop": "title",
+        "value": {
+          "a": 1
+        }
+      }
+    ],
+    "expected": {
+      "ops": [],
+      "diagnostics": [
+        {
+          "code": "op-invalid-value",
+          "severity": "warning",
+          "node": "#b",
+          "prop": "title",
+          "message": "op \"setAttr\" on \"#b\" cannot write a non-primitive value to attribute \"title\"",
+          "path": "/0"
+        }
+      ]
+    }
+  },
+  {
+    "description": "removeAttr removes a declared prop on a tree vocabulary",
+    "format": "application/x-ratatui+json",
+    "formats": {
+      "application/x-ratatui+json": {
+        "syntax": "jsml",
+        "nodes": {
+          "Block": {
+            "props": {
+              "title": {
+                "type": "string"
+              },
+              "link": {
+                "type": "string",
+                "sink": "uri"
+              }
+            },
+            "children": "any"
+          },
+          "Gauge": {
+            "props": {
+              "ratio": {
+                "type": "number"
+              },
+              "style": {
+                "type": "string",
+                "sink": "css"
+              }
+            },
+            "children": "none",
+            "bindTo": "ratio"
+          }
+        }
+      }
+    },
+    "ops": [
+      {
+        "op": "removeAttr",
+        "selector": "#b",
+        "attr": "title",
+        "prop": "title"
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "removeAttr",
+          "selector": "#b",
+          "target": {
+            "by": "id",
+            "id": "b"
+          },
+          "prop": "title",
+          "attr": "title"
+        }
+      ],
+      "diagnostics": []
+    }
+  },
+  {
+    "description": "removeAttr refuses a prop no node declares on a tree vocabulary",
+    "format": "application/x-ratatui+json",
+    "formats": {
+      "application/x-ratatui+json": {
+        "syntax": "jsml",
+        "nodes": {
+          "Block": {
+            "props": {
+              "title": {
+                "type": "string"
+              },
+              "link": {
+                "type": "string",
+                "sink": "uri"
+              }
+            },
+            "children": "any"
+          },
+          "Gauge": {
+            "props": {
+              "ratio": {
+                "type": "number"
+              },
+              "style": {
+                "type": "string",
+                "sink": "css"
+              }
+            },
+            "children": "none",
+            "bindTo": "ratio"
+          }
+        }
+      }
+    },
+    "ops": [
+      {
+        "op": "removeAttr",
+        "selector": "#b",
+        "attr": "nonesuch",
+        "prop": "nonesuch"
+      }
+    ],
+    "expected": {
+      "ops": [],
+      "diagnostics": [
+        {
+          "code": "op-unknown-prop",
+          "severity": "warning",
+          "node": "#b",
+          "prop": "nonesuch",
+          "message": "prop \"nonesuch\" is not declared by any node of format \"application/x-ratatui+json\"",
+          "path": "/0"
+        }
+      ]
+    }
+  },
+  {
+    "description": "replaceChildren keeps a list of markup strings a list and sanitizes each element",
+    "format": "text/html",
+    "ops": [
+      {
+        "op": "replaceChildren",
+        "selector": "#list",
+        "value": [
+          "<li onclick=\"x()\">a</li>",
+          "<li>b</li><script>bad()</script>"
+        ]
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "replaceChildren",
+          "selector": "#list",
+          "target": {
+            "by": "id",
+            "id": "list"
+          },
+          "value": [
+            "<li>a</li>",
+            "<li>b</li>"
+          ]
+        }
+      ],
+      "diagnostics": [
+        {
+          "code": "unsafe-prop",
+          "severity": "warning",
+          "node": "li",
+          "prop": "onclick",
+          "message": "stripped attribute \"onclick\" on <li>",
+          "path": "/0/0/0"
+        },
+        {
+          "code": "stripped-node",
+          "severity": "warning",
+          "node": "script",
+          "message": "stripped dangerous element: <script>",
+          "path": "/0/1/1"
+        }
+      ]
+    }
+  },
+  {
+    "description": "replaceChildren keeps an empty list an empty list, an explicit clear",
+    "format": "text/html",
+    "ops": [
+      {
+        "op": "replaceChildren",
+        "selector": "#list",
+        "value": []
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "replaceChildren",
+          "selector": "#list",
+          "target": {
+            "by": "id",
+            "id": "list"
+          },
+          "value": []
+        }
+      ],
+      "diagnostics": []
+    }
+  },
+  {
+    "description": "replaceChildren keeps an empty list on a tree vocabulary",
+    "format": "application/x-ratatui+json",
+    "formats": {
+      "application/x-ratatui+json": {
+        "syntax": "jsml",
+        "nodes": {
+          "Block": {
+            "props": {
+              "title": {
+                "type": "string"
+              },
+              "link": {
+                "type": "string",
+                "sink": "uri"
+              }
+            },
+            "children": "any"
+          },
+          "Gauge": {
+            "props": {
+              "ratio": {
+                "type": "number"
+              },
+              "style": {
+                "type": "string",
+                "sink": "css"
+              }
+            },
+            "children": "none",
+            "bindTo": "ratio"
+          }
+        }
+      }
+    },
+    "ops": [
+      {
+        "op": "replaceChildren",
+        "selector": "#b",
+        "value": []
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "replaceChildren",
+          "selector": "#b",
+          "target": {
+            "by": "id",
+            "id": "b"
+          },
+          "value": []
+        }
+      ],
+      "diagnostics": []
+    }
+  },
+  {
+    "description": "replaceChildren reads a string list on a tree vocabulary as text nodes",
+    "format": "application/x-ratatui+json",
+    "formats": {
+      "application/x-ratatui+json": {
+        "syntax": "jsml",
+        "nodes": {
+          "Block": {
+            "props": {
+              "title": {
+                "type": "string"
+              },
+              "link": {
+                "type": "string",
+                "sink": "uri"
+              }
+            },
+            "children": "any"
+          },
+          "Gauge": {
+            "props": {
+              "ratio": {
+                "type": "number"
+              },
+              "style": {
+                "type": "string",
+                "sink": "css"
+              }
+            },
+            "children": "none",
+            "bindTo": "ratio"
+          }
+        }
+      }
+    },
+    "ops": [
+      {
+        "op": "replaceChildren",
+        "selector": "#b",
+        "value": [
+          "one",
+          "<b>two</b>"
+        ]
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "replaceChildren",
+          "selector": "#b",
+          "target": {
+            "by": "id",
+            "id": "b"
+          },
+          "value": [
+            "one",
+            "<b>two</b>"
+          ]
+        }
+      ],
+      "diagnostics": []
+    }
+  },
+  {
+    "description": "replaceChildren keeps a markup string list on a host-declared html format",
+    "format": "app/mixed",
+    "formats": {
+      "app/mixed": {
+        "syntax": "html",
+        "vocabularies": [
+          "html"
+        ],
+        "nodes": {
+          "Widget": {
+            "props": {
+              "label": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "ops": [
+      {
+        "op": "replaceChildren",
+        "selector": "#list",
+        "value": [
+          "<Widget label=\"a\"></Widget>",
+          "<p onclick=\"x()\">b</p>"
+        ]
+      }
+    ],
+    "expected": {
+      "ops": [
+        {
+          "op": "replaceChildren",
+          "selector": "#list",
+          "target": {
+            "by": "id",
+            "id": "list"
+          },
+          "value": [
+            "<Widget label=\"a\"></Widget>",
+            "<p>b</p>"
+          ]
+        }
+      ],
+      "diagnostics": [
+        {
+          "code": "unsafe-prop",
+          "severity": "warning",
+          "node": "p",
+          "prop": "onclick",
+          "message": "stripped attribute \"onclick\" on <p>",
+          "path": "/0/1/0"
+        }
+      ]
+    }
+  },
+  {
+    "description": "replaceChildren refuses a value that is neither a string nor a list",
+    "format": "text/html",
+    "ops": [
+      {
+        "op": "replaceChildren",
+        "selector": "#list",
+        "value": {
+          "html": "<p>x</p>"
+        }
+      },
+      {
+        "op": "replaceChildren",
+        "selector": "#list",
+        "value": null
+      }
+    ],
+    "expected": {
+      "ops": [],
+      "diagnostics": [
+        {
+          "code": "op-invalid-value",
+          "severity": "warning",
+          "node": "#list",
+          "message": "op \"replaceChildren\" on \"#list\" needs a string or a list of children",
+          "path": "/0"
+        },
+        {
+          "code": "op-invalid-value",
+          "severity": "warning",
+          "node": "#list",
+          "message": "op \"replaceChildren\" on \"#list\" needs a string or a list of children",
+          "path": "/1"
+        }
+      ]
     }
   }
 ]

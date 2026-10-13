@@ -82,7 +82,7 @@ async function promptUser(
 		if (tierOverride) {
 			tier = parseTier(tierOverride) ?? 2;
 		} else {
-			const tierInput = await rl.question("Tier — 2 (bindings), 3 (advanced scripting), or 4 (full feature)? (2): ");
+			const tierInput = await rl.question("Tier: 2 (bindings), 3 (advanced scripting), or 4 (full feature)? (2): ");
 			tier = parseTier(tierInput.trim()) ?? 2;
 		}
 
@@ -90,7 +90,7 @@ async function promptUser(
 		if (langOverride) {
 			language = langOverride as "typescript" | "javascript";
 		} else {
-			const langInput = await rl.question("Language — ts or js? (ts): ");
+			const langInput = await rl.question("Language: ts or js? (ts): ");
 			const normalized = langInput.trim().toLowerCase();
 			language = (normalized === "js" || normalized === "javascript") ? "javascript" : "typescript";
 		}

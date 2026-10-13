@@ -6,9 +6,9 @@ A host runs untrusted code. The runtime gives it the caps to bound that code and
 
 Set `hardLimits` on `createRuntime`:
 
-- `timeout_ms` — wall-clock ceiling for a single execution.
-- `memory_mb` — sandbox memory ceiling.
-- `max_stack_depth` — recursion ceiling.
+- `timeout_ms`: wall-clock ceiling for a single execution.
+- `memory_mb`: sandbox memory ceiling.
+- `max_stack_depth`: recursion ceiling.
 
 Exceeding any of them throws `ExecutionLimitError`. Run without a timeout and a mod can hang the host; set one. Limits are per runtime, enforced by the runtime; the host does not police them by hand.
 
@@ -18,14 +18,14 @@ Pass a `CancellationToken` as `cancellation`. Call `token.cancel()` to request a
 
 ## Audit
 
-Pass an `audit` callback: `(event: AuditEvent) => void`. The runtime fires it on every gated binding call, with `{ binding, capability, at, decision }` — which binding ran, which capability gated it, and when. It also fires on a hook fill refused on capability grounds, with `decision: "denied"` plus `mod` and `hook`; that one is otherwise invisible, because hook dispatch swallows per-handler failures so a single bad mod cannot break a hook for everyone. Wire it to the host's logging to keep a record of what a mod actually exercised. Pair it with [granting capabilities](/guidance/host-capabilities/): grants are what you *allowed*, audit is what was *used*.
+Pass an `audit` callback: `(event: AuditEvent) => void`. The runtime fires it on every gated binding call, with `{ binding, capability, at, decision }}`: which binding ran, which capability gated it, and when. It also fires on a hook fill refused on capability grounds, with `decision: "denied"` plus `mod` and `hook`; that one is otherwise invisible, because hook dispatch swallows per-handler failures so a single bad mod cannot break a hook for everyone. Wire it to the host's logging to keep a record of what a mod actually exercised. Pair it with [granting capabilities](/guidance/host-capabilities/): grants are what you *allowed*, audit is what was *used*.
 
 ## Console
 
-Route sandbox console output through the `console` handler — `log`, `info`, `warn`, `error`, `debug`, `trace`, or a single `onLog(severity, ...args)`. Without it, a mod's console output goes nowhere.
+Route sandbox console output through the `console` handler: `log`, `info`, `warn`, `error`, `debug`, `trace`, or a single `onLog(severity, ...args)`. Without it, a mod's console output goes nowhere.
 
 ## Common mistakes
 
 - **No timeout.** A mod with an infinite loop hangs the host. Always set `timeout_ms`.
 - **Assuming cancellation is preemptive.** It is cooperative; it unwinds at check points. For mid-execution cancellation on some engines, use the async sandbox.
-- **Ignoring the audit channel.** Without it you have grants but no record of use — half the security story.
+- **Ignoring the audit channel.** Without it you have grants but no record of use, which is half the security story.

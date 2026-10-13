@@ -577,7 +577,78 @@ describe("sandbox fragment API", () => {
 		const ops = runtime.fireFragmentHook("inv-panel", "update", { items: ["sword", "shield"] });
 		assert.equal(ops.length, 1);
 		assert.equal(ops[0].op, "replaceChildren");
-		assert.equal(ops[0].value, "<li>sword</li><li>shield</li>");
+		assert.deepEqual(ops[0].value, ["<li>sword</li>", "<li>shield</li>"]);
+		runtime.dispose();
+	});
+
+	it("keeps an empty replaceChildren list as an explicit clear", () => {
+		const runtime = xript.createRuntime(appManifest, {
+			hostBindings: { log: () => {} },
+		});
+		runtime.execute(`
+			hooks.fragment.update("inv-panel", function(bindings, fragment) {
+				fragment.replaceChildren(".list", []);
+			});
+		`);
+		const ops = runtime.fireFragmentHook("inv-panel", "update", {});
+		assert.deepEqual(ops[0].value, []);
+		runtime.dispose();
+	});
+
+	it("emits removeAttr as the inverse of setAttr", () => {
+		const runtime = xript.createRuntime(appManifest, {
+			hostBindings: { log: () => {} },
+		});
+		runtime.execute(`
+			hooks.fragment.update("p", function(bindings, fragment) {
+				fragment.removeAttr("#go", "disabled");
+			});
+		`);
+		const ops = runtime.fireFragmentHook("p", "update", {});
+		assert.equal(ops.length, 1);
+		assert.equal(ops[0].op, "removeAttr");
+		assert.equal(ops[0].prop, "disabled");
+		assert.equal(ops[0].attr, "disabled");
+		assert.equal("value" in ops[0], false);
+		runtime.dispose();
+	});
+
+	it("finalizes setAttr false or null as removeAttr", () => {
+		const runtime = xript.createRuntime(appManifest, {
+			hostBindings: { log: () => {} },
+		});
+		runtime.execute(`
+			hooks.fragment.update("p", function(bindings, fragment) {
+				fragment.setAttr("#go", "disabled", false);
+				fragment.setAttr("#go", "title", null);
+				fragment.setAttr("#go", "aria-pressed", "false");
+			});
+		`);
+		const ops = runtime.fireFragmentHook("p", "update", {});
+		assert.deepEqual(ops.map((op) => op.op), ["removeAttr", "removeAttr", "setAttr"]);
+		assert.equal(ops[2].value, "false");
+		runtime.dispose();
+	});
+
+	it("refuses a non-primitive setAttr value with a diagnostic naming selector and attribute", () => {
+		const diagnostics = [];
+		const runtime = xript.createRuntime(appManifest, {
+			hostBindings: { log: () => {} },
+			onFragmentDiagnostic: (d) => diagnostics.push(d),
+		});
+		runtime.execute(`
+			hooks.fragment.update("p", function(bindings, fragment) {
+				fragment.setAttr("#go", "title", { label: "x" });
+				fragment.setAttr("#go", "title", ["a", "b"]);
+			});
+		`);
+		const ops = runtime.fireFragmentHook("p", "update", {});
+		assert.equal(ops.length, 0);
+		assert.equal(diagnostics.length, 2);
+		assert.equal(diagnostics[0].code, "op-invalid-value");
+		assert.equal(diagnostics[0].node, "#go");
+		assert.equal(diagnostics[0].prop, "title");
+		assert.ok(diagnostics[0].message.includes("#go") && diagnostics[0].message.includes("title"));
 		runtime.dispose();
 	});
 });

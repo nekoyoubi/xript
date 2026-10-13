@@ -68,12 +68,35 @@ Every function binding requires a `description`. This is not optional because if
 
 Optional fields on function bindings:
 
-- **`params`** — an ordered array of parameters, each with a `name`, `type`, and optional `description` and `default`
-- **`returns`** — the return type (omit for void functions)
+- **`params`**: an ordered array of parameters, each with a `name`, `type`, and optional `description`, `default`, `required`, `optional`, and `variadic` (see [Parameters](#parameters))
+- **`returns`**: the return type (omit for void functions), as a [type reference](#type-references) or as `{ "type": <typeRef>, "description": "..." }` when the returned value deserves a sentence
 - **`async`** — whether the function returns a promise (defaults to `false`)
 - **`capability`** — the capability required to call this function
 - **`examples`** — usage examples for documentation
 - **`deprecated`** — marks the function as deprecated with a migration message
+
+### Parameters
+
+A parameter is required unless it declares a `default` or `"required": false`. `"optional": true` is accepted as the inverse alias of `"required": false`; giving both with values that disagree is a validation error, and `xript lint` suggests the `required` spelling.
+
+A parameter marked `"variadic": true` is a rest parameter: it absorbs every remaining argument, and its `type` names the type of each one. Only the last parameter may be variadic, so `validate` rejects a variadic parameter anywhere else. `typegen` emits it as `...name: T[]`, and `docgen` lists it as `...name` with its element type.
+
+```json
+{
+  "bindings": {
+    "log": {
+      "description": "Writes a log line.",
+      "params": [
+        { "name": "level", "type": "string" },
+        { "name": "parts", "type": "string | number", "variadic": true }
+      ],
+      "returns": { "type": "number", "description": "How many parts were written." }
+    }
+  }
+}
+```
+
+No runtime enforces argument counts, so a call passes every argument it makes through to the host function; the declaration is what generated types and docs read.
 
 ### Namespace Bindings
 
@@ -209,12 +232,37 @@ For codegen, typegen emits a companion `<TypeName>Accessor` interface alongside 
 
 Anywhere a type is expected, you can use:
 
-- **Primitives**: `"string"`, `"number"`, `"boolean"`, `"void"`, `"null"`
+- **Primitives**: `"string"`, `"number"`, `"boolean"`, `"void"`, `"null"`, `"undefined"`, `"any"`, `"unknown"`
 - **Custom types**: `"Position"`, `"Direction"` (references to the `types` section)
 - **Array shorthand**: `"string[]"`, `"Position[]"`
 - **Complex expressions**: `{ "array": "Position" }`, `{ "union": ["string", "number"] }`, `{ "map": "number" }`, `{ "optional": "string" }`
+- **Functions**: `"function"` for a callback with no declared signature, or `{ "function": { "params": [...], "returns": "boolean" } }` to declare one. `params` uses the same shape as a binding's parameters
 
 The shorthand `"string[]"` is equivalent to `{ "array": "string" }`. Both are valid. The shorthand exists because array types are common and the verbose form is noisy for simple cases.
+
+The string form is a small grammar of its own:
+
+```
+union    := postfix ( "|" postfix )*
+postfix  := primary ( "[]" | "?" )*
+primary  := name | "(" union ")"
+```
+
+`[]` and `?` bind tighter than `|`, so `"string | number[]"` is a union of a string and an array of numbers, and `"(string | number)[]"` is an array of a union. `"T?"` means `{ "optional": "T" }`. A string outside the grammar, such as a generic like `"Record<string, Player>"`, is one opaque name that generators emit verbatim.
+
+A handful of loose type words are accepted and resolve to one meaning in every tool:
+
+| Word | Meaning | Canonical spelling |
+|------|---------|--------------------|
+| `int`, `integer`, `float` | `number` | `"number"` |
+| `bool` | `boolean` | `"boolean"` |
+| `array` | an array of anything | `"T[]"` or `{ "array": T }` |
+| `object` | a string-keyed map of anything | `{ "map": T }` or a declared type |
+| `function` | a callback of any arity, with no declared signature | `{ "function": { "params": [...], "returns": T } }` |
+
+`xript lint` reports each of these, and the `T?` suffix, with the canonical spelling. Every rendering is pinned by [`type-ref-tests.json`](./type-ref-tests.json), which `validate`, `typegen`, and `docgen` all assert.
+
+A function type is part of the contract only on a binding parameter, where a script function crosses into the host as a call-scoped callback (see [Callbacks](./bindings.md#callbacks)). A function in a binding's return value, a hook's arguments, or an event payload is not proxied and is not portable: it is marshalled by the ordinary data rules (the runtimes that marshal through JSON drop it), so nothing should rely on it. `lint` warns about a function type declared in any of those places (`callback-does-not-cross`).
 
 ## Slots
 
@@ -244,6 +292,8 @@ Slots are the host's typed fill surface, the counterpart to bindings. A binding 
 | `multiple` | boolean | no | false | Whether more than one mod can fill this slot |
 | `refines` | boolean | no | false | When set, deep-merges onto a base slot of the same `id` (see below) |
 | `style` | enum | no | "inherit" | Styling mode, for fragment-format slots |
+
+`slots` is an array of these declarations, never an object keyed by slot id. Every runtime checks the shape when it loads the manifest and refuses one that is not an array of `{ id, accepts }` objects, with an issue at `/slots` (or `/slots/<index>` for one malformed entry) that names the expected shape. The checks are pinned by [`manifest-shape-tests.json`](./manifest-shape-tests.json).
 
 A slot in an extending manifest can redeclare a base slot `id` with `"refines": true` to deep-merge onto it, including its payload member types. Without the marker, redeclaring a base slot `id` is a resolution error. See [Refining Concrete Types and Slots](./extends.md#the-three-moves-add-fill-refine).
 
@@ -737,6 +787,8 @@ The manifest schema will evolve as xript matures. The `xript` field enables runt
 - **1.0** and beyond will follow semver: minors add, majors break
 
 Runtimes should validate the `xript` field first and reject manifests with unsupported spec versions with a clear error message.
+
+The toolchain answers for the version a manifest targets. `validate`, `lint`, `typegen`, `docgen`, and their MCP tools read the target from the manifest's `$schema` URL, then its `xript` field, and check the manifest against the schema that version published; each also takes an explicit version to ask a different question. Every published schema stays served at its `$id`, byte for byte, so a manifest pinned to an earlier version keeps validating the way it did when it was written.
 
 ## Domain Schema Extension
 

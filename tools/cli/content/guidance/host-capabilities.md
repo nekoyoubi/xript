@@ -1,10 +1,10 @@
 # Granting capabilities
 
-Capabilities are default-deny. A mod requests the ones it needs in its manifest; the host decides which to honor. **Granting is host policy; enforcement is runtime mechanism.** The runtime never grants on its own and never prompts — it enforces exactly the allow-list the host hands it.
+Capabilities are default-deny. A mod requests the ones it needs in its manifest; the host decides which to honor. **Granting is host policy; enforcement is runtime mechanism.** The runtime never grants on its own and never prompts; it enforces exactly the allow-list the host hands it.
 
 ## How a host grants
 
-Pass the allow-list to the runtime: `createRuntime(manifest, { capabilities: ["clipboard.read", "net"] })`. That array is the complete set of capabilities this runtime honors. Omit it and the runtime grants nothing — a default-deny floor, not an oversight.
+Pass the allow-list to the runtime: `createRuntime(manifest, { capabilities: ["clipboard.read", "net"] })`. That array is the complete set of capabilities this runtime honors. Omit it and the runtime grants nothing: a default-deny floor, not an oversight.
 
 A mod's requested capabilities (from its manifest) are a *request*, not a grant. The host reads what the mod asks for, decides what it is willing to honor, and grants the intersection it chooses. Granting more than the mod requested is pointless; granting less than it requested means the mod's gated calls will fail loudly.
 
@@ -12,7 +12,7 @@ A mod's requested capabilities (from its manifest) are a *request*, not a grant.
 
 A binding gated by a capability the runtime was not granted throws `CapabilityDeniedError` when the mod calls it. A gated slot a mod fills without holding the gate fails [cross-validation](/guidance/authoring/) at load. The runtime is the only thing that checks; the host is the only thing that decides.
 
-Every gated binding call is observable through the `audit` callback — see [limits, cancellation & audit](/guidance/host-safety/). Wire it if you want a record of which capabilities a mod actually exercised.
+Every gated binding call is observable through the `audit` callback (see [limits, cancellation & audit](/guidance/host-safety/). Wire it if you want a record of which capabilities a mod actually exercised.
 
 ## Grant UX is host-side
 

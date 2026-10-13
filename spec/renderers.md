@@ -53,6 +53,7 @@ type RenderedFragment = {
   contentType: "html" | "tree";
   tree: FragmentNode[];              // bound, sanitized, resolved. always present
   conditions: FragmentCondition[];   // every data-if, path-keyed, already evaluated
+  repeats: FragmentRepeat[];         // every data-each, already expanded into tree. optional to read
   diagnostics: FragmentDiagnostic[]; // advisory
   html: string;                      // HTML projection; "" for a tree vocabulary. NOT for renderers
   visibility: Record<string, bool>;  // DEPRECATED, text-keyed, collides. do not read
@@ -97,6 +98,12 @@ A renderer does not sanitize. A renderer does not check whether a node is allowe
 > **Bound values keep their JSON type.** A `data-bind` that resolves to `0.62` writes the number `0.62`, not the string `"0.62"`. This is what makes a numeric widget — a gauge ratio, a sparkline series — drawable from the tree alone. Where a vocabulary's `bindTo` prop is textual, the runtime stringifies; where the profile types it as something else, it does not.
 
 `data-bind` and `data-if` props remain on the bound node as authoring residue. A renderer ignores them. They are not removed because the HTML projection and round-tripping still need them, and removing them would be a breaking change to hosts that read them today.
+
+### Repeats are expanded
+
+Every `data-each` template has already been replaced by its copies, one per element, each bound against its own item. The template itself is not in `tree`, and the copies carry no `data-each` or `data-key`, so nothing a renderer walks can be mistaken for a template and expanded twice. Paths in `conditions` address the expanded tree.
+
+`repeats` says where each expansion landed (`path`, `start`, `count`), how its copies are keyed, and a `patch` describing how the previous render's copies become these: `remove`, `insert`, `reuse`, or `move`, by key. A renderer that redraws from `tree` every update is correct and may ignore `repeats` entirely. A renderer that retains drawn nodes, and wants a moved item to keep its focus, scroll position, or animation state, applies the patch instead of remounting the range. The full shape is in [fragments.md](./fragments.md#what-the-host-receives).
 
 ### Interpolation is resolved
 
@@ -161,10 +168,11 @@ After a fragment hook runs, the runtime hands the host a finalized op list — a
 
 | op | fields | effect |
 |---|---|---|
-| `toggle` | `target`, `value: boolean` | show/hide the targeted node |
+| `toggle` | `target`, `value: boolean` | show the targeted node when `value` is true, hide it when false; a set, not a flip |
 | `setText` | `target`, `value: string` | replace the node's text content **as text**, never as markup |
 | `setProp` | `target`, `prop`, `value: PropValue` | set a prop; the value keeps its JSON type |
-| `replaceChildren` | `target`, `value: string \| string[] \| FragmentNode[]` | replace the node's children |
+| `removeAttr` | `target`, `prop` | remove the prop from the node |
+| `replaceChildren` | `target`, `value: string \| string[] \| FragmentNode[]` | replace the node's children; an empty list clears |
 
 Every op carries `target`, the parsed node reference:
 
@@ -230,6 +238,7 @@ A renderer that does all seven is a tree-walk and a switch statement. That is th
 | `contract` on every result | yes | yes | yes | not yet |
 | bound, sanitized `tree` | yes | yes | yes | yes |
 | path-keyed `conditions` | yes | yes | yes | yes |
+| expanded `data-each` and `repeats` patches | yes | yes | yes | yes |
 | resolved interpolation in text | yes | yes | yes | yes |
 | `diagnostics` | yes | yes | yes | yes |
 | ops targetable by `path` | yes | yes | yes | not yet |
@@ -238,7 +247,7 @@ A renderer that does all seven is a tree-walk and a switch statement. That is th
 
 Nothing in the remaining column is a per-engine fidelity limit. Unlike the debug protocol, where rquickjs genuinely cannot offer a per-line hook, the tree contract asks nothing of the JS engine at all: it is produced after the sandbox has finished. All four can hand back the same shape, and the ways they currently do not are decisions, not constraints.
 
-Parity is held the same way the rest of the fragment surface is: by shared conformance corpora. `spec/fragment-vocabulary-tests.json` and `spec/fragment-op-tests.json` cover the tree and the ops; the renderer contract adds no new corpus, it constrains what those two already assert.
+Parity is held the same way the rest of the fragment surface is: by shared conformance corpora. `spec/fragment-vocabulary-tests.json` and `spec/fragment-op-tests.json` cover the tree and the ops, and `spec/repeat-tests.json` covers expansion and patches; the renderer contract adds no new corpus, it constrains what those already assert.
 
 ## Reference implementation
 

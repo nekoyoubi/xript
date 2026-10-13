@@ -20,7 +20,9 @@
 //!   compiles and cancels; bind the value or call [`Pending::detach`].
 //! - **Cancellation only reaches running bytecode.** A call sitting inside a
 //!   blocking host binding observes nothing until that binding returns. See
-//!   `spec/execution.md`.
+//!   `spec/execution.md`. On a runtime built in `RuntimeMode::Async`, a call
+//!   awaiting an async binding is parked rather than blocked: later calls run
+//!   meanwhile, and cancellation reaches the parked one.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -233,7 +235,10 @@ struct Shared {
     /// Set by the runtime thread when construction fails, so every queued and
     /// subsequent command can be told why instead of hanging.
     init_error: Mutex<Option<String>>,
-    in_flight: Mutex<Option<(CallInfo, CallToken)>>,
+    /// Every dispatched call that has not yet completed, oldest first. A
+    /// blocking runtime has at most one; a yielding runtime may have several
+    /// parked on host futures at once.
+    in_flight: Mutex<Vec<(CallInfo, CallToken)>>,
     stopping: AtomicBool,
     /// Set by `kill`. Every command the loop dequeues afterwards is shed
     /// rather than run, which is the one shedding path that needs no
@@ -242,6 +247,9 @@ struct Shared {
     shed: std::sync::atomic::AtomicUsize,
     probe: Arc<RuntimeProbe>,
     retired: AtomicBool,
+    /// The runtime thread, unparked on every send so a yielding loop that is
+    /// parked between polls notices new work.
+    worker: std::sync::OnceLock<thread::Thread>,
 }
 
 pub struct XriptHandle {
@@ -290,12 +298,13 @@ impl XriptHandle {
             mods: mods.clone(),
             role_preferences: options.role_preferences.clone(),
             init_error: Mutex::new(None),
-            in_flight: Mutex::new(None),
+            in_flight: Mutex::new(Vec::new()),
             stopping: AtomicBool::new(false),
             killed: AtomicBool::new(false),
             shed: std::sync::atomic::AtomicUsize::new(0),
             probe: probe.clone(),
             retired: AtomicBool::new(false),
+            worker: std::sync::OnceLock::new(),
         });
 
         let worker_shared = shared.clone();
@@ -335,58 +344,13 @@ impl XriptHandle {
                 }
             };
 
-            while let Ok(cmd) = cmd_rx.recv() {
-                // Stop is checked before the token, so a dropped
-                // `Pending<ShutdownReport>` cannot cancel the shutdown itself.
-                if let CommandKind::Stop {
-                    drop_queue,
-                    in_flight,
-                    reply,
-                } = cmd.kind
-                {
-                    let mut dropped = worker_shared.shed.load(Ordering::SeqCst);
-                    if drop_queue {
-                        while let Ok(queued) = cmd_rx.try_recv() {
-                            dropped += 1;
-                            queued.kind.abort(|| XriptError::Cancelled);
-                        }
-                    }
-                    reply.complete(Ok(ShutdownReport {
-                        stopped: true,
-                        joined: false,
-                        abandoned_thread: false,
-                        dropped,
-                        in_flight,
-                    }));
-                    break;
-                }
-
-                // A call cancelled before it was dequeued is skipped outright,
-                // as is everything behind a `kill`. This is the one
-                // cancellation path that works unconditionally, because it
-                // needs no interrupt.
-                if cmd.token.is_cancelled() || worker_shared.killed.load(Ordering::SeqCst) {
-                    if worker_shared.killed.load(Ordering::SeqCst) {
-                        worker_shared.shed.fetch_add(1, Ordering::SeqCst);
-                    }
-                    cmd.kind.abort(|| XriptError::Cancelled);
-                    continue;
-                }
-
-                *worker_shared
-                    .in_flight
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner()) =
-                    Some((cmd.kind.describe(), cmd.token.clone()));
-                let _call = CallTokenScope::enter(cmd.token.clone());
-                dispatch(&rt, cmd.kind);
-                drop(_call);
-                *worker_shared
-                    .in_flight
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner()) = None;
+            if rt.mode() == crate::sandbox::RuntimeMode::Async {
+                run_yielding(&rt, &cmd_rx, &worker_shared);
+            } else {
+                run_blocking(&rt, &cmd_rx, &worker_shared);
             }
         });
+        let _ = shared.worker.set(thread.thread().clone());
 
         (
             Self {
@@ -418,8 +382,16 @@ impl XriptHandle {
                 },
                 None => XriptError::Engine("runtime thread is gone".into()),
             });
+        } else {
+            self.wake_worker();
         }
         pending
+    }
+
+    fn wake_worker(&self) {
+        if let Some(worker) = self.shared.worker.get() {
+            worker.unpark();
+        }
     }
 
     // -- work ---------------------------------------------------------------
@@ -717,28 +689,44 @@ impl XriptHandle {
         self.shared.probe.clone()
     }
 
-    /// What the runtime thread is working on right now, if anything.
+    /// What the runtime thread is working on right now, if anything. On a
+    /// yielding runtime with several calls parked at once, the oldest.
     pub fn in_flight(&self) -> Option<CallInfo> {
         self.shared
             .in_flight
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .as_ref()
+            .first()
             .map(|(info, _token)| info.clone())
     }
 
-    /// The token of the call the runtime thread is running right now.
-    ///
-    /// A pool uses it to tell a queued call from the dispatched one, which is
-    /// the difference between shedding something that has not started and
-    /// pretending to shed something that cannot be stopped.
-    pub(crate) fn in_flight_token(&self) -> Option<CallToken> {
+    /// Every dispatched call that has not completed, oldest first. At most one
+    /// on a blocking runtime; a yielding runtime may hold several, each parked
+    /// on a host future.
+    pub fn in_flight_all(&self) -> Vec<CallInfo> {
         self.shared
             .in_flight
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .as_ref()
+            .iter()
+            .map(|(info, _token)| info.clone())
+            .collect()
+    }
+
+    /// The tokens of the calls the runtime thread has dispatched and not yet
+    /// finished.
+    ///
+    /// A pool uses them to tell a queued call from a dispatched one, which is
+    /// the difference between shedding something that has not started and
+    /// pretending to shed something that cannot be stopped.
+    pub(crate) fn in_flight_tokens(&self) -> Vec<CallToken> {
+        self.shared
+            .in_flight
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
             .map(|(_info, token)| token.clone())
+            .collect()
     }
 
     /// Drains the queue, then stops the runtime thread.
@@ -758,13 +746,7 @@ impl XriptHandle {
     /// the thread stays alive. That is the honest outcome, not a bug.
     pub fn kill(&self) -> Pending<ShutdownReport> {
         self.shared.killed.store(true, Ordering::SeqCst);
-        if let Some((_info, token)) = self
-            .shared
-            .in_flight
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .as_ref()
-        {
+        for token in self.in_flight_tokens() {
             token.cancel();
         }
         self.stop(true)
@@ -795,6 +777,7 @@ impl XriptHandle {
                 in_flight,
             }));
         }
+        self.wake_worker();
         pending
     }
 
@@ -950,6 +933,259 @@ impl BlockingHandle<'_> {
 
     pub fn manifest_name(&self) -> &str {
         self.0.manifest_name()
+    }
+}
+
+fn lock_in_flight(shared: &Shared) -> std::sync::MutexGuard<'_, Vec<(CallInfo, CallToken)>> {
+    shared.in_flight.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+fn forget_in_flight(shared: &Shared, token: &CallToken) {
+    lock_in_flight(shared).retain(|(_info, held)| !held.same_call(token));
+}
+
+/// Answers a stop command once nothing it promised to wait for is left.
+fn finish_stop(
+    shared: &Shared,
+    cmd_rx: &mpsc::Receiver<Command>,
+    drop_queue: bool,
+    in_flight: Option<CallInfo>,
+    reply: Completer<ShutdownReport>,
+) {
+    let mut dropped = shared.shed.load(Ordering::SeqCst);
+    if drop_queue {
+        while let Ok(queued) = cmd_rx.try_recv() {
+            dropped += 1;
+            queued.kind.abort(|| XriptError::Cancelled);
+        }
+    }
+    reply.complete(Ok(ShutdownReport {
+        stopped: true,
+        joined: false,
+        abandoned_thread: false,
+        dropped,
+        in_flight,
+    }));
+}
+
+/// A call cancelled before it was dequeued is skipped outright, as is
+/// everything behind a `kill`. This is the one cancellation path that works
+/// unconditionally, because it needs no interrupt.
+fn shed_if_cancelled(shared: &Shared, cmd: Command) -> Option<Command> {
+    if cmd.token.is_cancelled() || shared.killed.load(Ordering::SeqCst) {
+        if shared.killed.load(Ordering::SeqCst) {
+            shared.shed.fetch_add(1, Ordering::SeqCst);
+        }
+        cmd.kind.abort(|| XriptError::Cancelled);
+        return None;
+    }
+    Some(cmd)
+}
+
+fn run_blocking(rt: &crate::sandbox::XriptRuntime, cmd_rx: &mpsc::Receiver<Command>, shared: &Shared) {
+    while let Ok(cmd) = cmd_rx.recv() {
+        // Stop is checked before the token, so a dropped
+        // `Pending<ShutdownReport>` cannot cancel the shutdown itself.
+        if let CommandKind::Stop {
+            drop_queue,
+            in_flight,
+            reply,
+        } = cmd.kind
+        {
+            finish_stop(shared, cmd_rx, drop_queue, in_flight, reply);
+            break;
+        }
+        let Some(cmd) = shed_if_cancelled(shared, cmd) else {
+            continue;
+        };
+        lock_in_flight(shared).push((cmd.kind.describe(), cmd.token.clone()));
+        let _call = CallTokenScope::enter(cmd.token.clone());
+        dispatch(rt, cmd.kind);
+        drop(_call);
+        forget_in_flight(shared, &cmd.token);
+    }
+}
+
+/// Wakes the runtime thread by unparking it, so the yielding loop can sleep
+/// between polls without a timer.
+struct UnparkWaker(thread::Thread);
+
+impl std::task::Wake for UnparkWaker {
+    fn wake(self: Arc<Self>) {
+        self.0.unpark();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.unpark();
+    }
+}
+
+/// One dispatched call on a yielding runtime, parked until its future settles.
+struct Flight<'rt> {
+    token: CallToken,
+    call: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'rt>>,
+}
+
+impl Flight<'_> {
+    /// Polls under the call's own token, so the interrupt frame pushed for this
+    /// poll carries this call's cancellation and nobody else's.
+    fn poll(&mut self, cx: &mut std::task::Context<'_>) -> bool {
+        let _call = CallTokenScope::enter(self.token.clone());
+        self.call.as_mut().poll(cx).is_ready()
+    }
+}
+
+/// The command loop of a yielding runtime. Calls that can await a host binding
+/// are started in queue order and polled once on arrival, so everything a call
+/// does before its first `await` happens in the order the calls were sent;
+/// after that, whichever call's host future settles first continues first.
+/// `load_mod` is a barrier: it runs to completion before the next command is
+/// taken, so a later call can rely on the mod being loaded.
+fn run_yielding(rt: &crate::sandbox::XriptRuntime, cmd_rx: &mpsc::Receiver<Command>, shared: &Shared) {
+    let waker = std::task::Waker::from(Arc::new(UnparkWaker(thread::current())));
+    let mut cx = std::task::Context::from_waker(&waker);
+    let mut flights: Vec<Flight<'_>> = Vec::new();
+    let mut stopping: Option<(bool, Option<CallInfo>, Completer<ShutdownReport>)> = None;
+    let mut disconnected = false;
+
+    loop {
+        while stopping.is_none() && !disconnected {
+            let next = if flights.is_empty() {
+                cmd_rx.recv().map_err(|_| mpsc::TryRecvError::Disconnected)
+            } else {
+                cmd_rx.try_recv()
+            };
+            let cmd = match next {
+                Ok(cmd) => cmd,
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    disconnected = true;
+                    break;
+                }
+            };
+            if let CommandKind::Stop {
+                drop_queue,
+                in_flight,
+                reply,
+            } = cmd.kind
+            {
+                if drop_queue {
+                    for flight in &flights {
+                        flight.token.cancel();
+                    }
+                }
+                stopping = Some((drop_queue, in_flight, reply));
+                break;
+            }
+            let Some(cmd) = shed_if_cancelled(shared, cmd) else {
+                continue;
+            };
+            lock_in_flight(shared).push((cmd.kind.describe(), cmd.token.clone()));
+            if !cmd.kind.yields() {
+                let _call = CallTokenScope::enter(cmd.token.clone());
+                dispatch(rt, cmd.kind);
+                drop(_call);
+                forget_in_flight(shared, &cmd.token);
+                continue;
+            }
+            let mut flight = Flight {
+                token: cmd.token.clone(),
+                call: Box::pin(dispatch_yielding(rt, cmd.kind)),
+            };
+            if flight.poll(&mut cx) {
+                forget_in_flight(shared, &flight.token);
+            } else {
+                flights.push(flight);
+            }
+        }
+
+        flights.retain_mut(|flight| {
+            let done = flight.poll(&mut cx);
+            if done {
+                forget_in_flight(shared, &flight.token);
+            }
+            !done
+        });
+
+        if flights.is_empty() {
+            if let Some((drop_queue, in_flight, reply)) = stopping.take() {
+                finish_stop(shared, cmd_rx, drop_queue, in_flight, reply);
+                return;
+            }
+            if disconnected {
+                return;
+            }
+            continue;
+        }
+        thread::park();
+    }
+}
+
+impl CommandKind {
+    /// Whether the call can await a host binding, and so runs as a parked
+    /// flight on a yielding runtime instead of to completion in line.
+    fn yields(&self) -> bool {
+        matches!(
+            self,
+            CommandKind::Execute { .. }
+                | CommandKind::InvokeExport { .. }
+                | CommandKind::FireHook { .. }
+                | CommandKind::FireHookTagged { .. }
+                | CommandKind::FireFragmentHook { .. }
+                | CommandKind::Emit { .. }
+                | CommandKind::EmitTagged { .. }
+                | CommandKind::InvokeResolved { .. }
+        )
+    }
+}
+
+async fn dispatch_yielding(rt: &crate::sandbox::XriptRuntime, kind: CommandKind) {
+    match kind {
+        CommandKind::Execute { code, reply } => reply.complete(rt.execute_async(&code).await),
+        CommandKind::InvokeExport {
+            mod_name,
+            name,
+            args,
+            reply,
+        } => reply.complete(match mod_name {
+            Some(owner) => rt.invoke_mod_export_async(&owner, &name, &args).await,
+            None => rt.invoke_export_async(&name, &args).await,
+        }),
+        CommandKind::FireHook {
+            hook,
+            payload,
+            reply,
+        } => reply.complete(rt.fire_hook_async(&hook, &payload).await),
+        CommandKind::FireHookTagged {
+            hook,
+            payload,
+            reply,
+        } => reply.complete(rt.fire_hook_tagged_async(&hook, &payload).await),
+        CommandKind::FireFragmentHook {
+            fragment_id,
+            lifecycle,
+            bindings,
+            reply,
+        } => reply.complete(
+            rt.fire_fragment_hook_async(&fragment_id, &lifecycle, bindings.as_ref())
+                .await,
+        ),
+        CommandKind::Emit {
+            event,
+            payload,
+            reply,
+        } => reply.complete(rt.emit_async(&event, &payload).await),
+        CommandKind::EmitTagged {
+            event,
+            payload,
+            reply,
+        } => reply.complete(rt.emit_tagged_async(&event, &payload).await),
+        CommandKind::InvokeResolved {
+            command,
+            call_args,
+            reply,
+        } => reply.complete(rt.invoke_command_async(&command, call_args.as_ref()).await),
+        other => dispatch(rt, other),
     }
 }
 

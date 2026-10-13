@@ -459,6 +459,60 @@ describe("undeclared type references", () => {
 		assert.equal(reported.length, 1, `expected only Spectre: ${reported.join(" | ")}`);
 		assert.ok(reported[0].includes("Spectre"));
 	});
+
+	it("resolves through map, optional, and function signatures, and treats function as a primitive", () => {
+		const nested = {
+			xript: "0.8",
+			name: "h",
+			types: { Cell: { description: "C.", fields: {} } },
+			bindings: {
+				a: { description: "Map of a ghost.", params: [], returns: { map: "Wraith" } },
+				b: { description: "Optional ghost.", params: [], returns: { optional: "Shade" } },
+				c: {
+					description: "Callback params.",
+					params: [
+						{ name: "plain", type: "function" },
+						{ name: "test", type: { function: { params: [{ name: "cell", type: "Cell" }, { name: "x", type: "Ghoul" }], returns: "Banshee" } } },
+					],
+				},
+			},
+		};
+		const reported = lintManifests(nested, []).findings
+			.filter((f) => f.code === "undeclared-type")
+			.map((f) => f.message);
+		for (const needle of ["Wraith", "Shade", "Ghoul", "Banshee"]) {
+			assert.ok(reported.some((m) => m.includes(needle)), `${needle} unreported: ${reported.join(" | ")}`);
+		}
+		assert.ok(!reported.some((m) => m.includes('"function"') || m.includes('"Cell"')), reported.join(" | "));
+	});
+});
+
+describe("callbacks only cross as binding parameters", () => {
+	const host = {
+		xript: "0.8",
+		name: "callback-host",
+		bindings: {
+			find: { description: "Takes a predicate.", params: [{ name: "test", type: "function" }], returns: "boolean" },
+			ns: { description: "Namespace.", members: { make: { description: "Returns a function.", params: [], returns: { optional: "function" } } } },
+		},
+		hooks: { onTick: { description: "Fires.", params: [{ name: "done", type: { function: {} } }] } },
+		events: [{ id: "app.ready", description: "Ready.", payload: { array: "function" } }],
+	};
+
+	it("warns where a function is declared somewhere no callback reaches", () => {
+		const reported = lintManifests(host, []).findings.filter((f) => f.code === "callback-does-not-cross");
+		const messages = reported.map((f) => f.message);
+		assert.equal(reported.length, 3, messages.join(" | "));
+		assert.ok(reported.every((f) => f.severity === "warn"));
+		for (const needle of ['binding "ns.make" return', 'hook "onTick" parameter "done"', 'event "app.ready" payload']) {
+			assert.ok(messages.some((m) => m.includes(needle)), `${needle} unreported: ${messages.join(" | ")}`);
+		}
+	});
+
+	it("stays quiet about a function parameter", () => {
+		const reported = lintManifests(host, []).findings.filter((f) => f.code === "callback-does-not-cross");
+		assert.ok(!reported.some((f) => f.message.includes('"find"')));
+	});
 });
 
 describe("reserved xript identifier namespace", () => {

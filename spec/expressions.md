@@ -1,9 +1,13 @@
 # Expressions (XEG)
 
 **XEG** — the xript Expression Grammar — is the one expression language a fragment carries.
-`data-if` evaluates it, `data-bind` evaluates it, and an `interpolate` fill evaluates it
-inside `{{ … }}` in text. Every runtime and every fragment renderer implements the same
-grammar with the same semantics, held to `spec/expression-tests.json`.
+`data-if` evaluates it, `data-bind` evaluates it, `data-each` repeats over it, `data-key`
+identifies copies with it, and an `interpolate` fill evaluates it inside `{{ … }}` in text.
+Every runtime and every fragment renderer implements the same grammar with the same
+semantics, held to `spec/expression-tests.json`, with repeat held to `spec/repeat-tests.json`.
+
+These are the fragment's three smart attributes, `data-bind`, `data-if`, and `data-each`
+(with its `data-key` modifier), and the [hard wall](./fragments.md#hard-wall) stops there.
 
 That corpus is the point of this document. Before it existed, "the expression in `data-if`"
 meant five different things: `new Function` in the browser and Node runtimes, a `Jint`
@@ -31,7 +35,9 @@ primary        := Number | String | "true" | "false" | "null"
                 | "(" expr ")"
 ```
 
-`Identifier` resolves **only** against the fill's declared `bindings` map. `Builtin`
+`Identifier` resolves **only** against the fill's declared `bindings` map, plus, inside a
+[`data-each`](./fragments.md#repeat-data-each) template, the names that template binds (its
+item, its optional index, and `$index`), which shadow the bindings they collide with. `Builtin`
 resolves **only** against the fixed table below. The two namespaces are disjoint and
 position-determined: an identifier in call position is never looked up in bindings, and a
 binding value is never callable. There is no syntax that reaches a host global, because
@@ -113,11 +119,18 @@ The parser also **classifies** the body, and the classification is load-bearing:
 
 - **`name`** — an lvalue. Two-way binding stays available: an `input` or `change` handler can
   push the value back through the binding's `path`. A bare name whose binding is absent
-  writes nothing, so the fragment's authored fallback content survives.
+  (undeclared, or declared with a `path` that resolves to nothing) writes nothing, so the
+  fragment's authored fallback content survives.
 - **`expression`** — read-only. A computed value has no inverse, so the runtime refuses to
   register write-back on it and `xript lint` reports a handler that tries as an error rather
   than silently dropping the write. An expression always writes, because a computed result
-  has no "absent" state to fall back from; `null` renders as the empty string.
+  has no "absent" state to fall back from.
+
+Absence is the only difference between the two. A value that is present renders through
+`str()` on both paths, so a bare name renders exactly as the same name inside an expression
+does: `null` renders as the empty string (an `input` gets `value=""`, never the word
+`null`), `0` renders as `0`, and an array joins its items with `,`. The `render` section of
+`spec/expression-tests.json` pins both paths side by side.
 
 A bare name stays valid *and stays privileged*, because writability is a real property that
 only a name has.
@@ -267,8 +280,10 @@ surface makes that collision more likely, not less. `visibility` stays populated
 
 - **`xript lint`** runs an `expressions` analyzer from `@xriptjs/validate` over the same AST
   the runtimes walk, reporting an unparseable body, an identifier no binding declares, a
-  write-back handler aimed at a computed value, a declared binding nothing reads, and a
-  well-formed site in a fill that never set `interpolate`.
+  write-back handler aimed at a computed value or a repeat item, a declared binding nothing
+  reads, a well-formed site in a fill that never set `interpolate`, a malformed `data-each`
+  header, and a `data-key` with no `data-each`. Repeat names are scoped to their template's
+  subtree, so a read of one is neither an unknown binding nor a read of the binding it shadows.
 - **`xript typegen --ambient`** emits a `XriptFragments` namespace with a per-fill bindings
   interface and a `keyof` alias, which is what an editor completes against inside `{{ … }}`,
   `data-if`, and `data-bind`. Binding value types come from the fill's optional `type` field;
@@ -292,6 +307,10 @@ work splits: typegen emits the types, the analyzer does the checking.
 | `attributes` | that an attribute value is never segmented and never reaches a sink it was not declared for |
 | `conditions` | that `data-if` results are addressed by tree position |
 | `bind` | which `data-bind` bodies are writable |
+
+`spec/repeat-tests.json` holds the `data-each` corpus: header parsing, expansion, scope and
+shadowing, totality, `data-if` per copy, key resolution, the copy ceiling, and the keyed
+patches an update produces. Every runtime asserts it.
 
 The `safety` and `attributes` sections are written to fail against an implementation that
 substitutes values into the source string and re-parses. That is the failure mode the design

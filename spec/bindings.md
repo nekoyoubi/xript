@@ -40,7 +40,7 @@ The runtime provides these error types to scripts:
 |-------|------------|
 | `BindingError` | A binding function failed during execution |
 | `CapabilityDeniedError` | A gated function was called without the required capability |
-| `TypeError` | Arguments don't match the binding's declared parameter types |
+| `TypeError` | Arguments don't match the binding's declared parameter types (always raised for a non-function where a function parameter is declared) |
 | `ImportDeniedError` | A module-format mod entry attempted to `import` any specifier (rejected at link time; carries `.specifier`) |
 | `CommonJSDetectedError` | A mod entry contained `require()`, `module.exports`, or `exports.x` artifacts (rejected at load time; carries `.artifact`) |
 
@@ -51,6 +51,8 @@ Runtimes may add additional error types, but these must be present. `ImportDenie
 Runtimes should validate argument types before invoking the host binding. If a binding declares `params: [{ "name": "value", "type": "number" }]` and the modder passes a string, the runtime should throw a `TypeError` without calling the host function. This prevents unexpected values from reaching the host and provides clear feedback to the modder.
 
 Type validation is recommended but not strictly required — some runtimes may defer to the host's own type checking for performance reasons.
+
+One check is required: a parameter declared as a function (`"function"`, `{ "function": { ... } }`, or either wrapped in `optional`) must receive a function. Anything else is refused with a `TypeError` naming the binding and the parameter, for example `probe.find(): parameter "test" expects a function, got number`, and the host is not called. A function parameter that is not required (`"required": false`, a `default`, or an `optional` wrapper) also accepts `undefined` and `null`. The runtime never coerces: a binding that cannot tell "the mod passed a callback" from "the mod passed nothing" answers wrong without saying so, which is exactly what this check exists to prevent. See [Callbacks](#callbacks).
 
 ## Versioning
 
@@ -100,6 +102,7 @@ The typegen tool generates TypeScript definitions from the manifest. These are t
 | `"boolean"` | `boolean` |
 | `"void"` | `void` |
 | `"null"` | `null` |
+| `"function"` | `(...args: any[]) => any` |
 
 ### Complex Types
 
@@ -110,6 +113,10 @@ The typegen tool generates TypeScript definitions from the manifest. These are t
 | `{ "union": ["string", "number"] }` | `string \| number` |
 | `{ "map": "number" }` | `Record<string, number>` |
 | `{ "optional": "string" }` | `string \| undefined` |
+| `{ "function": { "params": [{ "name": "cell", "type": "number" }], "returns": "boolean" } }` | `(cell: number) => boolean` |
+| `{ "optional": "function" }` | `((...args: any[]) => any) \| undefined` |
+
+A function type is parenthesised wherever it sits inside a union, an optional, or an array, so `| undefined` never binds to its return type. A signature with no `returns` returns `void`.
 
 ### Custom Types
 
@@ -250,6 +257,19 @@ Bindings with `"async": true` wrap their return type in `Promise`:
 declare function get(key: string): Promise<string | undefined>;
 ```
 
+`async` declares the **shape** of the value a script receives, a promise rather than a settled value. It says nothing about whether the interpreter yields while the host does its work; that is a property of the runtime, and the runtimes differ:
+
+| Runtime | What `await binding()` does | Other work on the same runtime meanwhile |
+| --- | --- | --- |
+| JS/WASM, `initXriptAsync` | the asyncify build suspends the QuickJS stack until the host promise settles; the host's event loop is free | none: one asyncify module suspends one call at a time, so a second call on that runtime waits |
+| JS/WASM, `initXript` | async bindings are not available; a host function's return value is marshalled as-is | n/a |
+| Node.js | the host promise is handed to the `vm` context unchanged; the script genuinely awaits it and the event loop is free | yes: other calls on the runtime run while it is pending |
+| Rust, `RuntimeMode::Sync` (default) | the host future is driven to completion on the interpreter thread (`pollster::block_on`) and the script receives an already-settled promise; `await` never suspends | none: the interpreter thread is held for the binding's full duration |
+| Rust, `RuntimeMode::Async` | the script receives a pending promise; the host future runs on the runtime's executor and settles it | yes: other calls on the runtime run while it is pending (drive them with the `*_async` methods or an `XriptHandle`) |
+| C# | host functions are synchronous (`HostFunction` returns a settled `JsonElement`) and run on the Jint engine thread; `async` is declarative only | none: the engine thread is held for the call |
+
+Execution limits differ too. In Rust's `RuntimeMode::Async`, `timeout_ms` bounds the whole call, time spent awaiting a host future included, and cancellation reaches a call parked on one. Everywhere else, limits and cancellation bound script execution only: Node's `vm` timeout covers the synchronous run, not the wait on a host promise, and a binding that blocks the engine thread is the host's to bound.
+
 ### Optional Parameters
 
 Parameters with a `default` value or `"required": false` become optional:
@@ -280,6 +300,46 @@ type LogLevel = "debug" | "info" | "warn" | "error" | (string & {});
 ```
 
 docgen marks an `open` type as extensible in the generated documentation.
+
+## Callbacks
+
+A binding can take a function. A pathfinder asks which cells are walkable, a filter asks which items to keep, a field-of-view routine asks what blocks sight: each needs a predicate the mod supplies. A script function passed anywhere in a binding's arguments (top level, an object field, an array element, any depth) arrives on the host as a **callback**: a callable proxy for the script function.
+
+```javascript
+const route = map.findPath(start, goal, { walkable: (cell) => !cell.lava });
+```
+
+The host calls the callback like a function. In the JavaScript and Node runtimes it is a plain function that throws `CallbackError`; in the Rust and C# runtimes, whose bindings receive JSON, a function appears in the arguments as a marker object `{ "$xriptCallback": "<token>" }` that the host resolves with `Callback::from_value` (Rust) or `XriptCallback.From` (C#) and calls with `call` / `Invoke`.
+
+### Lifetime
+
+A callback is **call-scoped**: it is valid only while the binding call that received it is running. Once the binding returns (or, for an async binding, once its result settles), calling it fails as expired, with a message naming the binding. Nothing retains a script function past the call, so there is no cross-call lifetime to manage and nothing for a garbage collector to get wrong. A host that wants something durable asks for data, or declares a slot a mod fills.
+
+A callback is also bound to the thread running the call. In the Rust and C# runtimes a callback called from another thread fails as expired.
+
+### Calling
+
+Calling a callback runs the script function synchronously on the sandbox, re-entrantly, inside the binding call:
+
+- **Arguments** go host to sandbox by the same rules as a binding's return value. **The return value** comes back sandbox to host by the same rules as a binding's arguments. A function inside a callback's arguments or return value is not proxied.
+- **Budget.** The callback spends the calling script's execution budget. The same timeout, memory, and stack limits apply, and a runaway callback is stopped exactly as a runaway script is. The stop is not the host's to swallow: if a callback exhausts the budget, the binding call ends with the execution-limit error whatever the host does next.
+- **Throws.** A script error inside a callback reaches the host as a catchable error whose message is the script error's own message (`CallbackError` with `reason: "threw"`, `CallbackError::Threw`, or `CallbackException` with `Reason == "threw"`). If the host lets it escape, the binding call rethrows the script's original error into the script, so `catch (e)` around the binding call sees the error the callback threw, with its own name and message. In Rust, "lets it escape" means returning the callback error's message unchanged (`Err(e.to_string())`, or `?` into a `String` error).
+- **Synchronous only.** A callback returns a settled value. A callback that returns a promise is refused (`reason: "promise"`). An async binding called from inside a callback throws instead of starting (a `BindingError` in the JavaScript runtimes, an `Error` with the same message in Rust), because the callback cannot await it.
+- **Re-entrancy.** A callback may call other bindings, including one that takes its own callback. Each binding call has its own scope.
+
+The failure reasons are the same in every runtime: `threw`, `expired`, `promise`, and `limit`.
+
+### Async bindings
+
+An async binding's callbacks stay valid until its result settles, so the host may call them before and after its own awaits. The universal runtime's async (asyncify) sandbox runs such a call while the engine is suspended in the binding; the call is synchronous and must not suspend again, which is why an async binding refuses to start inside a callback in every runtime.
+
+### What is not a callback
+
+Only a function passed **into** a binding call becomes a callback. A function in a value a host binding returns, in a hook's arguments, or in an event payload is not proxied; it is marshalled by the ordinary data rules, and the runtimes that marshal through JSON drop it. A manifest that declares a function type in one of those places gets a `callback-does-not-cross` lint warning.
+
+### Conformance
+
+`spec/callback-tests.json` is the shared corpus every runtime asserts: top-level, nested object, nested array, and deeply nested callbacks; argument and return marshalling; re-entrancy; a throw caught by the host and one left to propagate; a promise return; a call after the binding returned; a runaway callback against the script's budget; and the refusal of a non-function for a declared function parameter.
 
 ## Naming Conventions
 

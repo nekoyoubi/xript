@@ -1,5 +1,5 @@
 <script>
-	import { applyVisibility, applyOps, wireHandlers } from "./applyFragment.js";
+	import { applyFragmentVisibility, applyOps, wireHandlers } from "./applyFragment.js";
 
 	/**
 	 * @typedef {import("./applyFragment.js").FragmentResult} FragmentResult
@@ -22,7 +22,7 @@
 		const root = container;
 		if (!root) return;
 		root.innerHTML = fragment?.html ?? "";
-		applyVisibility(root, fragment?.visibility ?? {});
+		applyFragmentVisibility(root, fragment);
 		applyOps(root, ops);
 		teardown();
 		teardown = wireHandlers(root, handlers, dispatch);

@@ -18,6 +18,11 @@ fn demo_fragment() -> xript_runtime::FragmentInstance {
     let runtime = xript_runtime::create_runtime(
         &read("manifest.json"),
         xript_runtime::RuntimeOptions {
+            host_bindings: {
+                let mut bindings = xript_runtime::HostBindings::new();
+                bindings.add_function("log", |_: &[serde_json::Value]| Ok(serde_json::Value::Null));
+                bindings
+            },
             capabilities: vec!["ui-mount".to_string()],
             ..Default::default()
         },
@@ -26,6 +31,7 @@ fn demo_fragment() -> xript_runtime::FragmentInstance {
 
     let mut sources = HashMap::new();
     sources.insert("fragments/panel.json".to_string(), read("fragments/panel.json"));
+    sources.insert("src/mod.js".to_string(), read("src/mod.js"));
 
     runtime
         .load_mod(

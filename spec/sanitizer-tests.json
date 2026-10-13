@@ -588,5 +588,40 @@
 		"input": "<a href=\"javascript :alert(1)\">x</a>",
 		"expected": "<a>x</a>",
 		"description": "drops a javascript: scheme padded with a space before the colon"
+	},
+	{
+		"input": "<svg viewBox=\"0 0 16 16\"><title>Close</title><path d=\"M0 0L16 16\" /></svg>",
+		"expected": "<svg viewBox=\"0 0 16 16\"><title>Close</title><path d=\"M0 0L16 16\" /></svg>",
+		"description": "keeps an svg title as the icon's accessible name"
+	},
+	{
+		"input": "<svg><g><desc class=\"d\" onclick=\"x()\" fill=\"red\">A longer description</desc></g></svg>",
+		"expected": "<svg><g><desc class=\"d\">A longer description</desc></g></svg>",
+		"description": "keeps an svg desc nested in a group, dropping attributes outside its safe set"
+	},
+	{
+		"input": "<title>Document</title><p>body</p>",
+		"expected": "<p>body</p>",
+		"description": "still strips an html title outside any svg"
+	},
+	{
+		"input": "<svg><title>a <b>bold</b> <span class=\"x\">move</span></title></svg>",
+		"expected": "<svg><title>a bold move</title></svg>",
+		"description": "reduces element children of an svg title to their text"
+	},
+	{
+		"input": "<svg><title><script>alert(1)</script>safe</title></svg>",
+		"expected": "<svg><title>safe</title></svg>",
+		"description": "neutralizes a script inside an svg title, keeping the surrounding text"
+	},
+	{
+		"input": "<svg><title><style>.a{color:red}</style>label</title></svg>",
+		"expected": "<svg><title>label</title></svg>",
+		"description": "drops a style element inside an svg title rather than surfacing its css as text"
+	},
+	{
+		"input": "<svg><title>1 &lt; 2</title></svg><p>after</p>",
+		"expected": "<svg><title>1 &lt; 2</title></svg><p>after</p>",
+		"description": "keeps escaped markup in an svg title inert and does not swallow later content"
 	}
 ]

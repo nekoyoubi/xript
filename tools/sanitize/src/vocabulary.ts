@@ -1,6 +1,8 @@
 import {
 	ALLOWED_ELEMENTS,
 	STRIPPED_ELEMENTS,
+	SVG_TEXT_ATTRIBUTES,
+	SVG_TEXT_ELEMENTS,
 	UNWRAPPED_ELEMENTS,
 	isAllowedAttribute,
 	isValidAttributeName,
@@ -39,7 +41,10 @@ export type DiagnosticCode =
 	| "invalid-prop"
 	| "unsafe-prop"
 	| "illegal-child"
-	| "invalid-expression";
+	| "invalid-expression"
+	| "duplicate-key"
+	| "invalid-key"
+	| "repeat-limit";
 
 export type DiagnosticSeverity = "error" | "warning";
 
@@ -81,6 +86,8 @@ interface Context {
 	profile: FormatProfile;
 	strict: boolean;
 	interpolate: boolean;
+	/** True while walking the descendants of a built-in `<svg>` element. */
+	inSvg: boolean;
 	diagnostics: FragmentDiagnostic[];
 	strippedElements: string[];
 	strippedAttributes: Array<{ element: string; attribute: string }>;
@@ -89,6 +96,7 @@ interface Context {
 type Resolution =
 	| { kind: "declared"; vocabulary: string | null; name: string; definition: NodeDefinition }
 	| { kind: "html"; name: string }
+	| { kind: "svg-text"; name: string }
 	| { kind: "stripped"; name: string }
 	| { kind: "unwrap" }
 	| { kind: "unknown" };
@@ -126,6 +134,7 @@ export function sanitizeTree(
 		profile,
 		strict: options.strictVocabulary === true,
 		interpolate: options.interpolate === true,
+		inSvg: false,
 		diagnostics: [],
 		strippedElements: [],
 		strippedAttributes: [],
@@ -205,7 +214,7 @@ function walkNodes(
 			return;
 		}
 
-		const resolved = resolveNode(node.name, ctx.profile);
+		const resolved = resolveNode(node.name, ctx.profile, ctx.inSvg);
 
 		if (resolved.kind === "unknown") {
 			const severity = vocabularySeverity(ctx);
@@ -250,6 +259,11 @@ function walkNodes(
 			return;
 		}
 
+		if (resolved.kind === "svg-text") {
+			result.push(sanitizeSvgTextNode(node, resolved.name, ctx, nodePath));
+			return;
+		}
+
 		result.push(
 			resolved.kind === "declared"
 				? sanitizeDeclaredNode(node, resolved.definition, ctx, nodePath)
@@ -261,12 +275,93 @@ function walkNodes(
 }
 
 /**
+ * An SVG `title` or `desc`. Text-only: element children are reduced to their text,
+ * a stripped element's subtree is dropped outright, and a `style` element's content
+ * is dropped rather than surfacing as prose. Each removal is reported. Attributes are
+ * held to `SVG_TEXT_ATTRIBUTES` plus the inert `data-*`/`aria-*` prefixes.
+ */
+function sanitizeSvgTextNode(
+	node: FragmentElement,
+	tag: string,
+	ctx: Context,
+	path: string,
+): FragmentElement {
+	const props: Record<string, PropValue> = {};
+
+	for (const [key, value] of Object.entries(node.props)) {
+		const lowerKey = key.toLowerCase();
+		const allowed = !FORBIDDEN_PROP_NAMES.has(lowerKey)
+			&& isValidAttributeName(lowerKey)
+			&& (SVG_TEXT_ATTRIBUTES.has(lowerKey) || isMetadataPropName(lowerKey));
+		if (!allowed) {
+			ctx.strippedAttributes.push({ element: tag, attribute: lowerKey });
+			report(ctx, {
+				code: lowerKey.startsWith("on") ? "unsafe-prop" : "unknown-prop",
+				severity: "warning",
+				path,
+				node: tag,
+				prop: lowerKey,
+				message: `stripped attribute "${lowerKey}" on <${tag}>`,
+			});
+			continue;
+		}
+		setProp(props, lowerKey, value);
+	}
+
+	const text = collectSvgText(node.children, tag, ctx, path);
+	const children: FragmentTree = [];
+	if (text !== "") {
+		const textNode: FragmentText = { kind: "text", value: text };
+		children.push(ctx.interpolate ? segmentTextNode(textNode, ctx, `${path}/0`) : textNode);
+	}
+
+	return { kind: "element", name: tag, props, children };
+}
+
+function collectSvgText(nodes: FragmentTree, owner: string, ctx: Context, path: string): string {
+	let text = "";
+	nodes.forEach((child, index) => {
+		const childPath = `${path}/${index}`;
+		if (child.kind === "text") {
+			text += child.value;
+			return;
+		}
+
+		const lower = child.name.toLowerCase();
+		if (STRIPPED_ELEMENTS.has(lower)) {
+			ctx.strippedElements.push(lower);
+			report(ctx, {
+				code: "stripped-node",
+				severity: "warning",
+				path: childPath,
+				node: lower,
+				message: `stripped dangerous element: <${lower}>`,
+			});
+			return;
+		}
+
+		const keepsText = lower !== "style";
+		report(ctx, {
+			code: "illegal-child",
+			severity: "warning",
+			path: childPath,
+			node: child.name,
+			message: keepsText
+				? `node "${child.name}" is not permitted inside svg <${owner}>; its text was kept`
+				: `node "${child.name}" is not permitted inside svg <${owner}> and was dropped`,
+		});
+		if (keepsText) text += collectSvgText(child.children, owner, ctx, childPath);
+	});
+	return text;
+}
+
+/**
  * Walks the format's scope in order, returning the first vocabulary's claim on the
  * name. Order is authoritative and literal: no reordering, no merging. The built-in
  * HTML arm declines rather than terminates, so a vocabulary listed after it still gets
  * its turn.
  */
-function resolveNode(name: string, profile: FormatProfile): Resolution {
+function resolveNode(name: string, profile: FormatProfile, inSvg: boolean): Resolution {
 	for (const entry of profile.scope) {
 		if (entry.kind === "declared") {
 			if (Object.prototype.hasOwnProperty.call(entry.nodes, name)) {
@@ -276,6 +371,7 @@ function resolveNode(name: string, profile: FormatProfile): Resolution {
 		}
 
 		const lower = name.toLowerCase();
+		if (inSvg && SVG_TEXT_ELEMENTS.has(lower)) return { kind: "svg-text", name: lower };
 		if (STRIPPED_ELEMENTS.has(lower)) return { kind: "stripped", name: lower };
 		if (UNWRAPPED_ELEMENTS.has(lower) && profile.syntax === "html") return { kind: "unwrap" };
 		if (ALLOWED_ELEMENTS.has(lower)) return { kind: "html", name: lower };
@@ -376,12 +472,12 @@ function sanitizeHtmlNode(
 		setProp(props, canonicalAttributeName(lowerKey), value);
 	}
 
-	const element: FragmentElement = {
-		kind: "element",
-		name: tag,
-		props,
-		children: walkNodes(node.children, ctx, path, "any"),
-	};
+	const enclosingSvg = ctx.inSvg;
+	if (tag === "svg") ctx.inSvg = true;
+	const children = walkNodes(node.children, ctx, path, "any");
+	ctx.inSvg = enclosingSvg;
+
+	const element: FragmentElement = { kind: "element", name: tag, props, children };
 	if (node.selfClosing) element.selfClosing = true;
 	return element;
 }

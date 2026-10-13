@@ -1,0 +1,49 @@
+{
+  "description": "Conformance corpus for sandbox-to-host value marshalling. A script value crossing out to the host is data: a script function carries nothing across the boundary and must never reach the host as something callable, because the host could then run sandbox code outside the execution budget. Every runtime evaluates each case's `script` through `execute` and the value the host receives must equal `expected` (compared as JSON). A function marshals to null at the top level and as an array element, and is omitted as an object property, which is what JSON serialization produces.",
+  "notes": [
+    "The manifest every runtime uses is `{ \"xript\": \"0.1\", \"name\": \"marshal-out-probe\" }` (no bindings are needed).",
+    "`script` is evaluated exactly as written; it is already an expression that produces the value under test.",
+    "`expected` is the value the host must receive, as JSON. There is no representation of a function here on purpose: a function never crosses out, so it is absent (an object property), null (a top-level value or an array element), exactly as `JSON.stringify` would render the same shape."
+  ],
+  "manifest": {
+    "xript": "0.1",
+    "name": "marshal-out-probe"
+  },
+  "cases": [
+    {
+      "name": "a bare function marshals to null",
+      "script": "(function () { return function () { return 9; }; })()",
+      "expected": null
+    },
+    {
+      "name": "an arrow function marshals to null",
+      "script": "(function () { return () => 1; })()",
+      "expected": null
+    },
+    {
+      "name": "a function-valued object property is omitted",
+      "script": "(function () { return { f: function () {}, n: 1 }; })()",
+      "expected": { "n": 1 }
+    },
+    {
+      "name": "a function array element is null",
+      "script": "(function () { return [function () {}, 2]; })()",
+      "expected": [null, 2]
+    },
+    {
+      "name": "a nested function property is omitted",
+      "script": "(function () { return { outer: { f: function () {}, k: 3 } }; })()",
+      "expected": { "outer": { "k": 3 } }
+    },
+    {
+      "name": "a function held only in an array nested in an object is null",
+      "script": "(function () { return { items: [1, function () {}, 3] }; })()",
+      "expected": { "items": [1, null, 3] }
+    },
+    {
+      "name": "plain data is preserved unchanged",
+      "script": "(function () { return { a: [1, 2], b: \"x\", c: { d: true } }; })()",
+      "expected": { "a": [1, 2], "b": "x", "c": { "d": true } }
+    }
+  ]
+}

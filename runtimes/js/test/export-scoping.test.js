@@ -64,7 +64,7 @@ describe("export scoping — a later mod cannot weaken an earlier mod's gate", (
 			name: "mod-b",
 			version: "1.0.0",
 			entry: { format: "script", script: "b.js", exports: { doThing: { description: "no capability at all" } } },
-		});
+		}, { fragmentSources: { "b.js": "" } });
 
 		const error = captureThrow(() => runtime.invokeExport("doThing", []));
 		assert.ok(

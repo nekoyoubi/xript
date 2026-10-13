@@ -1,13 +1,13 @@
 # Resolving roles
 
-A role is a named set of functions a mod promises to provide — a transcriber, a formatter, a data provider. Cross-mod collaboration goes through roles, not hardcoded globals. The host resolves the active provider and calls its functions. **Declaring a role grants nothing; each named function stays gated by its own capability.**
+A role is a named set of functions a mod promises to provide: a transcriber, a formatter, a data provider. Cross-mod collaboration goes through roles, not hardcoded globals. The host resolves the active provider and calls its functions. **Declaring a role grants nothing; each named function stays gated by its own capability.**
 
 ## Resolving a provider
 
 - `runtime.resolveRole(role)` returns the active `RoleResolution`, or `null` when no mod provides it.
 - `runtime.resolveRoleAll(role)` returns every provider, for when the host wants to fan out rather than pick one.
 
-A `RoleResolution` is `{ addon, role, fns }`, where `fns` maps each role-function name to the provider mod's export name. The host calls them through `runtime.invokeModExport(addon, fns[name], args)` — it never assumes a global of that name exists.
+A `RoleResolution` is `{ addon, role, fns }`, where `fns` maps each role-function name to the provider mod's export name. The host calls them through `runtime.invokeModExport(addon, fns[name], args)`; it never assumes a global of that name exists.
 
 Pass the `addon` explicitly. Export names are scoped to the mod that declared them, so two providers of the same role naturally both export `transcribe` without shadowing each other. `invokeExport(name, args)` still resolves a name only one mod owns; when two do, it throws `AmbiguousExportError` naming both mods rather than guessing. The resolution already knows the owner, so hand it over.
 

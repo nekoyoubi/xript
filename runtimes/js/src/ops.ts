@@ -3,7 +3,8 @@ import {
 	isAllowedAttribute,
 	jsmlToTree,
 	jsString,
-	sanitizeHTML,
+	BUILTIN_PROFILES,
+	propTypeLookup,
 	sanitizeTree,
 	speaksHtml,
 	treeToHtml,
@@ -27,6 +28,7 @@ export type RuntimeDiagnosticCode =
 	| "unsupported-op"
 	| "unsupported-target"
 	| "op-unknown-prop"
+	| "op-invalid-value"
 	| "prop-sink-conflict";
 
 export interface RuntimeDiagnostic {
@@ -105,7 +107,8 @@ export function finalizeOps(
 				break;
 
 			case "setProp":
-			case "setAttr": {
+			case "setAttr":
+			case "removeAttr": {
 				const prop = raw.prop ?? raw.attr;
 				if (typeof prop !== "string" || prop.length === 0) {
 					emit({
@@ -113,6 +116,30 @@ export function finalizeOps(
 						severity: "warning",
 						node: raw.selector,
 						message: `op "${raw.op}" needs a prop name`,
+					});
+					return;
+				}
+				const isAttribute = raw.op !== "setProp" || landsOnHtmlAttribute(profile, prop);
+				const removes = raw.op === "removeAttr"
+					|| (isAttribute && (raw.value === false || raw.value === null || raw.value === undefined));
+				if (removes) {
+					const refusal = checkPropName(profile, prop);
+					if (refusal) {
+						emit({ code: refusal.code, severity: "warning", node: raw.selector, prop, message: refusal.message });
+						return;
+					}
+					op.op = "removeAttr";
+					op.prop = prop;
+					op.attr = prop;
+					break;
+				}
+				if (isAttribute && typeof raw.value === "object" && raw.value !== null) {
+					emit({
+						code: "op-invalid-value",
+						severity: "warning",
+						node: raw.selector,
+						prop,
+						message: `op "${raw.op}" on "${raw.selector}" cannot write a non-primitive value to attribute "${prop}"`,
 					});
 					return;
 				}
@@ -134,7 +161,16 @@ export function finalizeOps(
 			}
 
 			case "replaceChildren":
-				op.value = sanitizeOpChildren(raw.value, profile);
+				if (typeof raw.value !== "string" && !Array.isArray(raw.value)) {
+					emit({
+						code: "op-invalid-value",
+						severity: "warning",
+						node: raw.selector,
+						message: `op "replaceChildren" on "${raw.selector}" needs a string or a list of children`,
+					});
+					return;
+				}
+				op.value = sanitizeOpChildren(raw.value, profile, path, (diagnostic) => report?.(diagnostic));
 				break;
 		}
 
@@ -221,6 +257,34 @@ function routeOpValue(profile: FormatProfile, prop: string, value: PropValue): R
 	return { rejected: false, value: cleaned };
 }
 
+function declaredByScope(profile: FormatProfile, prop: string): boolean {
+	return profile.scope.some((vocabulary) => vocabulary.kind === "declared"
+		&& Object.values(vocabulary.nodes).some((definition) => definition.props
+			&& Object.prototype.hasOwnProperty.call(definition.props, prop)));
+}
+
+/**
+ * Whether a prop write resolves to an HTML attribute rather than to a typed prop a
+ * declared vocabulary owns. An attribute holds a string, so it has no `false` to hold:
+ * `false` and `null` there mean "absent", the way a boolean attribute does in HTML.
+ */
+function landsOnHtmlAttribute(profile: FormatProfile, prop: string): boolean {
+	if (speaksOnlyHtml(profile)) return true;
+	return speaksHtml(profile) && !declaredByScope(profile, prop);
+}
+
+/** The name half of `routeOpValue`: whether an op may address this prop at all. */
+function checkPropName(profile: FormatProfile, prop: string): { code: RuntimeDiagnosticCode; message: string } | null {
+	if (speaksOnlyHtml(profile)) {
+		return isAllowedAttribute("", prop.toLowerCase())
+			? null
+			: { code: "unsafe-prop", message: `prop "${prop}" is not settable on an HTML node` };
+	}
+	if (declaredByScope(profile, prop)) return null;
+	if (speaksHtml(profile) && isAllowedAttribute("", prop.toLowerCase())) return null;
+	return { code: "op-unknown-prop", message: `prop "${prop}" is not declared by any node of format "${profile.id}"` };
+}
+
 function htmlSinkFor(lowerProp: string): Sink {
 	if (lowerProp === "href") return "uri";
 	if (lowerProp === "src") return "image-uri";
@@ -234,17 +298,56 @@ function htmlSinkFor(lowerProp: string): Sink {
  * nodes the built-in HTML vocabulary knows nothing about, so sanitizing its markup against
  * built-in HTML alone would strip exactly the custom elements the format exists to declare.
  * A J5ML node list takes the same route through the tree sanitizer.
+ *
+ * The value keeps the shape the mod gave it. A list of strings under an HTML-speaking
+ * format is a list of markup strings, each sanitized on its own and the list kept; the
+ * empty list is an explicit clear. Any other list is a J5ML node list.
+ *
+ * Every finding the nested pass makes is forwarded with its path prefixed by the op's,
+ * and for a markup list by the item's index too (`/0` op, `/2` item, `/1` node).
  */
-function sanitizeOpChildren(value: unknown, profile: FormatProfile): unknown {
-	if (typeof value === "string") {
-		if (!speaksHtml(profile)) return value;
-		if (profile.builtin) return sanitizeHTML(value);
-		const sanitized = sanitizeTree(htmlToTree(value, profile), profile);
-		return treeToHtml(sanitized.tree);
+function sanitizeOpChildren(
+	value: unknown,
+	profile: FormatProfile,
+	opPath: string,
+	emit: (diagnostic: RuntimeDiagnostic) => void,
+): unknown {
+	if (typeof value === "string") return sanitizeOpMarkup(value, profile, opPath, emit);
+	if (Array.isArray(value) && speaksHtml(profile) && value.every((item) => typeof item === "string")) {
+		// `Array.from` builds the list in the host realm; the value's own `map` would keep it in the sandbox's.
+		return Array.from(value, (item, index) =>
+			sanitizeOpMarkup(item as string, profile, `${opPath}/${index}`, emit));
 	}
 	if (Array.isArray(value)) {
 		const sanitized = sanitizeTree(jsmlToTree(value as JsmlNode[]), profile);
+		forwardDiagnostics(sanitized.diagnostics, opPath, emit);
 		return treeToJsml(sanitized.tree);
 	}
 	return value;
+}
+
+/**
+ * Sanitizes one markup string. A built-in format's markup is read as `text/html`, which is
+ * what the string sanitizer has always done; a declared format's markup is read against its
+ * own scope so its custom elements survive.
+ */
+function sanitizeOpMarkup(
+	value: string,
+	profile: FormatProfile,
+	pathPrefix: string,
+	emit: (diagnostic: RuntimeDiagnostic) => void,
+): string {
+	if (!speaksHtml(profile)) return value;
+	const markupProfile = profile.builtin ? BUILTIN_PROFILES["text/html"] : profile;
+	const sanitized = sanitizeTree(htmlToTree(value, markupProfile), markupProfile);
+	forwardDiagnostics(sanitized.diagnostics, pathPrefix, emit);
+	return treeToHtml(sanitized.tree, propTypeLookup(markupProfile));
+}
+
+function forwardDiagnostics(
+	diagnostics: RuntimeDiagnostic[],
+	pathPrefix: string,
+	emit: (diagnostic: RuntimeDiagnostic) => void,
+): void {
+	for (const diagnostic of diagnostics) emit({ ...diagnostic, path: `${pathPrefix}${diagnostic.path}` });
 }

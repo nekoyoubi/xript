@@ -4,17 +4,17 @@ The hardest recurring question in an extensible app is where the line sits: what
 
 ## What belongs in the host
 
-- **The surface itself** — the manifest, and the bindings, slots, and capabilities it declares. A mod cannot declare the host's own surface; that is the host's job.
-- **Mechanism** — the implementation behind each binding, and the host-side handling of each slot. The *how* of reaching real state, performing a real action, mounting a fragment, or firing an event lives in the host; mods call bindings and fill slots, they don't reimplement the host's side.
-- **Security-critical enforcement** — capability gating, the sandbox boundary, anything a mod must not be able to reach around. If correctness depends on a mod *not* being able to bypass it, it is host code.
-- **Genuinely hot paths** — a tight inner loop where crossing the runtime boundary per iteration costs too much. A real performance constraint is a legitimate reason to keep something in the host; name the constraint when you invoke it.
+- **The surface itself**: the manifest, and the bindings, slots, and capabilities it declares. A mod cannot declare the host's own surface; that is the host's job.
+- **Mechanism**: the implementation behind each binding, and the host-side handling of each slot. The *how* of reaching real state, performing a real action, mounting a fragment, or firing an event lives in the host; mods call bindings and fill slots, they don't reimplement the host's side.
+- **Security-critical enforcement**: capability gating, the sandbox boundary, anything a mod must not be able to reach around. If correctness depends on a mod *not* being able to bypass it, it is host code.
+- **Genuinely hot paths**: a tight inner loop where crossing the runtime boundary per iteration costs too much. A real performance constraint is a legitimate reason to keep something in the host; name the constraint when you invoke it.
 
 ## What belongs in a mod
 
-- **Policy and behavior** — the decisions, the rules, the *what to do*. The host exposes the levers; mods decide how to pull them.
-- **Presentation, behavior, and reactions** — what the user sees, the roles the host needs satisfied, the moments mods react to: all contributed as fills into declared slots.
-- **The app's own content** — built-in features authored as mod zero, through the same surface a third party would use.
-- **Anything a third party could plausibly replace or extend** — if an outside author could reasonably want to do this differently, it is mod territory, even when the host ships the default.
+- **Policy and behavior**: the decisions, the rules, the *what to do*. The host exposes the levers; mods decide how to pull them.
+- **Presentation, behavior, and reactions**: what the user sees, the roles the host needs satisfied, the moments mods react to: all contributed as fills into declared slots.
+- **The app's own content**: built-in features authored as mod zero, through the same surface a third party would use.
+- **Anything a third party could plausibly replace or extend**: if an outside author could reasonably want to do this differently, it is mod territory, even when the host ships the default.
 
 ## The deciding question
 

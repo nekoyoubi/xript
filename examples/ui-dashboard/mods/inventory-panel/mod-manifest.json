@@ -1,20 +1,21 @@
 {
-	"$schema": "https://xript.dev/schema/mod-manifest/v0.8.json",
-	"xript": "0.8",
+	"$schema": "https://xript.dev/schema/mod-manifest/v0.9.json",
+	"xript": "0.9",
 	"name": "inventory-panel",
 	"version": "1.0.0",
 	"title": "Inventory Panel",
-	"description": "Shows the player's inventory using the sandbox fragment API for iteration.",
+	"description": "Shows the player's inventory as a keyed data-each list, with no script at all.",
 	"author": "xript-examples",
-	"entry": "src/mod.js",
 	"fills": {
 		"sidebar.left": [
 			{
 				"id": "inventory-list",
 				"format": "text/html",
 				"source": "fragments/inventory.html",
+				"interpolate": true,
 				"bindings": [
-					{ "name": "playerName", "path": "player.name" }
+					{ "name": "playerName", "path": "player.name" },
+					{ "name": "inventory", "path": "player.inventory" }
 				],
 				"priority": 5
 			}

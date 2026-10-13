@@ -2,6 +2,7 @@
 
 use crate::diagnostic::FragmentDiagnostic;
 use crate::node::FragmentTree;
+use crate::repeat::FragmentRepeat;
 
 /// The contract identifier every [`RenderedFragment`] carries. A renderer that
 /// does not recognize the string must refuse to render rather than guess.
@@ -53,6 +54,9 @@ pub struct RenderedFragment {
     pub tree: FragmentTree,
     /// Every `data-if`, path-keyed, already evaluated.
     pub conditions: Vec<FragmentCondition>,
+    /// Every `data-each` expansion, in document order. The copies are already in
+    /// `tree`; this says where they sit and how to patch the previous render's.
+    pub repeats: Vec<FragmentRepeat>,
     /// Advisory in every case.
     pub diagnostics: Vec<FragmentDiagnostic>,
 }
@@ -92,6 +96,7 @@ mod tests {
             content_type: ContentType::Tree,
             tree: Vec::new(),
             conditions,
+            repeats: Vec::new(),
             diagnostics: Vec::new(),
         }
     }

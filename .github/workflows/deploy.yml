@@ -35,6 +35,9 @@ jobs:
       - name: Build sanitize
         run: npm run build --workspace=tools/sanitize
 
+      - name: Build validate
+        run: npm run build --workspace=tools/validate
+
       - name: Build runtime
         run: npm run build --workspace=runtimes/js
 

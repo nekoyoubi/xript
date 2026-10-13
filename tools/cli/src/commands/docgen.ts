@@ -1,12 +1,19 @@
 import { readFile } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
 import { generateDocsFromFile, writeDocsToDirectory, resolveExtends, type DocgenOptions } from "@xriptjs/docgen";
+import { reportVersion, takeSpecFlag } from "../spec-version.js";
 
-export async function run(args: string[]): Promise<void> {
-	if (args.includes("--help") || args.includes("-h")) {
+export async function run(rawArgs: string[]): Promise<void> {
+	if (rawArgs.includes("--help") || rawArgs.includes("-h")) {
 		printHelp();
 		process.exit(0);
 	}
+	const spec = takeSpecFlag(rawArgs);
+	if (spec.missing) {
+		console.error("Error: --spec requires a manifest version, e.g. --spec 0.8");
+		process.exit(1);
+	}
+	const args = spec.rest;
 
 	const outputIndex = args.findIndex((a) => a === "--output" || a === "-o");
 	let outputDir: string | undefined;
@@ -57,6 +64,8 @@ export async function run(args: string[]): Promise<void> {
 		process.exit(1);
 	}
 
+	if (!(await reportVersion(manifestPath, spec.version))) process.exit(1);
+
 	try {
 		const opts: DocgenOptions = {};
 		if (linkFormat === "no-extension") opts.linkFormat = "no-extension";
@@ -90,5 +99,7 @@ function printHelp(): void {
 	console.log("  --frontmatter <s>  YAML frontmatter to inject into generated files");
 	console.log("  --grant-shapes     Emit a capability grant shapes reference page");
 	console.log("  --host <manifest>  For a mod manifest: the host it fills, so command fills and their gates are exact");
+	console.log("  --spec <version>   Check the manifest against this manifest version (0.6-0.9) before generating;");
+	console.log("                     defaults to the manifest's $schema, then its xript field");
 	console.log("  --help, -h         Show this help message");
 }

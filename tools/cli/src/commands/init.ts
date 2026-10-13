@@ -1,11 +1,26 @@
 import { resolve, basename } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { writeProject, type TemplateOptions } from "@xriptjs/init";
+import { resolveTargetVersion } from "@xriptjs/validate";
+import { takeSpecFlag } from "../spec-version.js";
 
-export async function run(args: string[]): Promise<void> {
-	if (args.includes("--help") || args.includes("-h")) {
+export async function run(rawArgs: string[]): Promise<void> {
+	if (rawArgs.includes("--help") || rawArgs.includes("-h")) {
 		printHelp();
 		process.exit(0);
+	}
+	const spec = takeSpecFlag(rawArgs);
+	if (spec.missing) {
+		console.error("Error: --spec requires a manifest version, e.g. --spec 0.8");
+		process.exit(1);
+	}
+	const args = spec.rest;
+	let specVersion: string | undefined;
+	try {
+		specVersion = spec.version !== undefined ? resolveTargetVersion({}, spec.version).version : undefined;
+	} catch (error) {
+		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+		process.exit(1);
 	}
 
 	const skipPrompts = args.includes("--yes") || args.includes("-y");
@@ -23,9 +38,10 @@ export async function run(args: string[]): Promise<void> {
 	const targetDir = positional[0] ? resolve(positional[0]) : process.cwd();
 
 	try {
-		const options = skipPrompts
+		const prompted = skipPrompts
 			? resolveDefaults(targetDir, tierFlag, langFlag, isMod)
 			: await promptUser(targetDir, tierFlag, langFlag, isMod);
+		const options: TemplateOptions = specVersion !== undefined ? { ...prompted, specVersion } : prompted;
 
 		const result = await writeProject(targetDir, options);
 
@@ -79,7 +95,7 @@ async function promptUser(
 		if (tierOverride) {
 			tier = parseTier(tierOverride) ?? 2;
 		} else {
-			const tierInput = await rl.question("Tier — 2 (bindings), 3 (advanced scripting), or 4 (full feature)? (2): ");
+			const tierInput = await rl.question("Tier: 2 (bindings), 3 (advanced scripting), or 4 (full feature)? (2): ");
 			tier = parseTier(tierInput.trim()) ?? 2;
 		}
 
@@ -87,7 +103,7 @@ async function promptUser(
 		if (langOverride) {
 			language = langOverride as "typescript" | "javascript";
 		} else {
-			const langInput = await rl.question("Language — ts or js? (ts): ");
+			const langInput = await rl.question("Language: ts or js? (ts): ");
 			const normalized = langInput.trim().toLowerCase();
 			language = (normalized === "js" || normalized === "javascript") ? "javascript" : "typescript";
 		}
@@ -118,5 +134,6 @@ function printHelp(): void {
 	console.log("  --tier <2|3|4>    Adoption tier (default: 2)");
 	console.log("  --typescript      Generate TypeScript files (default)");
 	console.log("  --javascript      Generate JavaScript files");
+	console.log("  --spec <version>  Manifest version the scaffold declares (0.6, 0.7, 0.8, 0.9; default: this toolchain's)");
 	console.log("  --help, -h        Show this help message");
 }

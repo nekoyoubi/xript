@@ -1,5 +1,7 @@
 <div class="inventory-panel">
 	<div class="panel-title"><span data-bind="playerName">Player</span>'s Inventory</div>
-	<ul class="item-list"></ul>
-	<div data-if="itemCount === 0" class="empty-message">No items yet.</div>
+	<ul class="item-list">
+		<li data-each="item in inventory" data-key="item.name">{{ item.name }} (x{{ item.count }})</li>
+	</ul>
+	<div data-if="len(inventory) == 0" class="empty-message">No items yet.</div>
 </div>

@@ -17,6 +17,12 @@ public record FragmentResult(string FragmentId, string Html, Dictionary<string, 
     public IReadOnlyList<FragmentCondition> Conditions { get; init; } = [];
 
     /// <summary>
+    /// Every <c>data-each</c> expansion, in document order: where its copies sit, their keys,
+    /// and how to patch the copies of the previous render into these.
+    /// </summary>
+    public IReadOnlyList<FragmentRepeat> Repeats { get; init; } = [];
+
+    /// <summary>
     /// The bound fragment tree. Present for every format; for a host-declared vocabulary
     /// it is the only representation, since such a fragment has no HTML projection.
     /// </summary>
@@ -214,44 +220,79 @@ public sealed class FragmentProcessor
         return new FragmentResult(fragmentId, html, visibility);
     }
 
-    public static object? ResolveBindingPath(Dictionary<string, object?> data, string path)
+    /// <summary>The value at a dotted path, or <c>null</c> when any segment is missing.</summary>
+    public static object? ResolveBindingPath(Dictionary<string, object?> data, string path) =>
+        TryResolveBindingPath(data, path, out var value) ? value : null;
+
+    /// <summary>
+    /// Reads the value at a dotted path. Returns <c>false</c> when any segment is missing, so
+    /// a missing path stays distinguishable from a present <c>null</c>.
+    ///
+    /// A segment walks a key of an object or a canonical numeric index of an array
+    /// (<c>items.0</c>), and nothing else: never a primitive's property (<c>name.length</c>)
+    /// and never an array's <c>length</c>.
+    /// </summary>
+    public static bool TryResolveBindingPath(Dictionary<string, object?> data, string path, out object? value)
     {
-        var parts = path.Split('.');
         object? current = data;
+        value = null;
 
-        foreach (var part in parts)
+        foreach (var part in path.Split('.'))
         {
-            if (current is null)
-                return null;
-
-            if (current is Dictionary<string, object?> dict)
+            switch (current)
             {
-                if (!dict.TryGetValue(part, out current))
-                    return null;
-            }
-            else if (current is JsonElement jsonEl)
-            {
-                if (jsonEl.ValueKind == JsonValueKind.Object && jsonEl.TryGetProperty(part, out var prop))
-                    current = (object)prop;
-                else
-                    return null;
-            }
-            else
-            {
-                return null;
+                case IDictionary<string, object?> dict:
+                    if (!dict.TryGetValue(part, out current)) return false;
+                    break;
+                case JsonElement { ValueKind: JsonValueKind.Object } element:
+                    if (!element.TryGetProperty(part, out var property)) return false;
+                    current = property;
+                    break;
+                case JsonElement { ValueKind: JsonValueKind.Array } element:
+                    if (CanonicalIndex(part) is not { } jsonIndex || jsonIndex >= element.GetArrayLength()) return false;
+                    current = element[jsonIndex];
+                    break;
+                case System.Collections.IList list:
+                    if (CanonicalIndex(part) is not { } listIndex || listIndex >= list.Count) return false;
+                    current = list[listIndex];
+                    break;
+                default:
+                    return false;
             }
         }
 
-        return current;
+        value = current;
+        return true;
     }
 
+    private static int? CanonicalIndex(string part)
+    {
+        if (part.Length == 0 || (part.Length > 1 && part[0] == '0')) return null;
+        foreach (var c in part)
+        {
+            if (c is < '0' or > '9') return null;
+        }
+        return int.TryParse(part, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var index)
+            ? index
+            : null;
+    }
+
+    /// <summary>
+    /// Resolves each declared binding against <paramref name="data"/>. A binding whose path is
+    /// missing is left out rather than set to <c>null</c>, so a bare-name <c>data-bind</c> on
+    /// it writes nothing and the authored fallback survives, while a present <c>null</c>
+    /// renders as empty.
+    /// </summary>
     public static Dictionary<string, object?> ResolveBindings(
         List<FragmentBinding> declarations,
         Dictionary<string, object?> data)
     {
         var resolved = new Dictionary<string, object?>();
         foreach (var binding in declarations)
-            resolved[binding.Name] = ResolveBindingPath(data, binding.Path);
+        {
+            if (TryResolveBindingPath(data, binding.Path, out var value))
+                resolved[binding.Name] = value;
+        }
         return resolved;
     }
 
@@ -272,10 +313,10 @@ public sealed class FragmentProcessor
             var bindName = match.Groups[2].Value;
             var closeTag = match.Groups[4].Value;
 
-            if (!bindings.TryGetValue(bindName, out var value) || value is null)
+            if (!bindings.TryGetValue(bindName, out var bound))
                 return match.Value;
 
-            return $"{openTag}{value}{closeTag}";
+            return $"{openTag}{FragmentTree.EscapeHtml(ExprValue.Render(ExprValue.Normalize(bound)))}{closeTag}";
         });
 
         result = SelfClosingDataBindPattern.Replace(result, match =>
@@ -283,13 +324,13 @@ public sealed class FragmentProcessor
             var beforeClose = match.Groups[1].Value;
             var bindName = match.Groups[2].Value;
 
-            if (!bindings.TryGetValue(bindName, out var value) || value is null)
+            if (!bindings.TryGetValue(bindName, out var bound))
                 return match.Value;
 
-            var valueAttr = $"value=\"{value}\"";
+            var valueAttr = $"value=\"{FragmentTree.EscapeAttrValue(ExprValue.Render(ExprValue.Normalize(bound)))}\"";
             if (beforeClose.Contains("value="))
             {
-                beforeClose = Regex.Replace(beforeClose, @"value=""[^""]*""", valueAttr);
+                beforeClose = Regex.Replace(beforeClose, @"value=""[^""]*""", _ => valueAttr);
                 return $"{beforeClose} />";
             }
 
@@ -348,6 +389,17 @@ public sealed class ModInstance
     /// </summary>
     public IReadOnlyList<CommandFill> CommandFills { get; internal set; } = [];
 
+    private readonly List<ModDiagnostic> _diagnostics = [];
+
+    /// <summary>
+    /// Findings raised while loading this mod, in the order they were raised: fragment
+    /// declarations first, then the entry. Under <see cref="EntryErrorPolicy.Report"/>, an entry
+    /// that did not run is recorded here instead of thrown.
+    /// </summary>
+    public IReadOnlyList<ModDiagnostic> Diagnostics => _diagnostics;
+
+    internal void AddDiagnostic(ModDiagnostic diagnostic) => _diagnostics.Add(diagnostic);
+
     public ModInstance(ModManifest mod, Dictionary<string, string>? fragmentSources)
         : this(mod, fragmentSources, null, null, false, null)
     {
@@ -372,11 +424,35 @@ public sealed class ModInstance
         {
             var source = decl.Inline == true
                 ? decl.Source
-                : fragmentSources?.GetValueOrDefault(decl.Source) ?? "";
+                : fragmentSources?.GetValueOrDefault(decl.Source) ?? EmptySource(decl, formats, vocabularies);
 
             Fragments.Add(FragmentInstance.Create(
                 decl, source, formats, vocabularies, strictHtmlVocabulary, onDiagnostic));
         }
+
+        _diagnostics.AddRange(ModDiagnostics.ForFragments(mod.Name, mod.Fragments, fragmentSources));
+    }
+
+    /// <summary>
+    /// What an unsupplied fragment source mounts as: an empty document in the format's own
+    /// syntax, so a missing JSON-syntax source mounts empty (with a diagnostic) the same way a
+    /// missing HTML source always has, rather than failing to parse an empty string.
+    /// </summary>
+    private static string EmptySource(
+        FragmentDeclaration decl,
+        IReadOnlyDictionary<string, JsonElement>? formats,
+        IReadOnlyDictionary<string, JsonElement>? vocabularies)
+    {
+        FormatProfile? profile;
+        try
+        {
+            profile = FormatProfiles.Resolve(decl.Format, formats, vocabularies);
+        }
+        catch (FormatProfileException)
+        {
+            return "";
+        }
+        return profile?.Syntax == FragmentSyntax.J5ml ? "[]" : "";
     }
 
     public List<FragmentResult> UpdateBindings(Dictionary<string, object?> data)
@@ -389,6 +465,11 @@ public sealed class FragmentInstance
 {
     private readonly FragmentDeclaration _declaration;
     private readonly SanitizedFragment _sanitized;
+    private readonly object _repeatLock = new();
+    private RepeatState? _repeatState;
+
+    /// <summary>The fill as the mod declared it, host-defined binding fields included.</summary>
+    public FragmentDeclaration Declaration => _declaration;
 
     public string Id => _declaration.Id;
     public string Slot => _declaration.Slot;
@@ -466,31 +547,31 @@ public sealed class FragmentInstance
             ? FragmentProcessor.ResolveBindings(_declaration.Bindings, data)
             : new Dictionary<string, object?>();
 
-        var bound = FragmentBinder.Bind(
-            _sanitized.Tree, bindings, Profile,
-            expression => FragmentProcessor.EvaluateCondition(expression, bindings));
+        BoundTree bound;
+        lock (_repeatLock)
+        {
+            bound = FragmentBinder.Bind(_sanitized.Tree, bindings, Profile, _repeatState);
+            _repeatState = bound.RepeatState;
+        }
 
-        if (_sanitized.ContentType == FragmentContentType.Tree)
-            return new FragmentResult(_declaration.Id, "", bound.Visibility)
-            {
-                Tree = bound.Tree,
-                Conditions = bound.Conditions,
-                Format = _declaration.Format,
-                ContentType = FragmentContentType.Tree,
-                Diagnostics = _sanitized.Diagnostics,
-            };
+        IReadOnlyList<FragmentDiagnostic> diagnostics = bound.Diagnostics.Count > 0
+            ? [.. _sanitized.Diagnostics, .. bound.Diagnostics]
+            : _sanitized.Diagnostics;
 
         // The HTML projection is serialized from the bound tree rather than patched into
         // the sanitized source string. One bind pass feeds both outputs, so an
         // expression-valued `data-bind` and a resolved interpolation site reach `Html` and
         // `Tree` identically instead of only the one a regex could see.
-        return new FragmentResult(_declaration.Id, FragmentTree.ToHtml(bound.Tree), bound.Visibility)
+        var html = FragmentSanitizer.ProjectsToHtml(Profile) ? FragmentTree.ToHtml(bound.Tree, Profile) : "";
+
+        return new FragmentResult(_declaration.Id, html, bound.Visibility)
         {
             Tree = bound.Tree,
             Conditions = bound.Conditions,
+            Repeats = bound.Repeats,
             Format = _declaration.Format,
-            ContentType = FragmentContentType.Html,
-            Diagnostics = _sanitized.Diagnostics,
+            ContentType = _sanitized.ContentType,
+            Diagnostics = diagnostics,
         };
     }
 

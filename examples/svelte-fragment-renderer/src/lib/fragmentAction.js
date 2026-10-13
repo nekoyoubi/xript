@@ -1,4 +1,4 @@
-import { applyVisibility, applyOps, wireHandlers } from "./applyFragment.js";
+import { applyFragmentVisibility, applyOps, wireHandlers } from "./applyFragment.js";
 
 /**
  * Svelte action form of the fragment renderer, for hosts that prefer
@@ -15,7 +15,7 @@ export function fragmentRenderer(node, params) {
 
 	function render(p) {
 		node.innerHTML = p.fragment?.html ?? "";
-		applyVisibility(node, p.fragment?.visibility ?? {});
+		applyFragmentVisibility(node, p.fragment);
 		applyOps(node, p.ops ?? []);
 		teardown();
 		teardown = wireHandlers(node, p.handlers ?? [], p.dispatch ?? (() => {}));

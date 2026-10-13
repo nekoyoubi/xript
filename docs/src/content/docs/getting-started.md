@@ -36,8 +36,8 @@ Create a `manifest.json` describing what your application exposes to scripts. St
 
 ```json
 {
-  "$schema": "https://xript.dev/schema/manifest/v0.8.json",
-  "xript": "0.8",
+  "$schema": "https://xript.dev/schema/manifest/v0.9.json",
+  "xript": "0.9",
   "name": "my-app",
   "version": "1.0.0",
   "bindings": {

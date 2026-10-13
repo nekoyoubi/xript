@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyVisibility, applyOp, applyOps, wireHandlers } from "../src/lib/applyFragment.js";
+import { applyVisibility, applyConditions, applyOp, applyOps, wireHandlers } from "../src/lib/applyFragment.js";
 import { makeRoot, FakeEvent } from "./dom-shim.js";
+import { runFragmentApplierConformance } from "@xriptjs/runtime";
 
 test("applyVisibility hides regions whose data-if flag is false", () => {
 	const root = makeRoot(
@@ -22,6 +23,23 @@ test("applyVisibility ignores expressions the runtime did not report", () => {
 	const root = makeRoot('<div class="warn" data-if="x < 50" hidden>low</div>');
 	applyVisibility(root, { "y > 0": true });
 	assert.equal(root.querySelector(".warn").hasAttribute("hidden"), true);
+});
+
+test("applyConditions hides by tree path, so copies with one expression differ", () => {
+	const root = makeRoot('<ul><li data-if="m.up">a</li><li data-if="m.up">b</li></ul>');
+	applyConditions(root, [
+		{ path: [0, 0], expression: "m.up", visible: true },
+		{ path: [0, 1], expression: "m.up", visible: false },
+	]);
+	const items = root.querySelectorAll("li");
+	assert.equal(items[0].hasAttribute("hidden"), false);
+	assert.equal(items[1].hasAttribute("hidden"), true);
+});
+
+test("applyConditions ignores a path that reaches no element", () => {
+	const root = makeRoot("<p>x</p>");
+	applyConditions(root, [{ path: [4, 2], expression: "x", visible: false }]);
+	assert.equal(root.querySelector("p").hasAttribute("hidden"), false);
 });
 
 test("applyOp setText sets element text", () => {
@@ -120,4 +138,24 @@ test("renderer never executes fragment markup: html is injected as inert text", 
 	applyVisibility(root, {});
 	applyOps(root, []);
 	assert.equal(root.querySelector(".counter-value").textContent, "7");
+});
+
+test("applyOp removeAttr and a false setAttr remove the attribute instead of writing \"false\"", () => {
+	const root = makeRoot('<button class="go" disabled title="t">go</button>');
+	applyOp(root, { op: "setAttr", selector: ".go", attr: "disabled", prop: "disabled", value: false });
+	applyOp(root, { op: "removeAttr", selector: ".go", attr: "title", prop: "title" });
+	assert.equal(root.querySelector(".go").hasAttribute("disabled"), false);
+	assert.equal(root.querySelector(".go").hasAttribute("title"), false);
+});
+
+test("applyOp replaceChildren clears on an empty list", () => {
+	const root = makeRoot('<ul class="list"><li>a</li></ul>');
+	applyOp(root, { op: "replaceChildren", selector: ".list", value: [] });
+	assert.equal(root.querySelectorAll("li").length, 0);
+});
+
+test("applyOps passes the shared fragment applier conformance table", () => {
+	const report = runFragmentApplierConformance((root, ops) => applyOps(root, ops));
+	assert.deepEqual(report.failures, []);
+	assert.ok(report.total > 0);
 });

@@ -398,6 +398,9 @@ describe("generateDocs", () => {
 		assert.ok(apiPage.content.includes("replaceChildren"));
 		assert.ok(apiPage.content.includes("setProp(selector, prop, value)"), "documents the canonical setProp op");
 		assert.match(apiPage.content, /setAttr[^\n]*Deprecated/, "marks setAttr deprecated");
+		assert.ok(apiPage.content.includes("| `removeAttr(selector, attr)` |"), "documents removeAttr");
+		assert.match(apiPage.content, /toggle[^\n]*a set, not a flip; appliers must read `value`/i);
+		assert.match(apiPage.content, /setAttr\(selector, name, false\)` removes the attribute/);
 	});
 
 	it("does not generate slot docs when no slots defined", () => {
@@ -657,5 +660,36 @@ describe("typeRef rendering corpus", () => {
 			const rendered = (generateDocs(manifestFor(testCase.ref)).pages.find((pg) => pg.slug.includes("bindings/f")).content.match(/## Returns\s+(.+)/) || [])[1].trim();
 			assert.equal(rendered, testCase.markdown, testCase.name);
 		});
+		it(`${testCase.name} (signature code)`, () => {
+			const page = generateDocs(manifestFor(testCase.ref)).pages.find((pg) => pg.slug.includes("bindings/f")).content;
+			const rendered = (page.match(/function f\(\): (.+)/) || [])[1];
+			assert.equal(rendered, testCase.typescript, testCase.name);
+		});
 	}
+});
+
+describe("callback parameters", () => {
+	const corpus = JSON.parse(readFileSync(new URL("../../../spec/callback-tests.json", import.meta.url), "utf-8"));
+	const page = generateDocs(corpus.manifest).pages.find((pg) => pg.slug === "bindings/probe").content;
+
+	it("renders callback types in the signature and the parameter table", () => {
+		assert.ok(page.includes("function typedSignature(test: (cell: number) => boolean): void"), page);
+		assert.ok(page.includes("| `test` | `(cell: number) => boolean` | Yes |"), page);
+		assert.ok(page.includes("| `fn` | `(...args: any[]) => any` | Yes |"), page);
+	});
+
+	it("explains the callback lifetime under a table that takes one", () => {
+		const notes = page.match(/> `fn` is a callback: the app may call it only while this call is running/g) ?? [];
+		assert.equal(notes.length, 2);
+		assert.ok(page.includes("> `test` is a callback"));
+	});
+
+	it("adds no note where no parameter is a callback", () => {
+		const plain = generateDocs({
+			xript: "0.8",
+			name: "h",
+			bindings: { f: { description: "F.", params: [{ name: "n", type: "number" }] } },
+		}).pages.find((pg) => pg.slug.includes("bindings/f")).content;
+		assert.ok(!plain.includes("is a callback"));
+	});
 });

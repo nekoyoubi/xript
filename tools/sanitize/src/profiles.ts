@@ -73,7 +73,7 @@ const BUILTIN_HTML_SCOPE: readonly ResolvedVocabulary[] = Object.freeze([
 ]);
 
 /** Props legal on every node of every vocabulary. Always strings, never sanitized, never dropped. */
-export const PROTOCOL_PROPS = new Set(["id", "data-bind", "data-if"]);
+export const PROTOCOL_PROPS = new Set(["id", "data-bind", "data-if", "data-each", "data-key"]);
 
 export const BUILTIN_FORMAT_IDS = [
 	"text/html",
@@ -382,6 +382,25 @@ export function nodeDefinition(profile: FormatProfile, name: string): NodeDefini
 		if (Object.prototype.hasOwnProperty.call(entry.nodes, name)) return entry.nodes[name];
 	}
 	return undefined;
+}
+
+/**
+ * The declared JSON Schema `type` of a node's prop under this profile, for the HTML
+ * projection's structured-value encoding. `undefined` for an undeclared node or prop.
+ */
+export function declaredPropType(
+	profile: FormatProfile,
+	node: string,
+	prop: string,
+): string | string[] | undefined {
+	const definition = nodeDefinition(profile, node);
+	if (!definition) return undefined;
+	return propDefinition(definition, prop)?.type;
+}
+
+/** Binds `declaredPropType` to a profile, in the shape `treeToHtml` takes. */
+export function propTypeLookup(profile: FormatProfile): (node: string, prop: string) => string | string[] | undefined {
+	return (node, prop) => declaredPropType(profile, node, prop);
 }
 
 export function propDefinition(node: NodeDefinition, name: string): PropDefinition | undefined {

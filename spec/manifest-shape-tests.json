@@ -1,0 +1,84 @@
+{
+  "description": "Conformance corpus for the structural checks every runtime applies when it loads a host manifest, before anything reaches the sandbox. Each runtime creates a runtime from `manifest` and asserts the outcome.",
+  "notes": [
+    "A case with `valid: true` must load. A case with `issues` must be refused with a manifest validation error whose issues match exactly, path and message.",
+    "`slots` given as an object keyed by slot id is the shape a reader of other plugin systems reaches for. Without a load-time check it passed the runtime's light structural pass and failed later, inside hook injection, as an iteration error that named neither `slots` nor the expected shape.",
+    "The variadic, `optional`, and `{ type, description }` return cases pin that the runtimes accept the parameter shapes the schema accepts. No runtime enforces argument counts, so a variadic parameter needs no runtime support beyond loading."
+  ],
+  "cases": [
+    {
+      "name": "slots as an array of declarations loads",
+      "manifest": {
+        "xript": "0.9",
+        "name": "probe",
+        "slots": [{ "id": "panel", "accepts": ["text/html"] }]
+      },
+      "valid": true
+    },
+    {
+      "name": "slots as an object keyed by id is refused",
+      "manifest": {
+        "xript": "0.9",
+        "name": "probe",
+        "slots": { "panel": { "accepts": ["text/html"] } }
+      },
+      "issues": [
+        { "path": "/slots", "message": "'slots' must be an array of { id, accepts } slot declarations, not an object or other value" }
+      ]
+    },
+    {
+      "name": "slots as a string is refused",
+      "manifest": {
+        "xript": "0.9",
+        "name": "probe",
+        "slots": "panel"
+      },
+      "issues": [
+        { "path": "/slots", "message": "'slots' must be an array of { id, accepts } slot declarations, not an object or other value" }
+      ]
+    },
+    {
+      "name": "a slot entry missing accepts is refused",
+      "manifest": {
+        "xript": "0.9",
+        "name": "probe",
+        "slots": [{ "id": "panel" }]
+      },
+      "issues": [
+        { "path": "/slots/0", "message": "each 'slots' entry must be an object { id, accepts } with a string 'id' and an array of strings 'accepts'" }
+      ]
+    },
+    {
+      "name": "a slot entry that is not an object is refused",
+      "manifest": {
+        "xript": "0.9",
+        "name": "probe",
+        "slots": [{ "id": "ok", "accepts": ["text/html"] }, "panel"]
+      },
+      "issues": [
+        { "path": "/slots/1", "message": "each 'slots' entry must be an object { id, accepts } with a string 'id' and an array of strings 'accepts'" }
+      ]
+    },
+    {
+      "name": "variadic, optional, and described-return parameter shapes load",
+      "manifest": {
+        "xript": "0.9",
+        "name": "probe",
+        "bindings": {
+          "log": {
+            "description": "Logs.",
+            "params": [
+              { "name": "level", "type": "string", "optional": true },
+              { "name": "parts", "type": "string", "variadic": true }
+            ],
+            "returns": { "type": "number", "description": "How many parts." }
+          }
+        },
+        "hooks": {
+          "tick": { "description": "Ticks.", "params": [{ "name": "values", "type": "int", "variadic": true }] }
+        }
+      },
+      "valid": true
+    }
+  ]
+}

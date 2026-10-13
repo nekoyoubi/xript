@@ -3520,5 +3520,294 @@
 			"strippedElements": [],
 			"strippedAttributes": []
 		}
+	},
+	{
+		"description": "an svg title is kept as text-only content",
+		"format": "application/jsml+json",
+		"source": "[\"svg\",{\"viewBox\":\"0 0 16 16\"},[\"title\",{\"id\":\"t\",\"onclick\":\"x()\"},\"Close\"],[\"desc\",\"An X\"]]",
+		"expected": {
+			"contentType": "html",
+			"html": "<svg viewBox=\"0 0 16 16\"><title id=\"t\">Close</title><desc>An X</desc></svg>",
+			"tree": [
+				{
+					"name": "svg",
+					"props": {
+						"viewBox": "0 0 16 16"
+					},
+					"children": [
+						{
+							"name": "title",
+							"props": {
+								"id": "t"
+							},
+							"children": [
+								{
+									"text": "Close"
+								}
+							]
+						},
+						{
+							"name": "desc",
+							"props": {},
+							"children": [
+								{
+									"text": "An X"
+								}
+							]
+						}
+					]
+				}
+			],
+			"diagnostics": [
+				{
+					"code": "unsafe-prop",
+					"severity": "warning",
+					"path": "/0/0",
+					"node": "title",
+					"prop": "onclick",
+					"message": "stripped attribute \"onclick\" on <title>"
+				}
+			],
+			"strippedElements": [],
+			"strippedAttributes": [
+				{
+					"element": "title",
+					"attribute": "onclick"
+				}
+			]
+		}
+	},
+	{
+		"description": "an svg title reduces element children to text and reports each removal",
+		"format": "text/html",
+		"source": "<svg><title>a <b>bold</b><script>bad()</script> c</title></svg>",
+		"expected": {
+			"contentType": "html",
+			"html": "<svg><title>a bold c</title></svg>",
+			"tree": [
+				{
+					"name": "svg",
+					"props": {},
+					"children": [
+						{
+							"name": "title",
+							"props": {},
+							"children": [
+								{
+									"text": "a bold c"
+								}
+							]
+						}
+					]
+				}
+			],
+			"diagnostics": [
+				{
+					"code": "illegal-child",
+					"severity": "warning",
+					"path": "/0/0/1",
+					"node": "b",
+					"message": "node \"b\" is not permitted inside svg <title>; its text was kept"
+				},
+				{
+					"code": "stripped-node",
+					"severity": "warning",
+					"path": "/0/0/2",
+					"node": "script",
+					"message": "stripped dangerous element: <script>"
+				}
+			],
+			"strippedElements": [
+				"script"
+			],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "an html title outside svg is still stripped",
+		"format": "application/jsml+json",
+		"source": "[\"div\",[\"title\",\"Document\"],[\"p\",\"body\"]]",
+		"expected": {
+			"contentType": "html",
+			"html": "<div><p>body</p></div>",
+			"tree": [
+				{
+					"name": "div",
+					"props": {},
+					"children": [
+						{
+							"name": "p",
+							"props": {},
+							"children": [
+								{
+									"text": "body"
+								}
+							]
+						}
+					]
+				}
+			],
+			"diagnostics": [
+				{
+					"code": "stripped-node",
+					"severity": "warning",
+					"path": "/0/0",
+					"node": "title",
+					"message": "stripped dangerous element: <title>"
+				}
+			],
+			"strippedElements": [
+				"title"
+			],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "an undeclared object or object-bearing array prop projects as json, a scalar array stays comma-joined",
+		"format": "application/jsml+json",
+		"source": "[\"div\",{\"data-items\":[{\"id\":1,\"label\":\"a\\\"b\"}],\"data-config\":{\"zeta\":true,\"alpha\":null,\"mid\":[1,2]},\"data-grid\":[[{\"x\":1}]],\"data-list\":[1,\"two\",null,3]}]",
+		"expected": {
+			"contentType": "html",
+			"html": "<div data-items=\"[{&quot;id&quot;:1,&quot;label&quot;:&quot;a\\&quot;b&quot;}]\" data-config=\"{&quot;alpha&quot;:null,&quot;mid&quot;:[1,2],&quot;zeta&quot;:true}\" data-grid=\"[[{&quot;x&quot;:1}]]\" data-list=\"1,two,,3\"></div>",
+			"tree": [
+				{
+					"name": "div",
+					"props": {
+						"data-items": [
+							{
+								"id": 1,
+								"label": "a\"b"
+							}
+						],
+						"data-config": {
+							"zeta": true,
+							"alpha": null,
+							"mid": [
+								1,
+								2
+							]
+						},
+						"data-grid": [
+							[
+								{
+									"x": 1
+								}
+							]
+						],
+						"data-list": [
+							1,
+							"two",
+							null,
+							3
+						]
+					},
+					"children": []
+				}
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
+	},
+	{
+		"description": "a prop declared as array or object projects as json with code point key order",
+		"format": "app/charts",
+		"formats": {
+			"app/charts": {
+				"syntax": "j5ml",
+				"vocabularies": [
+					"app.charts",
+					"html"
+				]
+			}
+		},
+		"vocabularies": {
+			"app.charts": {
+				"nodes": {
+					"x-chart": {
+						"props": {
+							"series": {
+								"type": "array"
+							},
+							"config": {
+								"type": "object"
+							},
+							"points": {
+								"type": [
+									"array",
+									"null"
+								]
+							},
+							"label": {
+								"type": "string"
+							}
+						}
+					}
+				}
+			}
+		},
+		"source": "[\"x-chart\",{\"series\":[1,2.5,0],\"config\":{\"😀\":1,\"\":2,\"b\":\"\\n\\t<\",\"a\":1e+21},\"points\":[3,4],\"label\":\"plain\",\"data-tags\":[\"x\",\"y\"]}]",
+		"expected": {
+			"contentType": "tree",
+			"html": "<x-chart series=\"[1,2.5,0]\" config=\"{&quot;a&quot;:1e+21,&quot;b&quot;:&quot;\\n\\t&lt;&quot;,&quot;&quot;:2,&quot;😀&quot;:1}\" points=\"[3,4]\" label=\"plain\" data-tags=\"x,y\"></x-chart>",
+			"tree": [
+				{
+					"name": "x-chart",
+					"props": {
+						"series": [
+							1,
+							2.5,
+							0
+						],
+						"config": {
+							"😀": 1,
+							"": 2,
+							"b": "\n\t<",
+							"a": 1e+21
+						},
+						"points": [
+							3,
+							4
+						],
+						"label": "plain",
+						"data-tags": [
+							"x",
+							"y"
+						]
+					},
+					"children": []
+				}
+			],
+			"jsml": [
+				[
+					"x-chart",
+					{
+						"config": {
+							"a": 1e+21,
+							"b": "\n\t<",
+							"": 2,
+							"😀": 1
+						},
+						"data-tags": [
+							"x",
+							"y"
+						],
+						"label": "plain",
+						"points": [
+							3,
+							4
+						],
+						"series": [
+							1,
+							2.5,
+							0
+						]
+					}
+				]
+			],
+			"diagnostics": [],
+			"strippedElements": [],
+			"strippedAttributes": []
+		}
 	}
 ]

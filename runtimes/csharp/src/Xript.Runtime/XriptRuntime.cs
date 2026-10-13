@@ -16,6 +16,8 @@ public sealed class XriptRuntime : IDisposable
     private readonly IReadOnlyDictionary<string, string> _commandPreferences;
     private readonly bool _strictHtmlVocabulary;
     private readonly Action<FragmentDiagnosticEvent>? _onFragmentDiagnostic;
+    private readonly EntryErrorPolicy _entryErrors;
+    private readonly Action<ModDiagnostic>? _onModDiagnostic;
     private readonly Action<AuditEvent>? _audit;
     private readonly HashSet<(string Mod, string Handler, string Hook)> _reportedHookFillDenials = [];
     private readonly long? _hardTimeoutMs;
@@ -39,15 +41,38 @@ public sealed class XriptRuntime : IDisposable
         _commandPreferences = options.CommandPreferences;
         _strictHtmlVocabulary = options.StrictHtmlVocabulary;
         _onFragmentDiagnostic = options.OnFragmentDiagnostic;
+        _entryErrors = options.EntryErrors;
+        _onModDiagnostic = options.OnModDiagnostic;
         _audit = options.Audit;
         _hardTimeoutMs = options.HardLimits?.TimeoutMs;
     }
 
     public static XriptRuntime Create(string manifestJson, RuntimeOptions? options = null)
     {
+        CheckRawShape(manifestJson);
         var manifest = JsonSerializer.Deserialize<Manifest>(manifestJson)
             ?? throw new ManifestValidationException([new("/", "manifest deserialized to null")]);
         return Build(manifest, options ?? new());
+    }
+
+    /// <summary>
+    /// Runs the raw-shape checks when the text parses. Text that does not parse is left to the
+    /// typed deserializer, so malformed JSON keeps surfacing as the <see cref="JsonException"/>
+    /// callers already handle.
+    /// </summary>
+    private static void CheckRawShape(string manifestJson)
+    {
+        JsonDocument raw;
+        try
+        {
+            raw = JsonDocument.Parse(manifestJson);
+        }
+        catch (JsonException)
+        {
+            return;
+        }
+        using (raw)
+            ManifestValidator.CheckRawShape(raw.RootElement);
     }
 
     public static XriptRuntime CreateFromFile(string path, RuntimeOptions? options = null)
@@ -60,6 +85,7 @@ public sealed class XriptRuntime : IDisposable
 
     public static XriptRuntime CreateFromValue(JsonDocument doc, RuntimeOptions? options = null)
     {
+        ManifestValidator.CheckRawShape(doc.RootElement);
         var manifest = doc.RootElement.Deserialize<Manifest>()
             ?? throw new ManifestValidationException([new("/", "manifest deserialized to null")]);
         return Build(manifest, options ?? new());
@@ -249,12 +275,17 @@ public sealed class XriptRuntime : IDisposable
             throw new ModManifestValidationException(
                 crossIssues.Select(msg => new ValidationIssue("/fragments", msg)).ToList());
 
-        RegisterExportCapabilities(mod);
-        RunEntryScripts(mod, fragmentSources);
-
         var instance = new ModInstance(
             mod, fragmentSources, Manifest.Formats, Manifest.Vocabularies, _strictHtmlVocabulary,
             _onFragmentDiagnostic);
+        foreach (var diagnostic in instance.Diagnostics)
+            SendModDiagnostic(diagnostic);
+
+        RegisterExportCapabilities(mod);
+        var failure = RunEntryScripts(mod, instance, fragmentSources);
+        if (failure is not null && _entryErrors == EntryErrorPolicy.Throw)
+            throw failure;
+
         instance.CommandFills = commandFills;
         _hookFills.AddRange(hookFills);
         _commandFills.AddRange(commandFills);
@@ -495,72 +526,97 @@ public sealed class XriptRuntime : IDisposable
         }
     }
 
-    private void RunEntryScripts(ModManifest mod, Dictionary<string, string>? fragmentSources)
+    private void SendModDiagnostic(ModDiagnostic diagnostic)
     {
-        if (mod.Entry is not { } entry)
-            return;
+        if (_onModDiagnostic is null) return;
+        try
+        {
+            _onModDiagnostic(diagnostic);
+        }
+        catch
+        {
+            // a throwing callback never changes whether a mod loads
+        }
+    }
 
-        var isModule = IsModuleFormat(entry);
-        var scriptPaths = ExtractEntryScripts(entry);
+    private void RecordModDiagnostic(ModInstance instance, ModDiagnostic diagnostic)
+    {
+        instance.AddDiagnostic(diagnostic);
+        SendModDiagnostic(diagnostic);
+    }
+
+    /// <summary>
+    /// Runs the mod's entry and returns the failure, if any, already recorded as a diagnostic.
+    /// Every script is checked for a source before any runs, so a mod never half-runs because a
+    /// later script is missing. A cancellation is the host's own decision and always propagates.
+    /// </summary>
+    private Exception? RunEntryScripts(
+        ModManifest mod, ModInstance instance, Dictionary<string, string>? fragmentSources)
+    {
+        var scriptPaths = ModEntry.Scripts(mod.Entry);
         if (scriptPaths.Count == 0)
-            return;
+            return null;
 
+        Exception? missing = null;
+        foreach (var path in scriptPaths)
+        {
+            if (fragmentSources?.ContainsKey(path) == true)
+                continue;
+            var error = new MissingEntryScriptException(mod.Name, path);
+            RecordModDiagnostic(instance, new ModDiagnostic(
+                ModDiagnosticCodes.MissingEntryScript, ModDiagnosticSeverity.Error, mod.Name, error.Message)
+            { Script = path });
+            missing ??= error;
+        }
+        if (missing is not null)
+            return missing;
+
+        var isModule = ModEntry.Format(mod.Entry) == "module";
         _sandbox.SetExportOwner(mod.Name);
         try
         {
             foreach (var path in scriptPaths)
             {
-                if (fragmentSources?.TryGetValue(path, out var source) != true || source is null)
-                    continue;
+                var source = fragmentSources![path] ?? "";
+                try
+                {
+                    if (CommonJsDetector.Detect(source) is { } artifact)
+                        throw new CommonJsDetectedException(artifact);
 
-                if (CommonJsDetector.Detect(source) is { } artifact)
-                    throw new CommonJsDetectedException(artifact);
-
-                if (isModule)
-                    _sandbox.EvaluateModule(source, mod.Name);
-                else
-                    _sandbox.Execute(source);
+                    if (isModule)
+                        _sandbox.EvaluateModule(source, mod.Name);
+                    else
+                        _sandbox.Execute(source);
+                }
+                catch (ExecutionCancelledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    var error = IsTypedEntryError(ex) ? ex : new ModEntryException(mod.Name, ex.Message);
+                    RecordModDiagnostic(instance, new ModDiagnostic(
+                        ModDiagnosticCodes.EntryFailed, ModDiagnosticSeverity.Error, mod.Name, error.Message)
+                    { Script = path });
+                    return error;
+                }
             }
         }
         finally
         {
             _sandbox.SetExportOwner(null);
         }
+        return null;
     }
 
-    private static bool IsModuleFormat(JsonElement entry)
-    {
-        if (entry.ValueKind != JsonValueKind.Object)
-            return false;
-
-        if (!entry.TryGetProperty("format", out var format) || format.ValueKind != JsonValueKind.String)
-            return false;
-
-        return format.GetString() == "module";
-    }
-
-    private static List<string> ExtractEntryScripts(JsonElement entry)
-    {
-        var paths = new List<string>();
-
-        switch (entry.ValueKind)
-        {
-            case JsonValueKind.String:
-                paths.Add(entry.GetString()!);
-                break;
-            case JsonValueKind.Array:
-                foreach (var item in entry.EnumerateArray())
-                    if (item.ValueKind == JsonValueKind.String)
-                        paths.Add(item.GetString()!);
-                break;
-            case JsonValueKind.Object:
-                if (entry.TryGetProperty("script", out var script) && script.ValueKind == JsonValueKind.String)
-                    paths.Add(script.GetString()!);
-                break;
-        }
-
-        return paths;
-    }
+    /// <summary>An error that already says what went wrong, so an entry failure passes it through instead of wrapping it.</summary>
+    private static bool IsTypedEntryError(Exception ex) => ex is ModEntryException
+        or CommonJsDetectedException
+        or ImportDeniedException
+        or LibraryUnavailableException
+        or CapabilityDeniedException
+        or BindingException
+        or ExecutionLimitException;
 
     private static XriptRuntime Build(Manifest manifest, RuntimeOptions options)
     {

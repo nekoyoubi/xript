@@ -123,7 +123,20 @@ public class FragmentVocabularyCorpusTests
             $"{context}\nexpected: {expectedText}\nactual:   {actualText}");
     }
 
-    private static string Canonicalize(JsonNode? node) => node?.ToJsonString() ?? "null";
+    /// <summary>
+    /// Serializes for comparison with every number spelled the JavaScript way, so a value
+    /// the corpus writes as <c>1e+21</c> and System.Text.Json writes as <c>1E+21</c> compare equal.
+    /// </summary>
+    private static string Canonicalize(JsonNode? node) => node switch
+    {
+        null => "null",
+        JsonObject obj => "{" + string.Join(",", obj.Select(entry =>
+            JsonValue.Create(entry.Key).ToJsonString() + ":" + Canonicalize(entry.Value))) + "}",
+        JsonArray array => "[" + string.Join(",", array.Select(Canonicalize)) + "]",
+        JsonValue value when value.GetValueKind() == System.Text.Json.JsonValueKind.Number =>
+            PropValue.NumberToString(value.GetValue<double>()),
+        _ => node.ToJsonString(),
+    };
 
     private static string CorpusPath()
     {

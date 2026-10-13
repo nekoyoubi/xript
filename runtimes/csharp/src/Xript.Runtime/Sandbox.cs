@@ -664,11 +664,12 @@ internal sealed class Sandbox : IDisposable
                     try {
                         var ops = [];
                         var proxy = {
-                            toggle: function(selector, condition) { ops.push({ op: "toggle", selector: selector, value: condition }); },
+                            toggle: function(selector, condition) { ops.push({ op: "toggle", selector: selector, value: !!condition }); },
                             addClass: function(selector, className) { ops.push({ op: "addClass", selector: selector, value: className }); },
                             removeClass: function(selector, className) { ops.push({ op: "removeClass", selector: selector, value: className }); },
                             setText: function(selector, text) { ops.push({ op: "setText", selector: selector, value: text }); },
                             setAttr: function(selector, attr, value) { ops.push({ op: "setAttr", selector: selector, attr: attr, value: value }); },
+                            removeAttr: function(selector, attr) { ops.push({ op: "removeAttr", selector: selector, attr: attr }); },
                             setProp: function(selector, prop, value) { ops.push({ op: "setProp", selector: selector, prop: prop, value: value }); },
                             replaceChildren: function(selector, html) { ops.push({ op: "replaceChildren", selector: selector, value: html }); }
                         };
@@ -714,9 +715,23 @@ internal sealed class Sandbox : IDisposable
                 return Object.freeze(obj);
             };
             delete globalThis.eval;
+            (function () {
+                var refuse = function () {
+                    throw new TypeError("Function constructor is not permitted. Dynamic code generation is disabled in xript.");
+                };
+                var prototypes = [
+                    Object.getPrototypeOf(function () {}),
+                    Object.getPrototypeOf(async function () {}),
+                    Object.getPrototypeOf(function* () {}),
+                    Object.getPrototypeOf(async function* () {}),
+                ];
+                for (var i = 0; i < prototypes.length; i++) {
+                    Object.defineProperty(prototypes[i], 'constructor', { value: refuse, writable: true, configurable: true });
+                }
+            })();
             if (typeof globalThis.Function !== 'undefined') {
                 Object.defineProperty(globalThis, 'Function', {
-                    get: function() { throw new Error("Function constructor is not permitted. Dynamic code generation is disabled in xript."); },
+                    get: function() { throw new TypeError("Function constructor is not permitted. Dynamic code generation is disabled in xript."); },
                     configurable: false
                 });
             }
@@ -793,7 +808,7 @@ internal sealed class Sandbox : IDisposable
         }
 
         var declaredCapability = TryGetCapability(def, out var cap) ? cap : null;
-        AssignBridgedFunction(target, hostFn, name, declaredCapability, audit);
+        AssignBridgedFunction(target, hostFn, name, declaredCapability, audit, def);
     }
 
     private void RegisterNamespaceBinding(
@@ -860,23 +875,60 @@ internal sealed class Sandbox : IDisposable
             }
 
             var declaredCapability = TryGetCapability(memberDef, out var cap) ? cap : null;
-            AssignBridgedFunction(memberTarget, hostFn, qualifiedName, declaredCapability, audit);
+            AssignBridgedFunction(memberTarget, hostFn, qualifiedName, declaredCapability, audit, memberDef);
         }
     }
 
+    /// <summary>
+    /// The sandbox side of a bridged binding: refuses a non-function where the manifest declares
+    /// a function parameter, then serializes the arguments with every script function swapped
+    /// for a numeric callback marker and hands the functions to the bridge alongside the JSON.
+    /// </summary>
+    private const string BridgeWrapper = """
+        (function (bridge, marker, checks, name) {
+            var stringify = JSON.stringify;
+            var parse = JSON.parse;
+            var slice = Array.prototype.slice;
+            return function () {
+                var args = slice.call(arguments);
+                for (var i = 0; i < checks.length; i++) {
+                    var check = checks[i];
+                    var value = args[check.index];
+                    if (typeof value === 'function') continue;
+                    if (check.optional && (value === undefined || value === null)) continue;
+                    throw new TypeError(name + '(): parameter "' + check.name + '" expects a function, got ' + (value === null ? 'null' : typeof value));
+                }
+                var fns = [];
+                var json = stringify(args, function (key, v) {
+                    if (typeof v === 'function') {
+                        var m = {};
+                        m[marker] = fns.length;
+                        fns[fns.length] = v;
+                        return m;
+                    }
+                    return v;
+                });
+                var envelope = parse(bridge(json, fns));
+                if (envelope.__xript_err !== undefined) throw new Error(envelope.__xript_err);
+                return envelope.__xript_ok;
+            };
+        })
+        """;
+
     private void AssignBridgedFunction(
-        string targetExpr, HostFunction hostFn, string binding, string? capability, Action<AuditEvent>? audit)
+        string targetExpr, HostFunction hostFn, string binding, string? capability, Action<AuditEvent>? audit, JsonElement def)
     {
         var bridgeName = $"__xript_bridge_{_bridgeCounter++}";
+        var checks = FunctionParamCheck.ToJson(FunctionParamCheck.For(def));
         _engine.SetValue(bridgeName, CreateBridge(hostFn, binding, capability, audit));
         _engine.Execute(
-            $"{targetExpr} = (function(bridge) {{ return function() {{ var args = Array.prototype.slice.call(arguments); var raw = bridge(JSON.stringify(args)); var envelope = JSON.parse(raw); if (envelope.__xript_err !== undefined) throw new Error(envelope.__xript_err); return envelope.__xript_ok; }}; }})({bridgeName}); delete globalThis.{bridgeName};");
+            $"{targetExpr} = {BridgeWrapper}({bridgeName}, {JsonSerializer.Serialize(XriptCallback.Marker)}, {checks}, {JsonSerializer.Serialize(binding)}); delete globalThis.{bridgeName};");
     }
 
-    private Func<string, string> CreateBridge(
+    private Func<string, JsValue, string> CreateBridge(
         HostFunction hostFn, string binding, string? capability, Action<AuditEvent>? audit)
     {
-        return argsJson =>
+        return (argsJson, functions) =>
         {
             if (audit is not null)
             {
@@ -899,14 +951,18 @@ internal sealed class Sandbox : IDisposable
                 return JsonSerializer.Serialize(new { __xript_err = "invalid arguments" });
             }
 
+            using var scope = new CallbackScope(_engine, binding, functions, JsonElementToJsValue, JsValueToJsonElement);
+            args = scope.ResolveMarkers(args);
             try
             {
                 var result = hostFn(args);
+                scope.Settle(null);
                 var raw = result.GetRawText();
                 return $"{{\"__xript_ok\":{raw}}}";
             }
             catch (Exception ex)
             {
+                scope.Settle(ex);
                 return JsonSerializer.Serialize(new { __xript_err = ex.Message });
             }
         };

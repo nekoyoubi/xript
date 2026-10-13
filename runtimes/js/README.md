@@ -62,26 +62,26 @@ runtime.dispose();
 
 ### `initXript(options?): Promise<XriptFactory>`
 
-Loads the QuickJS WASM module and returns a factory for creating runtimes. Defaults to the `@jitl/quickjs-wasmfile-release-sync` build.
+Loads the QuickJS WASM module and returns a factory for creating runtimes. Defaults to `@jitl/quickjs-singlefile-browser-release-sync` under the `browser` export condition and `@jitl/quickjs-wasmfile-release-sync` everywhere else.
 
 ### `initXriptAsync(options?): Promise<AsyncXriptFactory>`
 
-Same as `initXript`, but creates runtimes that support async host bindings. Defaults to the `@jitl/quickjs-wasmfile-release-asyncify` build.
+Same as `initXript`, but creates runtimes that support async host bindings. Defaults to `@jitl/quickjs-singlefile-browser-release-asyncify` under the `browser` condition and `@jitl/quickjs-wasmfile-release-asyncify` everywhere else.
 
 ### Choosing a WASM build
 
-Both entry points accept an optional `variant`. The sync and asyncify builds live in separate modules, so a host that only calls `initXript()` never pulls the asyncify build into its bundle.
+Browser builds default to `singlefile` variants, which inline the WASM, so no bundler or dev server has to serve a sibling `.wasm` asset and Vite needs no `optimizeDeps` entries. Node, Deno, Bun and `workerd` keep the smaller `wasmfile` variants. The sync and asyncify builds live in separate modules, so a host that only calls `initXript()` never pulls the asyncify build into its bundle.
 
-Override it to use a `singlefile-*` build, which inlines the WASM as base64 instead of resolving a separate `.wasm` asset -- the usual fix when shipping into a bundler configuration you do not control:
+Both entry points accept an optional `variant` to override the default:
 
 ```javascript
 import { initXript } from "@xriptjs/runtime";
-import RELEASE_SYNC_SINGLEFILE from "@jitl/quickjs-singlefile-browser-release-sync";
+import RELEASE_SYNC_WASMFILE from "@jitl/quickjs-wasmfile-release-sync";
 
-const xript = await initXript({ variant: RELEASE_SYNC_SINGLEFILE });
+const xript = await initXript({ variant: RELEASE_SYNC_WASMFILE });
 ```
 
-Install any variant you name; only the two release builds ship as dependencies.
+Any variant must be published at exactly `QUICKJS_CORE_VERSION`, the `quickjs-emscripten-core` version this package pins. A mismatched variant throws `QuickJSVariantMismatchError` at load instead of failing at the first host call with `QuickJSContext had no callback with id 0`. The four release builds ship as dependencies; install any other variant you name.
 
 ### `factory.createRuntime(manifest, options): XriptRuntime`
 

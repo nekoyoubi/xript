@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRuntime, loadModFiles, appState } from "../src/host/host.js";
 import { makeDispatch } from "../src/host/dispatch.js";
-import { applyVisibility, applyOps, wireHandlers } from "../src/lib/applyFragment.js";
+import { applyVisibility, applyFragmentVisibility, applyOps, wireHandlers } from "../src/lib/applyFragment.js";
 import { makeRoot, FakeEvent } from "./dom-shim.js";
 
 test("end-to-end: runtime output flows through the renderer core into the DOM", async () => {
@@ -56,4 +56,23 @@ test("declared fragment handler invokes the named export through the host", asyn
 	assert.equal(appState.counter.value, 1);
 
 	runtime.dispose();
+});
+
+test("a data-each repeat mounts its copies and hides each by its own condition", async () => {
+	const { createFragmentInstance } = await import("@xriptjs/runtime");
+	const source = '<ul><li data-each="m in party" data-if="m.up">{{ m.name }}</li></ul>';
+	const instance = createFragmentInstance(
+		{ id: "party", slot: "s", format: "text/html", source, inline: true, interpolate: true, bindings: [{ name: "party", path: "party" }] },
+		source,
+	);
+	const result = instance.getContent({ party: [{ name: "Ada", up: true }, { name: "Grace", up: false }] });
+
+	const root = makeRoot();
+	root.innerHTML = result.html;
+	applyFragmentVisibility(root, result);
+
+	const items = root.querySelectorAll("li");
+	assert.equal(items.length, 2);
+	assert.equal(items[0].hasAttribute("hidden"), false);
+	assert.equal(items[1].hasAttribute("hidden"), true);
 });

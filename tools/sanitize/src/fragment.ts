@@ -6,7 +6,7 @@ import {
 	type FragmentDiagnostic,
 	type VocabularyOptions,
 } from "./vocabulary.js";
-import { speaksHtml, type FormatProfile } from "./profiles.js";
+import { propTypeLookup, speaksHtml, type FormatProfile } from "./profiles.js";
 
 export type FragmentContentType = "html" | "tree";
 
@@ -51,7 +51,7 @@ export class FragmentParseError extends Error {
  * not just the format's inline nodes, so a referenced vocabulary cannot smuggle a
  * bare `<Panel>` into projected markup.
  */
-function projectsToHtml(profile: FormatProfile): boolean {
+export function projectsToHtml(profile: FormatProfile): boolean {
 	if (profile.builtin) return true;
 	if (!speaksHtml(profile)) return false;
 	return profile.scope.every(
@@ -97,7 +97,7 @@ export function sanitizeFragment(
 		const parsed = sanitizeTree(jsmlToTree(parseJsmlSource(source, profile.id)), profile, options);
 		return {
 			tree: parsed.tree,
-			html: projectsToHtml(profile) ? treeToHtml(parsed.tree) : "",
+			html: projectsToHtml(profile) ? treeToHtml(parsed.tree, propTypeLookup(profile)) : "",
 			contentType: profile.builtin ? "html" : "tree",
 			diagnostics: parsed.diagnostics,
 			strippedElements: parsed.strippedElements,
@@ -110,7 +110,7 @@ export function sanitizeFragment(
 	if (!profile.builtin) {
 		return {
 			tree: parsed.tree,
-			html: projectsToHtml(profile) ? treeToHtml(parsed.tree) : "",
+			html: projectsToHtml(profile) ? treeToHtml(parsed.tree, propTypeLookup(profile)) : "",
 			contentType: "tree",
 			diagnostics: parsed.diagnostics,
 			strippedElements: parsed.strippedElements,

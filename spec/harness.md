@@ -43,6 +43,8 @@ A stub answers one of four ways:
 
 Every call is journaled regardless of shape — arguments, outcome, and order.
 
+A [callback](./bindings.md#callbacks) the mod passed is live in `args` while the stub runs, so a `script` stub can call it; the journal records it as the string `"[callback]"`.
+
 **Scripts are host code.** A `script` stub runs in the trusted harness process, not in the sandbox. It stands in for the host application's own binding implementation and carries the same trust. Harness descriptors are test fixtures authored by the host developer; they are never mod-supplied content.
 
 ### Capability grants

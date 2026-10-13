@@ -63,6 +63,7 @@
 						<option value="health-bar">Health Bar</option>
 						<option value="low-health">Low Health Warning</option>
 						<option value="player-card">Player Card</option>
+						<option value="inventory">Inventory List</option>
 						<option value="event-demo">Event Demo</option>
 						<option value="dangerous">Dangerous Fragment</option>
 					</select>
@@ -109,6 +110,7 @@
 <script>
 	import { sanitizeHTMLDetailed } from "@xriptjs/sanitize";
 	import { CodeJar } from "codejar";
+	import { createLiveFragment } from "./fragment-dom";
 
 	function highlightHTML(el) {
 		const code = el.textContent || "";
@@ -134,6 +136,11 @@
 			html: '<div class="player-card">\n\t<div class="card-name" data-bind="playerName">Player</div>\n\t<div class="card-stat">\n\t\tHP: <span data-bind="health">0</span>/<span data-bind="maxHealth">0</span>\n\t</div>\n\t<div data-if="health < 30" class="card-danger">In danger!</div>\n</div>',
 			bindings: [{ name: "playerName", path: "playerName" }, { name: "health", path: "health" }, { name: "maxHealth", path: "maxHealth" }],
 		},
+		"inventory": {
+			html: '<div class="inventory">\n\t<div class="bar-label"><span data-bind="playerName">Player</span>\'s pack</div>\n\t<ul>\n\t\t<li data-each="item in inventory" data-key="item.name" data-if="item.count > 0">{{ item.name }} x{{ item.count }}</li>\n\t</ul>\n\t<div data-if="len(inventory) == 0">Empty.</div>\n</div>',
+			bindings: [{ name: "playerName", path: "playerName" }, { name: "inventory", path: "inventory" }],
+			interpolate: true,
+		},
 		"event-demo": {
 			html: '<div class="event-panel">\n\t<button data-action="heal" class="heal-btn">Heal +10</button>\n\t<button data-action="damage" class="dmg-btn">Damage -10</button>\n\t<div class="status">HP: <span data-bind="health">0</span></div>\n</div>',
 			bindings: [{ name: "health", path: "health" }],
@@ -156,7 +163,16 @@
 		],
 	};
 
-	let state = { health: 80, maxHealth: 100, playerName: "Adventurer" };
+	let state = {
+		health: 80,
+		maxHealth: 100,
+		playerName: "Adventurer",
+		inventory: [
+			{ name: "Iron Sword", count: 1 },
+			{ name: "Health Potion", count: 3 },
+			{ name: "Torch", count: 0 },
+		],
+	};
 	let mountedFragments = [];
 	let selectedSlot = "sidebar.left";
 	let editorJar;
@@ -173,39 +189,27 @@
 		el.scrollTop = el.scrollHeight;
 	}
 
-	function resolveBindings(bindings, data) {
-		const resolved = {};
-		for (const b of bindings) resolved[b.name] = data[b.path];
-		return resolved;
-	}
-
-	function applyDataBind(container, bindings) {
-		for (const el of container.querySelectorAll("[data-bind]")) {
-			const name = el.getAttribute("data-bind");
-			if (bindings[name] !== undefined) {
-				el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT"
-					? el.value = String(bindings[name])
-					: el.textContent = String(bindings[name]);
+	function drawFragment(frag) {
+		frag.live.render(frag.content, state);
+		for (const evt of frag.events) {
+			for (const target of frag.content.querySelectorAll(evt.selector)) {
+				target.addEventListener(evt.on, () => onFragmentEvent(evt));
 			}
 		}
 	}
 
-	function applyDataIf(container, bindings) {
-		const safeId = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/;
-		for (const el of container.querySelectorAll("[data-if]")) {
-			try {
-				const vars = Object.entries(bindings).filter(([k]) => safeId.test(k)).map(([k, v]) => `var ${k} = ${JSON.stringify(v)};`).join(" ");
-				el.style.display = new Function(`${vars} return !!(${el.getAttribute("data-if")})`)() ? "" : "none";
-			} catch { el.style.display = "none"; }
-		}
+	function onFragmentEvent(evt) {
+		addConsole(`Event: ${evt.on} → ${evt.handler}()`, "result");
+		if (evt.handler === "onHeal") state.health = Math.min(state.health + 10, state.maxHealth);
+		else if (evt.handler === "onDamage") state.health = Math.max(state.health - 10, 0);
+		else return;
+		document.getElementById("fb-health").value = String(state.health);
+		document.getElementById("fb-health-val").textContent = String(state.health);
+		renderFragments();
 	}
 
 	function renderFragments() {
-		for (const frag of mountedFragments) {
-			const bindings = resolveBindings(frag.bindings, state);
-			applyDataBind(frag.container, bindings);
-			applyDataIf(frag.container, bindings);
-		}
+		for (const frag of mountedFragments) drawFragment(frag);
 	}
 
 	function unmountFragment(wrapper) {
@@ -214,7 +218,7 @@
 		addConsole("unmounted fragment", "log");
 	}
 
-	function mountFragment(html, slotId, bindings, events) {
+	function mountFragment(html, slotId, bindings, events, interpolate) {
 		const slotEl = document.getElementById(`slot-${slotId.replace(/\./g, "-")}`);
 		if (!slotEl) { addConsole(`Slot '${slotId}' not found`, "error"); return; }
 
@@ -236,39 +240,23 @@
 		closeBtn.addEventListener("click", () => unmountFragment(wrapper));
 		wrapper.appendChild(closeBtn);
 
-		const content = document.createElement("div");
-		content.className = "fragment-content";
-		content.innerHTML = sanitizeResult.html;
-		wrapper.appendChild(content);
-
-		slotEl.appendChild(wrapper);
-
-		const resolved = resolveBindings(bindings, state);
-		applyDataBind(content, resolved);
-		applyDataIf(content, resolved);
-
-		if (events) {
-			for (const evt of events) {
-				for (const target of content.querySelectorAll(evt.selector)) {
-					target.addEventListener(evt.on, () => {
-						addConsole(`Event: ${evt.on} → ${evt.handler}()`, "result");
-						if (evt.handler === "onHeal") {
-							state.health = Math.min(state.health + 10, state.maxHealth);
-							document.getElementById("fb-health").value = String(state.health);
-							document.getElementById("fb-health-val").textContent = String(state.health);
-							renderFragments();
-						} else if (evt.handler === "onDamage") {
-							state.health = Math.max(state.health - 10, 0);
-							document.getElementById("fb-health").value = String(state.health);
-							document.getElementById("fb-health-val").textContent = String(state.health);
-							renderFragments();
-						}
-					});
-				}
-			}
+		let live;
+		try {
+			const names = [...new Set([...bindings.map((b) => b.name), ...Object.keys(state)])];
+			live = createLiveFragment(html, "text/html", names, interpolate === true || html.includes("{{"));
+		} catch (err) {
+			addConsole(err.message, "error");
+			return;
 		}
 
-		mountedFragments.push({ container: wrapper, bindings });
+		const content = document.createElement("div");
+		content.className = "fragment-content";
+		wrapper.appendChild(content);
+		slotEl.appendChild(wrapper);
+
+		const frag = { container: wrapper, content, live, events: events || [] };
+		drawFragment(frag);
+		mountedFragments.push(frag);
 		addConsole(`Mounted into ${slotId}`, "result");
 	}
 
@@ -319,7 +307,7 @@
 
 				const sampleKey = sampleSelect.value;
 				const sample = samples[sampleKey];
-				mountFragment(html, selectedSlot, sample?.bindings || [], sample?.events || []);
+				mountFragment(html, selectedSlot, sample?.bindings || [], sample?.events || [], sample?.interpolate);
 			});
 
 			document.getElementById("fb-clear-btn").addEventListener("click", () => {

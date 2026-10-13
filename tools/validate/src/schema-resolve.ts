@@ -1,10 +1,10 @@
 import { readFile, mkdir, writeFile } from "node:fs/promises";
-import { resolve, dirname, join } from "node:path";
+import { resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
+import { bundledSchema } from "./schemas.js";
+import { loadSpecSchema, resolveTargetVersion, xriptSchemaKind, type ManifestKind, type TargetVersion } from "./versions.js";
 
 /**
  * Schema validation is not the security boundary — the capability model is — so honoring a
@@ -22,9 +22,17 @@ export interface SchemaResolveOptions {
 	fetchImpl?: typeof fetch;
 	/** Directory for the on-disk remote-schema cache. Defaults to an OS-temp xript cache dir. */
 	cacheDir?: string;
+	/**
+	 * The manifest version (`0.6` through the current one) to validate against. Omitted, the
+	 * manifest's own `$schema` or `xript` field decides. Applies whenever the manifest declares no
+	 * `$schema` or declares a known xript schema URL; a local or remote overlay still governs.
+	 */
+	version?: string;
 }
 
 export interface ResolvedSchema {
+	/** The manifest version the schema belongs to, when it is a bundled xript schema. */
+	target?: TargetVersion;
 	/** The schema object to validate against. */
 	schema: object;
 	/** How the schema was resolved. */
@@ -33,19 +41,6 @@ export interface ResolvedSchema {
 	declared?: string;
 	/** A surfaced warning when resolution fell back to bundled core. */
 	warning?: string;
-}
-
-const CORE_SCHEMA_PREFIX = "https://xript.dev/schema/manifest/";
-const MOD_SCHEMA_PREFIX = "https://xript.dev/schema/mod-manifest/";
-
-async function readBundled(fileName: string): Promise<object> {
-	const bundled = resolve(__dirname, "./schema", fileName);
-	try {
-		return JSON.parse(await readFile(bundled, "utf-8")) as object;
-	} catch {
-		const source = resolve(__dirname, "../../../spec", fileName);
-		return JSON.parse(await readFile(source, "utf-8")) as object;
-	}
 }
 
 function declaredSchema(manifest: unknown): string | undefined {
@@ -59,9 +54,8 @@ function isRemote(ref: string): boolean {
 }
 
 function knownBundledFile(ref: string): string | null {
-	if (ref.startsWith(CORE_SCHEMA_PREFIX)) return "manifest.schema.json";
-	if (ref.startsWith(MOD_SCHEMA_PREFIX)) return "mod-manifest.schema.json";
-	return null;
+	const kind = xriptSchemaKind(ref);
+	return kind ? `${kind}.schema.json` : null;
 }
 
 function cachePath(cacheDir: string, url: string): string {
@@ -110,13 +104,18 @@ export async function resolveSchema(
 	options: SchemaResolveOptions = {},
 ): Promise<ResolvedSchema> {
 	const declared = declaredSchema(manifest);
+	const versioned = async (file: string): Promise<{ schema: object; target: TargetVersion }> => {
+		const target = resolveTargetVersion(manifest, options.version);
+		const kind: ManifestKind = file.startsWith("mod-") ? "mod-manifest" : "manifest";
+		return { schema: await loadSpecSchema(target.version, kind), target };
+	};
 	if (!declared) {
-		return { schema: await readBundled(defaultBundledFile), source: "bundled-fallback" };
+		return { ...(await versioned(defaultBundledFile)), source: "bundled-fallback" };
 	}
 
 	const knownFile = knownBundledFile(declared);
 	if (knownFile) {
-		return { schema: await readBundled(knownFile), source: "bundled-known", declared };
+		return { ...(await versioned(knownFile)), source: "bundled-known", declared };
 	}
 
 	if (isRemote(declared)) {
@@ -132,7 +131,7 @@ export async function resolveSchema(
 			(Array.isArray(options.allowRemote) && !options.allowRemote.includes(declared));
 		if (restricted) {
 			return {
-				schema: await readBundled(defaultBundledFile),
+				schema: bundledSchema(defaultBundledFile),
 				source: "bundled-fallback",
 				declared,
 				warning: `remote schema "${declared}" is not permitted by the active restriction; validating against bundled core`,
@@ -142,7 +141,7 @@ export async function resolveSchema(
 		const doFetch = options.fetchImpl ?? (typeof fetch === "function" ? fetch : undefined);
 		if (!doFetch) {
 			return {
-				schema: await readBundled(defaultBundledFile),
+				schema: bundledSchema(defaultBundledFile),
 				source: "bundled-fallback",
 				declared,
 				warning: `remote schema "${declared}" is uncached and no fetch transport is available; validating against bundled core`,
@@ -160,7 +159,7 @@ export async function resolveSchema(
 		} catch (e) {
 			const reason = e instanceof Error ? e.message : String(e);
 			return {
-				schema: await readBundled(defaultBundledFile),
+				schema: bundledSchema(defaultBundledFile),
 				source: "bundled-fallback",
 				declared,
 				warning: `could not fetch remote schema "${declared}" (${reason}); validating against bundled core`,
@@ -179,7 +178,7 @@ export async function resolveSchema(
 		return { schema: JSON.parse(raw) as object, source: "local", declared };
 	} catch {
 		return {
-			schema: await readBundled(defaultBundledFile),
+			schema: bundledSchema(defaultBundledFile),
 			source: "bundled-fallback",
 			declared,
 			warning: `could not read local schema "${declared}" relative to the manifest; validating against bundled core`,

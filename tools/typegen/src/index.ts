@@ -15,6 +15,13 @@ import {
 	FormatProfileError,
 	PROTOCOL_PROPS,
 	RESERVED_IDENTIFIER_PREFIX,
+	typeRefToTypeScript,
+	returnTypeRef,
+	returnDescription,
+	isSafeIdentifier,
+	isOptionalParameter,
+	parameterIdentifiers,
+	parametersToTypeScript,
 	type ResolvedExecutionIntent,
 	type NodeDefinition,
 } from "@xriptjs/validate";
@@ -97,7 +104,7 @@ function generateExecutionTable(manifest: unknown, constName: string, kinds: Rea
 	for (const line of wrapBanner(HOST_BINDING_THREAD_CONTRACT)) lines.push(`// ${line}`);
 	lines.push("");
 	lines.push(generateJSDoc(
-		"Declared execution intent for every surface in this manifest, resolved through the manifest-wide default. Advisory: a host routes on it, nothing enforces it. Absent from a mod's view of the world — this is a host-facing artifact. Where a slot declares its own `limits.timeout_ms`, `timeoutMs` carries it: that one *is* enforced, and it is the budget calls into that slot's fills actually run under.",
+		"Declared execution intent for every surface in this manifest, resolved through the manifest-wide default. Advisory: a host routes on it, nothing enforces it. Absent from a mod's view of the world: this is a host-facing artifact. Where a slot declares its own `limits.timeout_ms`, `timeoutMs` carries it: that one *is* enforced, and it is the budget calls into that slot's fills actually run under.",
 	));
 	lines.push(`export declare const ${constName}: {`);
 	for (const surface of surfaces) {
@@ -160,7 +167,7 @@ function effectiveHooks(hooks: Record<string, HookDef> | undefined, slots: SlotD
 interface ExportDef {
 	description: string;
 	params?: Parameter[];
-	returns?: TypeRef;
+	returns?: TypeRef | { type: TypeRef; description?: string };
 	capability?: string;
 }
 
@@ -238,7 +245,7 @@ type Binding = FunctionBinding | NamespaceBinding;
 interface FunctionBinding {
 	description: string;
 	params?: Parameter[];
-	returns?: TypeRef;
+	returns?: TypeRef | { type: TypeRef; description?: string };
 	async?: boolean;
 	capability?: string;
 	deprecated?: string;
@@ -255,6 +262,8 @@ interface Parameter {
 	description?: string;
 	default?: unknown;
 	required?: boolean;
+	optional?: boolean;
+	variadic?: boolean;
 }
 
 type TypeRef = string | ComplexTypeRef;
@@ -264,6 +273,12 @@ interface ComplexTypeRef {
 	union?: TypeRef[];
 	map?: TypeRef;
 	optional?: TypeRef;
+	function?: FunctionSignature;
+}
+
+interface FunctionSignature {
+	params?: Parameter[];
+	returns?: TypeRef;
 }
 
 interface Capability {
@@ -295,118 +310,99 @@ function isNamespace(binding: Binding): binding is NamespaceBinding {
 	return "members" in binding;
 }
 
-/**
- * Appends `[]`, parenthesising first when the element type is a union or intersection.
- *
- * Without the parentheses `{ array: { union: ["string", "number"] } }` emitted
- * `string | number[]`, which TypeScript reads as `string | (number[])` — a union with an array
- * rather than an array of a union. It compiles, which is what made it worse than a syntax error.
- */
-function arrayOf(resolved: string): string {
-	return /[|&]/.test(resolved) ? `(${resolved})[]` : `${resolved}[]`;
-}
+export { isSafeIdentifier };
 
 function resolveTypeRef(ref: TypeRef): string {
-	if (typeof ref === "string") {
-		const primitives: Record<string, string> = {
-			string: "string",
-			number: "number",
-			boolean: "boolean",
-			void: "void",
-			null: "null",
-		};
-
-		if (primitives[ref]) return primitives[ref];
-
-		if (ref.endsWith("[]")) {
-			const inner = ref.slice(0, -2);
-			return arrayOf(resolveTypeRef(inner));
-		}
-
-		return ref;
-	}
-
-	if (ref.array !== undefined) {
-		return arrayOf(resolveTypeRef(ref.array));
-	}
-	if (ref.union) {
-		return ref.union.map(resolveTypeRef).join(" | ");
-	}
-	if (ref.map !== undefined) {
-		return `Record<string, ${resolveTypeRef(ref.map)}>`;
-	}
-	if (ref.optional !== undefined) {
-		return `${resolveTypeRef(ref.optional)} | undefined`;
-	}
-
-	return "unknown";
+	return typeRefToTypeScript(ref);
 }
 
 function isOptionalParam(param: Parameter): boolean {
-	return param.default !== undefined || param.required === false;
+	return isOptionalParameter(param);
+}
+
+function renderParams(params: Parameter[] | undefined): string {
+	return parametersToTypeScript(params ?? []);
+}
+
+function paramDocs(params: Parameter[] | undefined): Array<{ name: string; description?: string }> | undefined {
+	if (!params) return undefined;
+	const ids = parameterIdentifiers(params);
+	return params.map((param, index) => ({ name: ids[index], description: param.description }));
+}
+
+function renderReturn(binding: { returns?: unknown; async?: boolean }): string {
+	const declared = returnTypeRef(binding.returns);
+	const type = declared !== undefined ? resolveTypeRef(declared as TypeRef) : "void";
+	return binding.async ? `Promise<${type}>` : type;
+}
+
+function functionDoc(binding: FunctionBinding, tags: string[], remarks: string[]): string {
+	return generateJSDoc(binding.description, {
+		params: paramDocs(binding.params),
+		capability: binding.capability,
+		deprecated: binding.deprecated,
+		returns: returnDescription(binding.returns),
+		tags,
+		remarks,
+	});
 }
 
 function generateFunction(name: string, binding: FunctionBinding, manifest?: unknown): string {
-	const lines: string[] = [];
 	const { tags, remarks } = intentDoc(manifest, `bindings/${name}`, binding.async === true);
-
-	lines.push(
-		generateJSDoc(binding.description, {
-			params: binding.params,
-			capability: binding.capability,
-			deprecated: binding.deprecated,
-			tags,
-			remarks,
-		}),
-	);
-
-	const params = (binding.params || [])
-		.map((p) => {
-			const optional = isOptionalParam(p) ? "?" : "";
-			return `${p.name}${optional}: ${resolveTypeRef(p.type)}`;
-		})
-		.join(", ");
-
-	let returnType = binding.returns ? resolveTypeRef(binding.returns) : "void";
-	if (binding.async) {
-		returnType = `Promise<${returnType}>`;
-	}
-
-	lines.push(`declare function ${name}(${params}): ${returnType};`);
-	return lines.join("\n");
+	return [functionDoc(binding, tags, remarks), `declare function ${name}(${renderParams(binding.params)}): ${renderReturn(binding)};`]
+		.filter(Boolean)
+		.join("\n");
 }
 
 function generateNamespaceFunction(name: string, binding: FunctionBinding, qualified: string, manifest?: unknown): string {
-	const lines: string[] = [];
 	const { tags, remarks } = intentDoc(manifest, `bindings/${qualified}`, binding.async === true);
+	return [functionDoc(binding, tags, remarks), `function ${name}(${renderParams(binding.params)}): ${renderReturn(binding)};`]
+		.filter(Boolean)
+		.join("\n");
+}
 
-	lines.push(
-		generateJSDoc(binding.description, {
-			params: binding.params,
-			capability: binding.capability,
-			deprecated: binding.deprecated,
-			tags,
-			remarks,
-		}),
+/** True when a namespace and every name beneath it can be emitted as a `namespace` declaration. */
+function namespaceIsDeclarable(binding: NamespaceBinding): boolean {
+	return Object.entries(binding.members).every(
+		([name, member]) => isSafeIdentifier(name) && (!isNamespace(member) || namespaceIsDeclarable(member)),
 	);
+}
 
-	const params = (binding.params || [])
-		.map((p) => {
-			const optional = isOptionalParam(p) ? "?" : "";
-			return `${p.name}${optional}: ${resolveTypeRef(p.type)}`;
-		})
-		.join(", ");
-
-	let returnType = binding.returns ? resolveTypeRef(binding.returns) : "void";
-	if (binding.async) {
-		returnType = `Promise<${returnType}>`;
+/**
+ * A namespace written as an object type literal. Used where a member name cannot be declared as
+ * a `function` inside a `namespace` (a reserved word, or a name that is not an identifier): a
+ * property key accepts any name, quoted where it has to be.
+ */
+function namespaceTypeLiteral(binding: NamespaceBinding, qualified: string, manifest?: unknown): string {
+	const lines: string[] = ["{"];
+	const memberEntries = Object.entries(binding.members);
+	for (let i = 0; i < memberEntries.length; i++) {
+		const [memberName, member] = memberEntries[i];
+		const memberPath = `${qualified}.${memberName}`;
+		const key = formatKeyName(memberName);
+		if (isNamespace(member)) {
+			const doc = generateJSDoc(member.description);
+			if (doc) lines.push(indent(doc, 1));
+			lines.push(indent(`${key}: ${namespaceTypeLiteral(member, memberPath, manifest)};`, 1));
+		} else {
+			const { tags, remarks } = intentDoc(manifest, `bindings/${memberPath}`, member.async === true);
+			const doc = functionDoc(member, tags, remarks);
+			if (doc) lines.push(indent(doc, 1));
+			lines.push(indent(`${key}(${renderParams(member.params)}): ${renderReturn(member)};`, 1));
+		}
+		if (i < memberEntries.length - 1) lines.push("");
 	}
-
-	lines.push(`function ${name}(${params}): ${returnType};`);
+	lines.push("}");
 	return lines.join("\n");
 }
 
 function generateNamespace(name: string, binding: NamespaceBinding, manifest?: unknown): string {
+	if (!namespaceIsDeclarable(binding)) {
+		return [generateJSDoc(binding.description), `declare const ${name}: ${namespaceTypeLiteral(binding, name, manifest)};`]
+			.filter(Boolean)
+			.join("\n");
+	}
+
 	const lines: string[] = [];
 
 	lines.push(generateJSDoc(binding.description));
@@ -460,6 +456,53 @@ function generateNestedNamespace(name: string, binding: NamespaceBinding, qualif
 	return lines.join("\n");
 }
 
+/**
+ * Top-level bindings whose names cannot be declared as globals (`delete`, `if`, `my-tool`) are
+ * gathered into one interface keyed by name. The sandbox still installs each one as a global, so a
+ * script reaches it as `globalThis["delete"]`; this interface is the type of that lookup.
+ */
+function generateUndeclarableBindings(bindings: Array<[string, Binding]>, manifest?: unknown): string {
+	const lines: string[] = [];
+	lines.push(
+		generateJSDoc(
+			"Bindings whose names are not legal TypeScript identifiers, keyed by name. The sandbox installs each one as a global under exactly this name; reach it with bracket access on `globalThis`.",
+		),
+	);
+	lines.push(`interface ${RESERVED_IDENTIFIER_PREFIX}Globals {`);
+	for (let i = 0; i < bindings.length; i++) {
+		const [name, binding] = bindings[i];
+		const key = formatKeyName(name);
+		if (isNamespace(binding)) {
+			const doc = generateJSDoc(binding.description);
+			if (doc) lines.push(indent(doc, 1));
+			lines.push(indent(`${key}: ${namespaceTypeLiteral(binding, name, manifest)};`, 1));
+		} else {
+			const { tags, remarks } = intentDoc(manifest, `bindings/${name}`, binding.async === true);
+			const doc = functionDoc(binding, tags, remarks);
+			if (doc) lines.push(indent(doc, 1));
+			lines.push(indent(`${key}(${renderParams(binding.params)}): ${renderReturn(binding)};`, 1));
+		}
+		if (i < bindings.length - 1) lines.push("");
+	}
+	lines.push("}");
+	return lines.join("\n");
+}
+
+/** Every declaration block the manifest's bindings emit, in manifest order. */
+function generateBindingBlocks(bindings: Record<string, Binding>, manifest?: unknown): string[] {
+	const blocks: string[] = [];
+	const undeclarable: Array<[string, Binding]> = [];
+	for (const [bindingName, binding] of Object.entries(bindings)) {
+		if (!isSafeIdentifier(bindingName)) {
+			undeclarable.push([bindingName, binding]);
+			continue;
+		}
+		blocks.push(isNamespace(binding) ? generateNamespace(bindingName, binding, manifest) : generateFunction(bindingName, binding, manifest));
+	}
+	if (undeclarable.length > 0) blocks.push(generateUndeclarableBindings(undeclarable, manifest));
+	return blocks;
+}
+
 function literalForValue(value: unknown): string {
 	if (typeof value === "string") return `"${value}"`;
 	if (typeof value === "number" || typeof value === "boolean") return String(value);
@@ -500,7 +543,7 @@ function generateObjectType(name: string, def: TypeDefinition, types?: Record<st
 				lines.push(indent(generateJSDoc(field.description), 1));
 			}
 			const optional = isFieldOptional(field) ? "?" : "";
-			lines.push(indent(`${fieldName}${optional}: ${resolveFieldType(field, types)};`, 1));
+			lines.push(indent(`${formatKeyName(fieldName)}${optional}: ${resolveFieldType(field, types)};`, 1));
 		}
 	}
 
@@ -524,8 +567,8 @@ function generateAccessorInterface(name: string, def: TypeDefinition, types?: Re
 			if (field.description) {
 				lines.push(indent(generateJSDoc(field.description), 1));
 			}
-			lines.push(indent(`get ${fieldName}(): ${valueType};`, 1));
-			lines.push(indent(`set ${fieldName}(v: ${valueType});`, 1));
+			lines.push(indent(`get ${formatKeyName(fieldName)}(): ${valueType};`, 1));
+			lines.push(indent(`set ${formatKeyName(fieldName)}(v: ${valueType});`, 1));
 			if (i < fieldEntries.length - 1) lines.push("");
 		}
 	}
@@ -535,49 +578,30 @@ function generateAccessorInterface(name: string, def: TypeDefinition, types?: Re
 }
 
 function generateHandlerType(hookDef: HookDef): string {
-	const params = (hookDef.params || [])
-		.map((p) => {
-			const optional = isOptionalParam(p) ? "?" : "";
-			return `${p.name}${optional}: ${resolveTypeRef(p.type)}`;
-		})
-		.join(", ");
-	return `(${params}) => void`;
+	return `(${renderParams(hookDef.params)}) => void`;
+}
+
+function hookDoc(name: string, hookDef: HookDef, manifest?: unknown): string {
+	const { tags, remarks } = intentDoc(manifest, `hooks/${name}`, hookDef.async === true);
+	return generateJSDoc(hookDef.description, {
+		capability: hookDef.capability,
+		deprecated: hookDef.deprecated,
+		tags,
+		remarks,
+	});
 }
 
 function generateHookFunction(name: string, hookDef: HookDef, manifest?: unknown): string {
-	const lines: string[] = [];
-	const handlerType = generateHandlerType(hookDef);
-	const { tags, remarks } = intentDoc(manifest, `hooks/${name}`, hookDef.async === true);
-
-	lines.push(
-		generateJSDoc(hookDef.description, {
-			capability: hookDef.capability,
-			deprecated: hookDef.deprecated,
-			tags,
-			remarks,
-		}),
-	);
-	if (JS_IDENTIFIER.test(name)) {
-		lines.push(`function ${name}(handler: ${handlerType}): void;`);
-	} else {
-		lines.push(`// hooks[${JSON.stringify(name)}] — register via bracket access: hooks[${JSON.stringify(name)}](handler)`);
-	}
-	return lines.join("\n");
+	return [hookDoc(name, hookDef, manifest), `function ${name}(handler: ${generateHandlerType(hookDef)}): void;`]
+		.filter(Boolean)
+		.join("\n");
 }
 
 function generatePhasedHookNamespace(name: string, hookDef: HookDef, manifest?: unknown): string {
 	const lines: string[] = [];
 	const handlerType = generateHandlerType(hookDef);
-	const { tags, remarks } = intentDoc(manifest, `hooks/${name}`, hookDef.async === true);
 
-	lines.push(
-		generateJSDoc(hookDef.description, {
-			capability: hookDef.capability,
-			deprecated: hookDef.deprecated,
-			tags,
-			remarks,
-		}),
-	);
+	lines.push(hookDoc(name, hookDef, manifest));
 	lines.push(`namespace ${name} {`);
 
 	const phases = hookDef.phases || [];
@@ -592,7 +616,55 @@ function generatePhasedHookNamespace(name: string, hookDef: HookDef, manifest?: 
 	return lines.join("\n");
 }
 
+/** True when every hook and phase name can be declared as a `function` inside `namespace hooks`. */
+function hooksAreDeclarable(hooks: Record<string, HookDef>): boolean {
+	return Object.entries(hooks).every(
+		([name, def]) => isSafeIdentifier(name) && (def.phases ?? []).every((phase) => isSafeIdentifier(phase)),
+	);
+}
+
+/**
+ * The `hooks` global written as an object type literal, for a host whose hook ids include a name
+ * a `namespace` cannot declare (`on-save`, `delete`). Every hook keeps its typed handler; one that
+ * is not an identifier is reached with bracket access, `hooks["on-save"](handler)`.
+ */
+function generateHooksTypeLiteral(hooks: Record<string, HookDef>, slots?: SlotDef[], manifest?: unknown): string {
+	const lines: string[] = [];
+	lines.push(generateJSDoc("Hook registration functions."));
+	lines.push("declare const hooks: {");
+	const hookEntries = Object.entries(hooks);
+	for (let i = 0; i < hookEntries.length; i++) {
+		const [hookName, hookDef] = hookEntries[i];
+		const doc = hookDoc(hookName, hookDef, manifest);
+		if (doc) lines.push(indent(doc, 1));
+		const handlerType = generateHandlerType(hookDef);
+		if (hookDef.phases && hookDef.phases.length > 0) {
+			lines.push(indent(`${formatKeyName(hookName)}: {`, 1));
+			for (const phase of hookDef.phases) {
+				lines.push(indent(`${formatKeyName(phase)}(handler: ${handlerType}): void;`, 2));
+			}
+			lines.push(indent("};", 1));
+		} else {
+			lines.push(indent(`${formatKeyName(hookName)}(handler: ${handlerType}): void;`, 1));
+		}
+		if (i < hookEntries.length - 1) lines.push("");
+	}
+	if (slots && slots.length > 0) {
+		if (hookEntries.length > 0) lines.push("");
+		lines.push(indent(generateJSDoc("Fragment lifecycle hook registration."), 1));
+		lines.push(indent("fragment: {", 1));
+		for (const [lifecycle, handlerType] of fragmentLifecycles()) {
+			lines.push(indent(`${lifecycle}(fragmentId: string, handler: ${handlerType}): void;`, 2));
+		}
+		lines.push(indent("};", 1));
+	}
+	lines.push("};");
+	return lines.join("\n");
+}
+
 function generateHooksNamespace(hooks: Record<string, HookDef>, slots?: SlotDef[], manifest?: unknown): string {
+	if (!hooksAreDeclarable(hooks)) return generateHooksTypeLiteral(hooks, slots, manifest);
+
 	const lines: string[] = [];
 
 	lines.push(generateJSDoc("Hook registration functions."));
@@ -618,6 +690,15 @@ function generateHooksNamespace(hooks: Record<string, HookDef>, slots?: SlotDef[
 
 	lines.push("}");
 	return lines.join("\n");
+}
+
+function fragmentLifecycles(): Array<[string, string]> {
+	return ["mount", "unmount", "update", "suspend", "resume"].map((lifecycle) => [
+		lifecycle,
+		lifecycle === "update"
+			? `(bindings: Record<string, unknown>, fragment: ${RESERVED_IDENTIFIER_PREFIX}FragmentProxy) => void`
+			: `(fragment: ${RESERVED_IDENTIFIER_PREFIX}FragmentProxy) => void`,
+	]);
 }
 
 function generateFragmentHooksNamespace(): string {
@@ -667,7 +748,7 @@ function generateCapabilityTypes(capabilities: Record<string, Capability>): stri
 
 	lines.push(
 		generateJSDoc(
-			`A capability scope declared by the host. Scope-only — no \`read:\`/\`write:\` mode prefix. Use \`${RESERVED_IDENTIFIER_PREFIX}CapabilityRef\` where a mode-prefixed grant or require string is expected.`,
+			`A capability scope declared by the host. Scope-only, with no \`read:\`/\`write:\` mode prefix. Use \`${RESERVED_IDENTIFIER_PREFIX}CapabilityRef\` where a mode-prefixed grant or require string is expected.`,
 		),
 	);
 	lines.push(`type ${RESERVED_IDENTIFIER_PREFIX}Capability = ${scopeUnion};`);
@@ -755,13 +836,7 @@ export function generateAmbientTypes(manifest: unknown, options?: TypegenOptions
 	}
 
 	if (env.bindings) {
-		for (const [bindingName, binding] of Object.entries(env.bindings)) {
-			if (isNamespace(binding)) {
-				globalBlocks.push(stripLeadingDeclare(generateNamespace(bindingName, binding, env)));
-			} else {
-				globalBlocks.push(stripLeadingDeclare(generateFunction(bindingName, binding, env)));
-			}
-		}
+		for (const block of generateBindingBlocks(env.bindings, env)) globalBlocks.push(stripLeadingDeclare(block));
 	}
 
 	if (env.hooks && Object.keys(env.hooks).length > 0) {
@@ -860,13 +935,7 @@ export function generateTypes(manifest: unknown, options?: TypegenOptions): stri
 	}
 
 	if (m.bindings) {
-		for (const [bindingName, binding] of Object.entries(m.bindings)) {
-			if (isNamespace(binding)) {
-				sections.push(generateNamespace(bindingName, binding, m));
-			} else {
-				sections.push(generateFunction(bindingName, binding, m));
-			}
-		}
+		for (const block of generateBindingBlocks(m.bindings, m)) sections.push(block);
 	}
 
 	if (m.hooks && Object.keys(m.hooks).length > 0) {
@@ -1022,18 +1091,17 @@ function generateExportsInterface(exports: Record<string, ExportDef>, manifest?:
 		const { tags, remarks } = intentDoc(manifest, `exports/${name}`);
 		lines.push(
 			indent(
-				generateJSDoc(def.description, { params: def.params, capability: def.capability, tags, remarks }),
+				generateJSDoc(def.description, {
+					params: paramDocs(def.params),
+					capability: def.capability,
+					returns: returnDescription(def.returns),
+					tags,
+					remarks,
+				}),
 				1,
 			),
 		);
-		const params = (def.params || [])
-			.map((p) => {
-				const optional = isOptionalParam(p) ? "?" : "";
-				return `${p.name}${optional}: ${resolveTypeRef(p.type)}`;
-			})
-			.join(", ");
-		const returnType = def.returns ? resolveTypeRef(def.returns) : "void";
-		lines.push(indent(`${name}(${params}): ${returnType};`, 1));
+		lines.push(indent(`${formatKeyName(name)}(${renderParams(def.params)}): ${renderReturn(def)};`, 1));
 		if (i < entries.length - 1) lines.push("");
 	}
 
@@ -1168,13 +1236,15 @@ function generateFormatTypes(manifest: unknown): string {
 		const lines: string[] = [];
 		lines.push(
 			generateJSDoc(
-				"Props legal on every node of this vocabulary. `data-bind` and `data-if` carry XEG; `id` addresses a node.",
+				"Props legal on every node of this vocabulary. `data-bind`, `data-if`, and `data-key` carry XEG; `data-each` carries `item in expr` or `(item, index) in expr`; `id` addresses a node.",
 			),
 		);
 		lines.push(`interface ${protocolName} {`);
 		lines.push(indent("id?: string;", 1));
 		lines.push(indent('"data-bind"?: string;', 1));
 		lines.push(indent('"data-if"?: string;', 1));
+		lines.push(indent('"data-each"?: string;', 1));
+		lines.push(indent('"data-key"?: string;', 1));
 		lines.push("}");
 
 		for (const name of nodeNames) {
@@ -1183,7 +1253,7 @@ function generateFormatTypes(manifest: unknown): string {
 			if (node.description) lines.push(generateJSDoc(node.description));
 			lines.push(`interface ${propsName(name)} extends ${protocolName} {`);
 			for (const [propKey, propDef] of Object.entries(node.props ?? {})) {
-				// `id`/`data-bind`/`data-if` are always strings the sanitizer enforces regardless of
+				// Protocol props are always strings the sanitizer enforces regardless of
 				// a node's declaration; the protocol interface already types them, so a node redeclaring
 				// one must not override the inherited member with an incompatible type.
 				if (PROTOCOL_PROPS.has(propKey)) continue;
@@ -1314,7 +1384,7 @@ function generateFragmentHandlerTypes(fills: Record<string, Fill[]>): string | u
  * TypeScript cannot type-check a string embedded in markup, and faking it with
  * template-literal type gymnastics would produce error messages no author could read. So
  * the work splits: these types give an editor something to complete against inside
- * `{{ … }}`, `data-if`, and `data-bind`, and the `expressions` analyzer in
+ * `{{ … }}`, `data-if`, `data-bind`, `data-each`, and `data-key`, and the `expressions` analyzer in
  * `@xriptjs/validate` does the actual checking over the same AST the runtimes walk.
  */
 function generateFragmentBindingTypes(
@@ -1348,7 +1418,7 @@ function generateFragmentBindingTypes(
 			lines.push("");
 			lines.push(
 				generateJSDoc(
-					`Every binding name valid inside a \`data-bind\`, \`data-if\`, or interpolation site on the \`${slotId}\` fill.`,
+					`Every binding name valid inside a \`data-bind\`, \`data-if\`, \`data-each\`, \`data-key\`, or interpolation site on the \`${slotId}\` fill. A \`data-each\` template adds its item and index names, and \`$index\`, inside its own subtree.`,
 				),
 			);
 			lines.push(`type ${base}Binding = keyof ${base}Bindings;`);
@@ -1361,7 +1431,7 @@ function generateFragmentBindingTypes(
 	const body = blocks.map((block) => indent(block, 1)).join("\n\n");
 	return [
 		generateJSDoc(
-			"Per-fill binding surfaces for fragment expressions. Names here are what an editor completes inside `{{ … }}`, `data-if`, and `data-bind`.",
+			"Per-fill binding surfaces for fragment expressions. Names here are what an editor completes inside `{{ … }}`, `data-if`, `data-bind`, `data-each`, and `data-key`.",
 		),
 		`declare namespace XriptFragments {\n${body}\n}`,
 	].join("\n");
@@ -1405,15 +1475,19 @@ function generateFragmentAPITypes(): string {
 
 	lines.push(generateJSDoc("Proxy for imperative fragment manipulation. Method calls accumulate a command buffer."));
 	lines.push(`interface ${RESERVED_IDENTIFIER_PREFIX}FragmentProxy {`);
+	lines.push(indent("/** Show matching nodes when `condition` is true, hide them when false. A set, not a flip: repeating it with the same condition changes nothing. */", 1));
 	lines.push(indent("toggle(selector: string, condition: boolean): void;", 1));
 	lines.push(indent("addClass(selector: string, className: string): void;", 1));
 	lines.push(indent("removeClass(selector: string, className: string): void;", 1));
 	lines.push(indent("setText(selector: string, text: string): void;", 1));
-	lines.push(indent("/** Set a prop on matching nodes; the value keeps its type. */", 1));
+	lines.push(indent("/** Set a prop on matching nodes; the value keeps its type. On an HTML attribute, `false` or `null` removes it. */", 1));
 	lines.push(indent("setProp(selector: string, prop: string, value: unknown): void;", 1));
-	lines.push(indent("/** @deprecated Alias of `setProp` kept under its own op name. */", 1));
-	lines.push(indent("setAttr(selector: string, attr: string, value: string): void;", 1));
-	lines.push(indent("replaceChildren(selector: string, html: string | string[]): void;", 1));
+	lines.push(indent("/** @deprecated Alias of `setProp` kept under its own op name. `false` or `null` removes the attribute; an object or array is refused. */", 1));
+	lines.push(indent("setAttr(selector: string, attr: string, value: string | number | boolean | null): void;", 1));
+	lines.push(indent("/** Remove an attribute from matching nodes. The inverse of `setAttr`. */", 1));
+	lines.push(indent("removeAttr(selector: string, attr: string): void;", 1));
+	lines.push(indent("/** Replace the children of matching nodes with markup, a list of markup strings, or a J5ML node list. An empty list clears. */", 1));
+	lines.push(indent("replaceChildren(selector: string, content: string | readonly (string | readonly unknown[])[]): void;", 1));
 	lines.push("}");
 
 	return lines.join("\n");

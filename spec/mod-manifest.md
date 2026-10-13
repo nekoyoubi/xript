@@ -70,7 +70,20 @@ The `entry` block declares the mod's code and the named API the host can invoke.
 
 The bare `entry: "main.js"` and `entry: ["a.js", "b.js"]` forms remain valid (script mode, no exports). The entry script registers each declared export via the runtime-injected `xript.exports.register(name, fn)`; the host invokes by name with JSON-serializable args and receives a JSON-serializable result. Invoking an undeclared or unregistered export, or an export that throws, surfaces a typed invocation error. An export may declare a required `capability`; invoking it without the grant throws a capability-denied error. **Streaming (partial results) is not yet specified.** Only request → single-response is defined in this version.
 
+An export's `params` and `returns` follow the host manifest's rules exactly: a last parameter may be `variadic`, `optional` is the inverse alias of `required`, and `returns` may be `{ "type": <typeRef>, "description": "..." }`. See [Parameters](./manifest.md#parameters) and [Type References](./manifest.md#type-references).
+
 Slot fills reference these exports by name (see the fill shapes below).
+
+### Loading the Entry
+
+Every script the entry names is a script the host must supply when it loads the mod (in the fragment sources a runtime's load call takes; the Rust runtime also accepts one explicit entry source). Each runtime exposes the rule publicly (`modEntryScripts` / `modEntryFormat` / `modEntryExports` in JavaScript, `ModManifest::entry_scripts` / `entry_format` / `entry_exports` in Rust, `ModEntry.Scripts` / `Format` / `Exports` in C#) so a host can collect the right sources before it loads.
+
+Loading is loud by default:
+
+- **An entry script the host did not supply is a load error** naming the mod and the script (`MissingEntryScriptError` and its equivalents). All scripts are checked before any runs, so a mod never half-runs because a later script is missing. An empty string is a supplied script with an empty body
+- **An entry that throws is a load error** (the mod entry error), whether the throw is a script's top level, a module body, or a module whose exports could not be read. A typed failure (an execution limit, a refused import, CommonJS) keeps its own type
+
+A host that would rather boot with one broken mod than not boot at all sets the **entry error policy** to `report`. The mod then loads anyway, without whatever its entry did not run; the failure is recorded on the mod instance's diagnostics (`missing-entry-script` or `entry-failed`, severity `error`) instead of thrown. Under either policy every load-time diagnostic also reaches the host's mod diagnostic callback, so the failure is observable even when it is not fatal. Cancellation is the host's own decision and always propagates. The behavior is held to `spec/mod-load-tests.json` by every runtime.
 
 ## Fills
 
@@ -94,6 +107,8 @@ Slot fills reference these exports by name (see the fill shapes below).
   }
 }
 ```
+
+A binding may carry fields beyond `name`, `path`, and `type`. These are host-defined extensions: the schema accepts them, runtimes pass them to the host untouched, and a mod that uses one only works on hosts that implement it. See [Binding Fields](./fragments.md#binding-fields).
 
 A fill engages exactly one slot: the key it lives under. The inner shape of a fill entry is governed by that slot's `accepts` type, which the host owns. The mod manifest does not redeclare the slot's type; it conforms to it.
 
@@ -195,7 +210,7 @@ Like the core [host manifest](./manifest.md#extending-the-core-vocabulary), the 
 }
 ```
 
-The published schema document carries no top-level `additionalProperties`/`unevaluatedProperties`. `@xriptjs/validate` flags an unrecognized top-level key, but as an **advisory warning, not an error** — the manifest still validates. This is deliberate: the runtime reads only the declared vocabulary and ignores a stray top-level key, so it has no runtime effect, and a hard error would block a key that does nothing. The warning exists to catch the *silent* case (a typo of an optional key like `capabilties` that would otherwise leave the real key absent with no signal); a key a declared `$schema` overlay accounts for is evaluated and draws no warning at all. Nested closures (a binding or slot's inner shape) remain hard errors.
+The published schema document carries no top-level `additionalProperties`/`unevaluatedProperties`. `@xriptjs/validate` flags an unrecognized top-level key, but as an **advisory warning, not an error**; the manifest still validates. This is deliberate: the runtime reads only the declared vocabulary and ignores a stray top-level key, so it has no runtime effect, and a hard error would block a key that does nothing. The warning exists to catch the *silent* case (a typo of an optional key like `capabilties` that would otherwise leave the real key absent with no signal); a key a declared `$schema` overlay accounts for is evaluated and draws no warning at all. Nested closures (a handler's or a legacy fragment's inner shape) remain hard errors, with one deliberate exception: a fragment binding accepts host-defined extension fields (see [Binding Fields](./fragments.md#binding-fields)).
 
 Because a stray top-level key is inert, it is **not an access surface** — nothing in the runtime or the sandbox ever reads it. When you want data a host actually consumes, use a payload-schema'd [data fill](#representative-fill-shapes) into a data slot (the host receives it keyed by slot id, checked by `--cross`); for host-provided values a mod reads, use a binding. Reach for a top-level overlay only for manifest-wide domain metadata that an external tool or a human reads off the JSON directly.
 

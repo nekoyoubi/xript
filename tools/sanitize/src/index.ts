@@ -38,6 +38,10 @@ export {
 	escapeHtml,
 	escapeAttrValue,
 	jsString,
+	canonicalJson,
+	propAttributeValue,
+	compareCodePoints,
+	type PropTypeLookup,
 	FORBIDDEN_PROP_NAMES,
 	type FragmentTree,
 	type FragmentNode,
@@ -78,6 +82,29 @@ export {
 } from "./interpolate.js";
 
 export {
+	parseRepeatHeader,
+	parseRepeatHeaderCached,
+	evaluateRepeatItems,
+	repeatScope,
+	resolveRepeatKeys,
+	replaceKeys,
+	diffRepeat,
+	longestIncreasingSubsequence,
+	repeatSiteId,
+	REPEAT_INDEX_NAME,
+	MAX_REPEAT_COPIES,
+	type RepeatHeader,
+	type RepeatHeaderResult,
+	type RepeatKey,
+	type RepeatMode,
+	type RepeatPatchOp,
+	type RepeatSite,
+	type FragmentRepeat,
+	type RepeatKeyProblem,
+	type RepeatKeyResolution,
+} from "./repeat.js";
+
+export {
 	BUILTIN_PROFILES,
 	BUILTIN_FORMAT_IDS,
 	BUILTIN_VOCABULARY_IDS,
@@ -87,6 +114,8 @@ export {
 	SINKS,
 	resolveFormatProfile,
 	nodeDefinition,
+	declaredPropType,
+	propTypeLookup,
 	speaksHtml,
 	anyVocabularyDeclares,
 	FormatProfileError,
@@ -110,6 +139,7 @@ export {
 
 export {
 	sanitizeFragment,
+	projectsToHtml,
 	parseJsmlSource,
 	FragmentParseError,
 	type SanitizedFragment,

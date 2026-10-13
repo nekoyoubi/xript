@@ -48,18 +48,41 @@ export function marshalToQuickJS(context: QuickJSContext, value: unknown, bindin
 
 	if (typeof value === "object") {
 		const obj = context.newObject();
+		let hasProtoKey = false;
 		try {
 			for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
 				const propHandle = marshalToQuickJS(context, val, bindingName);
-				context.setProp(obj, key, propHandle);
+				if (key === "__proto__") {
+					hasProtoKey = true;
+					context.defineProp(obj, key, { value: propHandle, configurable: true, enumerable: true });
+				} else {
+					context.setProp(obj, key, propHandle);
+				}
 				safeDispose(context, propHandle);
 			}
 		} catch (e) {
 			safeDispose(context, obj);
 			throw e;
 		}
-		return obj;
+		return hasProtoKey ? withWritableProps(context, obj) : obj;
 	}
 
 	return context.undefined;
+}
+
+/**
+ * An own `__proto__` key has to be defined rather than assigned, or it runs the
+ * prototype setter and reparents the object. `defineProp` cannot mark the property
+ * writable, so the object is re-spread inside the sandbox: object spread copies own
+ * enumerable properties as plain writable data properties, in order, and is syntax
+ * rather than a global a mod could have replaced.
+ */
+function withWritableProps(context: QuickJSContext, obj: QuickJSHandle): QuickJSHandle {
+	const spreader = context.unwrapResult(context.evalCode("(source) => ({ ...source })"));
+	try {
+		return context.unwrapResult(context.callFunction(spreader, context.undefined, obj));
+	} finally {
+		spreader.dispose();
+		obj.dispose();
+	}
 }

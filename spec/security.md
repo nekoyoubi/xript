@@ -24,7 +24,21 @@ Scripts cannot access anything the host has not explicitly exposed through bindi
 
 Objects returned from bindings must be copies or proxies, not direct references to host-internal objects. A script receiving a player position object must not be able to traverse prototype chains or property references to reach host internals. Runtimes should either deep-copy returned values or use membrane patterns that intercept property access.
 
+A copied value's keys are data. A runtime that copies a host object into the sandbox defines each key as an own, enumerable, writable data property; it never assigns it. Assignment runs setters, and an own key spelled `__proto__` (which `JSON.parse` produces) would then replace the copy's prototype instead of arriving as a key: its contents readable through inheritance, the key itself invisible to `Object.keys`. [`marshal-tests.json`](./marshal-tests.json) is the shared corpus every runtime is held to.
+
+**A script function never crosses out to the host as data.** The reverse of the copy rule governs values leaving the sandbox: a function the script returns from an `execute`, an export, a hook or event handler, or a callback carries no data representation and must never reach the host as something callable. Handing one over would let the host invoke sandbox code outside any execution budget and outside the call that produced it. A function marshals to `null` at the top level and as an array element, and is omitted as an object property, exactly as JSON serialization renders the same shape. The only sanctioned way for the host to call into the sandbox is through a declared export (`invokeExport`) or a live callback, both of which run under the budget. [`marshal-out-tests.json`](./marshal-out-tests.json) is the shared corpus every runtime is held to.
+
 **Failure mode:** If a script attempts to access something outside the sandbox (e.g., through a prototype chain exploit or a globalThis property not in the allowed set), the access must return `undefined` or throw a `TypeError`. It must never succeed silently.
+
+**Callbacks widen the boundary in one direction, under the same guarantees:**
+
+A script function passed to a binding reaches the host as a [callback](./bindings.md#callbacks), and the host may call back into the sandbox through it. That is a deliberate widening, and runtimes must hold it to these rules:
+
+- **The host never receives the script's function itself.** It receives a proxy. Calling the proxy runs the script function inside the sandbox, with the same restricted globals, capability grants, and `this` of `undefined`. Nothing about the call gives the script a reference to the host.
+- **Lifetime is the binding call.** The proxy is valid only while the binding call that received it is running, and only on the thread running it. Afterwards it fails as expired. No runtime retains a script function past the call, so a host cannot keep a handle into the sandbox alive, and a sandbox's teardown never waits on a host reference.
+- **Re-entrancy is synchronous.** A callback runs on the sandbox's own thread, nested inside the binding call. It cannot suspend; an async binding refuses to start inside one, and a callback that returns a promise is refused.
+- **Values cross by the data rules.** Arguments and return values are marshalled exactly as binding results and binding arguments are, so a callback opens no new path for host objects to enter the sandbox or for script objects to reach the host. In particular a callback that returns a function returns `null` to the host, by the outbound-function rule above.
+- **A callback reference is unforgeable.** A runtime that bridges arguments through JSON (where a function cannot travel as itself) stands a marker in its place and resolves it on the host side. The marker is minted only by the runtime, for a function the script actually passed, and carries a random per-scope nonce; a value the script spells into plain data that merely looks like a marker resolves to nothing, just as the same data shape is inert in a runtime that passes functions directly. A script cannot name a callback it was not given, nor reach one from another binding call. [`callback-tests.json`](./callback-tests.json) is the shared corpus every runtime is held to.
 
 ### 2. No Denial of Service
 
@@ -42,9 +56,17 @@ Every script invocation has a maximum memory allocation. The default is 64 MB. W
 
 Every script invocation has a maximum call stack depth. The default is 256 frames. When the limit is reached, the runtime must throw a `RangeError` (the standard JavaScript stack overflow error). Unlike timeout and memory violations, stack overflow is catchable — a script can catch the `RangeError` and continue operating within its remaining resource budget.
 
+**Callbacks spend the caller's budget:**
+
+A [callback](./bindings.md#callbacks) the host calls during a binding call runs against the budget of the script that made the binding call. It gets no fresh timeout. A callback that exhausts the budget is stopped like any runaway script, and the host cannot swallow the stop: even if the host catches the callback's failure, the binding call ends with the execution-limit error.
+
 **Infinite loop protection:**
 
 Runtimes must detect and terminate scripts that enter infinite loops or infinite recursion. The timeout limit is the primary mechanism for this, but runtimes may additionally instrument loops with iteration counters for faster detection.
+
+**A script cannot crash the host process:**
+
+A runtime whose sandbox shares the host's engine and process (the Node `vm` runtime shares V8 and the host's unhandled-rejection reporting) must keep a script's floating failures from reaching the host process. A rejected promise the script never settles (`Promise.reject(...)`, an un-awaited async body that throws, a bare `import(...)`) must be contained by the runtime, not surface as a process-level unhandled rejection that the host's default policy turns into an exit. Containment must be scoped to the runtime's own sandbox: a rejection originating in host code keeps the host's own policy. Runtimes that sandbox in a separate engine (QuickJS, Jint) contain floating rejections in that engine's job queue and never reach the host process.
 
 **Failure modes by resource:**
 
@@ -90,6 +112,11 @@ Scripts cannot dynamically generate and execute code. The `eval()` function, the
 - `import()` (dynamic import expressions)
 - Static `import` of any external specifier in a module-format entry (rejected at link time with `ImportDeniedError`)
 - Any runtime-specific mechanism that converts strings to executable code
+- The `Function` constructor reached any other way: `(function () {}).constructor`, the async, generator, and async-generator equivalents, and the `.constructor.constructor` of any object, array, or error, whether the script made it or a binding handed it over
+
+Replacing the global `Function` is not enough on its own, because every function's prototype chain still leads to the real constructor. A runtime must also point the `constructor` of each function prototype at something that refuses, and must refuse with a `TypeError`.
+
+A runtime whose sandbox shares the host's engine (the Node runtime's `vm` context) has a second obligation. The context's `codeGeneration` setting governs only the context's own `Function`; a host-realm value handed to a script is one `.constructor` away from the host's `Function`, which compiles anything and runs it with full host authority. Every value crossing host to sandbox there (binding results, thrown errors, promises, hook arguments, event payloads, export arguments, callback arguments, and every global the runtime installs, built-ins included) must be re-created in the context's realm: data copied into context-realm objects, errors and promises re-created as the context's own, and host functions wrapped in context-realm functions. `spec/escape-tests.json` is the shared corpus every runtime asserts.
 
 **Why this matters:**
 
@@ -187,8 +214,11 @@ Runtime implementors must verify their implementation against each item in this 
 - [ ] A mod entry containing `require()`, `module.exports`, or `exports.x` is rejected at load time with `CommonJSDetectedError`, in both script and module mode
 - [ ] Scripts cannot access other scripts' state
 - [ ] Objects returned from bindings do not expose host internals through prototype traversal
+- [ ] An own `__proto__` key in a binding's return value arrives as an own data property and does not reparent the object (`marshal-tests.json`)
 - [ ] The global scope contains only language built-ins, declared bindings, and nothing else
 - [ ] Accessing undefined globals returns `undefined` or throws `ReferenceError`, never host data
+- [ ] A script function passed to a binding reaches the host only as a proxy, never as the function itself
+- [ ] Calling that proxy after the binding call returns, or from another thread, fails as expired
 
 ### Resource Limits
 
@@ -196,6 +226,7 @@ Runtime implementors must verify their implementation against each item in this 
 - [ ] Scripts exceeding `memory_mb` are terminated (not catchable)
 - [ ] Scripts exceeding `max_stack_depth` receive a `RangeError` (catchable)
 - [ ] Infinite loops are terminated by the timeout mechanism
+- [ ] A callback runs against the calling script's budget, and a budget stop inside it ends the binding call even if the host catches the failure
 - [ ] Default limits (5000ms, 64MB, 256 stack frames) are applied when the manifest omits `limits`
 - [ ] After termination, the runtime is in a clean state (no leaked resources, no corrupted host state)
 
@@ -211,6 +242,8 @@ Runtime implementors must verify their implementation against each item in this 
 
 - [ ] `eval()` throws `TypeError`
 - [ ] `new Function()` throws `TypeError`
+- [ ] Every constructor chain in `spec/escape-tests.json` ends in a `TypeError`, including through values a binding returned or threw
+- [ ] In a runtime that shares the host's engine, no host-realm object, array, function, error, or promise is reachable from a script
 - [ ] `setTimeout(string)` throws `TypeError` or is unavailable
 - [ ] `setInterval(string)` throws `TypeError` or is unavailable
 - [ ] `import()` expressions are unavailable

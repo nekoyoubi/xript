@@ -1,7 +1,9 @@
 # xript-expr
 
 The xript Expression Grammar (XEG): one total, pure expression language for `data-if`,
-`data-bind`, and `{{ … }}` text interpolation in xript fragments.
+`data-bind`, `data-each`, `data-key`, and `{{ … }}` text interpolation in xript fragments.
+`parse_repeat_header` reads a `data-each` header (`item in expr`, `(item, index) in expr`)
+and `repeat_scope` builds the bindings each copy evaluates against.
 
 Identifiers resolve only against a fill's declared bindings and calls resolve only against
 a closed builtin table, so no production names a host global and no evaluation reaches a

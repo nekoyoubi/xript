@@ -87,7 +87,7 @@ describe("docgen — declared execution intent", () => {
 		const index = pageFor(mod, "index");
 		assert.match(index.content, /## Exports/);
 		assert.match(index.content, /\| Export \| Capability \| Execution \| Description \|/);
-		assert.match(index.content, /\| `crunch` \| — \| `long` \/ `any` \| Crunches\. \|/);
+		assert.match(index.content, /\| `crunch` \| - \| `long` \/ `any` \| Crunches\. \|/);
 		assert.match(index.content, /a host routes on the wider of the two/);
 	});
 });

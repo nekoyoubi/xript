@@ -1,0 +1,62 @@
+{
+	"$schema": "https://xript.dev/schema/manifest/v0.9.json",
+	"xript": "0.9",
+	"name": "game-hud",
+	"title": "Game HUD",
+	"version": "2.0.0",
+	"description": "An in-game heads-up display that mods extend with their own readouts.",
+	"bindings": {
+		"world": {
+			"description": "Reads the state of the world around the player.",
+			"members": {
+				"getTime": { "description": "Returns the in-game clock as HH:MM.", "returns": "string" },
+				"getWeather": { "description": "Returns the current weather condition.", "returns": "string" },
+				"getBiome": { "description": "Returns the biome the player stands in.", "returns": "string" }
+			}
+		},
+		"combat": {
+			"description": "Reads combat state.",
+			"members": {
+				"getEnemyCount": { "description": "Returns the number of nearby enemies.", "returns": "number", "capability": "combat" },
+				"isInCombat": { "description": "Returns whether the player is in combat.", "returns": "boolean", "capability": "combat" },
+				"getEnemies": { "description": "Returns the nearby enemies.", "returns": { "array": "Enemy" }, "capability": "combat" }
+			}
+		}
+	},
+	"capabilities": {
+		"combat": { "description": "Read combat state and draw combat readouts.", "risk": "medium" }
+	},
+	"types": {
+		"Enemy": {
+			"description": "A hostile creature near the player.",
+			"fields": {
+				"name": { "type": "string", "description": "Creature name." },
+				"health": { "type": "number", "description": "Remaining health." }
+			}
+		}
+	},
+	"slots": [
+		{
+			"id": "hud.top",
+			"description": "A strip of readouts along the top of the screen.",
+			"accepts": ["text/html", "application/j5ml+json"],
+			"multiple": true,
+			"style": "inherit"
+		},
+		{
+			"id": "hud.minimap",
+			"description": "The minimap frame; one mod at a time.",
+			"accepts": ["text/html"],
+			"multiple": false,
+			"style": "isolated"
+		},
+		{
+			"id": "hud.combat",
+			"description": "Combat readouts, shown while enemies are near.",
+			"accepts": ["text/html", "application/j5ml+json"],
+			"capability": "combat",
+			"multiple": true,
+			"style": "scoped"
+		}
+	]
+}

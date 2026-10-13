@@ -19,12 +19,18 @@ pub mod contract;
 pub mod diagnostic;
 pub mod node;
 pub mod ops;
+pub mod repeat;
 
 pub use contract::{ContentType, FragmentCondition, RenderedFragment, CONTRACT_VERSION};
 pub use diagnostic::{DiagnosticCode, DiagnosticSeverity, FragmentDiagnostic};
 pub use node::{
     is_forbidden_prop_name, js_number_to_string, js_string, matches_json_type, FragmentElement,
     FragmentNode, FragmentTree, Props, FORBIDDEN_PROP_NAMES,
+};
+pub use repeat::{
+    diff_repeat, longest_increasing_subsequence, replace_keys, resolve_repeat_keys,
+    FragmentRepeat, RepeatKey, RepeatKeyProblem, RepeatKeyResolution, RepeatMode, RepeatPatchKind,
+    RepeatPatchOp, RepeatSite,
 };
 pub use ops::{
     apply_ops, node_at, parse_node_ref, path_reference, resolve_target, FragmentOp, NodeRef,

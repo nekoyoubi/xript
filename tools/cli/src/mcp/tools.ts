@@ -1,6 +1,17 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { validateManifest, validateModManifest, validateManifestFile, validateModManifestFile, resolveSchema, crossValidate, isModManifest, type ValidationResult } from "@xriptjs/validate";
+import {
+	validateManifestFile,
+	validateModManifestFile,
+	validateManifestVersioned,
+	crossValidate,
+	resolveTargetVersion,
+	describeTargetVersion,
+	CURRENT_SPEC_VERSION,
+	SUPPORTED_SPEC_VERSIONS,
+	type ValidationResult,
+} from "@xriptjs/validate";
+import { checkManifestVersion, speaksSummary, versionFindings, withFindings } from "../spec-version.js";
 import { generateTypes, generateAmbientTypes } from "@xriptjs/typegen";
 import { generateDocs } from "@xriptjs/docgen";
 import { sanitizeHTMLDetailed } from "@xriptjs/sanitize";
@@ -81,7 +92,7 @@ async function resolveWorkspaceBaseDir(server: McpServer): Promise<string> {
  * the tool-call tokens — the server reads it. A value that starts with `{` or `[` is treated
  * as inline JSON; anything else is treated as a path. `extends` is resolved before returning.
  */
-async function resolveManifestArg(server: McpServer, value: string): Promise<{ ok: true; value: unknown } | { ok: false; error: string }> {
+async function resolveManifestArg(server: McpServer, value: string): Promise<{ ok: true; value: unknown; baseDir: string } | { ok: false; error: string }> {
 	let parsed: { ok: true; value: unknown } | { ok: false; error: string };
 	let baseDir: string;
 	if (isInlineJson(value)) {
@@ -101,7 +112,7 @@ async function resolveManifestArg(server: McpServer, value: string): Promise<{ o
 	}
 	if (!parsed.ok) return parsed;
 	try {
-		return { ok: true, value: await resolveExtends(parsed.value, baseDir) };
+		return { ok: true, value: await resolveExtends(parsed.value, baseDir), baseDir };
 	} catch (error) {
 		return { ok: false, error: `extends resolution failed: ${error instanceof Error ? error.message : String(error)}` };
 	}
@@ -164,8 +175,38 @@ async function resolveHostArg(
 	return { ok: true, value: parsed.value, baseDir: dirname(resolved.path) };
 }
 
+/** The optional `version` argument every manifest-taking tool accepts. */
+const versionArg = z
+	.string()
+	.optional()
+	.describe(
+		`The xript manifest version to answer for (${SUPPORTED_SPEC_VERSIONS.join(", ")}). Defaults to the version the manifest declares: its $schema URL, then its xript field, then ${CURRENT_SPEC_VERSION}.`,
+	);
+
+/**
+ * Checks a manifest against the schema of the version the call targets and renders what a
+ * generator should surface beside its output: the target, and any violation of that version's
+ * schema. A version the toolchain does not speak is reported as an error result.
+ */
+async function versionNotes(
+	manifest: unknown,
+	options: { version?: string; kind?: "app" | "mod"; baseDir?: string },
+): Promise<{ ok: true; note: string } | { ok: false; error: string }> {
+	const check = await checkManifestVersion(manifest, options);
+	if (check.fatal) return { ok: false, error: check.notes.join("\n") };
+	const target = check.result.target ? describeTargetVersion(check.result.target) : `xript ${CURRENT_SPEC_VERSION}`;
+	const lines = [`target: ${target}`, ...check.notes.filter((note) => !note.startsWith("answering for"))];
+	return { ok: true, note: lines.join("\n") };
+}
+
+/** A generated payload as the first content block, with the version note as a second. */
+function withNote(body: string, note: string): ToolResult {
+	return { content: [{ type: "text", text: body }, { type: "text", text: note }] };
+}
+
 function formatValidation(result: ValidationResult): ToolResult {
 	const lines: string[] = [result.valid ? "valid ✓" : "invalid ✗"];
+	if (result.target) lines.push(`  target ${describeTargetVersion(result.target)}`);
 	for (const error of result.errors) lines.push(`  error ${error.path}: ${error.message}`);
 	for (const warning of result.warnings ?? []) lines.push(`  warning ${warning.path}: ${warning.message}`);
 	return text(lines.join("\n"), !result.valid);
@@ -202,10 +243,18 @@ export async function registerTools(server: McpServer, buildInfo: ServerBuildInf
 		"xript_server_info",
 		{
 			title: "Report this server's build identity",
-			description: "Return the running xript MCP server's name, version, and build timestamp. Use it to confirm the server process is current: if `builtAt` predates a change you made in the xript repo, the running server is stale — rebuild and reconnect before trusting its results.",
+			description: "Return the running xript MCP server's name, toolchain version, build timestamp, and the xript manifest versions it can answer for. Use it to confirm the server process is current: if `builtAt` predates a change you made in the xript repo, the running server is stale, so rebuild and reconnect before trusting its results. Every manifest-taking tool accepts an optional `version` from `manifestVersions` and otherwise answers for the version the manifest declares.",
 			inputSchema: {},
 		},
-		async () => json({ ...buildInfo, runtime: `node ${process.version}` }),
+		async () =>
+			json({
+				...buildInfo,
+				toolchainVersion: buildInfo.version,
+				...speaksSummary(),
+				versionConvention:
+					"Manifest-taking tools accept an optional `version`; omitted, they answer for the manifest's $schema version, then its xript field, then defaultManifestVersion.",
+				runtime: `node ${process.version}`,
+			}),
 	);
 
 	server.registerTool(
@@ -216,27 +265,27 @@ export async function registerTools(server: McpServer, buildInfo: ServerBuildInf
 			inputSchema: {
 				manifest: z.string().describe("The manifest to validate — a file path (absolute, or relative to the workspace root), or the inline JSON."),
 				kind: z.enum(["app", "mod", "auto"]).optional().describe("Manifest kind. Defaults to auto-detect."),
+				version: versionArg,
 			},
 		},
-		async ({ manifest, kind }) => {
+		async ({ manifest, kind, version }) => {
 			const located = await locateManifestArg(server, manifest);
 			if (!located.ok) return text(located.error, true);
 			const forced = kind && kind !== "auto" ? kind : undefined;
+			const versionOption = version !== undefined ? { version } : {};
 			if (located.kind === "file") {
 				// Mirror the CLI: file-aware validation resolves the declared `$schema` and
 				// runs entry-source checks. `validateManifestFile` auto-routes app vs mod by
 				// content; force mod when the caller asked for it.
-				const result = forced === "mod" ? await validateModManifestFile(located.path) : await validateManifestFile(located.path);
+				const result =
+					forced === "mod"
+						? await validateModManifestFile(located.path, versionOption)
+						: await validateManifestFile(located.path, versionOption);
 				return formatValidation(result);
 			}
-			const isMod = forced ? forced === "mod" : isModManifest(located.value);
-			const schemaFile = isMod ? "mod-manifest.schema.json" : "manifest.schema.json";
-			const resolvedSchema = await resolveSchema(located.value, located.baseDir, schemaFile);
-			const result = isMod ? await validateModManifest(located.value, resolvedSchema.schema) : await validateManifest(located.value, resolvedSchema.schema);
-			if (resolvedSchema.warning) {
-				result.warnings = [...(result.warnings ?? []), { path: "/$schema", message: resolvedSchema.warning, keyword: "schema-fallback" }];
-			}
-			return formatValidation(result);
+			return formatValidation(
+				await validateManifestVersioned(located.value, { ...versionOption, baseDir: located.baseDir, ...(forced ? { kind: forced } : {}) }),
+			);
 		},
 	);
 
@@ -249,14 +298,23 @@ export async function registerTools(server: McpServer, buildInfo: ServerBuildInf
 				appManifest: z.string().describe("The host app manifest — a file path (absolute, or relative to the workspace root), or the inline JSON."),
 				modManifest: z.string().describe("The mod manifest — a file path (absolute, or relative to the workspace root), or the inline JSON."),
 				checkFillPayloads: z.boolean().optional().describe("Validate each fill against the target slot's payload schema. Default true; set false to check only slot existence, accepted formats, and gates."),
+				version: versionArg,
 			},
 		},
-		async ({ appManifest, modManifest, checkFillPayloads }) => {
+		async ({ appManifest, modManifest, checkFillPayloads, version }) => {
 			const app = await resolveManifestArg(server, appManifest);
 			if (!app.ok) return text(`app ${app.error}`, true);
 			const mod = await resolveManifestArg(server, modManifest);
 			if (!mod.ok) return text(`mod ${mod.error}`, true);
-			return formatValidation(await crossValidate(app.value, mod.value, checkFillPayloads !== undefined ? { checkFillPayloads } : {}));
+			const versionOption = version !== undefined ? { version } : {};
+			const appCheck = await validateManifestVersioned(app.value, { ...versionOption, kind: "app", baseDir: app.baseDir });
+			const modCheck = await validateManifestVersioned(mod.value, { ...versionOption, kind: "mod", baseDir: mod.baseDir });
+			const cross = await crossValidate(app.value, mod.value, checkFillPayloads !== undefined ? { checkFillPayloads } : {});
+			const prefixed = (label: string, result: ValidationResult) =>
+				result.errors.map((error) => ({ ...error, path: error.path, message: `${label} manifest: ${error.message}` }));
+			const errors = [...prefixed("app", appCheck), ...prefixed("mod", modCheck), ...cross.errors];
+			const warnings = [...(appCheck.warnings ?? []), ...(modCheck.warnings ?? []), ...(cross.warnings ?? [])];
+			return formatValidation({ valid: errors.length === 0, errors, warnings, ...(appCheck.target ? { target: appCheck.target } : {}) });
 		},
 	);
 
@@ -276,11 +334,14 @@ export async function registerTools(server: McpServer, buildInfo: ServerBuildInf
 					.string()
 					.optional()
 					.describe("For a mod manifest: the host manifest it fills, so slot kinds (command slots) are read rather than sniffed."),
+				version: versionArg,
 			},
 		},
-		async ({ manifest, ambient, intent, host }) => {
+		async ({ manifest, ambient, intent, host, version }) => {
 			const parsed = await resolveManifestArg(server, manifest);
 			if (!parsed.ok) return text(parsed.error, true);
+			const note = await versionNotes(parsed.value, { ...(version !== undefined ? { version } : {}), baseDir: parsed.baseDir });
+			if (!note.ok) return text(note.error, true);
 			let options: { host?: unknown; intent?: boolean } = intent === undefined ? {} : { intent };
 			if (host !== undefined) {
 				const parsedHost = await resolveManifestArg(server, host);
@@ -288,7 +349,7 @@ export async function registerTools(server: McpServer, buildInfo: ServerBuildInf
 				options = { ...options, host: parsedHost.value };
 			}
 			const out = ambient ? generateAmbientTypes(parsed.value, options) : generateTypes(parsed.value, options);
-			return text(out);
+			return withNote(out, note.note);
 		},
 	);
 
@@ -303,11 +364,14 @@ export async function registerTools(server: McpServer, buildInfo: ServerBuildInf
 					.string()
 					.optional()
 					.describe("For a mod manifest: the host manifest it fills, so command fills and their capability gates are exact."),
+				version: versionArg,
 			},
 		},
-		async ({ manifest, host }) => {
+		async ({ manifest, host, version }) => {
 			const parsed = await resolveManifestArg(server, manifest);
 			if (!parsed.ok) return text(parsed.error, true);
+			const note = await versionNotes(parsed.value, { ...(version !== undefined ? { version } : {}), baseDir: parsed.baseDir });
+			if (!note.ok) return text(note.error, true);
 			let options: { host?: unknown } = {};
 			if (host !== undefined) {
 				const parsedHost = await resolveManifestArg(server, host);
@@ -316,7 +380,7 @@ export async function registerTools(server: McpServer, buildInfo: ServerBuildInf
 			}
 			const { pages } = generateDocs(parsed.value, options);
 			const body = pages.map((page) => `<!-- ${page.slug} -->\n# ${page.title}\n\n${page.content}`).join("\n\n---\n\n");
-			return text(body);
+			return withNote(body, note.note);
 		},
 	);
 
@@ -342,9 +406,21 @@ export async function registerTools(server: McpServer, buildInfo: ServerBuildInf
 				type: z.enum(["app", "mod"]).describe("Whether to scaffold an app or a mod."),
 				tier: z.union([z.literal(2), z.literal(3), z.literal(4)]).describe("Adoption tier (2, 3, or 4)."),
 				language: z.enum(["typescript", "javascript"]).optional().describe("Defaults to typescript."),
+				version: z
+					.string()
+					.optional()
+					.describe(`The xript manifest version the scaffold's manifests declare (${SUPPORTED_SPEC_VERSIONS.join(", ")}). Defaults to ${CURRENT_SPEC_VERSION}.`),
 			},
 		},
-		async ({ name, type, tier, language }) => json(generateProjectFiles({ name, type, tier, language: language ?? "typescript" })),
+		async ({ name, type, tier, language, version }) => {
+			let specVersion: string | undefined;
+			try {
+				specVersion = version !== undefined ? resolveTargetVersion({}, version).version : undefined;
+			} catch (error) {
+				return text(error instanceof Error ? error.message : String(error), true);
+			}
+			return json(generateProjectFiles({ name, type, tier, language: language ?? "typescript", ...(specVersion ? { specVersion } : {}) }));
+		},
 	);
 
 	server.registerTool(
@@ -382,13 +458,16 @@ export async function registerTools(server: McpServer, buildInfo: ServerBuildInf
 			description: "Given a host manifest, summarize exactly what it exposes (bindings, hooks, slots, capabilities) so a mod author knows what they can call and contribute into.",
 			inputSchema: {
 				manifest: z.string().describe("The host app manifest — a file path (absolute, or relative to the workspace root), or the inline JSON."),
+				version: versionArg,
 			},
 		},
-		async ({ manifest }) => {
+		async ({ manifest, version }) => {
 			const parsed = await resolveManifestArg(server, manifest);
 			if (!parsed.ok) return text(parsed.error, true);
+			const note = await versionNotes(parsed.value, { ...(version !== undefined ? { version } : {}), kind: "app", baseDir: parsed.baseDir });
+			if (!note.ok) return text(note.error, true);
 			const { summary, docs } = describeManifest(parsed.value);
-			return text(`## Surface summary\n\n${JSON.stringify(summary, null, 2)}\n\n## Documentation\n\n${docs}`);
+			return text(`## Target version\n\n${note.note}\n\n## Surface summary\n\n${JSON.stringify(summary, null, 2)}\n\n## Documentation\n\n${docs}`);
 		},
 	);
 
@@ -503,19 +582,42 @@ export async function registerTools(server: McpServer, buildInfo: ServerBuildInf
 				host: z.string().describe("The host app manifest — a file path (absolute, or relative to the workspace root), or the inline JSON."),
 				mods: z.array(z.string()).optional().describe("Mod manifests to lint the host's surface against — each a file path (absolute or workspace-relative) or inline JSON."),
 				strict: z.boolean().optional().describe("Treat any warning as a failure, not just errors."),
+				version: versionArg,
 			},
 		},
-		async ({ host, mods, strict }) => {
+		async ({ host, mods, strict, version }) => {
 			const parsedHost = await resolveHostArg(server, host);
 			if (!parsedHost.ok) return text(`host ${parsedHost.error}`, true);
 			const parsedMods: unknown[] = [];
+			const modDirs: string[] = [];
 			for (const [index, raw] of (mods ?? []).entries()) {
 				const parsed = await resolveManifestArg(server, raw);
 				if (!parsed.ok) return text(`mod[${index}] ${parsed.error}`, true);
 				parsedMods.push(parsed.value);
+				modDirs.push(parsed.baseDir);
 			}
 			const { resolved, inheritedSlots, inheritedCapabilities, inheritedAbstractTypes, inheritedFormats } = await resolveProvenance(parsedHost.value, parsedHost.baseDir);
-			const result = lintManifests(resolved, parsedMods, { ...(strict !== undefined ? { strict } : {}), inheritedSlots, inheritedCapabilities, inheritedAbstractTypes, inheritedFormats });
+			const versionOption = version !== undefined ? { version } : {};
+			let versioned;
+			try {
+				versioned = await versionFindings(resolved, "host", { ...versionOption, kind: "app", baseDir: parsedHost.baseDir });
+				for (const [index, mod] of parsedMods.entries()) {
+					const name = (mod as { name?: unknown }).name;
+					versioned.push(
+						...(await versionFindings(mod, typeof name === "string" ? `mod "${name}"` : `mod[${index}]`, {
+							...versionOption,
+							kind: "mod",
+							baseDir: modDirs[index],
+						})),
+					);
+				}
+			} catch (error) {
+				return text(error instanceof Error ? error.message : String(error), true);
+			}
+			const result = withFindings(
+				lintManifests(resolved, parsedMods, { ...(strict !== undefined ? { strict } : {}), inheritedSlots, inheritedCapabilities, inheritedAbstractTypes, inheritedFormats }),
+				versioned,
+			);
 			const failed = result.counts.error > 0 || (strict === true && result.counts.warn > 0);
 			return json(result, failed);
 		},
@@ -685,15 +787,27 @@ export async function registerTools(server: McpServer, buildInfo: ServerBuildInf
 			description: `Get canonical xript guidance on when to use xript, choosing a surface, hosting a runtime, declaring fragment formats, authoring mods, and adoption tiers. Topics: ${guidanceIds}. Omit topic to list available topics.`,
 			inputSchema: {
 				topic: z.string().optional().describe(`Topic id. One of: ${guidanceIds}.`),
+				version: z
+					.string()
+					.optional()
+					.describe(
+						`The xript manifest version to read the doctrine for (${SUPPORTED_SPEC_VERSIONS.join(", ")}). A topic whose doctrine changed across versions leads with that version's note; omitted, the topic closes with every version's note.`,
+					),
 			},
 		},
-		async ({ topic }) => {
+		async ({ topic, version }) => {
 			const topics = await loadGuidanceIndex();
 			if (!topic) {
-				const list = topics.map((entry) => `- ${entry.id} — ${entry.title}: ${entry.summary}`).join("\n");
+				const list = topics.map((entry) => `- ${entry.id}: ${entry.title}. ${entry.summary}`).join("\n");
 				return text(`Available topics:\n\n${list}`);
 			}
-			const loaded = await loadGuidanceTopic(topic);
+			let line: string | undefined;
+			try {
+				line = version !== undefined ? resolveTargetVersion({}, version).version : undefined;
+			} catch (error) {
+				return text(error instanceof Error ? error.message : String(error), true);
+			}
+			const loaded = await loadGuidanceTopic(topic, line);
 			if (!loaded) {
 				const ids = topics.map((entry) => entry.id).join(", ");
 				return text(`Unknown topic "${topic}". Available: ${ids}`, true);

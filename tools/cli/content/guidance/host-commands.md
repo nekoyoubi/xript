@@ -1,6 +1,6 @@
 # Offering commands
 
-A command is a named, invocable action a mod contributes: the thing a command palette lists, a menu offers, and a keybinding fires. The host declares a **command slot**, mods fill it, and the host lists and invokes the fills. **A command is a kind of slot fill, not a third surface** — see [choosing a surface](/guidance/surfaces/).
+A command is a named, invocable action a mod contributes: the thing a command palette lists, a menu offers, and a keybinding fires. The host declares a **command slot**, mods fill it, and the host lists and invokes the fills. **A command is a kind of slot fill, not a third surface**; see [choosing a surface](/guidance/surfaces/).
 
 ## Declaring the slot
 
@@ -29,7 +29,7 @@ Nothing on the declaration is special to commands. `accepts` names the reserved 
 
 Ordering is `priority` descending, then command `id`, then owning mod name. It does not depend on the order the host loaded its mods, so a palette does not reshuffle when the mod list is reordered.
 
-Invocation merges the fill's bound `args` under the caller's arguments — shallow, and the caller wins any conflict — then routes through the addressed per-mod export path. That path re-reads the handler's export capability and re-checks it against the live grant set, so a grant revoked between load and call is honored.
+Invocation merges the fill's bound `args` under the caller's arguments (shallow, and the caller wins any conflict), then routes through the addressed per-mod export path. That path re-reads the handler's export capability and re-checks it against the live grant set, so a grant revoked between load and call is honored.
 
 ## Authority lives on the export
 

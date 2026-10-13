@@ -1,0 +1,47 @@
+{
+	"description": "Per-version notes for guide topics whose doctrine changed across manifest versions. Keyed by topic id, then by the manifest version (major.minor) the note applies to. A topic absent here reads the same in every version the toolchain speaks.",
+	"topics": {
+		"authoring": {
+			"0.6": "`fills` keyed by slot id is the shape the schema and `validate` expect, and `fragments[]` / `contributions` warn as deprecated. The 0.6 runtimes still load only the legacy `fragments[]` and `contributions` shapes, so a mod that must run on a 0.6 runtime declares those as well.",
+			"0.7": "Every runtime loads `fills` as authored. A mod mixing `fills` with the deprecated `fragments[]` or `contributions` is refused at load rather than contributing twice.",
+			"0.8": "A fragment fill of a host-declared format is checked against that format's vocabulary: an undeclared node is an error and the fill does not mount. A format the host never declared is a hard error, not a fall-through to the HTML sanitizer.",
+			"0.9": "An export's last parameter may be `variadic`, `optional` is accepted as the inverse of `required`, and `returns` may be `{ type, description }`. A binding parameter typed `function` takes a call-scoped callback, and a fragment template can repeat with `data-each`."
+		},
+		"surfaces": {
+			"0.6": "Fragments, roles, and hook handlers became fills of typed slots. Standalone `hooks`, `fragments[]`, and `contributions` remain accepted with deprecation warnings. A command fill was reserved in name only: it arrived untyped among a mod's data fills.",
+			"0.7": "`fills` is the surface every runtime loads; the deprecated shapes still load, but never alongside `fills` in one mod.",
+			"0.8": "A command became a real slot kind, parsed and delivered as a command fill, and a format became the declared vocabulary a fragment-format slot's fills speak.",
+			"0.9": "No change to the surface model."
+		},
+		"host-hooks": {
+			"0.6": "Standalone `hooks` is deprecated in favor of event-typed slots (`accepts: application/x-xript-hook`), and the top-level `events` catalog is declared. The catalog is discovery only: no subscriber receives an emitted event.",
+			"0.7": "`events.on` / `emit` deliver live, a capability-gated event refuses an ungranted subscription at registration, and hook fills load and fire in every runtime.",
+			"0.8": "No change to hook firing.",
+			"0.9": "A hook parameter may be `variadic`; handlers still receive the fired payload as positional arguments."
+		},
+		"host-slots": {
+			"0.6": "Slots carry `accepts` and a JSON Schema `payload`, and mods declare `fills`, but the 0.6 runtimes resolve slots only from the legacy `fragments[]` / `contributions` shapes.",
+			"0.7": "`resolveSlot` reads `fills`, gated at load by the slot's capability with prefix subsumption.",
+			"0.8": "A slot may carry its own `limits.timeout_ms` budget for calls into its fills.",
+			"0.9": "Every runtime refuses a `slots` that is not an array of `{ id, accepts }` declarations when it loads the manifest."
+		},
+		"host-formats": {
+			"0.6": "There is no `formats` or `vocabularies` block. Every fragment collapses to an HTML string, and an unrecognized format silently falls through to the HTML sanitizer.",
+			"0.7": "There is no `formats` or `vocabularies` block. Every fragment collapses to an HTML string, and an unrecognized format silently falls through to the HTML sanitizer.",
+			"0.8": "A host declares the formats it intakes and the vocabularies each speaks; the runtime returns a validated tree, props route through their declared sinks, and an unregistered format is a hard error.",
+			"0.9": "The format model is unchanged from 0.8."
+		},
+		"host-fragments": {
+			"0.6": "The runtime hands the host an HTML string, and command-buffer op values are not sanitized: the host must treat `replaceChildren` and `setAttr` values as untrusted markup.",
+			"0.7": "The runtime hands the host an HTML string, and command-buffer op values are not sanitized: the host must treat `replaceChildren` and `setAttr` values as untrusted markup.",
+			"0.8": "The runtime hands the host a validated tree alongside the HTML, and every op value passes through the same sink model as the fragment's own source.",
+			"0.9": "Templates gain `data-each` lists keyed by `data-key`; the tree and op hand-off is otherwise as in 0.8."
+		},
+		"host-commands": {
+			"0.6": "`application/x-xript-command` is reserved in name only: command fills arrive untyped in a mod's data fills, with no shape checks.",
+			"0.7": "`application/x-xript-command` is reserved in name only: command fills arrive untyped in a mod's data fills, with no shape checks.",
+			"0.8": "Command fills are parsed and delivered as command fills, resolved with `resolveCommands` and run with `invokeCommand`; a host reading them from data fills must move to the command path.",
+			"0.9": "No change to commands."
+		}
+	}
+}

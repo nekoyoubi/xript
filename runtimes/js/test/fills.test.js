@@ -78,7 +78,7 @@ describe("fills — the canonical contribution surface loads", () => {
 			version: "1.0.0",
 			entry: { script: "mod.js", exports: { doTranscribe: { description: "t" } } },
 			fills: { transcriber: [{ fns: { transcribe: "doTranscribe" } }] },
-		});
+		}, { fragmentSources: { "mod.js": "" } });
 		const resolution = runtime.resolveRole("transcriber");
 		assert.ok(resolution);
 		assert.equal(resolution.addon, "whisper-mod");

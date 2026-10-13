@@ -91,10 +91,10 @@ export function modCommands(fills: unknown, hostSlots?: unknown): CommandDoc[] {
 
 /** A one-cell summary of a JSON Schema: its property names when it has them, its type otherwise. */
 export function summarizeSchema(schema: unknown): string {
-	if (schema === undefined) return "—";
+	if (schema === undefined) return "-";
 	if (schema === true) return "any";
 	if (schema === false) return "never";
-	if (!isPlainObject(schema)) return "—";
+	if (!isPlainObject(schema)) return "-";
 	if (isPlainObject(schema.properties)) {
 		const names = Object.keys(schema.properties);
 		if (names.length > 0) {
@@ -134,7 +134,7 @@ export function generateHostCommandsSection(slots: CommandSlotDoc[]): string[] {
 	);
 	lines.push("");
 	lines.push(
-		"Authority is two-layered and neither layer lives on the fill. The slot's capability gates *contribution* — a mod without the grant contributes no commands here. The capability declared on the export a command names gates *invocation*, re-checked at call time. A fill carrying its own `capability` is rejected at load.",
+		"Authority is two-layered and neither layer lives on the fill. The slot's capability gates *contribution*: a mod without the grant contributes no commands here. The capability declared on the export a command names gates *invocation*, re-checked at call time. A fill carrying its own `capability` is rejected at load.",
 	);
 	lines.push("");
 	const declaresBudget = slots.some((slot) => budgetOf(slot) !== undefined);
@@ -147,7 +147,7 @@ export function generateHostCommandsSection(slots: CommandSlotDoc[]): string[] {
 	lines.push(`| Slot | Capability | Multiple |${declaresBudget ? " Budget |" : ""} Fill contract |`);
 	lines.push(`|------|------------|----------|${declaresBudget ? "--------|" : ""}---------------|`);
 	for (const slot of slots) {
-		const cap = slot.capability ? `\`${slot.capability}\`` : "—";
+		const cap = slot.capability ? `\`${slot.capability}\`` : "-";
 		const declared = budgetOf(slot);
 		const budget = declaresBudget ? ` ${declared === undefined ? "inherited" : `\`${declared}ms\``} |` : "";
 		lines.push(
@@ -202,8 +202,8 @@ export function generateModCommandsSection(
 			const requires = exportCapability(command.handler) ?? slotCapability(command.slot);
 			const bound = Object.keys(command.args);
 			lines.push(
-				`| \`${command.id}\` | ${command.title} | \`${command.handler}\` | ${requires ? `\`${requires}\`` : "—"} | ${
-					bound.length > 0 ? bound.map((key) => `\`${key}\``).join(", ") : "—"
+				`| \`${command.id}\` | ${command.title} | \`${command.handler}\` | ${requires ? `\`${requires}\`` : "-"} | ${
+					bound.length > 0 ? bound.map((key) => `\`${key}\``).join(", ") : "-"
 				} | ${summarizeSchema(command.input)} | ${summarizeSchema(command.output)} |`,
 			);
 		}
@@ -211,7 +211,7 @@ export function generateModCommandsSection(
 		const unexposed = list.filter((command) => !command.exposed);
 		if (unexposed.length > 0) {
 			lines.push(
-				`> ${unexposed.map((command) => `\`${command.id}\``).join(", ")} declare \`"exposed": false\`: a discoverability hint asking not to be listed in a palette. They still resolve and still run — authority is capability, never exposure.`,
+				`> ${unexposed.map((command) => `\`${command.id}\``).join(", ")} declare \`"exposed": false\`: a discoverability hint asking not to be listed in a palette. They still resolve and still run; authority is capability, never exposure.`,
 			);
 			lines.push("");
 		}

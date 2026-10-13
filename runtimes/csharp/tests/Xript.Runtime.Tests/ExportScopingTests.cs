@@ -48,7 +48,7 @@ public class ExportScopingTests
                     "doThing": { "description": "no capability at all" }
                 }}
             }
-            """);
+            """, new Dictionary<string, string> { ["b.js"] = "" });
 
         var error = Record.Exception(() => rt.InvokeExport("doThing", []));
         Assert.True(

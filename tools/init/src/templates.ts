@@ -14,8 +14,29 @@ const SPEC_LINE: string = PACKAGE_VERSION.split(".").slice(0, 2).join(".");
 /** The caret range a scaffold pins its xript dependencies to. */
 const DEP_RANGE = `^${PACKAGE_VERSION}`;
 
-function schemaUrl(kind: "manifest" | "mod-manifest" | "harness-steps"): string {
-	return `https://xript.dev/schema/${kind}/v${SPEC_LINE}.json`;
+/**
+ * The harness-steps schema versions on its own line: its `$id` moves only when the steps format
+ * changes, not with every release, so it cannot be derived from the package version.
+ */
+export const HARNESS_STEPS_SCHEMA = "https://xript.dev/schema/harness-steps/v0.8.json";
+
+/** The steps schema a scaffold targeting a manifest line before 0.8 names: the one that line shipped. */
+const LEGACY_HARNESS_STEPS_SCHEMA = "https://xript.dev/schema/harness-steps/v0.7.json";
+
+/** The manifest line a scaffold targets: the requested one, else this package's own. */
+function specLine(options: TemplateOptions): string {
+	return options.specVersion ?? SPEC_LINE;
+}
+
+function isBefore(line: string, other: string): boolean {
+	const [major, minor] = line.split(".").map(Number);
+	const [otherMajor, otherMinor] = other.split(".").map(Number);
+	return major < otherMajor || (major === otherMajor && minor < otherMinor);
+}
+
+function schemaUrl(kind: "manifest" | "mod-manifest" | "harness-steps", line: string): string {
+	if (kind === "harness-steps") return isBefore(line, "0.8") ? LEGACY_HARNESS_STEPS_SCHEMA : HARNESS_STEPS_SCHEMA;
+	return `https://xript.dev/schema/${kind}/v${line}.json`;
 }
 
 export interface ProjectFiles {
@@ -27,6 +48,12 @@ export interface TemplateOptions {
 	tier: 2 | 3 | 4;
 	language: "typescript" | "javascript";
 	type?: "app" | "mod";
+	/**
+	 * The manifest version (`major.minor`) the scaffold's manifests declare in `xript` and
+	 * `$schema`. Defaults to this package's own line. Callers validate it against the versions
+	 * the toolchain speaks; the templates only write it down.
+	 */
+	specVersion?: string;
 }
 
 export function generateProjectFiles(options: TemplateOptions): ProjectFiles {
@@ -82,8 +109,8 @@ export function generateModProjectFiles(options: TemplateOptions): ProjectFiles 
 
 function generateManifest(options: TemplateOptions): string {
 	const manifest: Record<string, unknown> = {
-		$schema: schemaUrl("manifest"),
-		xript: SPEC_LINE,
+		$schema: schemaUrl("manifest", specLine(options)),
+		xript: specLine(options),
 		name: options.name,
 		version: "0.1.0",
 		title: titleCase(options.name),
@@ -126,7 +153,7 @@ function generateManifest(options: TemplateOptions): string {
 
 		manifest.slots = [
 			{
-				id: "onStart",
+				id: "start",
 				accepts: ["application/x-xript-hook"],
 				description: "Fired when a script begins execution.",
 			},
@@ -298,7 +325,7 @@ function generateModAmbientTypes(options: TemplateOptions): string {
 		"\t}",
 		"",
 		"\t/**",
-		"\t * A capability scope declared by the host. Scope-only — no `read:`/`write:` mode prefix.",
+		"\t * A capability scope declared by the host. Scope-only, with no `read:`/`write:` mode prefix.",
 		"\t */",
 		"\ttype XriptCapability = \"modify-state\";",
 		"",
@@ -425,7 +452,7 @@ function generateTier3Host(options: TemplateOptions): string {
 	lines.push(`\t\tconsole: { log: console.log, warn: console.warn, error: console.error },`);
 	lines.push(`\t});`);
 	lines.push(``);
-	lines.push(`\truntime.fireHook("onStart");`);
+	lines.push(`\truntime.fireHook("start");`);
 	lines.push(``);
 	lines.push(`\treturn runtime;`);
 	lines.push(`}`);
@@ -444,7 +471,7 @@ function generateTier3Demo(options: TemplateOptions): string {
 	lines.push(`const runtime = createRuntime(["modify-state"]);`);
 	lines.push(``);
 	lines.push(`const script = \``);
-	lines.push(`hooks.onStart(() => {`);
+	lines.push(`hooks.start(() => {`);
 	lines.push(`\tlog("Script loaded!");`);
 	lines.push(`});`);
 	lines.push(``);
@@ -506,8 +533,8 @@ function generateTier4Demo(options: TemplateOptions): string {
 
 function generateTier4ModManifest(options: TemplateOptions): string {
 	const manifest: Record<string, unknown> = {
-		$schema: schemaUrl("mod-manifest"),
-		xript: SPEC_LINE,
+		$schema: schemaUrl("mod-manifest", specLine(options)),
+		xript: specLine(options),
 		name: `${options.name}-panel`,
 		version: "0.1.0",
 		title: `${titleCase(options.name)} Panel`,
@@ -552,8 +579,8 @@ function generateModManifest(options: TemplateOptions): string {
 	// naming `src/mod.ts` here handed every host a TypeScript file it cannot evaluate.
 	const entryScript = options.language === "typescript" ? "dist/mod.js" : "src/mod.js";
 	const manifest: Record<string, unknown> = {
-		$schema: schemaUrl("mod-manifest"),
-		xript: SPEC_LINE,
+		$schema: schemaUrl("mod-manifest", specLine(options)),
+		xript: specLine(options),
 		name: options.name,
 		version: "0.1.0",
 		title: titleCase(options.name),
@@ -620,8 +647,8 @@ function generateModPackageJson(options: TemplateOptions): string {
 
 function generateModDemoHostManifest(options: TemplateOptions): string {
 	const manifest = {
-		$schema: schemaUrl("manifest"),
-		xript: SPEC_LINE,
+		$schema: schemaUrl("manifest", specLine(options)),
+		xript: specLine(options),
 		name: `${options.name}-demo-host`,
 		version: "0.1.0",
 		description: "A synthetic host for exercising this mod without a real application. Its bindings are stubbed by the harness; replace it with your target host's real manifest when you have one.",
@@ -661,7 +688,7 @@ function generateModDemoSteps(options: TemplateOptions): string {
 	const entry = options.language === "typescript" ? "../dist/mod.js" : "../src/mod.js";
 	const exportName = exampleExportName(options.name);
 	const steps = {
-		$schema: schemaUrl("harness-steps"),
+		$schema: schemaUrl("harness-steps", specLine(options)),
 		steps: [
 			{
 				action: "load-mod",

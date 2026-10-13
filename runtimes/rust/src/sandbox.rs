@@ -2,7 +2,7 @@ use rquickjs::function::Rest;
 use rquickjs::loader::{Loader, Resolver};
 use rquickjs::module::{Declared, Evaluated, Module};
 use rquickjs::promise::{Promise, PromiseState};
-use rquickjs::{Context, Ctx, Error as QjsError, Function, Object, Runtime, Value};
+use rquickjs::{AsyncContext, AsyncRuntime, Context, Ctx, Error as QjsError, Function, Object, Runtime, Value};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
@@ -448,6 +448,37 @@ pub struct RuntimeOptions {
     /// Called for every vocabulary diagnostic a loaded fragment produces and for
     /// every diagnostic raised while finalizing a fragment's command buffer.
     pub on_fragment_diagnostic: Option<FragmentDiagnosticSink>,
+    /// What `load_mod` does when a mod's entry cannot run. Defaults to
+    /// [`EntryErrorPolicy::Throw`](crate::EntryErrorPolicy::Throw).
+    pub entry_errors: crate::mod_load::EntryErrorPolicy,
+    /// Receives every load-time [`ModDiagnostic`](crate::ModDiagnostic), under
+    /// either entry error policy. The same findings land on
+    /// `ModInstance::diagnostics`.
+    pub on_mod_diagnostic: Option<crate::mod_load::ModDiagnosticSink>,
+    /// Which engine the runtime is built on. [`RuntimeMode::Sync`], the
+    /// default, settles an async host binding on the interpreter thread before
+    /// script sees it; [`RuntimeMode::Async`] hands script a pending promise
+    /// and lets other work on the runtime proceed while it waits.
+    pub mode: RuntimeMode,
+}
+
+/// The engine a runtime is built on, and with it what `await` on an async
+/// host binding means.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RuntimeMode {
+    /// A synchronous QuickJS runtime. An async host binding is driven to
+    /// completion on the interpreter thread (`pollster::block_on`) and script
+    /// receives an already-settled promise: `await` never suspends, and a slow
+    /// binding holds the interpreter for its full duration.
+    #[default]
+    Sync,
+    /// An rquickjs `AsyncRuntime`. An async host binding returns a genuinely
+    /// pending promise whose host future runs on the runtime's own executor;
+    /// a script awaiting it yields, and other calls on the same runtime run in
+    /// the meantime. Use the `*_async` methods to interleave calls; the plain
+    /// methods still work and drive one call to completion on the calling
+    /// thread.
+    Async,
 }
 
 /// Receives a fragment diagnostic along with the id of the fragment that raised
@@ -592,6 +623,7 @@ impl Loader for LibraryLoader {
 /// One live execution region's interrupt state. Frames stack, and the
 /// tightest deadline across every live frame governs, so nesting can only
 /// narrow an execution budget, never extend an outer region's.
+#[derive(Clone)]
 pub(crate) struct InterruptFrame {
     pub(crate) deadline: Instant,
     pub(crate) token: Option<CancellationToken>,
@@ -769,7 +801,7 @@ impl Drop for CallTokenScope {
     }
 }
 
-fn current_call_token() -> Option<crate::pending::CallToken> {
+pub(crate) fn current_call_token() -> Option<crate::pending::CallToken> {
     CURRENT_CALL_TOKEN.with(|slot| slot.borrow().clone())
 }
 
@@ -819,6 +851,7 @@ pub struct RuntimeProbe {
     heartbeat: std::sync::atomic::AtomicU64,
     current: std::sync::atomic::AtomicUsize,
     names: std::sync::RwLock<Vec<String>>,
+    yielding: AtomicBool,
 }
 
 const NO_BINDING: usize = usize::MAX;
@@ -829,11 +862,21 @@ impl Default for RuntimeProbe {
             heartbeat: std::sync::atomic::AtomicU64::new(0),
             current: std::sync::atomic::AtomicUsize::new(NO_BINDING),
             names: std::sync::RwLock::new(Vec::new()),
+            yielding: AtomicBool::new(false),
         }
     }
 }
 
 impl RuntimeProbe {
+    /// True when the runtime was built in [`RuntimeMode::Async`]. There, a
+    /// call awaiting an async host binding parks without running bytecode or
+    /// occupying the thread, so a stalled heartbeat means a wedge only while
+    /// [`current_binding`](Self::current_binding) names a sync binding the
+    /// thread is actually inside.
+    pub fn yielding(&self) -> bool {
+        self.yielding.load(Ordering::Relaxed)
+    }
+
     /// Monotonic tick count. Advances only while the interpreter is running
     /// bytecode.
     pub fn heartbeat(&self) -> u64 {
@@ -888,12 +931,106 @@ impl Drop for BindingScope {
     }
 }
 
+/// The QuickJS runtime and context behind a sandbox, in whichever mode it was
+/// built. Each owns the interrupt handler installed on it for the lifetime of
+/// the sandbox.
+enum Engine {
+    Sync {
+        #[allow(dead_code)]
+        rt: Runtime,
+        ctx: Context,
+    },
+    Async {
+        rt: AsyncRuntime,
+        ctx: AsyncContext,
+    },
+}
+
+impl Engine {
+    /// Runs `f` against the context. On an async engine this takes the
+    /// runtime lock and holds it for `f` alone, driven on the calling thread.
+    fn with<R>(&self, f: impl for<'js> FnOnce(Ctx<'js>) -> R) -> R {
+        match self {
+            Engine::Sync { ctx, .. } => ctx.with(f),
+            Engine::Async { ctx, .. } => {
+                let f = crate::yielding::AssertSend(f);
+                pollster::block_on(ctx.with(move |ctx| {
+                    let f = f;
+                    crate::yielding::AssertSend(f.into_inner()(ctx))
+                }))
+                .into_inner()
+            }
+        }
+    }
+
+    fn set_interrupt_handler(&self, handler: Box<dyn FnMut() -> bool + Send>) {
+        match self {
+            Engine::Sync { rt, .. } => rt.set_interrupt_handler(Some(handler)),
+            Engine::Async { rt, .. } => pollster::block_on(rt.set_interrupt_handler(Some(handler))),
+        }
+    }
+}
+
+/// An engine's runtime before its context exists, so limits and the module
+/// loader can be configured the same way in either mode.
+enum EngineRt {
+    Sync(Runtime),
+    Async(AsyncRuntime),
+}
+
+impl EngineRt {
+    fn new(mode: RuntimeMode) -> Result<Self> {
+        Ok(match mode {
+            RuntimeMode::Sync => EngineRt::Sync(Runtime::new().map_err(|e| XriptError::Engine(e.to_string()))?),
+            RuntimeMode::Async => {
+                EngineRt::Async(AsyncRuntime::new().map_err(|e| XriptError::Engine(e.to_string()))?)
+            }
+        })
+    }
+
+    fn set_loader<R, L>(&self, resolver: R, loader: L)
+    where
+        R: Resolver + Send + 'static,
+        L: Loader + Send + 'static,
+    {
+        match self {
+            EngineRt::Sync(rt) => rt.set_loader(resolver, loader),
+            EngineRt::Async(rt) => pollster::block_on(rt.set_loader(resolver, loader)),
+        }
+    }
+
+    fn set_memory_limit(&self, limit: usize) {
+        match self {
+            EngineRt::Sync(rt) => rt.set_memory_limit(limit),
+            EngineRt::Async(rt) => pollster::block_on(rt.set_memory_limit(limit)),
+        }
+    }
+
+    fn set_max_stack_size(&self, limit: usize) {
+        match self {
+            EngineRt::Sync(rt) => rt.set_max_stack_size(limit),
+            EngineRt::Async(rt) => pollster::block_on(rt.set_max_stack_size(limit)),
+        }
+    }
+
+    fn into_engine(self) -> Result<Engine> {
+        Ok(match self {
+            EngineRt::Sync(rt) => {
+                let ctx = Context::full(&rt).map_err(|e| XriptError::Engine(e.to_string()))?;
+                Engine::Sync { rt, ctx }
+            }
+            EngineRt::Async(rt) => {
+                let ctx = pollster::block_on(AsyncContext::full(&rt))
+                    .map_err(|e| XriptError::Engine(e.to_string()))?;
+                Engine::Async { rt, ctx }
+            }
+        })
+    }
+}
+
 pub struct XriptRuntime {
-    // Owns the QuickJS runtime and the interrupt handler installed on it for
-    // the lifetime of the sandbox; dropped only with the sandbox itself.
-    #[allow(dead_code)]
-    rt: Runtime,
-    ctx: Context,
+    engine: Engine,
+    mode: RuntimeMode,
     manifest: Arc<Manifest>,
     interrupt_frames: InterruptFrames,
     cancellation: Option<CancellationToken>,
@@ -916,6 +1053,8 @@ pub struct XriptRuntime {
     debug: Option<crate::debug::DebugSession>,
     strict_html_vocabulary: bool,
     on_fragment_diagnostic: Option<FragmentDiagnosticSink>,
+    entry_errors: crate::mod_load::EntryErrorPolicy,
+    on_mod_diagnostic: Option<crate::mod_load::ModDiagnosticSink>,
     probe: Arc<RuntimeProbe>,
 }
 
@@ -983,7 +1122,9 @@ impl XriptRuntime {
     ) -> Result<Self> {
         crate::manifest::validate_structure(&manifest)?;
 
-        let rt = Runtime::new().map_err(|e| XriptError::Engine(e.to_string()))?;
+        let mode = options.mode;
+        probe.yielding.store(mode == RuntimeMode::Async, Ordering::Relaxed);
+        let rt = EngineRt::new(mode)?;
 
         for (specifier, source) in &options.libraries {
             if manifest
@@ -1060,7 +1201,7 @@ impl XriptRuntime {
         let effective_timeout_ms =
             effective_limit(manifest_timeout, hard.timeout_ms).unwrap_or(crate::manifest::DEFAULT_TIMEOUT_MS);
 
-        let ctx = Context::full(&rt).map_err(|e| XriptError::Engine(e.to_string()))?;
+        let engine = rt.into_engine()?;
 
         let granted: HashSet<String> = options.capabilities.into_iter().collect();
         let audit = options.audit.clone();
@@ -1069,6 +1210,8 @@ impl XriptRuntime {
         let command_preferences = options.command_preferences;
         let strict_html_vocabulary = options.strict_html_vocabulary;
         let on_fragment_diagnostic = options.on_fragment_diagnostic.clone();
+        let entry_errors = options.entry_errors;
+        let on_mod_diagnostic = options.on_mod_diagnostic.clone();
 
         let debug = options
             .debug
@@ -1076,7 +1219,7 @@ impl XriptRuntime {
 
 
 
-        ctx.with(|ctx| -> Result<()> {
+        engine.with(|ctx| -> Result<()> {
             remove_dangerous_globals(&ctx)?;
             register_console(&ctx, options.console)?;
             register_bindings(&ctx, &manifest, options.host_bindings, &granted, &audit, &probe)?;
@@ -1093,7 +1236,7 @@ impl XriptRuntime {
         let interrupt_frames: InterruptFrames = Arc::new(std::sync::Mutex::new(HashMap::new()));
         let handler_frames = interrupt_frames.clone();
         let handler_probe = probe.clone();
-        rt.set_interrupt_handler(Some(Box::new(move || {
+        engine.set_interrupt_handler(Box::new(move || {
             // Bumped before any early return: the tick is the signal that
             // bytecode is running at all, which is what tells a slow call
             // apart from a wedged one.
@@ -1136,11 +1279,11 @@ impl XriptRuntime {
             } else {
                 false
             }
-        }) as Box<dyn FnMut() -> bool + Send>));
+        }) as Box<dyn FnMut() -> bool + Send>);
 
         Ok(Self {
-            rt,
-            ctx,
+            engine,
+            mode,
             manifest,
             interrupt_frames,
             cancellation,
@@ -1161,6 +1304,8 @@ impl XriptRuntime {
             debug,
             strict_html_vocabulary,
             on_fragment_diagnostic,
+            entry_errors,
+            on_mod_diagnostic,
             probe,
         })
     }
@@ -1216,6 +1361,133 @@ impl XriptRuntime {
         code: &str,
         timeout_override_ms: Option<u64>,
     ) -> Result<ExecutionResult> {
+        match self.mode {
+            RuntimeMode::Sync => self.execute_within_blocking(code, timeout_override_ms),
+            RuntimeMode::Async => pollster::block_on(self.execute_within_yielding(code, timeout_override_ms)),
+        }
+    }
+
+    /// The engine mode this runtime was built in.
+    pub fn mode(&self) -> RuntimeMode {
+        self.mode
+    }
+
+    /// [`execute`](Self::execute) as a future. On an async-mode runtime a
+    /// script awaiting an async host binding suspends here, releasing the
+    /// runtime so other calls on it proceed until the binding's future
+    /// completes. The manifest's `timeout_ms` bounds the whole call, time spent
+    /// awaiting included. On a sync-mode runtime the call runs to completion on
+    /// first poll, exactly as `execute` does.
+    pub async fn execute_async(&self, code: &str) -> Result<ExecutionResult> {
+        self.execute_within_async(code, None).await
+    }
+
+    /// [`execute_within`](Self::execute_within) as a future; see
+    /// [`execute_async`](Self::execute_async).
+    pub async fn execute_within_async(
+        &self,
+        code: &str,
+        timeout_override_ms: Option<u64>,
+    ) -> Result<ExecutionResult> {
+        match self.mode {
+            RuntimeMode::Sync => self.execute_within_blocking(code, timeout_override_ms),
+            RuntimeMode::Async => self.execute_within_yielding(code, timeout_override_ms).await,
+        }
+    }
+
+    /// Runs every pending job and spawned host future on an async-mode
+    /// runtime until none remain, settling work a script started without
+    /// awaiting it. Returns immediately on a sync-mode runtime.
+    pub async fn idle(&self) {
+        if let Engine::Async { rt, .. } = &self.engine {
+            rt.idle().await;
+        }
+    }
+
+    fn timeout_for(&self, timeout_override_ms: Option<u64>) -> u64 {
+        match timeout_override_ms {
+            Some(requested) => effective_limit(Some(requested), self.hard_timeout_ms)
+                .unwrap_or(self.effective_timeout_ms),
+            None => self.effective_timeout_ms,
+        }
+    }
+
+    fn call_frame(&self, timeout_ms: u64, debug: bool) -> InterruptFrame {
+        InterruptFrame {
+            deadline: Instant::now() + Duration::from_millis(timeout_ms),
+            token: self.cancellation.clone(),
+            call_token: None,
+            debug_clock: if debug {
+                self.debug.as_ref().map(|d| d.paused_clock())
+            } else {
+                None
+            },
+            interrupted: Arc::new(AtomicBool::new(false)),
+            cancelled: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    async fn execute_within_yielding(
+        &self,
+        code: &str,
+        timeout_override_ms: Option<u64>,
+    ) -> Result<ExecutionResult> {
+        if self.cancellation.as_ref().is_some_and(|t| t.is_cancelled()) || call_cancelled() {
+            return Err(XriptError::Cancelled);
+        }
+        let Engine::Async { ctx, .. } = &self.engine else {
+            unreachable!("yielding execution requires an async engine");
+        };
+        let start = Instant::now();
+        let frame = self.call_frame(self.timeout_for(timeout_override_ms), true);
+        let watch = crate::yielding::Watch::new(&frame);
+        let interrupted = frame.interrupted.clone();
+        let cancelled = frame.cancelled.clone();
+        let code = code.to_string();
+        let body_watch = watch.clone();
+
+        let call = rquickjs::async_with!(ctx => |ctx| {
+            let settled = match ctx.eval::<Value, _>(code.as_str()) {
+                Ok(val) => match Promise::from_value(val.clone()) {
+                    Ok(promise) => {
+                        match crate::yielding::Abortable::new(promise.into_future::<Value>(), body_watch).await {
+                            Ok(Ok(v)) => Ok(js_value_to_json(&ctx, &v)),
+                            Ok(Err(_)) => Err(None),
+                            Err(limit) => Err(Some(limit)),
+                        }
+                    }
+                    Err(_) => Ok(js_value_to_json(&ctx, &val)),
+                },
+                Err(_) => Err(None),
+            };
+            match settled {
+                Ok(value) => Ok(value),
+                Err(Some(limit)) => Err(limit),
+                Err(None) => {
+                    if cancelled.load(Ordering::Relaxed) {
+                        Err(XriptError::Cancelled)
+                    } else if interrupted.load(Ordering::Relaxed) {
+                        Err(XriptError::ExecutionLimit { limit: "timeout_ms".into() })
+                    } else {
+                        let caught = ctx.catch();
+                        Err(XriptError::Script(format_rejection(&ctx, &caught)))
+                    }
+                }
+            }
+        });
+
+        let value = crate::yielding::Governed::new(self, frame, watch, call).await?;
+        Ok(ExecutionResult {
+            value,
+            duration_ms: start.elapsed().as_secs_f64() * 1000.0,
+        })
+    }
+
+    fn execute_within_blocking(
+        &self,
+        code: &str,
+        timeout_override_ms: Option<u64>,
+    ) -> Result<ExecutionResult> {
         if let Some(ref token) = self.cancellation
             && token.is_cancelled()
         {
@@ -1244,7 +1516,7 @@ impl XriptRuntime {
             cancelled: cancelled.clone(),
         });
 
-        let result = self.ctx.with(|ctx| {
+        let result = self.engine.with(|ctx| {
             let res: std::result::Result<Value, _> = ctx.eval(code);
             match res {
                 Ok(val) => {
@@ -1323,6 +1595,24 @@ impl XriptRuntime {
         granted_capabilities: &HashSet<String>,
         entry_source: Option<&str>,
     ) -> Result<crate::fragment::ModInstance> {
+        pollster::block_on(self.load_mod_async(
+            mod_manifest_json,
+            fragment_sources,
+            granted_capabilities,
+            entry_source,
+        ))
+    }
+
+    /// [`load_mod`](Self::load_mod) as a future. On an async-mode runtime a
+    /// module entry whose top-level `await` waits on an async host binding
+    /// yields while it waits.
+    pub async fn load_mod_async(
+        &self,
+        mod_manifest_json: &str,
+        fragment_sources: HashMap<String, String>,
+        granted_capabilities: &HashSet<String>,
+        entry_source: Option<&str>,
+    ) -> Result<crate::fragment::ModInstance> {
         let normalized = crate::fragment::normalize_mod_fills(
             mod_manifest_json,
             self.manifest.slots.as_deref().unwrap_or(&[]),
@@ -1330,7 +1620,7 @@ impl XriptRuntime {
         )?;
         let mod_manifest_json = normalized.manifest_json.as_str();
 
-        let mod_instance = crate::fragment::load_mod_with_options(
+        let mut mod_instance = crate::fragment::load_mod_with_options(
             mod_manifest_json,
             &self.manifest,
             granted_capabilities,
@@ -1344,6 +1634,9 @@ impl XriptRuntime {
                     sink(&fragment.id, diagnostic);
                 }
             }
+        }
+        for diagnostic in &mod_instance.diagnostics {
+            crate::mod_load::send(self.on_mod_diagnostic.as_ref(), diagnostic);
         }
 
         let mod_manifest: crate::manifest::ModManifest =
@@ -1368,30 +1661,39 @@ impl XriptRuntime {
             .map(|e| e.format == "module")
             .unwrap_or(false);
 
-        if let Some(source) = entry_source {
-            let mod_name = mod_instance.name.clone();
-            crate::module::check_entry_source_with(&mod_name, source, is_module, |specifier| {
-                self.library_registry.approve(&mod_name, specifier)
-            })?;
+        let mod_name = mod_instance.name.clone();
+        let (scripts, mut failure) =
+            self.resolve_entry_sources(&mut mod_instance, &mod_manifest, entry_source, &fragment_sources);
 
-            self.set_export_owner(Some(&mod_name));
-            let evaluated = if is_module {
-                self.eval_module_entry(&mod_name, source)
-            } else {
-                self.ctx.with(|ctx| {
-                    let res: std::result::Result<Value, _> = ctx.eval(source);
-                    if res.is_err() {
-                        let caught = ctx.catch();
-                        return Err(XriptError::ModEntry {
-                            mod_name,
-                            message: format_rejection(&ctx, &caught),
-                        });
+        if failure.is_none() {
+            for (script, source) in &scripts {
+                match self.run_entry_script(&mod_name, source, is_module).await {
+                    Ok(()) => {}
+                    Err(XriptError::Cancelled) => return Err(XriptError::Cancelled),
+                    Err(error) => {
+                        self.record_mod_diagnostic(
+                            &mut mod_instance,
+                            crate::mod_load::ModDiagnostic {
+                                code: crate::mod_load::ModDiagnosticCode::EntryFailed,
+                                severity: crate::mod_load::ModDiagnosticSeverity::Error,
+                                mod_name: mod_name.clone(),
+                                message: error.to_string(),
+                                script: Some(script.clone()),
+                                fragment_id: None,
+                                field: None,
+                            },
+                        );
+                        failure = Some(error);
+                        break;
                     }
-                    Ok(())
-                })
-            };
-            self.set_export_owner(None);
-            evaluated?;
+                }
+            }
+        }
+
+        if let Some(error) = failure
+            && self.entry_errors == crate::mod_load::EntryErrorPolicy::Throw
+        {
+            return Err(error);
         }
 
         self.hook_fills.lock().unwrap().extend(normalized.hook_fills);
@@ -1409,7 +1711,161 @@ impl XriptRuntime {
         Ok(mod_instance)
     }
 
-    fn eval_module_entry(&self, mod_name: &str, source: &str) -> Result<()> {
+    fn record_mod_diagnostic(
+        &self,
+        mod_instance: &mut crate::fragment::ModInstance,
+        diagnostic: crate::mod_load::ModDiagnostic,
+    ) {
+        crate::mod_load::send(self.on_mod_diagnostic.as_ref(), &diagnostic);
+        mod_instance.diagnostics.push(diagnostic);
+    }
+
+    /// Pairs each entry script with its source. An explicit `entry_source`
+    /// stands for the whole entry; without one, every script the entry names is
+    /// looked up in `fragment_sources`, and all of them are checked before any
+    /// runs, so a mod never half-runs because a later script is missing.
+    fn resolve_entry_sources(
+        &self,
+        mod_instance: &mut crate::fragment::ModInstance,
+        mod_manifest: &crate::manifest::ModManifest,
+        entry_source: Option<&str>,
+        fragment_sources: &HashMap<String, String>,
+    ) -> (Vec<(String, String)>, Option<XriptError>) {
+        let scripts = mod_manifest.entry_scripts();
+        if let Some(source) = entry_source {
+            let script = scripts.into_iter().next().unwrap_or_else(|| "entry".to_string());
+            return (vec![(script, source.to_string())], None);
+        }
+
+        let mut resolved = Vec::new();
+        let mut first_missing = None;
+        for script in scripts {
+            match fragment_sources.get(&script) {
+                Some(source) => resolved.push((script, source.clone())),
+                None => {
+                    let error = XriptError::MissingEntryScript {
+                        mod_name: mod_instance.name.clone(),
+                        script: script.clone(),
+                    };
+                    self.record_mod_diagnostic(
+                        mod_instance,
+                        crate::mod_load::ModDiagnostic {
+                            code: crate::mod_load::ModDiagnosticCode::MissingEntryScript,
+                            severity: crate::mod_load::ModDiagnosticSeverity::Error,
+                            mod_name: mod_instance.name.clone(),
+                            message: error.to_string(),
+                            script: Some(script),
+                            fragment_id: None,
+                            field: None,
+                        },
+                    );
+                    first_missing.get_or_insert(error);
+                }
+            }
+        }
+        (resolved, first_missing)
+    }
+
+    async fn run_entry_script(&self, mod_name: &str, source: &str, is_module: bool) -> Result<()> {
+        crate::module::check_entry_source_with(mod_name, source, is_module, |specifier| {
+            self.library_registry.approve(mod_name, specifier)
+        })?;
+
+        self.set_export_owner(Some(mod_name));
+        let evaluated = if is_module {
+            self.eval_module_entry(mod_name, source).await
+        } else {
+            self.eval_script_entry(mod_name, source)
+        };
+        self.set_export_owner(None);
+        evaluated
+    }
+
+    /// Evaluates a classic-script entry under the same deadline and
+    /// cancellation as any other execution, so an entry that never ends is an
+    /// [`XriptError::ExecutionLimit`] rather than a load that never returns.
+    fn eval_script_entry(&self, mod_name: &str, source: &str) -> Result<()> {
+        if let Some(ref token) = self.cancellation
+            && token.is_cancelled()
+        {
+            return Err(XriptError::Cancelled);
+        }
+        let interrupted = Arc::new(AtomicBool::new(false));
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let _interrupt = self.push_interrupt_frame(InterruptFrame {
+            deadline: Instant::now() + Duration::from_millis(self.effective_timeout_ms),
+            token: self.cancellation.clone(),
+            call_token: None,
+            debug_clock: None,
+            interrupted: interrupted.clone(),
+            cancelled: cancelled.clone(),
+        });
+
+        self.engine.with(|ctx| {
+            let res: std::result::Result<Value, _> = ctx.eval(source);
+            if res.is_ok() {
+                return Ok(());
+            }
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(XriptError::Cancelled);
+            }
+            if interrupted.load(Ordering::Relaxed) {
+                return Err(XriptError::ExecutionLimit {
+                    limit: "timeout_ms".into(),
+                });
+            }
+            let caught = ctx.catch();
+            Err(XriptError::ModEntry {
+                mod_name: mod_name.to_string(),
+                message: format_rejection(&ctx, &caught),
+            })
+        })
+    }
+
+    async fn eval_module_entry(&self, mod_name: &str, source: &str) -> Result<()> {
+        match self.mode {
+            RuntimeMode::Sync => self.eval_module_entry_blocking(mod_name, source),
+            RuntimeMode::Async => {
+                self.library_registry.load_phase.store(true, Ordering::Relaxed);
+                let result = self.eval_module_entry_yielding(mod_name, source).await;
+                self.library_registry.load_phase.store(false, Ordering::Relaxed);
+                result
+            }
+        }
+    }
+
+    async fn eval_module_entry_yielding(&self, mod_name: &str, source: &str) -> Result<()> {
+        let Engine::Async { ctx, .. } = &self.engine else {
+            unreachable!("yielding evaluation requires an async engine");
+        };
+        let frame = self.call_frame(self.effective_timeout_ms, false);
+        let watch = crate::yielding::Watch::new(&frame);
+        let interrupted = frame.interrupted.clone();
+        let cancelled = frame.cancelled.clone();
+        let mod_name = mod_name.to_string();
+        let source = source.to_string();
+        let body_watch = watch.clone();
+
+        let call = rquickjs::async_with!(ctx => |ctx| {
+            let declared = match Module::declare(ctx.clone(), "xript:mod-entry", source) {
+                Ok(m) => m,
+                Err(_) => return Err(module_eval_error(&ctx, &mod_name, &cancelled, &interrupted)),
+            };
+            let (evaluated, promise) = match declared.eval() {
+                Ok(pair) => pair,
+                Err(_) => return Err(module_eval_error(&ctx, &mod_name, &cancelled, &interrupted)),
+            };
+            match crate::yielding::Abortable::new(promise.into_future::<Value>(), body_watch).await {
+                Ok(Ok(_)) => harvest_named_exports(&ctx, &evaluated),
+                Ok(Err(_)) => Err(module_eval_error(&ctx, &mod_name, &cancelled, &interrupted)),
+                Err(limit) => Err(limit),
+            }
+        });
+
+        crate::yielding::Governed::new(self, frame, watch, call).await
+    }
+
+    fn eval_module_entry_blocking(&self, mod_name: &str, source: &str) -> Result<()> {
         let timeout_ms = self.effective_timeout_ms;
         let interrupted = Arc::new(AtomicBool::new(false));
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -1425,7 +1881,7 @@ impl XriptRuntime {
         });
 
         self.library_registry.load_phase.store(true, Ordering::Relaxed);
-        let result = self.ctx.with(|ctx| -> Result<()> {
+        let result = self.engine.with(|ctx| -> Result<()> {
             let declared = match Module::declare(ctx.clone(), "xript:mod-entry", source) {
                 Ok(m) => m,
                 Err(_) => {
@@ -1515,6 +1971,42 @@ impl XriptRuntime {
         self.invoke_export_in(name, args, Some(mod_name), timeout_override_ms)
     }
 
+    /// [`invoke_export`](Self::invoke_export) as a future. On an async-mode
+    /// runtime an export that returns a promise is awaited, yielding while it
+    /// waits on async host bindings, and its settled value is returned.
+    pub async fn invoke_export_async(
+        &self,
+        name: &str,
+        args: &[serde_json::Value],
+    ) -> Result<serde_json::Value> {
+        let owner = self.declared_owner(name)?;
+        self.invoke_export_in_async(name, args, owner.as_deref(), None).await
+    }
+
+    /// [`invoke_mod_export`](Self::invoke_mod_export) as a future; see
+    /// [`invoke_export_async`](Self::invoke_export_async).
+    pub async fn invoke_mod_export_async(
+        &self,
+        mod_name: &str,
+        name: &str,
+        args: &[serde_json::Value],
+    ) -> Result<serde_json::Value> {
+        self.invoke_export_in_async(name, args, Some(mod_name), None).await
+    }
+
+    /// [`invoke_mod_export_within`](Self::invoke_mod_export_within) as a
+    /// future; see [`invoke_export_async`](Self::invoke_export_async).
+    pub async fn invoke_mod_export_within_async(
+        &self,
+        mod_name: &str,
+        name: &str,
+        args: &[serde_json::Value],
+        timeout_override_ms: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        self.invoke_export_in_async(name, args, Some(mod_name), timeout_override_ms)
+            .await
+    }
+
     fn declared_owner(&self, name: &str) -> Result<Option<String>> {
         let owners = self.export_owners.lock().unwrap();
         match owners.get(name) {
@@ -1574,11 +2066,21 @@ impl XriptRuntime {
         let escaped = escape_js_string(owner.unwrap_or(""));
         let code = format!("globalThis.__xript_set_export_owner('{escaped}');");
         let _ = self
-            .ctx
+            .engine
             .with(|ctx| ctx.eval::<Value, _>(code.as_str()).map(|_| ()));
     }
 
     fn invoke_export_in(
+        &self,
+        name: &str,
+        args: &[serde_json::Value],
+        owner: Option<&str>,
+        timeout_override_ms: Option<u64>,
+    ) -> Result<serde_json::Value> {
+        pollster::block_on(self.invoke_export_in_async(name, args, owner, timeout_override_ms))
+    }
+
+    async fn invoke_export_in_async(
         &self,
         name: &str,
         args: &[serde_json::Value],
@@ -1600,16 +2102,17 @@ impl XriptRuntime {
             Some(owner) => format!("'{}'", escape_js_string(owner)),
             None => "undefined".to_string(),
         };
+        let yielding = self.mode == RuntimeMode::Async;
         let escaped_args = args_json.replace('\\', "\\\\").replace('`', "\\`");
         let code = format!(
-            r#"(function() {{
+            r#"({async_kw}function() {{
                 var fn = globalThis.__xript_lookup_export('{name}', {owner});
                 if (typeof fn !== 'function') {{
                     return JSON.stringify({{ __xript_err: "export {name} not found" }});
                 }}
                 try {{
                     var args = JSON.parse(`{args}`);
-                    var result = fn.apply(null, args);
+                    var result = {await_kw}fn.apply(null, args);
                     return JSON.stringify({{ __xript_ok: result === undefined ? null : result }});
                 }} catch (e) {{
                     return JSON.stringify({{ __xript_err: (e && e.message) ? e.message : String(e) }});
@@ -1618,9 +2121,11 @@ impl XriptRuntime {
             name = escaped_name,
             owner = owner_expr,
             args = escaped_args,
+            async_kw = if yielding { "async " } else { "" },
+            await_kw = if yielding { "await " } else { "" },
         );
 
-        let result = self.execute_within(&code, timeout_override_ms)?;
+        let result = self.execute_within_async(&code, timeout_override_ms).await?;
         let raw = result.value.as_str().unwrap_or("{}");
         let envelope: serde_json::Value = serde_json::from_str(raw).unwrap_or(serde_json::Value::Null);
         if let Some(err) = envelope.get("__xript_err").and_then(|v| v.as_str()) {
@@ -1661,7 +2166,23 @@ impl XriptRuntime {
     /// exist so a pool can merge segments from several workers back into a
     /// single deterministic order — see `spec/hooks.md`.
     pub fn fire_hook_tagged(&self, hook: &str, payload: &[serde_json::Value]) -> Result<Vec<TaggedResult>> {
-        let mut results = self.dispatch_to_registry("__xript_hooks", hook, payload, true)?;
+        pollster::block_on(self.fire_hook_tagged_async(hook, payload))
+    }
+
+    /// [`fire_hook`](Self::fire_hook) as a future. Handlers run in registration
+    /// order and their return values are collected as they are, unawaited.
+    pub async fn fire_hook_async(&self, hook: &str, payload: &[serde_json::Value]) -> Result<Vec<serde_json::Value>> {
+        Ok(self
+            .fire_hook_tagged_async(hook, payload)
+            .await?
+            .into_iter()
+            .map(|tagged| tagged.value)
+            .collect())
+    }
+
+    /// [`fire_hook_tagged`](Self::fire_hook_tagged) as a future.
+    pub async fn fire_hook_tagged_async(&self, hook: &str, payload: &[serde_json::Value]) -> Result<Vec<TaggedResult>> {
+        let mut results = self.dispatch_to_registry("__xript_hooks", hook, payload, true).await?;
         let fills: Vec<crate::fragment::HookFillDecl> = self
             .hook_fills
             .lock()
@@ -1689,7 +2210,8 @@ impl XriptRuntime {
                 continue;
             }
             let value = self
-                .invoke_mod_export(&fill.mod_name, &fill.handler, payload)
+                .invoke_export_in_async(&fill.handler, payload, Some(&fill.mod_name), None)
+                .await
                 .unwrap_or(serde_json::Value::Null);
             results.push(TaggedResult {
                 mod_id: fill.mod_name.clone(),
@@ -1720,10 +2242,25 @@ impl XriptRuntime {
     /// [`emit`](Self::emit) with each result tagged by the subscribing mod and
     /// its index within that mod's subscriptions for this event.
     pub fn emit_tagged(&self, event: &str, payload: &[serde_json::Value]) -> Result<Vec<TaggedResult>> {
-        self.dispatch_to_registry("__xript_event_handlers", event, payload, false)
+        pollster::block_on(self.emit_tagged_async(event, payload))
     }
 
-    fn dispatch_to_registry(
+    /// [`emit`](Self::emit) as a future.
+    pub async fn emit_async(&self, event: &str, payload: &[serde_json::Value]) -> Result<Vec<serde_json::Value>> {
+        Ok(self
+            .emit_tagged_async(event, payload)
+            .await?
+            .into_iter()
+            .map(|tagged| tagged.value)
+            .collect())
+    }
+
+    /// [`emit_tagged`](Self::emit_tagged) as a future.
+    pub async fn emit_tagged_async(&self, event: &str, payload: &[serde_json::Value]) -> Result<Vec<TaggedResult>> {
+        self.dispatch_to_registry("__xript_event_handlers", event, payload, false).await
+    }
+
+    async fn dispatch_to_registry(
         &self,
         registry: &str,
         id: &str,
@@ -1762,7 +2299,7 @@ impl XriptRuntime {
             payload = escaped_payload,
         );
 
-        let result = self.execute(&code)?;
+        let result = self.execute_async(&code).await?;
         let raw = result.value.as_str().unwrap_or("[]");
         let parsed: serde_json::Value =
             serde_json::from_str(raw).unwrap_or(serde_json::Value::Null);
@@ -1951,6 +2488,26 @@ impl XriptRuntime {
         )
     }
 
+    /// [`invoke_command`](Self::invoke_command) as a future; the handler is
+    /// awaited the way [`invoke_export_async`](Self::invoke_export_async)
+    /// awaits an export.
+    pub async fn invoke_command_async(
+        &self,
+        command: &crate::commands::ResolvedCommand,
+        call_args: Option<&serde_json::Map<String, serde_json::Value>>,
+    ) -> Result<serde_json::Value> {
+        let effective = crate::commands::merge_command_args(&command.args, call_args);
+        self.invoke_mod_export_within_async(
+            &command.mod_name,
+            &command.handler,
+            &[serde_json::Value::Object(effective)],
+            Some(self
+                .manifest
+                .effective_slot_timeout_ms(&command.slot, self.hard_timeout_ms)),
+        )
+        .await
+    }
+
     /// Returns the attached DAP debug session, or `None` when the runtime was
     /// built without a `debug` option. Default off, zero overhead when absent.
     pub fn debug_session(&self) -> Option<&crate::debug::DebugSession> {
@@ -1958,6 +2515,16 @@ impl XriptRuntime {
     }
 
     pub fn fire_fragment_hook(
+        &self,
+        fragment_id: &str,
+        lifecycle: &str,
+        bindings: Option<&serde_json::Value>,
+    ) -> Result<Vec<crate::fragment::ops::FragmentOp>> {
+        pollster::block_on(self.fire_fragment_hook_async(fragment_id, lifecycle, bindings))
+    }
+
+    /// [`fire_fragment_hook`](Self::fire_fragment_hook) as a future.
+    pub async fn fire_fragment_hook_async(
         &self,
         fragment_id: &str,
         lifecycle: &str,
@@ -1983,6 +2550,7 @@ impl XriptRuntime {
                         removeClass: function(sel, cls) {{ ops.push({{ op: "removeClass", selector: sel, value: cls }}); }},
                         setText: function(sel, txt) {{ ops.push({{ op: "setText", selector: sel, value: txt }}); }},
                         setAttr: function(sel, attr, val) {{ ops.push({{ op: "setAttr", selector: sel, attr: attr, value: val }}); }},
+                        removeAttr: function(sel, attr) {{ ops.push({{ op: "removeAttr", selector: sel, attr: attr }}); }},
                         setProp: function(sel, prop, val) {{ ops.push({{ op: "setProp", selector: sel, prop: prop, value: val }}); }},
                         replaceChildren: function(sel, children) {{ ops.push({{ op: "replaceChildren", selector: sel, value: children }}); }}
                     }};
@@ -1996,7 +2564,7 @@ impl XriptRuntime {
             bindings_json = bindings_json.replace('\'', "\\'"),
         );
 
-        let result = self.execute(&code)?;
+        let result = self.execute_async(&code).await?;
         let raw: Vec<serde_json::Value> = serde_json::from_str::<Vec<Vec<serde_json::Value>>>(
             result.value.as_str().unwrap_or("[]"),
         )
@@ -2101,9 +2669,23 @@ fn harvest_named_exports<'js>(
 fn remove_dangerous_globals(ctx: &Ctx<'_>) -> Result<()> {
     let script = r#"
         delete globalThis.eval;
+        (function () {
+            var refuse = function () {
+                throw new TypeError("Function constructor is not permitted. Dynamic code generation is disabled in xript.");
+            };
+            var prototypes = [
+                Object.getPrototypeOf(function () {}),
+                Object.getPrototypeOf(async function () {}),
+                Object.getPrototypeOf(function* () {}),
+                Object.getPrototypeOf(async function* () {}),
+            ];
+            for (var i = 0; i < prototypes.length; i++) {
+                Object.defineProperty(prototypes[i], 'constructor', { value: refuse, writable: true, configurable: true });
+            }
+        })();
         if (typeof globalThis.Function !== 'undefined') {
             Object.defineProperty(globalThis, 'Function', {
-                get: function() { throw new Error("Function constructor is not permitted. Dynamic code generation is disabled in xript."); },
+                get: function() { throw new TypeError("Function constructor is not permitted. Dynamic code generation is disabled in xript."); },
                 configurable: false
             });
         }
@@ -2232,10 +2814,12 @@ fn audited_sync(
     })
 }
 
-/// The async mirror of [`audited_sync`]. The scope covers the whole future,
-/// which the Rust runtime settles with `pollster::block_on` on the JS thread —
-/// so a host future that never settles reads as "inside this binding" for as
-/// long as it takes, which is exactly right.
+/// The async mirror of [`audited_sync`]. On a sync runtime the scope covers
+/// the whole future, which is settled with `pollster::block_on` on the JS
+/// thread, so a host future that never settles reads as "inside this binding"
+/// for as long as it takes, which is exactly right. On a yielding runtime the
+/// thread is not inside the binding while its future is pending, so the scope
+/// covers only the call that creates the future.
 fn audited_async(
     f: AsyncHostFn,
     audit: &Option<AuditSink>,
@@ -2243,6 +2827,7 @@ fn audited_async(
     capability: Option<String>,
     probe: &Arc<RuntimeProbe>,
 ) -> AsyncHostFn {
+    let yielding = probe.yielding();
     let index = probe.intern(binding);
     let probe = probe.clone();
     let sink = audit.clone();
@@ -2259,6 +2844,10 @@ fn audited_async(
         }
         let scope = BindingScope::enter(&probe, index);
         let inner = f(args);
+        if yielding {
+            drop(scope);
+            return inner;
+        }
         Box::pin(async move {
             let _scope = scope;
             inner.await
@@ -2296,17 +2885,18 @@ fn register_bindings(
                 }
 
                 let cap = func_def.capability.clone();
+                let checks = crate::callback::function_param_checks(func_def.params.as_ref());
                 match host_bindings.bindings.get(name) {
                     Some(HostBinding::Function(f)) => {
                         let wrapped = audited_sync(f.clone(), audit, name, cap, probe);
-                        let js_fn = create_host_function(ctx, name, wrapped)?;
+                        let js_fn = create_host_function(ctx, name, wrapped, &checks)?;
                         ctx.globals()
                             .set(name.as_str(), js_fn)
                             .map_err(|e| XriptError::Engine(e.to_string()))?;
                     }
                     Some(HostBinding::AsyncFunction(f)) => {
                         let wrapped = audited_async(f.clone(), audit, name, cap, probe);
-                        let js_fn = create_async_host_function(ctx, name, wrapped)?;
+                        let js_fn = async_binding(ctx, name, wrapped, probe, &checks)?;
                         ctx.globals()
                             .set(name.as_str(), js_fn)
                             .map_err(|e| XriptError::Engine(e.to_string()))?;
@@ -2413,12 +3003,14 @@ fn build_namespace_object<'js>(
                 }
 
                 let cap = func_def.capability.clone();
+                let checks = crate::callback::function_param_checks(func_def.params.as_ref());
                 let value = resolve_namespace_member(
                     ctx,
                     &full_name,
                     member_name,
                     host_view,
                     cap,
+                    &checks,
                     audit,
                     probe,
                 )?;
@@ -2447,6 +3039,7 @@ fn resolve_namespace_member<'js>(
     member_name: &str,
     host_view: &HostNsView<'_>,
     capability: Option<String>,
+    checks: &[crate::callback::FunctionParamCheck],
     audit: &Option<AuditSink>,
     probe: &Arc<RuntimeProbe>,
 ) -> Result<Value<'js>> {
@@ -2460,29 +3053,29 @@ fn resolve_namespace_member<'js>(
             }
             if let Some(f) = functions.get(member_name) {
                 let wrapped = audited_sync(f.clone(), audit, full_name, capability, probe);
-                return Ok(create_host_function(ctx, full_name, wrapped)?.into_value());
+                return Ok(create_host_function(ctx, full_name, wrapped, &checks)?.into_value());
             }
         }
         HostNsView::Sync(map) => {
             if let Some(f) = map.get(member_name) {
                 let wrapped = audited_sync(f.clone(), audit, full_name, capability, probe);
-                return Ok(create_host_function(ctx, full_name, wrapped)?.into_value());
+                return Ok(create_host_function(ctx, full_name, wrapped, &checks)?.into_value());
             }
         }
         HostNsView::Async(map) => {
             if let Some(f) = map.get(member_name) {
                 let wrapped = audited_async(f.clone(), audit, full_name, capability, probe);
-                return Ok(create_async_host_function(ctx, full_name, wrapped)?.into_value());
+                return Ok(async_binding(ctx, full_name, wrapped, probe, &checks)?.into_value());
             }
         }
         HostNsView::Nested(map) => match map.get(member_name) {
             Some(HostNamespaceMember::Function(f)) => {
                 let wrapped = audited_sync(f.clone(), audit, full_name, capability, probe);
-                return Ok(create_host_function(ctx, full_name, wrapped)?.into_value());
+                return Ok(create_host_function(ctx, full_name, wrapped, &checks)?.into_value());
             }
             Some(HostNamespaceMember::AsyncFunction(f)) => {
                 let wrapped = audited_async(f.clone(), audit, full_name, capability, probe);
-                return Ok(create_async_host_function(ctx, full_name, wrapped)?.into_value());
+                return Ok(async_binding(ctx, full_name, wrapped, probe, &checks)?.into_value());
             }
             Some(HostNamespaceMember::Property(value)) => {
                 return json_to_js(ctx, value);
@@ -2704,42 +3297,98 @@ fn js_string_escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('\'', "\\'").replace('"', "\\\"")
 }
 
-fn create_host_function<'js>(
+/// The sandbox side of a bridged binding: refuses a non-function where the
+/// manifest declares a function parameter, then serializes the arguments with
+/// every script function swapped for a numeric callback marker and hands the
+/// functions to the bridge alongside the JSON.
+const BRIDGE_WRAPPER: &str = r#"(function (bridge, marker, checks, name, settle) {
+    var stringify = JSON.stringify;
+    var parse = JSON.parse;
+    var slice = Array.prototype.slice;
+    return function () {
+        var args = slice.call(arguments);
+        for (var i = 0; i < checks.length; i++) {
+            var check = checks[i];
+            var value = args[check.index];
+            if (typeof value === 'function') continue;
+            if (check.optional && (value === undefined || value === null)) continue;
+            throw new TypeError(name + '(): parameter "' + check.name + '" expects a function, got ' + (value === null ? 'null' : typeof value));
+        }
+        var fns = [];
+        var json = stringify(args, function (key, v) {
+            if (typeof v === 'function') {
+                var m = {};
+                m[marker] = fns.length;
+                fns[fns.length] = v;
+                return m;
+            }
+            return v;
+        });
+        return settle(bridge(json, fns), parse);
+    };
+})"#;
+
+const SYNC_SETTLE: &str = "(function (raw, parse) { var envelope = parse(raw); if (envelope.__xript_err !== undefined) { throw new Error(envelope.__xript_err); } return envelope.__xript_ok; })";
+
+const ASYNC_SETTLE: &str = "(function (raw, parse) { var envelope = parse(raw); if (envelope.__xript_err !== undefined) { return Promise.reject(new Error(envelope.__xript_err)); } return Promise.resolve(envelope.__xript_ok); })";
+
+const YIELD_SETTLE: &str = "(function (pending, parse) { return pending.then(function (raw) { var envelope = parse(raw); if (envelope.__xript_err !== undefined) { throw new Error(envelope.__xript_err); } return envelope.__xript_ok; }); })";
+
+const ASYNC_IN_CALLBACK_MESSAGE: &str =
+    "cannot be called from inside a callback passed to a binding: it is async, and a callback runs synchronously";
+
+fn bridge_envelope(result: std::result::Result<serde_json::Value, String>) -> String {
+    match result {
+        Ok(value) => serde_json::to_string(&serde_json::json!({ "__xript_ok": value }))
+            .unwrap_or("{\"__xript_ok\":null}".into()),
+        Err(msg) => serde_json::to_string(&serde_json::json!({ "__xript_err": msg })).unwrap(),
+    }
+}
+
+/// Runs one bridged binding call: resolves its callbacks, invokes the host
+/// through `call`, and ends the call with the script's own exception when a
+/// callback demands it (a budget stop, or a throw the host passed through).
+fn run_bridged_call<'js>(
+    ctx: &Ctx<'js>,
+    binding: &str,
+    args_json: &str,
+    functions: Vec<Function<'js>>,
+    call: impl FnOnce(&[serde_json::Value]) -> std::result::Result<serde_json::Value, String>,
+) -> rquickjs::Result<String> {
+    let mut args: Vec<serde_json::Value> = match serde_json::from_str(args_json) {
+        Ok(a) => a,
+        Err(e) => return Ok(bridge_envelope(Err(format!("invalid args: {}", e)))),
+    };
+    let scope = crate::callback::CallScope::new(ctx.clone(), binding, functions);
+    scope.resolve_markers(&mut args);
+    let result = scope.run(|| call(&args));
+    if let Some(exception) = scope.outcome(result.as_ref().err().map(String::as_str)) {
+        return Err(ctx.throw(exception));
+    }
+    Ok(bridge_envelope(result))
+}
+
+fn install_bridge<'js>(
     ctx: &Ctx<'js>,
     name: &str,
-    f: HostFn,
+    bridge_fn: Function<'js>,
+    checks: &[crate::callback::FunctionParamCheck],
+    settle: &str,
 ) -> Result<Function<'js>> {
-    let bridge_fn = Function::new(ctx.clone(), move |args_json: String| -> String {
-        let args: Vec<serde_json::Value> = match serde_json::from_str(&args_json) {
-            Ok(a) => a,
-            Err(e) => {
-                let err = serde_json::json!({"__xript_err": format!("invalid args: {}", e)});
-                return serde_json::to_string(&err).unwrap();
-            }
-        };
-        match f(&args) {
-            Ok(result) => {
-                let wrapped = serde_json::json!({"__xript_ok": result});
-                serde_json::to_string(&wrapped).unwrap_or("{\"__xript_ok\":null}".into())
-            }
-            Err(msg) => {
-                let err = serde_json::json!({"__xript_err": msg});
-                serde_json::to_string(&err).unwrap()
-            }
-        }
-    })
-    .map_err(|e| {
-        XriptError::Engine(format!("failed to create host function '{}': {}", name, e))
-    })?;
+    let checks_json = serde_json::to_string(checks).map_err(|e| XriptError::Engine(e.to_string()))?;
+    let name_json = serde_json::to_string(name).map_err(|e| XriptError::Engine(e.to_string()))?;
+    let marker_json = serde_json::to_string(crate::callback::CALLBACK_MARKER)
+        .map_err(|e| XriptError::Engine(e.to_string()))?;
 
     ctx.globals()
         .set("__xript_tmp_bridge", bridge_fn)
         .map_err(|e| XriptError::Engine(e.to_string()))?;
 
-    let wrapper: Function = ctx.eval(
-        "(function(bridge) { return function() { var args = Array.prototype.slice.call(arguments); var raw = bridge(JSON.stringify(args)); var envelope = JSON.parse(raw); if (envelope.__xript_err !== undefined) { throw new Error(envelope.__xript_err); } return envelope.__xript_ok; }; })(__xript_tmp_bridge)",
-    )
-    .map_err(|e| XriptError::Engine(e.to_string()))?;
+    let wrapper: Function = ctx
+        .eval(format!(
+            "{BRIDGE_WRAPPER}(__xript_tmp_bridge, {marker_json}, {checks_json}, {name_json}, {settle})"
+        ))
+        .map_err(|e| XriptError::Engine(e.to_string()))?;
 
     ctx.eval::<(), _>("delete globalThis.__xript_tmp_bridge")
         .map_err(|e| XriptError::Engine(e.to_string()))?;
@@ -2747,30 +3396,65 @@ fn create_host_function<'js>(
     Ok(wrapper)
 }
 
-fn create_async_host_function<'js>(
+fn async_binding<'js>(
     ctx: &Ctx<'js>,
     name: &str,
     f: AsyncHostFn,
+    probe: &Arc<RuntimeProbe>,
+    checks: &[crate::callback::FunctionParamCheck],
 ) -> Result<Function<'js>> {
-    let bridge_fn = Function::new(ctx.clone(), move |args_json: String| -> String {
-        let args: Vec<serde_json::Value> = match serde_json::from_str(&args_json) {
-            Ok(a) => a,
-            Err(e) => {
-                let err = serde_json::json!({"__xript_err": format!("invalid args: {}", e)});
-                return serde_json::to_string(&err).unwrap();
+    if probe.yielding() {
+        create_yielding_host_function(ctx, name, f, checks)
+    } else {
+        create_async_host_function(ctx, name, f, checks)
+    }
+}
+
+/// An async host binding on a yielding runtime: hands script a genuinely
+/// pending promise and spawns the host future onto the runtime's own executor.
+/// The call's callback scope travels with the future and is entered for every
+/// poll, so callbacks passed to the binding stay callable until it settles,
+/// as they do on a sync runtime, and expire when it does.
+fn create_yielding_host_function<'js>(
+    ctx: &Ctx<'js>,
+    name: &str,
+    f: AsyncHostFn,
+    checks: &[crate::callback::FunctionParamCheck],
+) -> Result<Function<'js>> {
+    let binding = name.to_string();
+    let bridge_fn = Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'js>, args_json: String, functions: Vec<Function<'js>>| -> rquickjs::Result<Value<'js>> {
+            if crate::callback::inside_callback() {
+                return Err(rquickjs::Exception::throw_message(
+                    &ctx,
+                    &format!("{binding}(): {ASYNC_IN_CALLBACK_MESSAGE}"),
+                ));
             }
-        };
-        match pollster::block_on(f(&args)) {
-            Ok(result) => {
-                let wrapped = serde_json::json!({"__xript_ok": result});
-                serde_json::to_string(&wrapped).unwrap_or("{\"__xript_ok\":null}".into())
+            let (promise, resolve, reject) = ctx.promise()?;
+            let mut args: Vec<serde_json::Value> = match serde_json::from_str(&args_json) {
+                Ok(a) => a,
+                Err(e) => {
+                    resolve.call::<_, ()>((bridge_envelope(Err(format!("invalid args: {}", e))),))?;
+                    return Ok(promise.into_value());
+                }
+            };
+            let scope = crate::callback::CallScope::new(ctx.clone(), &binding, functions);
+            scope.resolve_markers(&mut args);
+            let mut pending = scope.run(|| f(&args));
+            if let Some(exception) = scope.outcome(None) {
+                return Err(ctx.throw(exception));
             }
-            Err(msg) => {
-                let err = serde_json::json!({"__xript_err": msg});
-                serde_json::to_string(&err).unwrap()
-            }
-        }
-    })
+            ctx.spawn(async move {
+                let result = std::future::poll_fn(|cx| scope.run(|| pending.as_mut().poll(cx))).await;
+                let _ = match scope.outcome(result.as_ref().err().map(String::as_str)) {
+                    Some(exception) => reject.call::<_, ()>((exception,)),
+                    None => resolve.call::<_, ()>((bridge_envelope(result),)),
+                };
+            });
+            Ok(promise.into_value())
+        },
+    )
     .map_err(|e| {
         XriptError::Engine(format!(
             "failed to create async host function '{}': {}",
@@ -2778,19 +3462,58 @@ fn create_async_host_function<'js>(
         ))
     })?;
 
-    ctx.globals()
-        .set("__xript_tmp_bridge", bridge_fn)
-        .map_err(|e| XriptError::Engine(e.to_string()))?;
+    install_bridge(ctx, name, bridge_fn, checks, YIELD_SETTLE)
+}
 
-    let wrapper: Function = ctx.eval(
-        "(function(bridge) { return function() { var args = Array.prototype.slice.call(arguments); var raw = bridge(JSON.stringify(args)); var envelope = JSON.parse(raw); if (envelope.__xript_err !== undefined) { return Promise.reject(new Error(envelope.__xript_err)); } return Promise.resolve(envelope.__xript_ok); }; })(__xript_tmp_bridge)",
+fn create_host_function<'js>(
+    ctx: &Ctx<'js>,
+    name: &str,
+    f: HostFn,
+    checks: &[crate::callback::FunctionParamCheck],
+) -> Result<Function<'js>> {
+    let binding = name.to_string();
+    let bridge_fn = Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'js>, args_json: String, functions: Vec<Function<'js>>| -> rquickjs::Result<String> {
+            run_bridged_call(&ctx, &binding, &args_json, functions, |args| f(args))
+        },
     )
-    .map_err(|e| XriptError::Engine(e.to_string()))?;
+    .map_err(|e| {
+        XriptError::Engine(format!("failed to create host function '{}': {}", name, e))
+    })?;
 
-    ctx.eval::<(), _>("delete globalThis.__xript_tmp_bridge")
-        .map_err(|e| XriptError::Engine(e.to_string()))?;
+    install_bridge(ctx, name, bridge_fn, checks, SYNC_SETTLE)
+}
 
-    Ok(wrapper)
+fn create_async_host_function<'js>(
+    ctx: &Ctx<'js>,
+    name: &str,
+    f: AsyncHostFn,
+    checks: &[crate::callback::FunctionParamCheck],
+) -> Result<Function<'js>> {
+    let binding = name.to_string();
+    let bridge_fn = Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'js>, args_json: String, functions: Vec<Function<'js>>| -> rquickjs::Result<String> {
+            if crate::callback::inside_callback() {
+                return Err(rquickjs::Exception::throw_message(
+                    &ctx,
+                    &format!("{binding}(): {ASYNC_IN_CALLBACK_MESSAGE}"),
+                ));
+            }
+            run_bridged_call(&ctx, &binding, &args_json, functions, |args| {
+                pollster::block_on(f(args))
+            })
+        },
+    )
+    .map_err(|e| {
+        XriptError::Engine(format!(
+            "failed to create async host function '{}': {}",
+            name, e
+        ))
+    })?;
+
+    install_bridge(ctx, name, bridge_fn, checks, ASYNC_SETTLE)
 }
 
 /// Outcome of awaiting a top-level promise. Distinguishing rejection
@@ -2869,7 +3592,7 @@ fn format_rejection<'js>(ctx: &Ctx<'js>, val: &Value<'js>) -> String {
     }
 }
 
-fn json_to_js<'js>(ctx: &Ctx<'js>, value: &serde_json::Value) -> Result<Value<'js>> {
+pub(crate) fn json_to_js<'js>(ctx: &Ctx<'js>, value: &serde_json::Value) -> Result<Value<'js>> {
     let serialized = serde_json::to_string(value)
         .map_err(|e| XriptError::Engine(format!("json_to_js serialize: {e}")))?;
     let escaped = serialized.replace('\\', "\\\\").replace('`', "\\`");
@@ -2878,7 +3601,7 @@ fn json_to_js<'js>(ctx: &Ctx<'js>, value: &serde_json::Value) -> Result<Value<'j
         .map_err(|e| XriptError::Engine(format!("json_to_js eval: {e}")))
 }
 
-fn js_value_to_json<'a>(ctx: &Ctx<'a>, val: &Value<'a>) -> serde_json::Value {
+pub(crate) fn js_value_to_json<'a>(ctx: &Ctx<'a>, val: &Value<'a>) -> serde_json::Value {
     if val.is_undefined() || val.is_null() {
         return serde_json::Value::Null;
     }

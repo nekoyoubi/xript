@@ -1,12 +1,19 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve, basename, dirname } from "node:path";
 import { generateTypesFromFile, resolveExtends } from "@xriptjs/typegen";
+import { reportVersion, takeSpecFlag } from "../spec-version.js";
 
-export async function run(args: string[]): Promise<void> {
-	if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
+export async function run(rawArgs: string[]): Promise<void> {
+	if (rawArgs.length === 0 || rawArgs.includes("--help") || rawArgs.includes("-h")) {
 		printHelp();
-		process.exit(args.length === 0 ? 1 : 0);
+		process.exit(rawArgs.length === 0 ? 1 : 0);
 	}
+	const spec = takeSpecFlag(rawArgs);
+	if (spec.missing) {
+		console.error("Error: --spec requires a manifest version, e.g. --spec 0.8");
+		process.exit(1);
+	}
+	const args = spec.rest;
 
 	const includeGrantShapes = args.includes("--include-grant-shapes");
 	const ambient = args.includes("--ambient");
@@ -40,6 +47,8 @@ export async function run(args: string[]): Promise<void> {
 		console.error("Error: manifest file path is required.");
 		process.exit(1);
 	}
+
+	if (!(await reportVersion(manifestPath, spec.version))) process.exit(1);
 
 	try {
 		const host = hostPath ? await loadManifest(hostPath) : undefined;
@@ -81,5 +90,7 @@ function printHelp(): void {
 	console.log("  --intent                Emit the execution routing table a host routes on (implied by --ambient)");
 	console.log("  --host <manifest.json>  For a mod manifest: the host it fills, so slot kinds (commands) are exact");
 	console.log("  --include-grant-shapes  Emit CapabilityPrompt, InstallDescriptor, DiscoveryResult interfaces");
+	console.log("  --spec <version>        Check the manifest against this manifest version (0.6-0.9) before generating;");
+	console.log("                          defaults to the manifest's $schema, then its xript field");
 	console.log("  --help, -h              Show this help message");
 }

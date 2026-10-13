@@ -7,6 +7,7 @@ import {
 	createFragmentInstance,
 	evaluateCondition,
 	bindExpressionKind,
+	processFragment,
 	processTree,
 	resolveFragmentProfile,
 	sanitizeSource,
@@ -16,8 +17,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const corpusPath = resolve(__dirname, "../../../spec/expression-tests.json");
 const corpus = JSON.parse(await readFile(corpusPath, "utf-8"));
 
-function fragment(source, { bindings = {}, interpolate = false, format = "text/html" } = {}) {
-	const names = Object.keys(bindings);
+function fragment(source, { bindings = {}, declared, interpolate = false, format = "text/html" } = {}) {
+	const names = declared ?? Object.keys(bindings);
 	const instance = createFragmentInstance(
 		{
 			id: "corpus",
@@ -26,7 +27,7 @@ function fragment(source, { bindings = {}, interpolate = false, format = "text/h
 			source,
 			inline: true,
 			interpolate,
-			bindings: names.map((name) => ({ name, path: name })),
+			bindings: names.map((name) => (typeof name === "string" ? { name, path: name } : name)),
 		},
 		source,
 	);
@@ -81,6 +82,33 @@ describe("XEG corpus: data-bind classification", () => {
 			bindings: { evil: "<script>alert(1)</script>" },
 		});
 		assert.equal(result.html, '<p data-bind="evil">&lt;script&gt;alert(1)&lt;/script&gt;</p>');
+	});
+});
+
+describe("XEG corpus: a bare name renders as its expression does", () => {
+	for (const testCase of corpus.render) {
+		it(testCase.id, () => {
+			const result = fragment(testCase.source, {
+				bindings: testCase.bindings,
+				declared: testCase.declared,
+			});
+			assert.equal(result.html, testCase.expectedHtml);
+		});
+	}
+
+	it("a bare name never reads an inherited property of the bindings", () => {
+		const result = fragment('<p data-bind="constructor">fallback</p>', { bindings: {} });
+		assert.equal(result.html, '<p data-bind="constructor">fallback</p>');
+	});
+
+	it("the deprecated string pass stringifies the same way", () => {
+		const { html } = processFragment('<p data-bind="a">x</p><input data-bind="b" value="y" />', { a: null, b: 0 });
+		assert.equal(html, '<p data-bind="a"></p><input data-bind="b" value="0" />');
+	});
+
+	it("the deprecated string pass writes a value literally", () => {
+		const { html } = processFragment('<input data-bind="b" value="y" />', { b: "$&$1" });
+		assert.equal(html, '<input data-bind="b" value="$&amp;$1" />');
 	});
 });
 

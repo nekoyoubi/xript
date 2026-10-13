@@ -149,15 +149,33 @@ function compileStubScript(name: string, body: string): ScriptFn {
 	}
 }
 
+/**
+ * A callback a script passed is a live function only for the length of the call, and would vanish
+ * from a serialized journal; it is recorded as a `"[callback]"` placeholder so the record shows it
+ * crossed.
+ */
+function journalValue(value: unknown, seen = new Set<object>()): unknown {
+	if (typeof value === "function") return "[callback]";
+	if (value === null || typeof value !== "object" || seen.has(value)) return value;
+	seen.add(value);
+	try {
+		if (Array.isArray(value)) return value.map((item) => journalValue(item, seen));
+		return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, journalValue(item, seen)]));
+	} finally {
+		seen.delete(value);
+	}
+}
+
 function makeStubFn(name: string, stub: BindingStub, journal: JournalEntry[], nextSeq: () => number): (...args: unknown[]) => unknown {
 	let calls = 0;
 	const scriptFn = stub.script !== undefined ? compileStubScript(name, stub.script) : null;
-	return (...args: unknown[]) => {
+	return (...callArgs: unknown[]) => {
 		const callIndex = calls++;
+		const args = callArgs.map((arg) => journalValue(arg));
 		try {
 			let value: unknown;
 			if (scriptFn) {
-				value = scriptFn(args, callIndex);
+				value = scriptFn(callArgs, callIndex);
 			} else if (stub.sequence) {
 				const entry = stub.sequence[Math.min(callIndex, stub.sequence.length - 1)];
 				if (entry?.throws !== undefined) throw new Error(entry.throws);

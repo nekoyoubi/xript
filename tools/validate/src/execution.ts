@@ -46,7 +46,7 @@ export const ASYNC_SHAPE_REMARK =
  * unconditionally.
  */
 export const LIMITS_REACH_REMARK =
-	"xript's execution budget bounds SCRIPT execution, not host-binding execution. Once control enters this binding, no xript timeout, cancellation token, or drop-cancel will stop it — the interpreter is not running, so nothing observes them. Bounding a binding that may block is the host's own job.";
+	"xript's execution budget bounds SCRIPT execution, not host-binding execution. Once control enters this binding, no xript timeout, cancellation token, or drop-cancel will stop it: the interpreter is not running, so nothing observes them. Bounding a binding that may block is the host's own job.";
 
 export const DURATION_PROSE: Record<Duration, string> = {
 	instant: "completes in microseconds and touches no I/O; safe to call from anywhere, including a render pass",

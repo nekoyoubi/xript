@@ -5,12 +5,14 @@ import type {
 	QuickJSAsyncContext,
 	QuickJSAsyncRuntime,
 	QuickJSWASMModule,
+	AsyncFunctionImplementation,
 } from "quickjs-emscripten-core";
-import type { AsyncVariant } from "./quickjs-async.js";
+import type { AsyncVariant } from "./quickjs-loader.js";
 import { AmbiguousExportError, BindingError, CapabilityDeniedError, CancellationError, InvokeError, ModEntryError, ImportDeniedError, ModuleUnsupportedError, LibraryUnavailableError, LibraryRegistrationError } from "./errors.js";
 import { grantedSatisfies } from "./capabilities.js";
 import { findImportSpecifier, findImportSpecifiers, detectCommonJS } from "./module-support.js";
 import { marshalToQuickJS, safeDispose } from "./marshal.js";
+import { CallbackScope, callbackSupportFor, functionParamChecks, functionParamViolation, releaseCallbackSupport } from "./callbacks.js";
 import type { DebugOptions, DebugSession } from "./debug-types.js";
 import { DebugUnsupportedError } from "./debug-types.js";
 import { createDebugController, type DebugController } from "./debug-session.js";
@@ -358,6 +360,28 @@ function injectConsole(
 	consoleObj.dispose();
 }
 
+/**
+ * Replacing the global `Function` leaves the real constructor one `.constructor` away from any
+ * function (and its async, generator, and async-generator siblings from theirs), so every one of
+ * those prototype links is pointed at a thrower too.
+ */
+const SEAL_FUNCTION_CONSTRUCTORS = `
+	(function () {
+		var refuse = function () {
+			throw new TypeError("Function() is not permitted. Dynamic code generation is disabled in xript.");
+		};
+		var prototypes = [
+			Object.getPrototypeOf(function () {}),
+			Object.getPrototypeOf(async function () {}),
+			Object.getPrototypeOf(function* () {}),
+			Object.getPrototypeOf(async function* () {}),
+		];
+		for (var i = 0; i < prototypes.length; i++) {
+			Object.defineProperty(prototypes[i], "constructor", { value: refuse, writable: true, configurable: true });
+		}
+	})();
+`;
+
 function blockCodeGeneration(context: QuickJSContext | QuickJSAsyncContext): void {
 	evalAndDispose(context, `
 		globalThis.eval = function() {
@@ -366,6 +390,7 @@ function blockCodeGeneration(context: QuickJSContext | QuickJSAsyncContext): voi
 		globalThis.Function = function() {
 			throw new TypeError("Function() is not permitted. Dynamic code generation is disabled in xript.");
 		};
+		${SEAL_FUNCTION_CONSTRUCTORS}
 	`);
 }
 
@@ -421,6 +446,9 @@ function stripBindingPrefix(error: BindingError): string {
 const ASYNC_ON_SYNC_TIER_MESSAGE =
 	'declares "async": true in the manifest, and the synchronous sandbox cannot await it. The app must create the runtime with the async entry point (initXriptAsync / createSandboxAsync) for this binding to be callable.';
 
+const ASYNC_IN_CALLBACK_MESSAGE =
+	"cannot be called from inside a callback passed to a binding: it is async, and a callback runs synchronously";
+
 function createAsyncUnsupportedStub(
 	context: QuickJSContext | QuickJSAsyncContext,
 	qualifiedName: string,
@@ -438,6 +466,7 @@ function createHostFunctionWrapper(
 	grantedCapabilities: Set<string>,
 	audit?: (binding: string, capability: string | null) => void,
 ): QuickJSHandle {
+	const functionChecks = functionParamChecks(binding.params);
 	return context.newFunction(qualifiedName, (...handles: QuickJSHandle[]) => {
 		if (binding.capability && !grantedSatisfies(grantedCapabilities, binding.capability)) {
 			return createCapabilityError(context, qualifiedName, binding.capability);
@@ -447,13 +476,21 @@ function createHostFunctionWrapper(
 			return createBindingError(context, qualifiedName, "not implemented by the app");
 		}
 
+		const refusal = functionParamViolation(qualifiedName, functionChecks, (i) => argTypeOf(context, handles[i]));
+		if (refusal) return { error: context.newError({ name: "TypeError", message: refusal }) };
+
 		if (audit) audit(qualifiedName, binding.capability ?? null);
 
+		const scope = new CallbackScope(context, callbackSupportFor(context), qualifiedName);
 		try {
-			const nativeArgs = handles.map((h) => context.dump(h));
+			const nativeArgs = handles.map((h) => scope.unmarshal(h));
 			const result = hostFn(...nativeArgs);
+			const stopped = scope.takeOutcome(undefined);
+			if (stopped) return { error: stopped };
 			return marshalToQuickJS(context, result, qualifiedName);
 		} catch (e) {
+			const original = scope.takeOutcome(e);
+			if (original) return { error: original };
 			if (e instanceof CapabilityDeniedError) {
 				return createCapabilityError(context, e.binding, e.capability);
 			}
@@ -462,8 +499,17 @@ function createHostFunctionWrapper(
 			}
 			const message = e instanceof Error ? e.message : String(e);
 			return createBindingError(context, qualifiedName, message);
+		} finally {
+			scope.close();
 		}
 	});
+}
+
+function argTypeOf(context: QuickJSContext | QuickJSAsyncContext, handle: QuickJSHandle | undefined): string {
+	if (handle === undefined) return "undefined";
+	const kind = context.typeof(handle);
+	if (kind === "object" && context.sameValue(handle, context.null)) return "null";
+	return kind;
 }
 
 function registerAsyncBinding(
@@ -479,13 +525,16 @@ function registerAsyncBinding(
 	const missingImpl = !hostFn;
 
 	if (!capabilityDenied && !missingImpl) {
-		const asyncImpl = context.newAsyncifiedFunction(asyncKey, async (...handles: QuickJSHandle[]) => {
-			if (audit) audit(qualifiedName, binding.capability ?? null);
+		const functionChecks = functionParamChecks(binding.params);
+		const settle = async (scope: CallbackScope, nativeArgs: unknown[]) => {
 			try {
-				const nativeArgs = handles.map((h) => context.dump(h));
 				const result = await hostFn!(...nativeArgs);
+				const stopped = scope.takeOutcome(undefined);
+				if (stopped) return { error: stopped };
 				return marshalToQuickJS(context, result, qualifiedName);
 			} catch (e) {
+				const original = scope.takeOutcome(e);
+				if (original) return { error: original };
 				if (e instanceof CapabilityDeniedError) {
 					return createCapabilityError(context, e.binding, e.capability);
 				}
@@ -494,8 +543,26 @@ function registerAsyncBinding(
 				}
 				const message = e instanceof Error ? e.message : String(e);
 				return createBindingError(context, qualifiedName, message);
+			} finally {
+				scope.close();
 			}
-		});
+		};
+		const asyncImpl = context.newAsyncifiedFunction(asyncKey, ((...handles: QuickJSHandle[]) => {
+			const refusal = functionParamViolation(qualifiedName, functionChecks, (i) => argTypeOf(context, handles[i]));
+			if (refusal) return { error: context.newError({ name: "TypeError", message: refusal }) };
+			const support = callbackSupportFor(context);
+			if (support.depth > 0) return createBindingError(context, qualifiedName, ASYNC_IN_CALLBACK_MESSAGE);
+			if (audit) audit(qualifiedName, binding.capability ?? null);
+			const scope = new CallbackScope(context, support, qualifiedName);
+			let nativeArgs: unknown[];
+			try {
+				nativeArgs = handles.map((h) => scope.unmarshal(h));
+			} catch (e) {
+				scope.close();
+				throw e;
+			}
+			return settle(scope, nativeArgs);
+		}) as AsyncFunctionImplementation);
 		context.setProp(context.global, asyncKey, asyncImpl);
 		asyncImpl.dispose();
 	}
@@ -913,10 +980,8 @@ function injectFragmentAPI(context: QuickJSContext | QuickJSAsyncContext): void 
 					setText: function(target, text) { ops.push({ op: "setText", selector: target, value: text }); },
 					setProp: function(target, prop, value) { ops.push({ op: "setProp", selector: target, prop: prop, value: value }); },
 					setAttr: function(target, attr, value) { ops.push({ op: "setAttr", selector: target, attr: attr, prop: attr, value: value }); },
-					replaceChildren: function(target, content) {
-						var isStringList = Array.isArray(content) && content.every(function(c) { return typeof c === "string"; });
-						ops.push({ op: "replaceChildren", selector: target, value: isStringList ? content.join("") : content });
-					}
+					removeAttr: function(target, attr) { ops.push({ op: "removeAttr", selector: target, attr: attr, prop: attr }); },
+					replaceChildren: function(target, content) { ops.push({ op: "replaceChildren", selector: target, value: content }); }
 				};
 				try {
 					handlers[i](bindings, fragmentProxy);
@@ -1072,6 +1137,17 @@ function setExportOwnerInContext(
 	else result.value.dispose();
 }
 
+/**
+ * Dumps a result handle for the host, marshalling a bare script function to null. A function
+ * carries no data across the boundary and must not reach the host as something callable;
+ * `context.dump` already drops or nulls functions nested in objects and arrays, so only the
+ * top-level handle needs this guard.
+ */
+function dumpForHost(context: QuickJSContext | QuickJSAsyncContext, handle: QuickJSHandle): unknown {
+	if (context.typeof(handle) === "function") return null;
+	return context.dump(handle);
+}
+
 function invokeExportInContext(
 	context: QuickJSContext | QuickJSAsyncContext,
 	exportName: string,
@@ -1086,7 +1162,7 @@ function invokeExportInContext(
 		throwInvokeFailure(errorObj, exportName);
 	}
 
-	const value = context.dump(callResult.value);
+	const value = dumpForHost(context, callResult.value);
 	callResult.value.dispose();
 	return value;
 }
@@ -1118,7 +1194,7 @@ async function invokeExportAsyncInContext(
 		throwInvokeFailure(errorObj, exportName);
 	}
 
-	const value = context.dump(awaited.value);
+	const value = dumpForHost(context, awaited.value);
 	if (awaited.value.alive) awaited.value.dispose();
 	return value;
 }
@@ -1211,6 +1287,7 @@ export type FragmentOpName =
 	| "replaceChildren"
 	| "setProp"
 	| "setAttr"
+	| "removeAttr"
 	| "addClass"
 	| "removeClass";
 
@@ -1224,10 +1301,11 @@ export interface FragmentOp {
 	op: FragmentOpName;
 	selector: string;
 	target: NodeRef;
-	/** `setProp` / `setAttr`. */
+	/** `setProp` / `setAttr` / `removeAttr`. */
 	prop?: string;
-	/** @deprecated Alias of `prop`, populated only for `setAttr`. */
+	/** @deprecated Alias of `prop`, populated only for `setAttr` and `removeAttr`. */
 	attr?: string;
+	/** Absent on `removeAttr`. */
 	value?: unknown;
 }
 
@@ -1243,6 +1321,7 @@ export interface RawFragmentOp {
 function harvestModuleExports(
 	context: QuickJSAsyncContext,
 	namespace: QuickJSHandle,
+	modName: string,
 ): string[] {
 	const harvestFn = context.getProp(context.global, "__xript_harvest_exports");
 	const callResult = context.callFunction(harvestFn, context.undefined, namespace);
@@ -1250,8 +1329,12 @@ function harvestModuleExports(
 	if (namespace.alive) namespace.dispose();
 
 	if (callResult.error) {
+		const errorObj = context.dump(callResult.error) as { message?: string } | undefined;
 		callResult.error.dispose();
-		return [];
+		throw new ModEntryError(
+			modName,
+			`could not read the module's exports: ${errorObj?.message || String(errorObj)}`,
+		);
 	}
 
 	const harvested = context.dump(callResult.value) as string[];
@@ -1485,7 +1568,7 @@ export function createSandboxSync(
 			throwFromError(errorObj, timeoutMs, cancellation);
 		}
 
-		const value = context.dump(result.value);
+		const value = dumpForHost(context, result.value);
 		result.value.dispose();
 		return { value, duration_ms };
 	}
@@ -1522,7 +1605,7 @@ export function createSandboxSync(
 			throwFromError(errorObj, timeoutMs, cancellation);
 		}
 
-		const value = context.dump(awaited.value);
+		const value = dumpForHost(context, awaited.value);
 		if (awaited.value.alive) awaited.value.dispose();
 		return { value, duration_ms };
 	}
@@ -1589,6 +1672,7 @@ export function createSandboxSync(
 	}
 
 	function dispose(): void {
+		releaseCallbackSupport(context);
 		context.dispose();
 		runtime.dispose();
 	}
@@ -1600,7 +1684,7 @@ export async function createSandboxAsync(
 	options: SandboxOptions,
 	variant?: AsyncVariant,
 ): Promise<SandboxResult> {
-	const { newAsyncContext } = await import("./quickjs-async.js");
+	const { newAsyncContext } = await import("#quickjs-async");
 
 	const { manifest, hostBindings, capabilities = [], cancellation } = options;
 	const grantedCapabilities = new Set(capabilities);
@@ -1676,7 +1760,7 @@ export async function createSandboxAsync(
 			throwFromError(errorObj, timeoutMs, cancellation);
 		}
 
-		const value = context.dump(result.value);
+		const value = dumpForHost(context, result.value);
 		result.value.dispose();
 		return { value, duration_ms };
 	}
@@ -1754,7 +1838,7 @@ export async function createSandboxAsync(
 			popInterrupt();
 		}
 
-		return harvestModuleExports(context, namespace);
+		return harvestModuleExports(context, namespace, modName);
 	}
 
 	async function executeAsync(code: string): Promise<ExecutionResult> {
@@ -1789,7 +1873,7 @@ export async function createSandboxAsync(
 			throwFromError(errorObj, timeoutMs, cancellation);
 		}
 
-		const value = context.dump(awaited.value);
+		const value = dumpForHost(context, awaited.value);
 		if (awaited.value.alive) awaited.value.dispose();
 		return { value, duration_ms };
 	}
@@ -1842,6 +1926,7 @@ export async function createSandboxAsync(
 	}
 
 	function dispose(): void {
+		releaseCallbackSupport(context);
 		context.dispose();
 		runtime.dispose();
 	}

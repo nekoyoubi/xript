@@ -51,6 +51,15 @@ pub static STRIPPED_ELEMENTS: LazyLock<HashSet<&'static str>> = LazyLock::new(||
     .collect()
 });
 
+/// SVG's text-content metadata elements. `title` is stripped as HTML's document
+/// title, but inside an SVG it is the accessible name and tooltip primitive, and
+/// `desc` is its longer description. Both are admitted only under an `<svg>`,
+/// hold text alone, and carry only [`SVG_TEXT_ATTRIBUTES`].
+pub const SVG_TEXT_ELEMENTS: [&str; 2] = ["title", "desc"];
+
+/// The attributes an SVG `title`/`desc` keeps, beyond the inert `data-*` and `aria-*`.
+pub const SVG_TEXT_ATTRIBUTES: [&str; 4] = ["id", "class", "lang", "dir"];
+
 pub static UNWRAPPED_ELEMENTS: LazyLock<HashSet<&'static str>> =
     LazyLock::new(|| ["html", "head", "body"].into_iter().collect());
 

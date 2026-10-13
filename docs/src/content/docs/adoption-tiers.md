@@ -29,7 +29,7 @@ The manifest is minimal:
 
 ```json
 {
-  "xript": "0.8",
+  "xript": "0.9",
   "name": "calculator"
 }
 ```
@@ -54,7 +54,7 @@ The manifest adds bindings, capabilities, and custom types:
 
 ```json
 {
-  "xript": "0.8",
+  "xript": "0.9",
   "name": "task-manager",
   "version": "1.0.0",
   "bindings": {
@@ -140,7 +140,7 @@ Mods declare themselves in a [mod manifest](/spec/mod-manifest/) and contribute 
 
 ```json
 {
-  "xript": "0.8",
+  "xript": "0.9",
   "name": "health-panel",
   "version": "1.0.0",
   "capabilities": ["ui-mount"],
@@ -159,7 +159,7 @@ Mods declare themselves in a [mod manifest](/spec/mod-manifest/) and contribute 
 
 `fills` is the canonical contribution surface. A UI fragment, a provider role, and a lifecycle hook handler are not separate top-level concepts; each is a fill of a slot of a particular type. The value under each slot id is always an array, so a `multiple: true` slot can take more than one fill. (The earlier top-level `fragments[]` array and `contributions.provides` still validate but emit a deprecation warning; fold them into `fills`.)
 
-Fragment markup uses `data-bind` for value binding and `data-if` for conditional visibility. DOM event handlers go in the `handlers` array (entries shaped `{ selector, on, handler }`; the old `events` key is a deprecated alias). The sandbox fragment API gives mods programmatic control through a command buffer: `toggle`, `addClass`, `setText`, `replaceChildren`, and more. Every fragment is sanitized before it reaches the host.
+Fragment markup uses `data-bind` for value binding, `data-if` for conditional visibility, and `data-each` (keyed by `data-key`) to render a node once per list element. DOM event handlers go in the `handlers` array (entries shaped `{ selector, on, handler }`; the old `events` key is a deprecated alias). The sandbox fragment API gives mods programmatic control through a command buffer: `toggle`, `addClass`, `setText`, `replaceChildren`, and more. Every fragment is sanitized before it reaches the host.
 
 Scaffold a new mod project with `xript init --mod` to get a working template with a mod manifest, fragment HTML, and entry script.
 

@@ -167,7 +167,8 @@ public static class HtmlReader
                     parent.Children.Add(element);
 
                     var rawText = HtmlRulesApply(token.RawTag)
-                        && (token.Tag == "style" || HtmlRules.StrippedElements.Contains(token.Tag));
+                        && (token.Tag == "style" || HtmlRules.StrippedElements.Contains(token.Tag))
+                        && !(HtmlRules.SvgTextElements.Contains(token.Tag) && InsideSvg(stack));
 
                     if (rawText)
                     {
@@ -203,6 +204,14 @@ public static class HtmlReader
 
         return root.Children;
     }
+
+    /// <summary>
+    /// Whether an open <c>&lt;svg&gt;</c> encloses the insertion point. Inside SVG the HTML
+    /// parser reads <c>&lt;title&gt;</c> as a foreign element with ordinary content, not as
+    /// the document title's raw-text region.
+    /// </summary>
+    private static bool InsideSvg(List<FragmentNode.Element> stack) =>
+        stack.Exists(element => string.Equals(element.Name, "svg", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// A repeated attribute name resolves to its first occurrence: the parser discards a

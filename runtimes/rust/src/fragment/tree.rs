@@ -15,6 +15,7 @@ pub use xript_tree::node::{
     FragmentNode, FragmentTree, Props, FORBIDDEN_PROP_NAMES,
 };
 
+use super::profiles::FormatProfile;
 use super::rules::{escape_attr_value, escape_html, is_valid_attribute_name, VOID_ELEMENTS};
 
 /// Projects a node into the published J5ML tree type. Prop order is not
@@ -43,15 +44,25 @@ pub fn tree_to_j5ml(tree: &[FragmentNode]) -> Vec<Node> {
     tree.iter().map(node_to_j5ml).collect()
 }
 
+/// Serializes a tree to HTML with no vocabulary in view, as the built-in HTML
+/// vocabulary does: it declares no prop types.
 pub fn tree_to_html(tree: &[FragmentNode]) -> String {
-    tree.iter().map(node_to_html).collect()
+    tree.iter().map(|node| node_to_html(node, None)).collect()
 }
 
-fn node_to_html(node: &FragmentNode) -> String {
+/// Serializes a tree to HTML, reading each prop's declared JSON Schema `type`
+/// from the profile so a declared `array` prop projects as JSON.
+pub fn tree_to_html_for(tree: &[FragmentNode], profile: &FormatProfile) -> String {
+    tree.iter().map(|node| node_to_html(node, Some(profile))).collect()
+}
+
+fn node_to_html(node: &FragmentNode, profile: Option<&FormatProfile>) -> String {
     let element = match node {
         FragmentNode::Text { value, .. } => return escape_html(value),
         FragmentNode::Element(element) => element,
     };
+
+    let definition = profile.and_then(|profile| profile.node(&element.name));
 
     let mut attrs = String::new();
     for (key, value) in element.props.iter() {
@@ -61,7 +72,15 @@ fn node_to_html(node: &FragmentNode) -> String {
         match value {
             Value::Bool(true) => attrs.push_str(&format!(" {key}")),
             Value::Bool(false) | Value::Null => {}
-            other => attrs.push_str(&format!(" {key}=\"{}\"", escape_attr_value(&js_string(other)))),
+            other => {
+                let declared = definition
+                    .and_then(|definition| definition.prop(key))
+                    .and_then(|prop| prop.types.as_deref());
+                attrs.push_str(&format!(
+                    " {key}=\"{}\"",
+                    escape_attr_value(&prop_attribute_value(other, declared))
+                ));
+            }
         }
     }
 
@@ -71,8 +90,103 @@ fn node_to_html(node: &FragmentNode) -> String {
         return format!("<{}{} />", element.name, attrs);
     }
 
-    let children: String = element.children.iter().map(node_to_html).collect();
+    let children: String =
+        element.children.iter().map(|child| node_to_html(child, profile)).collect();
     format!("<{0}{1}>{2}</{0}>", element.name, attrs, children)
+}
+
+/// The text a prop value contributes as an HTML attribute value.
+///
+/// Scalars keep JavaScript `String()` semantics. A plain object is JSON-encoded,
+/// since `String()` would yield `[object Object]`. An array is JSON-encoded when
+/// the prop is declared `type: "array"` or when it holds an object at any depth;
+/// an undeclared array of scalars keeps its comma-joined `String()` form.
+pub fn prop_attribute_value(value: &Value, declared_types: Option<&[String]>) -> String {
+    match value {
+        Value::Object(_) => canonical_json(value),
+        Value::Array(items) => {
+            let declared_array = declared_types
+                .is_some_and(|types| types.iter().any(|candidate| candidate == "array"));
+            if declared_array || contains_object(items) {
+                canonical_json(value)
+            } else {
+                js_string(value)
+            }
+        }
+        other => js_string(other),
+    }
+}
+
+fn contains_object(items: &[Value]) -> bool {
+    items.iter().any(|item| match item {
+        Value::Object(_) => true,
+        Value::Array(inner) => contains_object(inner),
+        _ => false,
+    })
+}
+
+/// The canonical JSON encoding a structured prop projects to: compact,
+/// `JSON.stringify` escaping and number formatting, and object keys ordered by
+/// Unicode code point, so the attribute is byte-identical on every runtime.
+pub fn canonical_json(value: &Value) -> String {
+    let mut out = String::new();
+    write_canonical_json(value, &mut out);
+    out
+}
+
+fn write_canonical_json(value: &Value, out: &mut String) {
+    match value {
+        Value::Null => out.push_str("null"),
+        Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+        Value::Number(n) => match n.as_f64() {
+            Some(f) if f.is_finite() => out.push_str(&js_number_to_string(f)),
+            Some(_) => out.push_str("null"),
+            None => out.push_str(&n.to_string()),
+        },
+        Value::String(s) => write_json_string(s, out),
+        Value::Array(items) => {
+            out.push('[');
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                write_canonical_json(item, out);
+            }
+            out.push(']');
+        }
+        Value::Object(members) => {
+            let mut keys: Vec<&String> = members.keys().collect();
+            keys.sort();
+            out.push('{');
+            for (index, key) in keys.into_iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                write_json_string(key, out);
+                out.push(':');
+                write_canonical_json(&members[key], out);
+            }
+            out.push('}');
+        }
+    }
+}
+
+fn write_json_string(value: &str, out: &mut String) {
+    out.push('"');
+    for c in value.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0c}' => out.push_str("\\f"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
 }
 
 /// Serializes a tree into J5ML array form as raw JSON.

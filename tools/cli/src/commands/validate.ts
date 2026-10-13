@@ -1,17 +1,25 @@
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
 import {
 	validateManifestFile,
 	crossValidate,
-	validateManifest,
-	validateModManifest,
+	validateManifestVersioned,
 	validateShape,
 	type GrantShape,
+	type ValidationResult,
 } from "@xriptjs/validate";
+import { takeSpecFlag } from "../spec-version.js";
 
 const KNOWN_SHAPES = ["capability-prompt", "install-descriptor", "discovery-result", "debug-messages"];
 
-export async function run(args: string[]): Promise<void> {
+export async function run(rawArgs: string[]): Promise<void> {
+	const spec = takeSpecFlag(rawArgs);
+	if (spec.missing) {
+		console.error("Error: --spec requires a manifest version, e.g. --spec 0.8");
+		process.exit(1);
+	}
+	const args = spec.rest;
+	const versionOption = spec.version !== undefined ? { version: spec.version } : {};
 	const crossIndex = args.indexOf("--cross");
 	const isCross = crossIndex !== -1;
 	const skipFillPayloads = args.includes("--no-fill-payloads");
@@ -100,18 +108,18 @@ export async function run(args: string[]): Promise<void> {
 			process.exit(1);
 		}
 
-		const appResult = await validateManifest(appManifest!);
+		const appResult = await validateManifestVersioned(appManifest!, { ...versionOption, kind: "app", baseDir: dirname(resolve(appPath)) });
 		if (!appResult.valid) {
-			console.error(`\x1b[31m\u2717\x1b[0m ${resolve(appPath)} (app manifest invalid)`);
+			console.error(`\x1b[31m\u2717\x1b[0m ${resolve(appPath)} (app manifest invalid${targetSuffix(appResult)})`);
 			for (const error of appResult.errors) {
 				console.error(`  ${error.path}: ${error.message}`);
 			}
 			process.exit(1);
 		}
 
-		const modResult = await validateModManifest(modManifest!);
+		const modResult = await validateManifestVersioned(modManifest!, { ...versionOption, kind: "mod", baseDir: dirname(resolve(modPath)) });
 		if (!modResult.valid) {
-			console.error(`\x1b[31m\u2717\x1b[0m ${resolve(modPath)} (mod manifest invalid)`);
+			console.error(`\x1b[31m\u2717\x1b[0m ${resolve(modPath)} (mod manifest invalid${targetSuffix(modResult)})`);
 			for (const error of modResult.errors) {
 				console.error(`  ${error.path}: ${error.message}`);
 			}
@@ -140,13 +148,13 @@ export async function run(args: string[]): Promise<void> {
 		let hasFailure = false;
 
 		for (const file of files) {
-			const result = await validateManifestFile(file);
+			const result = await validateManifestFile(file, versionOption);
 
 			if (result.valid) {
-				console.log(`\x1b[32m\u2713\x1b[0m ${result.filePath}`);
+				console.log(`\x1b[32m\u2713\x1b[0m ${result.filePath}${targetSuffix(result, " ")}`);
 			} else {
 				hasFailure = true;
-				console.error(`\x1b[31m\u2717\x1b[0m ${result.filePath}`);
+				console.error(`\x1b[31m\u2717\x1b[0m ${result.filePath}${targetSuffix(result, " ")}`);
 				for (const error of result.errors) {
 					console.error(`  ${error.path}: ${error.message}`);
 				}
@@ -160,6 +168,12 @@ export async function run(args: string[]): Promise<void> {
 	}
 }
 
+/** `(xript 0.8)` after a result, naming the manifest version it was checked against. */
+function targetSuffix(result: ValidationResult, lead = ", "): string {
+	if (!result.target) return "";
+	return lead === " " ? ` (xript ${result.target.version})` : `, xript ${result.target.version}`;
+}
+
 function printHelp(): void {
 	console.log("Usage: xript validate <manifest.json> [manifest2.json ...]");
 	console.log("       xript validate --cross <app-manifest.json> <mod-manifest.json>");
@@ -168,6 +182,8 @@ function printHelp(): void {
 	console.log("Auto-detects app vs mod manifests.");
 	console.log("");
 	console.log("Options:");
+	console.log("  --spec <version>  Validate against this manifest version's schema (0.6, 0.7, 0.8, 0.9);");
+	console.log("                    defaults to the manifest's $schema, then its xript field");
 	console.log("  --cross           Cross-validate an app manifest against a mod manifest");
 	console.log("  --no-fill-payloads  With --cross, skip validating fills against slot payload schemas");
 	console.log("  --shape <name>    Validate a JSON payload against a grant/debug wire shape");

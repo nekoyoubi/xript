@@ -33,10 +33,12 @@ describe("xript CLI dispatcher", () => {
 		assert.ok(stdout.includes("scan"));
 	});
 
-	test("--version prints version", async () => {
+	test("--version prints the toolchain version, then the manifest versions it speaks", async () => {
 		const { stdout, exitCode } = await run("--version");
 		assert.equal(exitCode, 0);
-		assert.match(stdout.trim(), /^\d+\.\d+\.\d+$/);
+		const [toolchain, speaks] = stdout.trim().split(/\r?\n/);
+		assert.match(toolchain, /^\d+\.\d+\.\d+$/);
+		assert.equal(speaks, "manifest versions: 0.6, 0.7, 0.8, 0.9 (default 0.9)");
 	});
 
 	test("no arguments shows help and exits 1", async () => {

@@ -10,6 +10,7 @@ The xript specification defines how applications expose functionality to scripts
 - [capabilities.md](./capabilities.md): the capability model
 - [bindings.md](./bindings.md): binding conventions and type mapping
 - [hooks.md](./hooks.md): hook conventions, lifecycle phases, and registration
+- [execution.md](./execution.md): execution limits, what can and cannot be interrupted, host bindings, pool wedge detection, and Rust async mode
 - [commands.md](./commands.md): the command slot kind (`application/x-xript-command`), bound arguments, resolution, and invocation
 - [security.md](./security.md): security guarantees and conformance checklist
 - [fragments.md](./fragments.md): the fragment protocol (the semantics of fragment-format slots)
@@ -20,3 +21,7 @@ The xript specification defines how applications expose functionality to scripts
 - [sanitizer-tests.json](./sanitizer-tests.json): HTML sanitizer conformance test suite
 - [command-tests.json](./command-tests.json): command slot conformance corpus (branch order, normalization, bound args, resolution)
 - [expression-tests.json](./expression-tests.json): expression conformance corpus (evaluation, refused sources, interpolation, and the safety cases)
+- [marshal-tests.json](./marshal-tests.json): host-to-sandbox marshalling conformance corpus (a host value's keys are data, an own `__proto__` included)
+- [callback-tests.json](./callback-tests.json): call-scoped callback conformance corpus (script functions passed into host bindings)
+- [escape-tests.json](./escape-tests.json): code-generation conformance corpus (every `.constructor` chain a script can walk, through its own values and the host's, ends in a `TypeError`)
+- [fragment-applier-tests.json](./fragment-applier-tests.json): fragment op applier conformance table, run by a host through `runFragmentApplierConformance`

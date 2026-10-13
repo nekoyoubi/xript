@@ -1,12 +1,20 @@
 import { readFile } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
 import { lintManifests, resolveProvenance, type LintResult, type Severity } from "@xriptjs/validate";
+import { takeSpecFlag, versionFindings, withFindings } from "../spec-version.js";
 
-export async function run(args: string[]): Promise<void> {
-	if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
+export async function run(rawArgs: string[]): Promise<void> {
+	if (rawArgs.length === 0 || rawArgs.includes("--help") || rawArgs.includes("-h")) {
 		printHelp();
-		process.exit(args.length === 0 ? 1 : 0);
+		process.exit(rawArgs.length === 0 ? 1 : 0);
 	}
+	const spec = takeSpecFlag(rawArgs);
+	if (spec.missing) {
+		console.error("Error: --spec requires a manifest version, e.g. --spec 0.8");
+		process.exit(1);
+	}
+	const args = spec.rest;
+	const versionOption = spec.version !== undefined ? { version: spec.version } : {};
 
 	const asJson = args.includes("--json");
 	const strict = args.includes("--strict");
@@ -38,13 +46,27 @@ export async function run(args: string[]): Promise<void> {
 		const mods = await Promise.all(modPaths.map(async (path) => JSON.parse(await readFile(resolve(path), "utf-8"))));
 		const { resolved, inheritedSlots, inheritedCapabilities, inheritedAbstractTypes, inheritedFormats } =
 			await resolveProvenance(host, dirname(hostAbs));
-		const result = lintManifests(resolved, mods, {
-			strict,
-			inheritedSlots,
-			inheritedCapabilities,
-			inheritedAbstractTypes,
-			inheritedFormats,
-		});
+		const versioned = await versionFindings(resolved, "host", { ...versionOption, kind: "app", baseDir: dirname(hostAbs) });
+		for (const [index, mod] of mods.entries()) {
+			const name = (mod as { name?: unknown }).name;
+			versioned.push(
+				...(await versionFindings(mod, typeof name === "string" ? `mod "${name}"` : `mod ${index + 1}`, {
+					...versionOption,
+					kind: "mod",
+					baseDir: dirname(resolve(modPaths[index])),
+				})),
+			);
+		}
+		const result = withFindings(
+			lintManifests(resolved, mods, {
+				strict,
+				inheritedSlots,
+				inheritedCapabilities,
+				inheritedAbstractTypes,
+				inheritedFormats,
+			}),
+			versioned,
+		);
 
 		if (asJson) {
 			console.log(JSON.stringify(result, null, 2));
@@ -104,5 +126,7 @@ function printHelp(): void {
 	console.log("");
 	console.log("Options:");
 	console.log("  --strict   Exit non-zero on any warning, not just errors");
+	console.log("  --spec <v> Check each manifest against this manifest version (0.6-0.9); defaults to each");
+	console.log("             manifest's $schema, then its xript field");
 	console.log("  --json     Emit the full result as JSON");
 }

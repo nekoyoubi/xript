@@ -45,7 +45,7 @@ Configure your MCP client to launch `xript mcp` (or `npx -y @xriptjs/cli mcp`) o
 | `xript_score_diff` | Diff a host's score against a saved baseline; toward or away from xript |
 | `xript_lint` | Review a host + mods for actionable findings; the complement to `xript_score` |
 | `xript_guide` | Read canonical authoring doctrine by topic |
-| `xript_server_info` | Report the running server's name, version, build timestamp, and runtime |
+| `xript_server_info` | Report the running server's name, toolchain version, build timestamp, runtime, and the manifest versions it answers for |
 
 `xript_manifest_describe` is the one to reach for first when authoring against a host. Point it at the host's manifest and it returns the surface the mod can call and contribute into, derived from the manifest rather than guessed.
 
@@ -54,6 +54,24 @@ Configure your MCP client to launch `xript mcp` (or `npx -y @xriptjs/cli mcp`) o
 ### Paths or inline
 
 Every tool that takes a manifest accepts **either a file path or the inline JSON**. Pass a path, absolute or relative to the client's workspace root, and the server reads the file itself, so a large manifest never has to ride through the tool-call tokens. A value that starts with `{` or `[` is treated as inline JSON; anything else is treated as a path. Relative paths resolve against the workspace root the client advertises, the same mechanism `xript_scan` uses; without a root, pass an absolute path.
+
+### Answering for a manifest version
+
+A tool answers for the xript version the manifest targets, not for whatever version the server happens to be. `xript_validate`, `xript_cross_validate`, `xript_lint`, `xript_manifest_describe`, `xript_typegen`, `xript_docgen`, and `xript_scaffold` each take an optional `version` (`0.6`, `0.7`, `0.8`, or `0.9`). Omitted, the target comes from the manifest itself, in this order:
+
+1. the version in its `$schema`, when that is an xript schema URL (`https://xript.dev/schema/manifest/v0.8.json`)
+2. its `xript` field
+3. the server's default, the current version
+
+The manifest is then checked against **that version's schema**: the frozen document its `$id` published, not the current one. A 0.8 manifest using a 0.9 feature fails as a 0.8 manifest, and passing `version: "0.9"` asks the other question. A manifest naming a version the server does not speak is answered for the default, with a note saying so; an explicit `version` the server does not speak is an error.
+
+Every result names the version it answered for. `xript_validate` and `xript_cross_validate` print a `target` line; `xript_typegen` and `xript_docgen` return the generated text as the first content block and the target, plus any violation of that version's schema, as a second; `xript_lint` adds a `schema-version` error finding per violation; `xript_manifest_describe` opens with a `Target version` section; `xript_scaffold` writes the version into every manifest's `xript` and `$schema`.
+
+`xript_guide` takes the same `version`. A topic whose doctrine changed across versions (the deprecated `fragments[]` / `contributions` / standalone `hooks` shapes giving way to `fills`, and fragment formats) leads with that version's note; without one, it closes with an **Across versions** section listing every version's note.
+
+`xript_server_info` reports `toolchainVersion`, `manifestVersions` (what it speaks), and `defaultManifestVersion`. The CLI follows the same convention: `--spec <version>` on `validate`, `typegen`, `docgen`, `lint`, `describe`, `init`, and `guide`, and `xript --version` prints the toolchain version followed by the manifest versions it speaks.
+
+The convention is deliberately small so other tools can copy it: take an optional target version, default it from the artifact's own declaration, validate against that version's frozen schema, and say in every answer which version you answered for.
 
 ## Resources
 

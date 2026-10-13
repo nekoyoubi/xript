@@ -14,6 +14,14 @@ import {
 	HOST_BINDING_THREAD_CONTRACT,
 	resolveFormatProfile,
 	FormatProfileError,
+	typeRefToMarkdown,
+	typeRefToTypeScript,
+	typeRefToRestArray,
+	returnTypeRef,
+	returnDescription,
+	parseTypeRef,
+	resolveTypeWords,
+	type TypeNode,
 	type NodeDefinition,
 	type PropDefinition,
 } from "@xriptjs/validate";
@@ -82,7 +90,7 @@ type Binding = FunctionBinding | NamespaceBinding;
 interface FunctionBinding {
 	description: string;
 	params?: Parameter[];
-	returns?: TypeRef;
+	returns?: TypeRef | { type: TypeRef; description?: string };
 	async?: boolean;
 	capability?: string;
 	examples?: Example[];
@@ -100,6 +108,8 @@ interface Parameter {
 	description?: string;
 	default?: unknown;
 	required?: boolean;
+	optional?: boolean;
+	variadic?: boolean;
 }
 
 type TypeRef = string | ComplexTypeRef;
@@ -109,6 +119,7 @@ interface ComplexTypeRef {
 	union?: TypeRef[];
 	map?: TypeRef;
 	optional?: TypeRef;
+	function?: { params?: Parameter[]; returns?: TypeRef };
 }
 
 interface Capability {
@@ -196,52 +207,84 @@ function isNamespace(binding: Binding): binding is NamespaceBinding {
 	return "members" in binding;
 }
 
-/**
- * Appends `[]`, parenthesising first when the element type is a union or intersection.
- *
- * Without it, `{ array: { union: ["string", "number"] } }` documents as `string | number[]`,
- * which reads as a union with an array rather than an array of a union — and the signature block
- * is fenced as TypeScript, so the wrong type is published as code an adopter copies.
- */
-function needsParensAsElement(ref: TypeRef): boolean {
-	if (typeof ref === "string") return false;
-	// `optional` renders as `X | undefined`, which needs the same grouping a union does.
-	return Boolean(ref.union) || ref.optional !== undefined;
-}
-
-function docArrayOf(ref: TypeRef, rendered: string): string {
-	return needsParensAsElement(ref) ? `(${rendered})[]` : `${rendered}[]`;
-}
-
 function formatTypeRef(ref: TypeRef): string {
-	if (typeof ref === "string") {
-		const primitives = ["string", "number", "boolean", "void", "null"];
-		if (primitives.includes(ref)) return `\`${ref}\``;
-		if (ref.endsWith("[]")) return `\`${ref.slice(0, -2)}\`[]`;
-		return `\`${ref}\``;
-	}
-	if (ref.array !== undefined) return docArrayOf(ref.array, formatTypeRef(ref.array));
-	if (ref.union) return ref.union.map(formatTypeRef).join(" \\| ");
-	if (ref.map !== undefined) return `Record<string, ${formatTypeRef(ref.map)}>`;
-	// `undefined` is a type name like any other here, and every other one is backticked.
-	if (ref.optional !== undefined) return `${formatTypeRef(ref.optional)} \\| \`undefined\``;
-	return "`unknown`";
+	return typeRefToMarkdown(ref);
 }
 
 function typeRefToCode(ref: TypeRef): string {
-	if (typeof ref === "string") {
-		if (ref.endsWith("[]")) return `${ref.slice(0, -2)}[]`;
-		return ref;
-	}
-	if (ref.array !== undefined) return docArrayOf(ref.array, typeRefToCode(ref.array));
-	if (ref.union) return ref.union.map(typeRefToCode).join(" | ");
-	if (ref.map !== undefined) return `Record<string, ${typeRefToCode(ref.map)}>`;
-	if (ref.optional !== undefined) return `${typeRefToCode(ref.optional)} | undefined`;
-	return "unknown";
+	return typeRefToTypeScript(ref);
+}
+
+function refersToFunction(ref: TypeRef): boolean {
+	const walk = (node: TypeNode): boolean => {
+		switch (node.kind) {
+			case "function":
+			case "signature":
+				return true;
+			case "array":
+				return walk(node.element);
+			case "map":
+				return walk(node.value);
+			case "optional":
+				return walk(node.inner);
+			case "union":
+				return node.members.some(walk);
+			default:
+				return false;
+		}
+	};
+	return walk(resolveTypeWords(parseTypeRef(ref)));
+}
+
+/** Explains the call-scoped lifetime once, under a table whose parameters take a callback. */
+function callbackNote(params: Parameter[]): string[] {
+	const callbacks = params.filter((p) => refersToFunction(p.type)).map((p) => `\`${p.name}\``);
+	if (callbacks.length === 0) return [];
+	const [subject, pronoun] =
+		callbacks.length === 1 ? [`${callbacks[0]} is a callback`, "it"] : [`${callbacks.join(", ")} are callbacks`, "them"];
+	return [
+		`> ${subject}: the app may call ${pronoun} only while this call is running, synchronously, and every call spends your script's execution budget.`,
+		"",
+	];
 }
 
 function isOptionalParam(param: Parameter): boolean {
-	return param.default !== undefined || param.required === false;
+	return param.default !== undefined || param.required === false || param.optional === true;
+}
+
+/** A parameter list as it appears in a fenced TypeScript signature; a variadic last parameter is a rest. */
+function signatureParams(params: Parameter[]): string {
+	return params
+		.map((p) => {
+			if (p.variadic) return `...${p.name}: ${typeRefToRestArray(p.type)}`;
+			return `${p.name}${isOptionalParam(p) ? "?" : ""}: ${typeRefToCode(p.type)}`;
+		})
+		.join(", ");
+}
+
+/** The rows of a parameter table. A variadic parameter is listed by its element type and marked as a rest. */
+function parameterRows(params: Parameter[]): string[] {
+	return params.map((p) => {
+		const req = p.variadic || isOptionalParam(p) ? "No" : "Yes";
+		const name = p.variadic ? `\`...${p.name}\`` : `\`${p.name}\``;
+		const variadicNote = p.variadic ? " Variadic: takes zero or more arguments, each of this type." : "";
+		const desc = escapeCell(p.description || "");
+		const defaultNote = p.default !== undefined ? ` (default: \`${JSON.stringify(p.default)}\`)` : "";
+		return `| ${name} | ${formatTypeRef(p.type)} | ${req} | ${`${desc}${defaultNote}${variadicNote}`.trim()} |`;
+	});
+}
+
+function signatureReturn(binding: { returns?: unknown; async?: boolean }): string {
+	const declared = returnTypeRef(binding.returns);
+	const type = declared !== undefined ? typeRefToCode(declared as TypeRef) : "void";
+	return binding.async ? `Promise<${type}>` : type;
+}
+
+/** The returned type in markdown, with the async marker and the declared description when present. */
+function returnsText(binding: { returns?: unknown; async?: boolean }): string {
+	const declared = returnTypeRef(binding.returns);
+	const description = returnDescription(binding.returns);
+	return `${formatTypeRef(declared as TypeRef)}${binding.async ? " (async)" : ""}${description ? `: ${description}` : ""}`;
 }
 
 /**
@@ -353,7 +396,7 @@ function generateExportsSection(manifest: Manifest): string[] {
 	lines.push("| Export | Capability | Execution | Description |");
 	lines.push("|--------|------------|-----------|-------------|");
 	for (const [name, def] of Object.entries(exports)) {
-		const cap = def?.capability ? `\`${def.capability}\`` : "—";
+		const cap = def?.capability ? `\`${def.capability}\`` : "-";
 		const intent = resolveExecutionIntent(manifest, `exports/${name}`);
 		lines.push(`| \`${name}\` | ${cap} | \`${intent.duration}\` / \`${intent.affinity}\` | ${escapeCell(def?.description ?? "")} |`);
 	}
@@ -371,7 +414,7 @@ function generateExecutionSection(manifest: Manifest): string[] {
 	lines.push("## Execution");
 	lines.push("");
 	lines.push(
-		"Declared execution intent: how long a host should expect a call to take (`duration`) and where it may run (`affinity`). This is a routing signal and nothing more — it is not `limits`, which is enforcement, and it is not a capability, so declaring `unbounded` buys no privilege. A surface that declares nothing resolves to the manifest-wide `execution`, and absent that to the defaults `brief` / `any`.",
+		"Declared execution intent: how long a host should expect a call to take (`duration`) and where it may run (`affinity`). This is a routing signal and nothing more: it is not `limits`, which is enforcement, and it is not a capability, so declaring `unbounded` buys no privilege. A surface that declares nothing resolves to the manifest-wide `execution`, and absent that to the defaults `brief` / `any`.",
 	);
 	lines.push("");
 	lines.push(
@@ -409,7 +452,7 @@ function executionNote(manifest: unknown, path: string, isAsync = false): string
 	const resolved = resolveExecutionIntent(manifest, path);
 	const lines: string[] = [];
 	if (!isDefaultIntent(resolved)) {
-		lines.push(`**Execution:** \`duration: ${resolved.duration}\` — ${DURATION_PROSE[resolved.duration]}. \`affinity: ${resolved.affinity}\`.`);
+		lines.push(`**Execution:** \`duration: ${resolved.duration}\`: ${DURATION_PROSE[resolved.duration]}. \`affinity: ${resolved.affinity}\`.`);
 		lines.push("");
 	}
 	if (isAsync) {
@@ -459,7 +502,7 @@ function generateIndexPage(manifest: Manifest, options?: DocgenOptions): DocPage
 			for (const name of topLevel) {
 				const binding = manifest.bindings[name] as FunctionBinding;
 				const ext = linkExt(options);
-				lines.push(`- [\`${name}()\`](./bindings/${name}${ext})${binding.description ? ` — ${binding.description}` : ""}`);
+				lines.push(`- [\`${name}()\`](./bindings/${name}${ext})${binding.description ? `: ${binding.description}` : ""}`);
 			}
 			lines.push("");
 		}
@@ -473,7 +516,7 @@ function generateIndexPage(manifest: Manifest, options?: DocgenOptions): DocPage
 				const ext = linkExt(options);
 				const count = `(${memberCount} ${memberCount === 1 ? "function" : "functions"})`;
 				lines.push(
-					`- [\`${name}\`](./bindings/${name}${ext})${binding.description ? ` — ${binding.description} ` : " "}${count}`,
+					`- [\`${name}\`](./bindings/${name}${ext})${binding.description ? `: ${binding.description} ` : " "}${count}`,
 				);
 			}
 			lines.push("");
@@ -488,7 +531,7 @@ function generateIndexPage(manifest: Manifest, options?: DocgenOptions): DocPage
 			const phaseInfo =
 				hook.phases && hook.phases.length > 0 ? ` *(${hook.phases.join(", ")})*` : "";
 			const ext = linkExt(options);
-			lines.push(`- [\`${name}\`](./hooks/${name}${ext}) — ${hook.description}${phaseInfo}`);
+			lines.push(`- [\`${name}\`](./hooks/${name}${ext}): ${hook.description}${phaseInfo}`);
 		}
 		lines.push("");
 	}
@@ -516,15 +559,15 @@ function generateIndexPage(manifest: Manifest, options?: DocgenOptions): DocPage
 			lines.push("| Event | Payload | Capability | Description |");
 			lines.push("|-------|---------|------------|-------------|");
 			for (const event of manifest.events) {
-				const payload = event.payload !== undefined ? formatTypeRef(event.payload) : "—";
-				const cap = event.capability ? `\`${event.capability}\`` : "—";
+				const payload = event.payload !== undefined ? formatTypeRef(event.payload) : "-";
+				const cap = event.capability ? `\`${event.capability}\`` : "-";
 				lines.push(`| \`${event.id}\` | ${payload} | ${cap} | ${escapeCell(event.description)} |`);
 			}
 		} else {
 			lines.push("| Event | Payload | Description |");
 			lines.push("|-------|---------|-------------|");
 			for (const event of manifest.events) {
-				const payload = event.payload !== undefined ? formatTypeRef(event.payload) : "—";
+				const payload = event.payload !== undefined ? formatTypeRef(event.payload) : "-";
 				lines.push(`| \`${event.id}\` | ${payload} | ${escapeCell(event.description)} |`);
 			}
 		}
@@ -541,8 +584,8 @@ function generateIndexPage(manifest: Manifest, options?: DocgenOptions): DocPage
 		lines.push("| Library | Version | Capability | Description |");
 		lines.push("|---------|---------|------------|-------------|");
 		for (const [specifier, library] of Object.entries(manifest.libraries)) {
-			const version = library.version ? `\`${library.version}\`` : "—";
-			const cap = library.capability ? `\`${library.capability}\`` : "—";
+			const version = library.version ? `\`${library.version}\`` : "-";
+			const cap = library.capability ? `\`${library.capability}\`` : "-";
 			const deprecated = library.deprecated ? ` **Deprecated:** ${library.deprecated}` : "";
 			lines.push(`| \`${specifier}\` | ${version} | ${cap} | ${escapeCell(library.description ?? "")}${deprecated} |`);
 		}
@@ -555,7 +598,7 @@ function generateIndexPage(manifest: Manifest, options?: DocgenOptions): DocPage
 		for (const [name, def] of Object.entries(manifest.types)) {
 			const kind = def.values ? "enum" : "interface";
 			const ext = linkExt(options);
-			lines.push(`- [\`${name}\`](./types/${name}${ext}) — ${def.description} *(${kind})*`);
+			lines.push(`- [\`${name}\`](./types/${name}${ext}): ${def.description} *(${kind})*`);
 		}
 		lines.push("");
 	}
@@ -589,7 +632,7 @@ function generateIndexPage(manifest: Manifest, options?: DocgenOptions): DocPage
 			const accepts = slot.accepts.join(", ");
 			const multiple = slot.multiple ? "Yes" : "No";
 			const style = slot.style || "inherit";
-			const cap = slot.capability ? `\`${slot.capability}\`` : "—";
+			const cap = slot.capability ? `\`${slot.capability}\`` : "-";
 			const intent = resolveExecutionIntent(manifest, `slots/${slot.id}`);
 			const execution = slotsDeclareIntent ? ` \`${intent.duration}\` / \`${intent.affinity}\` |` : "";
 			const budget = slotsDeclareBudget
@@ -628,21 +671,21 @@ function generateIndexPage(manifest: Manifest, options?: DocgenOptions): DocPage
 			lines.push("### Runtime-configured scopes");
 			lines.push("");
 			lines.push(
-				"These scopes have children the host creates at run time — one per configured root, account, or project. Request the specific child you need; a grant on the parent covers every instance under it, including ones that do not exist yet.",
+				"These scopes have children the host creates at run time, one per configured root, account, or project. Request the specific child you need; a grant on the parent covers every instance under it, including ones that do not exist yet.",
 			);
 			lines.push("");
 			lines.push("| Capability | One child is | Example |");
 			lines.push("|------------|--------------|---------|");
 			for (const [name, cap] of dynamicScopes) {
 				const instances = cap.instances!;
-				const example = instances.example ? `\`${instances.example}\`` : "—";
-				lines.push(`| \`${name}\` | ${escapeCell(instances.description ?? "—")} | ${example} |`);
+				const example = instances.example ? `\`${instances.example}\`` : "-";
+				lines.push(`| \`${name}\` | ${escapeCell(instances.description ?? "-")} | ${example} |`);
 			}
 			lines.push("");
 		}
 		if (anyDotted) {
 			lines.push(
-				"Because scopes subsume by prefix, a grant on a parent scope also satisfies any requirement nested beneath it — a grant on `run` covers `run.command`, but not the unrelated sibling `runner`.",
+				"Because scopes subsume by prefix, a grant on a parent scope also satisfies any requirement nested beneath it: a grant on `run` covers `run.command`, but not the unrelated sibling `runner`.",
 			);
 			lines.push("");
 		}
@@ -679,7 +722,7 @@ function generateIndexPage(manifest: Manifest, options?: DocgenOptions): DocPage
 					`A grant on \`${name}\` also satisfies, by scope subsumption, the requirements of:`,
 				);
 				for (const r of subsumed) {
-					lines.push(`- ${r.link ? `[${r.label}](${r.link})` : r.label} *(${r.kind})* — requires \`${r.capability}\``);
+					lines.push(`- ${r.link ? `[${r.label}](${r.link})` : r.label} *(${r.kind})*: requires \`${r.capability}\``);
 				}
 			}
 			lines.push("");
@@ -739,7 +782,7 @@ function generateIndexPage(manifest: Manifest, options?: DocgenOptions): DocPage
 					lines.push("");
 					if (usingAlias) {
 						lines.push(
-							"> **Deprecated:** this fill declares handlers under the `events` key. `events` is a deprecated alias for `handlers` — rename the key. If both are present, `handlers` wins.",
+							"> **Deprecated:** this fill declares handlers under the `events` key. `events` is a deprecated alias for `handlers`, so rename the key. If both are present, `handlers` wins.",
 						);
 						lines.push("");
 					}
@@ -772,19 +815,11 @@ function generateFunctionPage(name: string, binding: FunctionBinding, manifest?:
 	}
 
 	const params = binding.params || [];
-	const paramStr = params
-		.map((p) => {
-			const opt = isOptionalParam(p) ? "?" : "";
-			return `${p.name}${opt}: ${typeRefToCode(p.type)}`;
-		})
-		.join(", ");
-	let returnType = binding.returns ? typeRefToCode(binding.returns) : "void";
-	if (binding.async) returnType = `Promise<${returnType}>`;
 
 	lines.push("## Signature");
 	lines.push("");
 	lines.push("```typescript");
-	lines.push(`function ${name}(${paramStr}): ${returnType}`);
+	lines.push(`function ${name}(${signatureParams(params)}): ${signatureReturn(binding)}`);
 	lines.push("```");
 	lines.push("");
 	lines.push(...executionNote(manifest, `bindings/${name}`, binding.async === true));
@@ -794,19 +829,15 @@ function generateFunctionPage(name: string, binding: FunctionBinding, manifest?:
 		lines.push("");
 		lines.push("| Name | Type | Required | Description |");
 		lines.push("|------|------|----------|-------------|");
-		for (const p of params) {
-			const req = isOptionalParam(p) ? "No" : "Yes";
-			const desc = escapeCell(p.description || "");
-			const defaultNote = p.default !== undefined ? ` (default: \`${JSON.stringify(p.default)}\`)` : "";
-			lines.push(`| \`${p.name}\` | ${formatTypeRef(p.type)} | ${req} | ${desc}${defaultNote} |`);
-		}
+		lines.push(...parameterRows(params));
 		lines.push("");
+		lines.push(...callbackNote(params));
 	}
 
 	if (binding.returns) {
 		lines.push("## Returns");
 		lines.push("");
-		lines.push(`${formatTypeRef(binding.returns)}${binding.async ? " (async)" : ""}`);
+		lines.push(returnsText(binding));
 		lines.push("");
 	}
 
@@ -847,14 +878,6 @@ function appendNamespaceMember(
 	manifest?: Manifest,
 ): void {
 	const params = fn.params || [];
-	const paramStr = params
-		.map((p) => {
-			const opt = isOptionalParam(p) ? "?" : "";
-			return `${p.name}${opt}: ${typeRefToCode(p.type)}`;
-		})
-		.join(", ");
-	let returnType = fn.returns ? typeRefToCode(fn.returns) : "void";
-	if (fn.async) returnType = `Promise<${returnType}>`;
 
 	lines.push(`### ${qualifiedPrefix}.${memberName}()`);
 	lines.push("");
@@ -865,7 +888,7 @@ function appendNamespaceMember(
 	lines.push(fn.description);
 	lines.push("");
 	lines.push("```typescript");
-	lines.push(`function ${memberName}(${paramStr}): ${returnType}`);
+	lines.push(`function ${memberName}(${signatureParams(params)}): ${signatureReturn(fn)}`);
 	lines.push("```");
 	lines.push("");
 	lines.push(...executionNote(manifest, `bindings/${qualifiedPrefix}.${memberName}`, fn.async === true));
@@ -875,17 +898,13 @@ function appendNamespaceMember(
 		lines.push("");
 		lines.push("| Name | Type | Required | Description |");
 		lines.push("|------|------|----------|-------------|");
-		for (const p of params) {
-			const req = isOptionalParam(p) ? "No" : "Yes";
-			const desc = escapeCell(p.description || "");
-			const defaultNote = p.default !== undefined ? ` (default: \`${JSON.stringify(p.default)}\`)` : "";
-			lines.push(`| \`${p.name}\` | ${formatTypeRef(p.type)} | ${req} | ${desc}${defaultNote} |`);
-		}
+		lines.push(...parameterRows(params));
 		lines.push("");
+		lines.push(...callbackNote(params));
 	}
 
 	if (fn.returns) {
-		lines.push(`**Returns:** ${formatTypeRef(fn.returns)}${fn.async ? " (async)" : ""}`);
+		lines.push(`**Returns:** ${returnsText(fn)}`);
 		lines.push("");
 	}
 
@@ -982,10 +1001,10 @@ function generateTypePage(name: string, def: TypeDefinition): DocPage {
 		for (const [fieldName, field] of Object.entries(def.fields)) {
 			const req = field.default !== undefined ? "Yes" : field.optional ? "No" : "Yes";
 			const desc = escapeCell(field.description || "");
-			const def_ = field.default !== undefined ? `\`${JSON.stringify(field.default)}\`` : "—";
+			const def_ = field.default !== undefined ? `\`${JSON.stringify(field.default)}\`` : "-";
 			const allowed = Array.isArray(field.enum) && field.enum.length > 0
 				? field.enum.map((v) => `\`${JSON.stringify(v)}\``).join(", ")
-				: "—";
+				: "-";
 			lines.push(`| \`${fieldName}\` | ${formatTypeRef(field.type)} | ${req} | ${def_} | ${allowed} | ${desc} |`);
 		}
 		lines.push("");
@@ -1019,13 +1038,7 @@ function generateHookPage(name: string, hookDef: HookDef, manifest?: Manifest): 
 	lines.push(...executionNote(manifest, `hooks/${name}`, hookDef.async === true));
 
 	const params = hookDef.params || [];
-	const handlerParams = params
-		.map((p) => {
-			const opt = isOptionalParam(p) ? "?" : "";
-			return `${p.name}${opt}: ${typeRefToCode(p.type)}`;
-		})
-		.join(", ");
-	const handlerType = `(${handlerParams}) => void`;
+	const handlerType = `(${signatureParams(params)}) => void`;
 
 	if (hookDef.phases && hookDef.phases.length > 0) {
 		lines.push("## Phases");
@@ -1057,13 +1070,7 @@ function generateHookPage(name: string, hookDef: HookDef, manifest?: Manifest): 
 		lines.push("");
 		lines.push("| Name | Type | Required | Description |");
 		lines.push("|------|------|----------|-------------|");
-		for (const p of params) {
-			const req = isOptionalParam(p) ? "No" : "Yes";
-			const desc = escapeCell(p.description || "");
-			const defaultNote =
-				p.default !== undefined ? ` (default: \`${JSON.stringify(p.default)}\`)` : "";
-			lines.push(`| \`${p.name}\` | ${formatTypeRef(p.type)} | ${req} | ${desc}${defaultNote} |`);
-		}
+		lines.push(...parameterRows(params));
 		lines.push("");
 	}
 
@@ -1083,7 +1090,7 @@ function generateFragmentAPIPage(): DocPage {
 	lines.push("# Fragment API");
 	lines.push("");
 	lines.push("The sandbox fragment API provides imperative fragment manipulation from within mod scripts.");
-	lines.push("All operations use the command buffer pattern — method calls accumulate operations that the host applies after the callback returns.");
+	lines.push("All operations use the command buffer pattern: method calls accumulate operations that the host applies after the callback returns.");
 	lines.push("");
 
 	lines.push("## Lifecycle Hooks");
@@ -1101,13 +1108,18 @@ function generateFragmentAPIPage(): DocPage {
 	lines.push("");
 	lines.push("| Method | Arguments | Effect |");
 	lines.push("|--------|-----------|--------|");
-	lines.push("| `toggle(selector, condition)` | CSS selector, boolean | Show/hide matching elements |");
+	lines.push("| `toggle(selector, condition)` | CSS selector, boolean | Show matching elements when `condition` is true, hide them when false. A set, not a flip; appliers must read `value` |");
 	lines.push("| `addClass(selector, className)` | CSS selector, string | Add class to matching elements |");
 	lines.push("| `removeClass(selector, className)` | CSS selector, string | Remove class from matching elements |");
 	lines.push("| `setText(selector, text)` | CSS selector, string | Set text content of matching elements |");
-	lines.push("| `setProp(selector, prop, value)` | CSS selector, string, any | Set a prop on matching nodes; the value keeps its type |");
-	lines.push("| `setAttr(selector, attr, value)` | CSS selector, string, string | **Deprecated** alias of `setProp`, kept under its own op name |");
-	lines.push("| `replaceChildren(selector, html)` | CSS selector, string/string[] | Replace children of matching elements |");
+	lines.push("| `setProp(selector, prop, value)` | CSS selector, string, any | Set a prop on matching nodes; the value keeps its type. On an HTML attribute, `false`/`null` removes it |");
+	lines.push("| `setAttr(selector, attr, value)` | CSS selector, string, string/number/boolean/null | **Deprecated** alias of `setProp`, kept under its own op name. `false`/`null` removes the attribute; an object or array is refused |");
+	lines.push("| `removeAttr(selector, attr)` | CSS selector, string | Remove an attribute from matching elements; the inverse of `setAttr` |");
+	lines.push("| `replaceChildren(selector, content)` | CSS selector, string/string[]/node[] | Replace children of matching elements. A list stays a list; `[]` clears |");
+	lines.push("");
+	lines.push("`toggle` is a set, not a flip: the condition arrives as the op's strict boolean `value`, and calling it twice with the same condition leaves the element where one call did. An applier must read `value` rather than invert the element's current state.");
+	lines.push("");
+	lines.push("`setAttr(selector, name, false)` removes the attribute rather than writing the string `\"false\"`, which HTML would read as present: the op reaches the host as `removeAttr`. To write a string-boolean attribute such as `aria-pressed`, pass the string `\"false\"`.");
 	lines.push("");
 
 	lines.push("## Example");
@@ -1129,7 +1141,7 @@ function generateGrantShapesPage(): DocPage {
 
 	lines.push("# Capability Grant Shapes");
 	lines.push("");
-	lines.push("Host-side wire shapes for capability grant flows. The runtimes never see these — grant policy and prompt UX stay host-side. Granting still flows through `RuntimeOptions.capabilities`.");
+	lines.push("Host-side wire shapes for capability grant flows. The runtimes never see these; grant policy and prompt UX stay host-side. Granting still flows through `RuntimeOptions.capabilities`.");
 	lines.push("");
 
 	lines.push("## CapabilityPrompt");
@@ -1250,7 +1262,7 @@ function generateFormatsSection(manifest: Manifest): string[] {
 				? Object.entries(node.props)
 						.map(([propName, propDef]) => `\`${propName}\`: ${renderPropType(propDef)}`)
 						.join("<br>")
-				: "—";
+				: "-";
 			lines.push(`| \`${nodeName}\` | ${props} | ${renderChildren(node.children)} |`);
 		}
 		lines.push("");

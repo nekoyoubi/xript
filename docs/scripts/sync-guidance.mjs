@@ -48,29 +48,37 @@ const SPEC_SLUGS = {
 	"manifest.md": "manifest", "mod-manifest.md": "mod-manifest", "fragments.md": "fragments",
 	"fragment-formats.md": "fragment-formats", "renderers.md": "renderers", "expressions.md": "expressions",
 	"capabilities.md": "capabilities", "bindings.md": "bindings",
-	"hooks.md": "hooks", "commands.md": "commands", "modules.md": "modules", "extends.md": "extends", "harness.md": "harness",
+	"hooks.md": "hooks", "execution.md": "execution", "commands.md": "commands", "modules.md": "modules", "extends.md": "extends", "harness.md": "harness",
 	"debug-protocol.md": "debugging", "security.md": "security", "annotations.md": "annotations",
 };
-const SCHEMA_URLS = {
-	"manifest.schema.json": "/schema/manifest/v0.8.json",
-	"mod-manifest.schema.json": "/schema/mod-manifest/v0.8.json",
-	"harness.schema.json": "/schema/harness/v0.7.json",
-	"harness-steps.schema.json": "/schema/harness-steps/v0.7.json",
-	"capability-prompt.schema.json": "/schema/capability-prompt/v0.5.json",
-	"install-descriptor.schema.json": "/schema/install-descriptor/v0.5.json",
-	"discovery-result.schema.json": "/schema/discovery-result/v0.5.json",
-	"debug-messages.schema.json": "/schema/debug-messages/v0.5.json",
-};
+const SCHEMA_URLS = Object.fromEntries(
+	await Promise.all(
+		[
+			"manifest.schema.json",
+			"mod-manifest.schema.json",
+			"harness.schema.json",
+			"harness-steps.schema.json",
+			"capability-prompt.schema.json",
+			"install-descriptor.schema.json",
+			"discovery-result.schema.json",
+			"debug-messages.schema.json",
+		].map(async (file) => {
+			const { $id } = JSON.parse(await readFile(join(specSource, file), "utf-8"));
+			return [file, new URL($id).pathname];
+		}),
+	),
+);
 const SPEC_PAGES = [
 	{ file: "manifest.md", title: "Manifest Specification", description: "The xript manifest format: how applications declare their scripting API." },
 	{ file: "mod-manifest.md", title: "Mod Manifest", description: "What a mod declares: capabilities, entry, exports, and fills keyed by host slot id." },
-	{ file: "fragments.md", title: "Fragment Protocol", description: "Inert templates, data-bind, data-if, handlers, and the command buffer." },
+	{ file: "fragments.md", title: "Fragment Protocol", description: "Inert templates, data-bind, data-if, data-each, handlers, and the command buffer." },
 	{ file: "fragment-formats.md", title: "Fragment Formats", description: "The format catalog a slot's accepts names, and what a host must do to paint each." },
 	{ file: "renderers.md", title: "Renderers", description: "The xript-tree/1 contract: what a thing that draws is handed, and what it is never asked to do." },
-	{ file: "expressions.md", title: "Expressions (XEG)", description: "The one expression grammar behind data-if, data-bind, and inline {{ }} interpolation, and why it is corpus-locked." },
+	{ file: "expressions.md", title: "Expressions (XEG)", description: "The one expression grammar behind data-if, data-bind, data-each, and inline {{ }} interpolation, and why it is corpus-locked." },
 	{ file: "capabilities.md", title: "Capability Model", description: "Default-deny grants, prefix subsumption, and the read/write mode lattice." },
 	{ file: "bindings.md", title: "Bindings", description: "Host functions and namespaces: errors, versioning, type mapping, and naming grammars." },
 	{ file: "hooks.md", title: "Hooks", description: "Event-typed slots, the dispatch contract, and live event delivery." },
+	{ file: "execution.md", title: "Execution Limits", description: "What bounds a running script, what xript can interrupt, why host bindings are not interruptible, pool wedge detection, and Rust async mode." },
 	{ file: "commands.md", title: "Commands", description: "The command slot kind: the fill shape, bound arguments, resolution, invocation, and where authority lives." },
 	{ file: "modules.md", title: "Module-Format Mods", description: "ES module entries, the import deny, approved libraries, and TypeScript authoring." },
 	{ file: "extends.md", title: "Manifest Inheritance (extends)", description: "How a manifest builds on base manifests: add-new, fill, refine, collision rules, and cycle detection." },
