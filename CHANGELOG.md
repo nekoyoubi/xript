@@ -1,5 +1,7 @@
 # Changelog
 
+## v0.10.0
+
 ## v0.9.0
 
 Most of this release is about the sandbox boundary telling the truth. Values crossing it were quietly changed, callbacks were flattened to strings, mods that failed to load reported themselves healthy, and the tools disagreed about what a valid manifest even was. Chasing all that turned up and closed a full host escape in `@xriptjs/runtime-node` and an eval hole in the other three runtimes, which is reason enough to upgrade on its own.
