@@ -23,8 +23,8 @@ const variadicHost = (xript, extra = {}) => ({
 
 describe("target version resolution", () => {
 	it("speaks 0.6 through the current version", () => {
-		assert.deepEqual(SUPPORTED_SPEC_VERSIONS, ["0.6", "0.7", "0.8", "0.9"]);
-		assert.equal(CURRENT_SPEC_VERSION, "0.9");
+		assert.deepEqual(SUPPORTED_SPEC_VERSIONS, ["0.6", "0.7", "0.8", "0.9", "0.10"]);
+		assert.equal(CURRENT_SPEC_VERSION, "0.10");
 	});
 
 	it("prefers an explicit version, then $schema, then the xript field", () => {
@@ -32,7 +32,7 @@ describe("target version resolution", () => {
 		assert.deepEqual(resolveTargetVersion(manifest, "0.6"), { version: "0.6", source: "option" });
 		assert.deepEqual(resolveTargetVersion(manifest), { version: "0.7", source: "$schema" });
 		assert.deepEqual(resolveTargetVersion({ xript: "0.8", name: "p" }), { version: "0.8", source: "xript" });
-		assert.deepEqual(resolveTargetVersion({ name: "p" }), { version: "0.9", source: "default" });
+		assert.deepEqual(resolveTargetVersion({ name: "p" }), { version: "0.10", source: "default" });
 	});
 
 	it("normalizes a patch or v-prefixed version", () => {
@@ -42,10 +42,10 @@ describe("target version resolution", () => {
 
 	it("answers for the current version, with a note, when the manifest names one it does not speak", () => {
 		const target = resolveTargetVersion({ xript: "0.3", name: "p" });
-		assert.equal(target.version, "0.9");
+		assert.equal(target.version, "0.10");
 		assert.equal(target.source, "default");
 		assert.match(target.note, /xript 0\.3/);
-		assert.match(describeTargetVersion(target), /^xript 0\.9 \(the toolchain default\); /);
+		assert.match(describeTargetVersion(target), /^xript 0\.10 \(the toolchain default\); /);
 	});
 
 	it("refuses an explicit version it does not speak", () => {

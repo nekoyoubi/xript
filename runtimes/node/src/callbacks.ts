@@ -1,4 +1,6 @@
 import { CallbackError } from "./errors.js";
+import type { CallerContext } from "./caller-context.js";
+import type { DeclaredTypes, RetainedCallback, RetainedRegistry, RetainPositions } from "./retained.js";
 
 /** A parameter the manifest declares as a function, checked before the host runs. */
 export interface FunctionParamCheck {
@@ -12,6 +14,7 @@ interface DeclaredParam {
 	type: unknown;
 	default?: unknown;
 	required?: boolean;
+	optional?: boolean;
 }
 
 function isFunctionTypeRef(type: unknown): boolean {
@@ -33,7 +36,7 @@ export function functionParamChecks(params: DeclaredParam[] | undefined): Functi
 				? (type as { optional: unknown }).optional
 				: undefined;
 		if (isFunctionTypeRef(type)) {
-			checks.push({ index, name: param.name, optional: param.required === false || param.default !== undefined });
+			checks.push({ index, name: param.name, optional: param.required === false || param.optional === true || param.default !== undefined });
 		} else if (wrapped !== undefined && isFunctionTypeRef(wrapped)) {
 			checks.push({ index, name: param.name, optional: true });
 		}
@@ -56,24 +59,47 @@ export function functionParamViolation(binding: string, checks: FunctionParamChe
 	return null;
 }
 
-/** Counts callbacks running right now, so an async binding can refuse to start inside one. */
+/**
+ * The sandbox's callback state: how many callbacks are running (an async binding refuses to
+ * start inside one), the binding calls running synchronously right now (innermost last), and
+ * what retaining needs.
+ */
 export interface CallbackTracker {
 	depth: number;
+	/** Binding calls whose host function is running right now; a retained call inside one is re-entrant. */
+	scopes: CallbackScope[];
 	/** Re-creates a host value in the sandbox realm before a callback receives it. */
 	toContext?: (value: unknown) => unknown;
 	/** Copies a callback's return value out of the sandbox realm for the host. */
 	toHost?: (value: unknown) => unknown;
+	retained?: RetainedRegistry;
+	caller?: CallerContext;
+	/** The manifest's declared types, which retain positions are found through. */
+	types?: DeclaredTypes;
 }
 
-function isThenable(value: unknown): boolean {
+/** A callback as the host receives it: the proxy function, plus `retain()`. */
+export type HostCallback = ((...args: unknown[]) => unknown) & { retain(): RetainedCallback };
+
+export function isThenable(value: unknown): boolean {
 	if (value === null || (typeof value !== "object" && typeof value !== "function")) return false;
 	return typeof (value as { then?: unknown }).then === "function";
 }
 
+/** The name and message of a value a script threw. */
+export function describeThrown(e: unknown): { name?: string; message?: string } {
+	return e !== null && typeof e === "object"
+		? { name: (e as { name?: string }).name, message: (e as { message?: string }).message }
+		: { message: String(e) };
+}
+
+type ScriptFunction = (...args: unknown[]) => unknown;
+
 /**
  * One binding call's callbacks. Script functions anywhere in the arguments are swapped for
  * proxies that are valid only while the scope is open; containers holding one are copied so
- * the host never receives the script's own function.
+ * the host never receives the script's own function. Each proxy remembers whether it was
+ * found at a position the manifest marks `retain`.
  */
 export class CallbackScope {
 	private active = true;
@@ -82,15 +108,18 @@ export class CallbackScope {
 	constructor(
 		readonly binding: string,
 		private readonly tracker: CallbackTracker,
+		private readonly retainable: RetainPositions = () => false,
 	) {}
 
 	wrapArgs(args: unknown[]): unknown[] {
 		const seen = new Set<object>();
-		return args.map((arg) => this.wrap(arg, seen));
+		return args.map((arg, index) => this.wrap(arg, seen, [index]));
 	}
 
-	private wrap(value: unknown, seen: Set<object>): unknown {
-		if (typeof value === "function") return this.proxy(value as (...args: unknown[]) => unknown);
+	private wrap(value: unknown, seen: Set<object>, path: (string | number)[]): unknown {
+		if (typeof value === "function") {
+			return this.proxy(value as ScriptFunction, this.retainable(path));
+		}
 		if (value === null || typeof value !== "object") return value;
 		if (seen.has(value) || ArrayBuffer.isView(value)) return value;
 		seen.add(value);
@@ -98,7 +127,7 @@ export class CallbackScope {
 			if (Array.isArray(value)) {
 				let copy: unknown[] | null = null;
 				for (let i = 0; i < value.length; i++) {
-					const wrapped = this.wrap(value[i], seen);
+					const wrapped = this.wrap(value[i], seen, [...path, i]);
 					if (wrapped !== value[i]) {
 						copy ??= value.slice();
 						copy[i] = wrapped;
@@ -110,7 +139,7 @@ export class CallbackScope {
 			const record = value as Record<string, unknown>;
 			for (const key of Object.keys(record)) {
 				const original = record[key];
-				const wrapped = this.wrap(original, seen);
+				const wrapped = this.wrap(original, seen, [...path, key]);
 				if (wrapped !== original) {
 					copy ??= { ...record };
 					copy[key] = wrapped;
@@ -122,32 +151,40 @@ export class CallbackScope {
 		}
 	}
 
-	private proxy(fn: (...args: unknown[]) => unknown): (...args: unknown[]) => unknown {
+	private proxy(fn: ScriptFunction, retainable: boolean): HostCallback {
 		const scope = this;
-		return function xriptCallback(...args: unknown[]): unknown {
-			return scope.invoke(fn, args);
+		const callback = function xriptCallback(...args: unknown[]): unknown {
+			if (!scope.active) throw new CallbackError(scope.binding, "expired");
+			return scope.invoke(fn, args, scope.binding);
 		};
+		Object.defineProperty(callback, "retain", {
+			value: function retain(): RetainedCallback {
+				const registry = scope.tracker.retained;
+				if (!scope.active || !registry) throw new CallbackError(scope.binding, "expired");
+				return registry.retain(fn, scope.binding, scope.tracker.caller?.current() ?? null, retainable);
+			},
+		});
+		return callback as HostCallback;
 	}
 
-	private invoke(fn: (...args: unknown[]) => unknown, args: unknown[]): unknown {
-		if (!this.active) throw new CallbackError(this.binding, "expired");
+	/**
+	 * Runs a script function inside this binding call, on the calling script's budget. A throw
+	 * is remembered so a host that lets it escape rethrows the script's own error.
+	 */
+	invoke(fn: ScriptFunction, args: unknown[], binding: string): unknown {
 		this.tracker.depth++;
 		let result: unknown;
 		try {
 			const toContext = this.tracker.toContext;
 			result = Reflect.apply(fn, undefined, toContext ? args.map((arg) => toContext(arg)) : args);
 		} catch (e) {
-			const info =
-				e !== null && typeof e === "object"
-					? { name: (e as { name?: string }).name, message: (e as { message?: string }).message }
-					: { message: String(e) };
-			const error = new CallbackError(this.binding, "threw", info);
+			const error = new CallbackError(binding, "threw", describeThrown(e));
 			this.thrown.set(error, e);
 			throw error;
 		} finally {
 			this.tracker.depth--;
 		}
-		if (isThenable(result)) throw new CallbackError(this.binding, "promise");
+		if (isThenable(result)) throw new CallbackError(binding, "promise");
 		return this.tracker.toHost ? this.tracker.toHost(result) : result;
 	}
 

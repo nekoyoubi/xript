@@ -150,3 +150,66 @@ describe("parameter shape", () => {
 		assert.deepEqual(result.errors.map((e) => e.keyword), ["variadic-position"]);
 	});
 });
+
+describe("retain", () => {
+	const host = (params, types) => ({
+		xript: "0.10",
+		name: "h",
+		bindings: { f: { description: "F.", params } },
+		...(types ? { types } : {}),
+	});
+
+	it("accepts retain on every function-typed parameter spelling", async () => {
+		for (const type of ["function", "function?", { function: { params: [] } }, { optional: "function" }, { optional: { function: {} } }]) {
+			const result = await validateManifest(host([{ name: "fn", type, retain: true }]));
+			assert.equal(result.valid, true, `${JSON.stringify(type)}: ${JSON.stringify(result.errors)}`);
+		}
+	});
+
+	it("rejects retain on a parameter that is not function-typed", async () => {
+		for (const type of ["string", "function[]", { array: "function" }, "Opts", { union: ["function", "string"] }]) {
+			const result = await validateManifest(host([{ name: "fn", type, retain: true }], { Opts: { description: "O.", fields: {} } }));
+			assert.equal(result.valid, false, JSON.stringify(type));
+			assert.deepEqual(result.errors.map((e) => e.keyword), ["retain-not-function"], JSON.stringify(type));
+			assert.equal(result.errors[0].path, "/bindings/f/params/0/retain");
+		}
+	});
+
+	it("accepts retain: false anywhere", async () => {
+		const result = await validateManifest(host([{ name: "n", type: "number", retain: false }]));
+		assert.equal(result.valid, true, JSON.stringify(result.errors));
+	});
+
+	it("accepts a retained function field of a declared type", async () => {
+		const result = await validateManifest(
+			host([{ name: "o", type: "Opts" }], { Opts: { description: "O.", fields: { onDone: { type: "function", retain: true } } } }),
+		);
+		assert.equal(result.valid, true, JSON.stringify(result.errors));
+	});
+
+	it("rejects retain on a field that is not function-typed", async () => {
+		const result = await validateManifest(
+			host([{ name: "o", type: "Opts" }], { Opts: { description: "O.", fields: { label: { type: "string", retain: true } } } }),
+		);
+		assert.equal(result.valid, false);
+		assert.deepEqual(result.errors.map((e) => e.keyword), ["retain-not-function"]);
+		assert.equal(result.errors[0].path, "/types/Opts/fields/label/retain");
+		assert.ok(result.errors[0].message.includes('field "Opts.label"'));
+	});
+
+	it("checks retain inside namespaces", async () => {
+		const result = await validateManifest({
+			xript: "0.10",
+			name: "h",
+			bindings: { ns: { description: "N.", members: { g: { description: "G.", params: [{ name: "n", type: "number", retain: true }] } } } },
+		});
+		assert.deepEqual(result.errors.map((e) => e.path), ["/bindings/ns/members/g/params/0/retain"]);
+	});
+
+	it("accepts max_retained_callbacks in limits and refuses a negative one", async () => {
+		const ok = await validateManifest({ xript: "0.10", name: "h", limits: { max_retained_callbacks: 0 } });
+		assert.equal(ok.valid, true, JSON.stringify(ok.errors));
+		const bad = await validateManifest({ xript: "0.10", name: "h", limits: { max_retained_callbacks: -1 } });
+		assert.equal(bad.valid, false);
+	});
+});

@@ -126,7 +126,7 @@ function printHelp(): void {
 	console.log("");
 	console.log("Options:");
 	console.log("  --strict   Exit non-zero on any warning, not just errors");
-	console.log("  --spec <v> Check each manifest against this manifest version (0.6-0.9); defaults to each");
+	console.log("  --spec <v> Check each manifest against this manifest version (0.6-0.10); defaults to each");
 	console.log("             manifest's $schema, then its xript field");
 	console.log("  --json     Emit the full result as JSON");
 }

@@ -118,7 +118,9 @@ public static class ModDiagnostics
                     { FragmentId = fragment.Id, Field = "source" });
             }
 
+#pragma warning disable CS0618 // reporting the deprecated alias is the point of this check
             if (!reportedEventsAlias && fragment.Events is not null)
+#pragma warning restore CS0618
             {
                 reportedEventsAlias = true;
                 diagnostics.Add(new ModDiagnostic(

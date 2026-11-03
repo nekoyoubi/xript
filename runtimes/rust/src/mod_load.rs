@@ -106,6 +106,7 @@ pub fn looks_like_markup(source: &str) -> bool {
 /// The load-time findings a mod's fragment declarations raise against the
 /// sources the host supplied, in declaration order: a non-inline `source` that
 /// resolves to nothing, and the deprecated `events` alias, once per mod.
+#[allow(deprecated)]
 pub fn fragment_declaration_diagnostics(
     mod_name: &str,
     fragments: &[FragmentDeclaration],

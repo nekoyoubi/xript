@@ -939,14 +939,14 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
 name = "xript-expr"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "xript-ratatui"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "ansi-to-tui",
  "crossterm",
@@ -958,7 +958,7 @@ dependencies = [
 
 [[package]]
 name = "xript-runtime"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "j5ml",
  "pollster",
@@ -973,7 +973,7 @@ dependencies = [
 
 [[package]]
 name = "xript-tree"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "serde_json",
  "xript-expr",

@@ -363,8 +363,67 @@ describe("event subscription surface", () => {
 	it("emits a typed events global with on/subscribe over the event id union (ambient)", () => {
 		const out = generateTypes(manifest, { ambient: true });
 		assert.match(out, /namespace events \{/);
-		assert.match(out, /function on<K extends XriptEventId>\(id: K, handler: \(payload: XriptEvents\[K\]\) => void\): void;/);
-		assert.match(out, /function subscribe<K extends XriptEventId>\(id: K, handler: \(payload: XriptEvents\[K\]\) => void\): void;/);
+		assert.match(out, /function on<K extends XriptEventId>\(id: K, handler: \(\.\.\.args: XriptEventArgs\[K\]\) => unknown, options\?: XriptSubscribeOptions\): XriptSubscription;/);
+		assert.match(out, /function subscribe<K extends XriptEventId>\(id: K, handler: \(\.\.\.args: XriptEventArgs\[K\]\) => unknown, options\?: XriptSubscribeOptions\): XriptSubscription;/);
+	});
+
+	it("types handler arguments as the payload's fields, positionally, the way the runtimes spread them", () => {
+		const out = generateTypes({
+			xript: "0.10",
+			name: "host",
+			types: {
+				Damage: {
+					description: "A hit.",
+					fields: { amount: { type: "number" }, source: { type: "string" }, note: { type: "string", optional: true } },
+				},
+				Kind: { description: "A kind.", values: ["a", "b"] },
+			},
+			events: [
+				{ id: "player.damaged", description: "Hit.", payload: "Damage" },
+				{ id: "level.loaded", description: "Loaded." },
+				{ id: "score.changed", description: "Score.", payload: "number" },
+				{ id: "kind.picked", description: "Kind.", payload: "Kind" },
+				{ id: "bag.changed", description: "Bag.", payload: { map: "number" } },
+				{ id: "stat.changed", description: "Stat.", payload: "Damage", addressed: ["stat.<id>.changed"] },
+			],
+		});
+		assert.match(out, /interface XriptEventArgs \{/);
+		assert.match(out, /"player\.damaged": \[amount: number, source: string, note: string \| undefined\];/);
+		assert.match(out, /"level\.loaded": \[\];/);
+		assert.match(out, /"score\.changed": \[payload: number\];/);
+		assert.match(out, /"kind\.picked": \[payload: Kind\];/);
+		assert.match(out, /"bag\.changed": \[\.\.\.values: unknown\[\]\];/);
+		assert.match(out, /\[id: `stat\.\$\{string\}\.changed`\]: \[amount: number, source: string, note: string \| undefined\];/);
+		assert.match(out, /function emit<K extends XriptModEventId>\(id: K, data\?: XriptEvents\[K\]\): unknown\[\];/);
+		assert.match(out, /function emitAsync<K extends XriptModEventId>\(id: K, data\?: XriptEvents\[K\]\): Promise<unknown\[\]>;/);
+		assert.match(out, /function emitAsync\(id: string, data\?: unknown\): Promise<unknown\[\]>;/);
+	});
+
+	it("types every bus verb, with an untyped overload for events declared at runtime", () => {
+		const out = generateTypes(manifest, { ambient: true });
+		for (const verb of ["once", "cancel", "off", "emit", "emitAsync", "cancelOwned", "claim", "namespaces", "ownerOf", "declare", "describe", "catalogue", "names", "listenerCount", "subscribers"]) {
+			assert.match(out, new RegExp(`function ${verb}[<(]`), verb);
+		}
+		assert.match(out, /function on\(id: string, handler: \(\.\.\.args: any\[\]\) => unknown, options\?: XriptSubscribeOptions\): XriptSubscription;/);
+	});
+
+	it("types pattern ids and addressed forms as template literal ids", () => {
+		const out = generateTypes({
+			xript: "0.10",
+			name: "host",
+			events: [
+				{ id: "stat.changed", description: "Any stat changed.", payload: "number", addressed: ["stat.<instanceId>.changed"], emit: "mods" },
+				{ id: "cell.<x>.<y>.lit", description: "A cell lit.", pattern: true },
+			],
+		});
+		assert.match(out, /\[id: `stat\.\$\{string\}\.changed`\]: number;/);
+		assert.match(out, /\[id: `cell\.\$\{string\}\.\$\{string\}\.lit`\]: void;/);
+		assert.match(out, /type XriptEventId = "stat\.changed" \| `stat\.\$\{string\}\.changed` \| `cell\.\$\{string\}\.\$\{string\}\.lit`;/);
+		assert.match(out, /type XriptModEventId = "stat\.changed" \| `stat\.\$\{string\}\.changed`;/);
+	});
+
+	it("leaves XriptModEventId empty when no event lets mods emit", () => {
+		assert.match(generateTypes(manifest), /type XriptModEventId = never;/);
 	});
 
 	it("declares the events global in non-ambient mode", () => {

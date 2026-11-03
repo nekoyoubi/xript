@@ -68,18 +68,21 @@ Every function binding requires a `description`. This is not optional because if
 
 Optional fields on function bindings:
 
-- **`params`**: an ordered array of parameters, each with a `name`, `type`, and optional `description`, `default`, `required`, `optional`, and `variadic` (see [Parameters](#parameters))
+- **`params`**: an ordered array of parameters, each with a `name`, `type`, and optional `description`, `default`, `required`, `optional`, `variadic`, and `retain` (see [Parameters](#parameters))
 - **`returns`**: the return type (omit for void functions), as a [type reference](#type-references) or as `{ "type": <typeRef>, "description": "..." }` when the returned value deserves a sentence
 - **`async`** — whether the function returns a promise (defaults to `false`)
 - **`capability`** — the capability required to call this function
 - **`examples`** — usage examples for documentation
 - **`deprecated`** — marks the function as deprecated with a migration message
+- **`optional`** — a conforming host may omit this function (see [Optional Bindings](#optional-bindings))
 
 ### Parameters
 
 A parameter is required unless it declares a `default` or `"required": false`. `"optional": true` is accepted as the inverse alias of `"required": false`; giving both with values that disagree is a validation error, and `xript lint` suggests the `required` spelling.
 
 A parameter marked `"variadic": true` is a rest parameter: it absorbs every remaining argument, and its `type` names the type of each one. Only the last parameter may be variadic, so `validate` rejects a variadic parameter anywhere else. `typegen` emits it as `...name: T[]`, and `docgen` lists it as `...name` with its element type.
+
+A function-typed parameter marked `"retain": true` hands the host a callback it may keep past the call and call later; the same flag on a function-typed field of a declared type does the same for that field. `retain` on anything that is not function-typed (`"function"`, `{ "function": { ... } }`, or either made optional) is a validation error. See [Retained callbacks](./bindings.md#retained-callbacks).
 
 ```json
 {
@@ -127,6 +130,54 @@ Namespaces group related functions. They create the `namespace.function()` calli
 Namespaces can nest arbitrarily (`game.world.weather.setRain()`), but deep nesting is discouraged; two levels is usually plenty.
 
 A binding is distinguished as a namespace by the presence of `members`. A binding with both `members` and `params` is invalid.
+
+### Accessor Bindings
+
+An accessor binding reads as a value rather than a function, and the host computes that value on every read. It is the shape for live state, such as a clock or the current selection, where `clock.now()` would be the wrong shape and an eager value would go stale:
+
+```json
+{
+  "bindings": {
+    "clock": {
+      "description": "The game clock.",
+      "members": {
+        "now": { "description": "The current tick.", "accessor": "get", "type": "number" },
+        "speed": { "description": "Ticks per second.", "accessor": "get-set", "type": "number" }
+      }
+    }
+  }
+}
+```
+
+A binding is distinguished as an accessor by the presence of `accessor`:
+
+- **`accessor`** (required): `"get"` for a read-only value, `"get-set"` for one a script may also assign
+- **`type`**: the value's [type reference](#type-references) (omit for an untyped value)
+- **`capability`**: the capability required to read and write it, checked on every access
+- **`deprecated`**, **`optional`**: as on a function binding
+
+An accessor is usually a namespace member; at the top level it is a global accessor. It takes no `params`, `returns`, or `async`. See [Accessors](bindings.md#accessors) for the runtime contract.
+
+### Optional Bindings
+
+Two hosts can share one manifest when a few bindings exist on only one of them, say a binding that needs a browser. Such a binding declares `"optional": true`, on a function, a namespace, a namespace member, or an accessor:
+
+```json
+{
+  "bindings": {
+    "net": {
+      "description": "Network helpers.",
+      "members": {
+        "fetch": { "description": "Fetches a URL.", "optional": true, "params": [{ "name": "url", "type": "string" }] },
+        "status": { "description": "Reports link status." }
+      }
+    },
+    "share": { "description": "Opens the platform share sheet.", "optional": true }
+  }
+}
+```
+
+A conforming host may omit an optional binding. Which hosts provide it is not declared: a list of host names would be a taxonomy the spec cannot check. A mod asks the running host instead, with `xript.has("net.fetch")`. See [Optional Bindings](bindings.md#optional-bindings) for the runtime contract.
 
 ### Why Bindings Are a Flat Object, Not Nested by Default
 
@@ -262,7 +313,7 @@ A handful of loose type words are accepted and resolve to one meaning in every t
 
 `xript lint` reports each of these, and the `T?` suffix, with the canonical spelling. Every rendering is pinned by [`type-ref-tests.json`](./type-ref-tests.json), which `validate`, `typegen`, and `docgen` all assert.
 
-A function type is part of the contract only on a binding parameter, where a script function crosses into the host as a call-scoped callback (see [Callbacks](./bindings.md#callbacks)). A function in a binding's return value, a hook's arguments, or an event payload is not proxied and is not portable: it is marshalled by the ordinary data rules (the runtimes that marshal through JSON drop it), so nothing should rely on it. `lint` warns about a function type declared in any of those places (`callback-does-not-cross`).
+A function type is part of the contract only on a binding parameter, where a script function crosses into the host as a callback (call-scoped, or retained where marked `retain`; see [Callbacks](./bindings.md#callbacks)). A function in a binding's return value, a hook's arguments, or an event payload is not proxied and is not portable: it is marshalled by the ordinary data rules (the runtimes that marshal through JSON drop it), so nothing should rely on it. `lint` warns about a function type declared in any of those places (`callback-does-not-cross`), except at a position marked `retain`: a retained callback the host passes back arrives as the script's own function.
 
 ## Slots
 
@@ -384,7 +435,7 @@ See [hooks.md](./hooks.md) for the full hook conventions, error handling, and Ty
 
 ## Events (Host Broadcast Catalog)
 
-The optional top-level `events` array is the named events a host **emits** and the payload each carries. It says "here is what this application broadcasts," and through the shared dispatch engine that hooks already use, it is *deliverable*: a sandbox script subscribes with `events.on("<id>", handler)`, the host's own UI may react, an external subscriber may observe. The catalog names the signal; sandbox delivery rides the hook registry/fire engine rather than introducing a parallel event subsystem (see [Event Delivery](./hooks.md#event-delivery)).
+The optional top-level `events` array is the named events a host **emits** and the payload each carries. It says "here is what this application broadcasts," and the runtime makes it *deliverable*: a sandbox script subscribes with `events.on("<id>", handler)`, the host's own UI may react, an external subscriber may observe. Sandbox delivery is the `events` bus, which follows the hook fan-out contract and adds ownership, mod-side emit, runtime declaration, namespaces, and introspection (see [Event Delivery](./hooks.md#event-delivery)).
 
 ```json
 {
@@ -398,19 +449,43 @@ The optional top-level `events` array is the named events a host **emits** and t
       "id": "level.loaded",
       "description": "Broadcast after a level finishes loading and is interactive.",
       "capability": "read:world"
+    },
+    {
+      "id": "stat.changed",
+      "description": "Broadcast after any stat's value changes, with the stat instance and its new value.",
+      "addressed": ["stat.<instanceId>.changed"],
+      "keys": ["instanceId", "value"]
+    },
+    {
+      "id": "cell.<x>.<y>.lit",
+      "description": "Broadcast when one grid cell lights up.",
+      "pattern": true
+    },
+    {
+      "id": "note.posted",
+      "description": "Broadcast when a mod posts a note for the others to read.",
+      "emit": "mods"
     }
   ]
 }
 ```
 
+The same entry shape is what `events.declare(entry)` and the host's `declareEvent(entry)` take at runtime.
+
 ### Event Fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `id` | string | yes | Event identifier, the name the host broadcasts under |
-| `description` | string | yes | What the event signals and when it fires |
+| `id` | string | yes | Event identifier, the name the host broadcasts under: lowercase letters, digits, `.` and `-`, starting with a letter. Segments are the `.`-separated parts. |
+| `description` | string | yes | What the event signals and when it fires, as a sentence a stranger can act on |
 | `payload` | typeRef | no | The type of the data carried with the event (a [type reference](#type-references)) |
-| `capability` | capabilityRef | no | Capability required to subscribe via `events.on`. If omitted, any script may subscribe. Gated at registration time, reusing the hook gate model. |
+| `capability` | capabilityRef | no | Capability required to subscribe via `events.on` or `events.once`. If omitted, any script may subscribe. Gated at registration time, reusing the hook gate model. |
+| `emit` | `"host"` \| `"mods"` | no | Who may emit it. `"host"` (the default): only the host. `"mods"`: mods may also emit it with `events.emit`. |
+| `pattern` | boolean | no | The `id` is itself a family shape with no generic form, its varying segments written `<name>` (`cell.<x>.<y>.lit`). Only a `pattern` entry may use `<name>` in its `id`, and it must use at least one. |
+| `addressed` | string[] | no | Companion shapes the host emits alongside this generic event, carrying the subject's id: the generic `stat.changed` declares `["stat.<instanceId>.changed"]`. |
+| `keys` | string[] | no | The payload's top-level keys. A subscription's `match` may name only these. |
+
+A concrete id resolves to an entry by exact match first, then against every `pattern` id and `addressed` form, segment by segment. A `<name>` segment matches exactly one segment, so a subject id that contains a `.` itself does not fit a single `<name>`: `stat.hero.hp.changed` does not resolve against `stat.<instanceId>.changed`. See [Resolution](./hooks.md#resolution).
 
 ### Three Surfaces, One Distinction
 
@@ -422,7 +497,7 @@ The optional top-level `events` array is the named events a host **emits** and t
 
 In one line: bindings are *what you can call*, slots and fragment handlers are *what handles*, and `events` is *what the host emits and a mod subscribes to*.
 
-The catalog is a source of truth for documentation and code generation: typegen emits a typed event catalog, docgen renders an events section. Sandbox delivery and the event-typed-slot hook dispatch share one engine: a keyed handler registry plus a fire-from-registry pass. As with the rest of the manifest, xript declares the shape; the host owns dispatch.
+The catalog is a source of truth for documentation and code generation: typegen emits a typed event catalog (a `pattern` id or `addressed` form becomes a template literal id), and docgen renders an events section. Sandbox delivery and event-typed-slot hook dispatch share one fan-out contract. As with the rest of the manifest, xript declares the shape; the host decides when to emit.
 
 ## Libraries (Approved Import Allow-List)
 
@@ -563,10 +638,13 @@ The `limits` section sets default bounds for script execution:
   "limits": {
     "timeout_ms": 5000,
     "memory_mb": 64,
-    "max_stack_depth": 256
+    "max_stack_depth": 256,
+    "max_retained_callbacks": 10000
   }
 }
 ```
+
+`max_retained_callbacks` caps how many [retained callbacks](./bindings.md#retained-callbacks) the runtime holds at once; a retain beyond it is refused.
 
 These are defaults that runtimes enforce unless the host application overrides them at runtime. They exist in the manifest so that the application author can declare sensible defaults for their use case: a game mod system might allow 100ms per frame tick, while a data processing tool might allow 30 seconds.
 

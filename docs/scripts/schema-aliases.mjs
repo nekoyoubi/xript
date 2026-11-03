@@ -11,6 +11,7 @@ export const SCHEMA_FAMILIES = [
 	{ file: "debug-messages.schema.json", dir: "debug-messages" },
 	{ file: "harness.schema.json", dir: "harness" },
 	{ file: "harness-steps.schema.json", dir: "harness-steps" },
+	{ file: "expression-reference.schema.json", dir: "expression-reference" },
 ];
 
 function aliasFromId(schemaId) {

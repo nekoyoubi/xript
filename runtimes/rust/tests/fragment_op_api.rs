@@ -31,6 +31,20 @@ fn a_string_list_stays_a_list() {
 }
 
 #[test]
+fn bindings_with_quotes_and_newlines_reach_the_handler_intact() {
+    let runtime = runtime();
+    runtime
+        .execute(r#"hooks.fragment.update("probe", function(bindings, fragment) { fragment.setText(".out", bindings.text); });"#)
+        .expect("handler registers");
+    let text = "she said \"hi\"\nthen left \\ it's done";
+    let ops = runtime
+        .fire_fragment_hook("probe", "update", Some(&serde_json::json!({ "text": text })))
+        .expect("hook fires");
+    assert_eq!(ops.len(), 1);
+    assert_eq!(ops[0].value, Some(serde_json::json!(text)));
+}
+
+#[test]
 fn an_empty_list_is_an_explicit_clear() {
     let ops = fire(&runtime(), r#"fragment.replaceChildren(".list", []);"#);
     assert_eq!(ops[0].value, Some(serde_json::json!([])));

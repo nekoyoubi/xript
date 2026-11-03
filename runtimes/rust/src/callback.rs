@@ -7,14 +7,19 @@
 //! [`Callback::from_value`]. The callback is valid only while the binding call
 //! that received it is running, and only on the thread running it. Calling it
 //! runs the script function synchronously against the calling script's budget.
+//! A callback found at a position the manifest marks `retain` can outlive the
+//! call through [`Callback::retain`]; see [`crate::retained`].
 
 use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::hash::{BuildHasher, RandomState};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use rquickjs::function::Rest;
 use rquickjs::{Ctx, Error as QjsError, Function, Object, Value};
+
+use crate::retained::{PathStep, RetainError, RetainedCallback, RetainedRegistry};
 
 /// The key of the marker object that stands in for a script function in a
 /// binding's JSON arguments.
@@ -36,6 +41,20 @@ pub enum CallbackError {
     Promise { binding: String },
     /// The calling script ran out of its execution budget inside the callback.
     Limit { binding: String },
+    /// The retained callback was released, by the host, with its mod, or with
+    /// its runtime.
+    Released { binding: String },
+    /// A retained callback was used where it is not valid; reason `"expired"`.
+    RetainedExpired { binding: String, cause: ExpiredCause },
+}
+
+/// Where a retained callback was used that made it fail as expired.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpiredCause {
+    /// Called from a thread other than the one it was retained on.
+    OtherThread,
+    /// Passed into a runtime, or a mod, other than the one that supplied it.
+    Foreign,
 }
 
 impl CallbackError {
@@ -45,17 +64,21 @@ impl CallbackError {
             CallbackError::Threw { binding, .. }
             | CallbackError::Expired { binding }
             | CallbackError::Promise { binding }
-            | CallbackError::Limit { binding } => binding,
+            | CallbackError::Limit { binding }
+            | CallbackError::Released { binding }
+            | CallbackError::RetainedExpired { binding, .. } => binding,
         }
     }
 
-    /// `"threw"`, `"expired"`, `"promise"`, or `"limit"`, matching the other runtimes.
+    /// `"threw"`, `"expired"`, `"promise"`, `"limit"`, or `"released"`,
+    /// matching the other runtimes.
     pub fn reason(&self) -> &'static str {
         match self {
             CallbackError::Threw { .. } => "threw",
-            CallbackError::Expired { .. } => "expired",
+            CallbackError::Expired { .. } | CallbackError::RetainedExpired { .. } => "expired",
             CallbackError::Promise { .. } => "promise",
             CallbackError::Limit { .. } => "limit",
+            CallbackError::Released { .. } => "released",
         }
     }
 }
@@ -75,6 +98,24 @@ impl fmt::Display for CallbackError {
             CallbackError::Limit { binding } => write!(
                 f,
                 "{binding}(): callback stopped by the calling script's execution limit"
+            ),
+            CallbackError::Released { binding } => write!(
+                f,
+                "{binding}(): callback released; the host released this retained callback"
+            ),
+            CallbackError::RetainedExpired {
+                binding,
+                cause: ExpiredCause::OtherThread,
+            } => write!(
+                f,
+                "{binding}(): callback expired; a retained callback can only be called on its runtime's thread"
+            ),
+            CallbackError::RetainedExpired {
+                binding,
+                cause: ExpiredCause::Foreign,
+            } => write!(
+                f,
+                "{binding}(): callback expired; a retained callback crosses back only into the runtime and mod that supplied it"
             ),
         }
     }
@@ -148,10 +189,134 @@ impl Callback {
         // state it points at. The pointer is therefore valid here.
         unsafe { (*invoker).invoke(self.index, args) }
     }
+
+    /// Retains the callback past the binding call, so the host can call it
+    /// later. Succeeds only while the binding call is running, on its thread,
+    /// for a callback at a position the manifest marks `retain`, or for a
+    /// function this mod already retained (which yields that same
+    /// [`RetainedCallback`]).
+    pub fn retain(&self) -> Result<RetainedCallback, RetainError> {
+        let Some(invoker) = find_scope(self.scope, self.nonce) else {
+            return Err(RetainError::Expired {
+                binding: self.binding.clone(),
+            });
+        };
+        // SAFETY: as in `call`.
+        unsafe { (*invoker).retain(self.index) }
+    }
 }
 
 trait Invoke {
     fn invoke(&self, index: usize, args: &[serde_json::Value]) -> Result<serde_json::Value, CallbackError>;
+    fn retain(&self, index: usize) -> Result<RetainedCallback, RetainError>;
+    fn registry_id(&self) -> Option<u64>;
+    fn invoke_retained(
+        &self,
+        registry: &RetainedRegistry,
+        id: u64,
+        binding: &str,
+        owner: Option<String>,
+        args: &[serde_json::Value],
+    ) -> Result<serde_json::Value, CallbackError>;
+}
+
+fn find_scope(scope: u64, nonce: u64) -> Option<*const (dyn Invoke + 'static)> {
+    SCOPES.with(|scopes| {
+        scopes
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(id, n, _)| *id == scope && *n == nonce)
+            .map(|(_, _, invoker)| *invoker)
+    })
+}
+
+/// Calls a retained callback from inside a binding call this runtime is
+/// running on this thread, if there is one: through the innermost such call,
+/// on its budget. `None` when no binding call of this runtime is running here.
+pub(crate) fn invoke_retained_reentrant(
+    registry: &Arc<RetainedRegistry>,
+    id: u64,
+    binding: &str,
+    owner: Option<String>,
+    args: &[serde_json::Value],
+) -> Option<Result<serde_json::Value, CallbackError>> {
+    let invoker = SCOPES.with(|scopes| {
+        scopes
+            .borrow()
+            .iter()
+            .rev()
+            // SAFETY: every entry in `SCOPES` points at a live scope (see `call`).
+            .find(|(_, _, invoker)| unsafe { (**invoker).registry_id() } == Some(registry.id()))
+            .map(|(_, _, invoker)| *invoker)
+    })?;
+    // SAFETY: as above.
+    Some(unsafe { (*invoker).invoke_retained(registry, id, binding, owner, args) })
+}
+
+/// Calls a retained callback between script calls, on the budget the caller
+/// already armed (`interrupted` is its frame's flag).
+pub(crate) fn call_detached<'js>(
+    ctx: &Ctx<'js>,
+    function: &Function<'js>,
+    binding: &str,
+    args: &[serde_json::Value],
+    interrupted: &AtomicBool,
+) -> Result<serde_json::Value, CallbackError> {
+    let js_args = host_args(ctx, binding, args)?;
+    let outcome: rquickjs::Result<Value> = {
+        let _depth = DepthGuard::enter();
+        function.call((Rest(js_args),))
+    };
+    match outcome {
+        Ok(value) => settled(ctx, binding, value),
+        Err(QjsError::Exception) => {
+            let exception = ctx.catch();
+            let (name, message) = describe_exception(&exception);
+            if interrupted.load(Ordering::Relaxed) || message.contains("interrupted") {
+                return Err(CallbackError::Limit {
+                    binding: binding.to_string(),
+                });
+            }
+            Err(CallbackError::Threw {
+                binding: binding.to_string(),
+                name,
+                message,
+            })
+        }
+        Err(other) => Err(CallbackError::Threw {
+            binding: binding.to_string(),
+            name: None,
+            message: other.to_string(),
+        }),
+    }
+}
+
+fn host_args<'js>(ctx: &Ctx<'js>, binding: &str, args: &[serde_json::Value]) -> Result<Vec<Value<'js>>, CallbackError> {
+    let mut js_args = Vec::with_capacity(args.len());
+    for arg in args {
+        match crate::retained::host_value_to_js(ctx, arg) {
+            Ok(value) => js_args.push(value),
+            Err(crate::retained::HostValueError::Callback(error)) => return Err(error),
+            Err(crate::retained::HostValueError::Marshal(message)) => {
+                return Err(CallbackError::Threw {
+                    binding: binding.to_string(),
+                    name: None,
+                    message,
+                })
+            }
+        }
+    }
+    Ok(js_args)
+}
+
+fn settled<'js>(ctx: &Ctx<'js>, binding: &str, value: Value<'js>) -> Result<serde_json::Value, CallbackError> {
+    if is_thenable(&value) {
+        return Err(CallbackError::Promise {
+            binding: binding.to_string(),
+        });
+    }
+    Ok(crate::sandbox::js_value_to_json(ctx, &value))
 }
 
 thread_local! {
@@ -181,11 +346,15 @@ pub(crate) struct CallScope<'js> {
     functions: Vec<Function<'js>>,
     thrown: RefCell<Vec<(String, Value<'js>)>>,
     fatal: RefCell<Option<Value<'js>>>,
+    registry: Option<Arc<RetainedRegistry>>,
+    retainable: RefCell<Vec<bool>>,
 }
 
 impl<'js> CallScope<'js> {
     pub(crate) fn new(ctx: Ctx<'js>, binding: &str, functions: Vec<Function<'js>>) -> Self {
         let id = NEXT_SCOPE.fetch_add(1, Ordering::Relaxed);
+        let registry = crate::retained::registry_of(&ctx);
+        let retainable = RefCell::new(vec![false; functions.len()]);
         Self {
             id,
             // A random, process-local nonce makes a callback token unforgeable: script data
@@ -196,24 +365,32 @@ impl<'js> CallScope<'js> {
             functions,
             thrown: RefCell::new(Vec::new()),
             fatal: RefCell::new(None),
+            registry,
+            retainable,
         }
     }
 
-    /// Rewrites the numeric markers the sandbox emitted into resolvable tokens.
+    /// Rewrites the numeric markers the sandbox emitted into resolvable tokens,
+    /// noting which callbacks sit at a position the manifest marks `retain`.
     pub(crate) fn resolve_markers(&self, args: &mut [serde_json::Value]) {
         if self.functions.is_empty() {
             return;
         }
-        for arg in args.iter_mut() {
-            self.resolve_value(arg);
+        let mut path = Vec::new();
+        for (index, arg) in args.iter_mut().enumerate() {
+            path.push(PathStep::Index(index));
+            self.resolve_value(arg, &mut path);
+            path.pop();
         }
     }
 
-    fn resolve_value(&self, value: &mut serde_json::Value) {
+    fn resolve_value(&self, value: &mut serde_json::Value, path: &mut Vec<PathStep>) {
         match value {
             serde_json::Value::Array(items) => {
-                for item in items {
-                    self.resolve_value(item);
+                for (index, item) in items.iter_mut().enumerate() {
+                    path.push(PathStep::Index(index));
+                    self.resolve_value(item, path);
+                    path.pop();
                 }
             }
             serde_json::Value::Object(map) => {
@@ -221,17 +398,71 @@ impl<'js> CallScope<'js> {
                     && let Some(index) = map.get(CALLBACK_MARKER).and_then(|v| v.as_u64())
                     && (index as usize) < self.functions.len()
                 {
+                    if let Some(registry) = &self.registry
+                        && registry.is_retainable(&self.binding, path)
+                    {
+                        self.retainable.borrow_mut()[index as usize] = true;
+                    }
                     map.insert(
                         CALLBACK_MARKER.to_string(),
                         serde_json::Value::String(format!("{}:{}:{}:{}", self.id, index, self.nonce, self.binding)),
                     );
                     return;
                 }
-                for item in map.values_mut() {
-                    self.resolve_value(item);
+                for (key, item) in map.iter_mut() {
+                    path.push(PathStep::Key(key.clone()));
+                    self.resolve_value(item, path);
+                    path.pop();
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Calls a script function on this binding call's budget, recording a
+    /// budget stop as fatal and a throw for pass-through.
+    fn call_function(
+        &self,
+        function: &Function<'js>,
+        binding: &str,
+        args: &[serde_json::Value],
+    ) -> Result<serde_json::Value, CallbackError> {
+        if self.fatal.borrow().is_some() {
+            return Err(CallbackError::Limit {
+                binding: binding.to_string(),
+            });
+        }
+        let js_args = host_args(&self.ctx, binding, args)?;
+
+        let outcome: rquickjs::Result<Value> = {
+            let _depth = DepthGuard::enter();
+            function.call((Rest(js_args),))
+        };
+
+        match outcome {
+            Ok(value) => settled(&self.ctx, binding, value),
+            Err(QjsError::Exception) => {
+                let exception = self.ctx.catch();
+                let (name, message) = describe_exception(&exception);
+                if message.contains("interrupted") {
+                    *self.fatal.borrow_mut() = Some(exception);
+                    return Err(CallbackError::Limit {
+                        binding: binding.to_string(),
+                    });
+                }
+                let error = CallbackError::Threw {
+                    binding: binding.to_string(),
+                    name,
+                    message,
+                };
+                self.thrown.borrow_mut().push((error.to_string(), exception));
+                Err(error)
+            }
+            Err(other) => Err(CallbackError::Threw {
+                binding: binding.to_string(),
+                name: None,
+                message: other.to_string(),
+            }),
         }
     }
 
@@ -293,61 +524,53 @@ impl Drop for DepthGuard {
 
 impl Invoke for CallScope<'_> {
     fn invoke(&self, index: usize, args: &[serde_json::Value]) -> Result<serde_json::Value, CallbackError> {
-        let binding = self.binding.clone();
         if self.fatal.borrow().is_some() {
-            return Err(CallbackError::Limit { binding });
+            return Err(CallbackError::Limit {
+                binding: self.binding.clone(),
+            });
         }
         let Some(function) = self.functions.get(index) else {
-            return Err(CallbackError::Expired { binding });
+            return Err(CallbackError::Expired {
+                binding: self.binding.clone(),
+            });
         };
+        self.call_function(function, &self.binding, args)
+    }
 
-        let mut js_args = Vec::with_capacity(args.len());
-        for arg in args {
-            match crate::sandbox::json_to_js(&self.ctx, arg) {
-                Ok(value) => js_args.push(value),
-                Err(e) => {
-                    return Err(CallbackError::Threw {
-                        binding,
-                        name: None,
-                        message: e.to_string(),
-                    })
-                }
-            }
-        }
-
-        let outcome: rquickjs::Result<Value> = {
-            let _depth = DepthGuard::enter();
-            function.call((Rest(js_args),))
+    fn retain(&self, index: usize) -> Result<RetainedCallback, RetainError> {
+        let (Some(registry), Some(function)) = (&self.registry, self.functions.get(index)) else {
+            return Err(RetainError::Expired {
+                binding: self.binding.clone(),
+            });
         };
+        let retainable = self.retainable.borrow().get(index).copied().unwrap_or(false);
+        registry.retain(&self.ctx, function, &self.binding, retainable)
+    }
 
-        match outcome {
-            Ok(value) => {
-                if is_thenable(&value) {
-                    return Err(CallbackError::Promise { binding });
-                }
-                Ok(crate::sandbox::js_value_to_json(&self.ctx, &value))
-            }
-            Err(QjsError::Exception) => {
-                let exception = self.ctx.catch();
-                let (name, message) = describe_exception(&exception);
-                if message.contains("interrupted") {
-                    *self.fatal.borrow_mut() = Some(exception);
-                    return Err(CallbackError::Limit { binding });
-                }
-                let error = CallbackError::Threw {
-                    binding,
-                    name,
-                    message,
-                };
-                self.thrown.borrow_mut().push((error.to_string(), exception));
-                Err(error)
-            }
-            Err(other) => Err(CallbackError::Threw {
-                binding,
-                name: None,
-                message: other.to_string(),
-            }),
+    fn registry_id(&self) -> Option<u64> {
+        self.registry.as_ref().map(|r| r.id())
+    }
+
+    fn invoke_retained(
+        &self,
+        registry: &RetainedRegistry,
+        id: u64,
+        binding: &str,
+        owner: Option<String>,
+        args: &[serde_json::Value],
+    ) -> Result<serde_json::Value, CallbackError> {
+        if self.fatal.borrow().is_some() {
+            return Err(CallbackError::Limit {
+                binding: binding.to_string(),
+            });
         }
+        let Some(function) = registry.restore(&self.ctx, id) else {
+            return Err(CallbackError::Released {
+                binding: binding.to_string(),
+            });
+        };
+        let _caller = registry.caller().enter(owner);
+        self.call_function(&function, binding, args)
     }
 }
 
@@ -411,7 +634,7 @@ pub(crate) fn function_param_checks(params: Option<&Vec<crate::manifest::Paramet
             checks.push(FunctionParamCheck {
                 index,
                 name: param.name.clone(),
-                optional: param.required == Some(false) || param.default.is_some(),
+                optional: param.required == Some(false) || param.optional == Some(true) || param.default.is_some(),
             });
         } else if wrapped.is_some_and(is_function_type) {
             checks.push(FunctionParamCheck {

@@ -37,6 +37,7 @@ export const SPEC_RESOURCES: SpecResource[] = [
 	{ id: "extends", title: "Manifest inheritance", description: "How `extends` resolves and merges base manifests, and the rules that keep it from clobbering.", file: "extends.md", mimeType: "text/markdown" },
 	{ id: "modules", title: "Modules", description: "Module support and entry-script evaluation.", file: "modules.md", mimeType: "text/markdown" },
 	{ id: "security", title: "Security model", description: "Sandboxing guarantees and the threat model.", file: "security.md", mimeType: "text/markdown" },
+	{ id: "deprecations", title: "Deprecations", description: "The deprecation channel, the codes it raises, and the deprecated APIs with what to use instead.", file: "deprecations.md", mimeType: "text/markdown" },
 	{ id: "vision", title: "Vision", description: "What xript is and the problem it solves.", file: "vision.md", mimeType: "text/markdown" },
 	{ id: "annotations", title: "Annotations", description: "@xript JSDoc tags scanned into manifest bindings.", file: "annotations.md", mimeType: "text/markdown" },
 	{ id: "debug-protocol", title: "Debug protocol", description: "The DAP-shaped debugging surface across runtimes.", file: "debug-protocol.md", mimeType: "text/markdown" },
@@ -45,6 +46,8 @@ export const SPEC_RESOURCES: SpecResource[] = [
 	{ id: "mod-manifest-schema", title: "Mod manifest JSON Schema", description: "The mod manifest JSON Schema.", file: "mod-manifest.schema.json", mimeType: "application/json" },
 	{ id: "harness-schema", title: "Harness JSON Schema", description: "The harness descriptor JSON Schema — binding stubs and capability grants.", file: "harness.schema.json", mimeType: "application/json" },
 	{ id: "harness-steps-schema", title: "Harness steps JSON Schema", description: "The harness steps JSON Schema — the replayable scenario format.", file: "harness-steps.schema.json", mimeType: "application/json" },
+	{ id: "expression-reference", title: "Expression reference (XEG)", description: "Machine-readable XEG reference: builtin signatures, descriptions, and examples, operators by precedence, evaluation rules, and the fragment attributes that carry expressions. For completion and hover text.", file: "expression-reference.json", mimeType: "application/json" },
+	{ id: "expression-reference-schema", title: "Expression reference JSON Schema", description: "The JSON Schema for the XEG expression reference.", file: "expression-reference.schema.json", mimeType: "application/json" },
 ];
 
 export async function loadGuidanceIndex(): Promise<GuidanceTopic[]> {

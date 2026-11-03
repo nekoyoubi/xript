@@ -16,6 +16,8 @@ import {
 	PROTOCOL_PROPS,
 	RESERVED_IDENTIFIER_PREFIX,
 	typeRefToTypeScript,
+	parseTypeRef,
+	resolveTypeWords,
 	returnTypeRef,
 	returnDescription,
 	isSafeIdentifier,
@@ -191,6 +193,10 @@ interface EventDef {
 	description: string;
 	payload?: TypeRef;
 	capability?: string;
+	emit?: "host" | "mods";
+	pattern?: boolean;
+	addressed?: string[];
+	keys?: string[];
 }
 
 interface FragmentHandler {
@@ -240,7 +246,7 @@ interface LibraryDef {
 	deprecated?: string;
 }
 
-type Binding = FunctionBinding | NamespaceBinding;
+type Binding = FunctionBinding | NamespaceBinding | AccessorBinding;
 
 interface FunctionBinding {
 	description: string;
@@ -249,11 +255,22 @@ interface FunctionBinding {
 	async?: boolean;
 	capability?: string;
 	deprecated?: string;
+	optional?: boolean;
 }
 
 interface NamespaceBinding {
 	description: string;
 	members: Record<string, Binding>;
+	optional?: boolean;
+}
+
+interface AccessorBinding {
+	description: string;
+	accessor: "get" | "get-set";
+	type?: TypeRef;
+	capability?: string;
+	deprecated?: string;
+	optional?: boolean;
 }
 
 interface Parameter {
@@ -264,6 +281,7 @@ interface Parameter {
 	required?: boolean;
 	optional?: boolean;
 	variadic?: boolean;
+	retain?: boolean;
 }
 
 type TypeRef = string | ComplexTypeRef;
@@ -300,6 +318,15 @@ interface FieldDefinition {
 	default?: unknown;
 	enum?: unknown[];
 	open?: boolean;
+	retain?: boolean;
+}
+
+const RETAINED_PARAM_DOC = "Retained: the host may keep this callback and call it after this call returns.";
+const RETAINED_FIELD_DOC = "Retained: the host may keep this callback and call it after the call that received it returns.";
+
+function withRetainedDoc(description: string | undefined, retain: boolean | undefined, note: string): string | undefined {
+	if (retain !== true) return description;
+	return description ? `${description} ${note}` : note;
 }
 
 interface TypegenManifestContext {
@@ -308,6 +335,49 @@ interface TypegenManifestContext {
 
 function isNamespace(binding: Binding): binding is NamespaceBinding {
 	return "members" in binding;
+}
+
+function isAccessor(binding: Binding): binding is AccessorBinding {
+	return typeof (binding as AccessorBinding).accessor === "string";
+}
+
+function isOptionalBinding(binding: Binding): boolean {
+	return binding.optional === true;
+}
+
+const OPTIONAL_BINDING_REMARK = "Optional: a host may omit this, and then it is `undefined`. Check with `xript.has(path)` before use.";
+
+/**
+ * Whether a namespace has to be written as an object type: a `namespace` declaration can neither
+ * mark a member possibly-absent nor declare a live value property, so anything optional or any
+ * accessor beneath it moves the whole namespace to the object-type form.
+ */
+function namespaceNeedsTypeLiteral(binding: NamespaceBinding): boolean {
+	return Object.values(binding.members).some(
+		(member) => isOptionalBinding(member) || isAccessor(member) || (isNamespace(member) && namespaceNeedsTypeLiteral(member)),
+	);
+}
+
+function accessorType(binding: AccessorBinding): string {
+	return binding.type !== undefined ? resolveTypeRef(binding.type) : "unknown";
+}
+
+function functionTypeExpression(binding: FunctionBinding): string {
+	return `(${renderParams(binding.params)}) => ${renderReturn(binding)}`;
+}
+
+function accessorDoc(binding: AccessorBinding): string {
+	const remarks = [
+		binding.accessor === "get"
+			? "Read live: every read asks the host. Read-only; assigning throws a `TypeError`."
+			: "Read and written live: every read and every assignment goes to the host.",
+	];
+	if (isOptionalBinding(binding)) remarks.push(OPTIONAL_BINDING_REMARK);
+	return generateJSDoc(binding.description, { capability: binding.capability, deprecated: binding.deprecated, remarks });
+}
+
+function withOptionalRemark(remarks: string[], binding: Binding): string[] {
+	return isOptionalBinding(binding) ? [...remarks, OPTIONAL_BINDING_REMARK] : remarks;
 }
 
 export { isSafeIdentifier };
@@ -327,7 +397,10 @@ function renderParams(params: Parameter[] | undefined): string {
 function paramDocs(params: Parameter[] | undefined): Array<{ name: string; description?: string }> | undefined {
 	if (!params) return undefined;
 	const ids = parameterIdentifiers(params);
-	return params.map((param, index) => ({ name: ids[index], description: param.description }));
+	return params.map((param, index) => ({
+		name: ids[index],
+		description: withRetainedDoc(param.description, param.retain, RETAINED_PARAM_DOC),
+	}));
 }
 
 function renderReturn(binding: { returns?: unknown; async?: boolean }): string {
@@ -343,13 +416,25 @@ function functionDoc(binding: FunctionBinding, tags: string[], remarks: string[]
 		deprecated: binding.deprecated,
 		returns: returnDescription(binding.returns),
 		tags,
-		remarks,
+		remarks: withOptionalRemark(remarks, binding),
 	});
 }
 
 function generateFunction(name: string, binding: FunctionBinding, manifest?: unknown): string {
 	const { tags, remarks } = intentDoc(manifest, `bindings/${name}`, binding.async === true);
-	return [functionDoc(binding, tags, remarks), `declare function ${name}(${renderParams(binding.params)}): ${renderReturn(binding)};`]
+	const declaration = isOptionalBinding(binding)
+		? `declare const ${name}: (${functionTypeExpression(binding)}) | undefined;`
+		: `declare function ${name}(${renderParams(binding.params)}): ${renderReturn(binding)};`;
+	return [functionDoc(binding, tags, remarks), declaration]
+		.filter(Boolean)
+		.join("\n");
+}
+
+/** A top-level accessor: a global whose value the host computes on every read. */
+function generateAccessor(name: string, binding: AccessorBinding): string {
+	const keyword = binding.accessor === "get" ? "const" : "let";
+	const type = isOptionalBinding(binding) ? `${accessorType(binding)} | undefined` : accessorType(binding);
+	return [accessorDoc(binding), `declare ${keyword} ${name}: ${type};`]
 		.filter(Boolean)
 		.join("\n");
 }
@@ -379,26 +464,51 @@ function namespaceTypeLiteral(binding: NamespaceBinding, qualified: string, mani
 	for (let i = 0; i < memberEntries.length; i++) {
 		const [memberName, member] = memberEntries[i];
 		const memberPath = `${qualified}.${memberName}`;
-		const key = formatKeyName(memberName);
-		if (isNamespace(member)) {
-			const doc = generateJSDoc(member.description);
-			if (doc) lines.push(indent(doc, 1));
-			lines.push(indent(`${key}: ${namespaceTypeLiteral(member, memberPath, manifest)};`, 1));
-		} else {
-			const { tags, remarks } = intentDoc(manifest, `bindings/${memberPath}`, member.async === true);
-			const doc = functionDoc(member, tags, remarks);
-			if (doc) lines.push(indent(doc, 1));
-			lines.push(indent(`${key}(${renderParams(member.params)}): ${renderReturn(member)};`, 1));
-		}
+		lines.push(...memberTypeLines(formatKeyName(memberName), member, memberPath, manifest).map((line) => indent(line, 1)));
 		if (i < memberEntries.length - 1) lines.push("");
 	}
 	lines.push("}");
 	return lines.join("\n");
 }
 
+/**
+ * One binding written as a property of an object type: its doc comment, then its signature. An
+ * optional binding is an optional property, so a mod that uses it unguarded fails to typecheck;
+ * an accessor is a value property, `readonly` when the host declares no setter.
+ */
+function memberTypeLines(key: string, member: Binding, memberPath: string, manifest?: unknown): string[] {
+	const lines: string[] = [];
+	const mark = isOptionalBinding(member) ? "?" : "";
+	if (isNamespace(member)) {
+		const remarks = withOptionalRemark([], member);
+		const doc = generateJSDoc(member.description, remarks.length > 0 ? { remarks } : undefined);
+		if (doc) lines.push(doc);
+		lines.push(`${key}${mark}: ${namespaceTypeLiteral(member, memberPath, manifest)};`);
+	} else if (isAccessor(member)) {
+		const doc = accessorDoc(member);
+		if (doc) lines.push(doc);
+		lines.push(`${member.accessor === "get" ? "readonly " : ""}${key}${mark}: ${accessorType(member)};`);
+	} else {
+		const { tags, remarks } = intentDoc(manifest, `bindings/${memberPath}`, member.async === true);
+		const doc = functionDoc(member, tags, remarks);
+		if (doc) lines.push(doc);
+		lines.push(
+			mark
+				? `${key}?: ${functionTypeExpression(member)};`
+				: `${key}(${renderParams(member.params)}): ${renderReturn(member)};`,
+		);
+	}
+	return lines;
+}
+
 function generateNamespace(name: string, binding: NamespaceBinding, manifest?: unknown): string {
-	if (!namespaceIsDeclarable(binding)) {
-		return [generateJSDoc(binding.description), `declare const ${name}: ${namespaceTypeLiteral(binding, name, manifest)};`]
+	if (isOptionalBinding(binding) || namespaceNeedsTypeLiteral(binding) || !namespaceIsDeclarable(binding)) {
+		const type = namespaceTypeLiteral(binding, name, manifest);
+		const remarks = withOptionalRemark([], binding);
+		return [
+			generateJSDoc(binding.description, remarks.length > 0 ? { remarks } : undefined),
+			`declare const ${name}: ${isOptionalBinding(binding) ? `${type} | undefined` : type};`,
+		]
 			.filter(Boolean)
 			.join("\n");
 	}
@@ -417,7 +527,7 @@ function generateNamespace(name: string, binding: NamespaceBinding, manifest?: u
 			const nested = generateNestedNamespace(memberName, memberBinding, memberPath, manifest);
 			lines.push(indent(nested, 1));
 		} else {
-			const fn = generateNamespaceFunction(memberName, memberBinding, memberPath, manifest);
+			const fn = generateNamespaceFunction(memberName, memberBinding as FunctionBinding, memberPath, manifest);
 			lines.push(indent(fn, 1));
 		}
 		if (i < memberEntries.length - 1) {
@@ -444,7 +554,7 @@ function generateNestedNamespace(name: string, binding: NamespaceBinding, qualif
 			const nested = generateNestedNamespace(memberName, memberBinding, memberPath, manifest);
 			lines.push(indent(nested, 1));
 		} else {
-			const fn = generateNamespaceFunction(memberName, memberBinding, memberPath, manifest);
+			const fn = generateNamespaceFunction(memberName, memberBinding as FunctionBinding, memberPath, manifest);
 			lines.push(indent(fn, 1));
 		}
 		if (i < memberEntries.length - 1) {
@@ -471,17 +581,7 @@ function generateUndeclarableBindings(bindings: Array<[string, Binding]>, manife
 	lines.push(`interface ${RESERVED_IDENTIFIER_PREFIX}Globals {`);
 	for (let i = 0; i < bindings.length; i++) {
 		const [name, binding] = bindings[i];
-		const key = formatKeyName(name);
-		if (isNamespace(binding)) {
-			const doc = generateJSDoc(binding.description);
-			if (doc) lines.push(indent(doc, 1));
-			lines.push(indent(`${key}: ${namespaceTypeLiteral(binding, name, manifest)};`, 1));
-		} else {
-			const { tags, remarks } = intentDoc(manifest, `bindings/${name}`, binding.async === true);
-			const doc = functionDoc(binding, tags, remarks);
-			if (doc) lines.push(indent(doc, 1));
-			lines.push(indent(`${key}(${renderParams(binding.params)}): ${renderReturn(binding)};`, 1));
-		}
+		lines.push(...memberTypeLines(formatKeyName(name), binding, name, manifest).map((line) => indent(line, 1)));
 		if (i < bindings.length - 1) lines.push("");
 	}
 	lines.push("}");
@@ -497,7 +597,13 @@ function generateBindingBlocks(bindings: Record<string, Binding>, manifest?: unk
 			undeclarable.push([bindingName, binding]);
 			continue;
 		}
-		blocks.push(isNamespace(binding) ? generateNamespace(bindingName, binding, manifest) : generateFunction(bindingName, binding, manifest));
+		blocks.push(
+			isNamespace(binding)
+				? generateNamespace(bindingName, binding, manifest)
+				: isAccessor(binding)
+					? generateAccessor(bindingName, binding)
+					: generateFunction(bindingName, binding, manifest),
+		);
 	}
 	if (undeclarable.length > 0) blocks.push(generateUndeclarableBindings(undeclarable, manifest));
 	return blocks;
@@ -539,8 +645,9 @@ function generateObjectType(name: string, def: TypeDefinition, types?: Record<st
 	if (def.fields) {
 		const fieldEntries = Object.entries(def.fields);
 		for (const [fieldName, field] of fieldEntries) {
-			if (field.description) {
-				lines.push(indent(generateJSDoc(field.description), 1));
+			const doc = withRetainedDoc(field.description, field.retain, RETAINED_FIELD_DOC);
+			if (doc) {
+				lines.push(indent(generateJSDoc(doc), 1));
 			}
 			const optional = isFieldOptional(field) ? "?" : "";
 			lines.push(indent(`${formatKeyName(fieldName)}${optional}: ${resolveFieldType(field, types)};`, 1));
@@ -790,6 +897,8 @@ function generateXriptConst(): string {
 		indent("/** Registers a named callable the host can invoke by name. */", 2),
 		indent("register(name: string, fn: (...args: any[]) => unknown): void;", 2),
 		indent("};", 1),
+		indent("/** Whether the binding at this dotted path is declared and provided by this host. */", 1),
+		indent("has(path: string): boolean;", 1),
 		"};",
 	].join("\n");
 }
@@ -858,7 +967,7 @@ export function generateAmbientTypes(manifest: unknown, options?: TypegenOptions
 	if (ambientFormatTypes) globalBlocks.push(ambientFormatTypes);
 
 	if (env.events && env.events.length > 0) {
-		globalBlocks.push(generateEventCatalog(env.events));
+		globalBlocks.push(generateEventCatalog(env.events, env.types as Record<string, TypeDefinition> | undefined));
 		globalBlocks.push(generateEventsGlobal());
 	}
 
@@ -957,7 +1066,7 @@ export function generateTypes(manifest: unknown, options?: TypegenOptions): stri
 	if (formatTypes) sections.push(formatTypes);
 
 	if (m.events && m.events.length > 0) {
-		sections.push(generateEventCatalog(m.events));
+		sections.push(generateEventCatalog(m.events, m.types as Record<string, TypeDefinition> | undefined));
 		sections.push(generateEventsGlobal(true));
 	}
 
@@ -1284,7 +1393,36 @@ function generateFormatTypes(manifest: unknown): string {
 	return blocks.join("\n\n");
 }
 
-function generateEventCatalog(events: EventDef[]): string {
+/**
+ * The handler argument tuple for an event payload. Every runtime spreads an object payload's
+ * values as positional arguments, so a declared record type becomes its fields in order; a
+ * payload that may be an object of unknown shape becomes a rest of unknowns; anything else is
+ * one argument.
+ */
+function eventHandlerArgs(payload: TypeRef | undefined, types: Record<string, TypeDefinition> | undefined): string {
+	if (payload === undefined) return "[]";
+	const node = resolveTypeWords(parseTypeRef(payload));
+	if (node.kind === "name") {
+		const fields = types?.[node.name]?.fields;
+		if (fields) {
+			const members = Object.entries(fields).map(([name, field], index) => {
+				const label = isSafeIdentifier(name) ? name : `arg${index}`;
+				const type = resolveFieldType(field, types);
+				return `${label}: ${isFieldOptional(field) ? `${type} | undefined` : type}`;
+			});
+			return `[${members.join(", ")}]`;
+		}
+		if (node.name === "any" || node.name === "unknown") return "[...values: unknown[]]";
+		if (node.name === "void" || node.name === "undefined") return "[]";
+		return `[payload: ${resolveTypeRef(payload)}]`;
+	}
+	if (node.kind === "map" || node.kind === "union" || node.kind === "optional" || node.kind === "unknown") {
+		return "[...values: unknown[]]";
+	}
+	return `[payload: ${resolveTypeRef(payload)}]`;
+}
+
+function generateEventCatalog(events: EventDef[], types?: Record<string, TypeDefinition>): string {
 	const lines: string[] = [];
 
 	lines.push(
@@ -1297,38 +1435,163 @@ function generateEventCatalog(events: EventDef[]): string {
 	for (const event of events) {
 		const payload = event.payload !== undefined ? resolveTypeRef(event.payload) : "void";
 		lines.push(indent(generateJSDoc(event.description, { capability: event.capability }), 1));
-		lines.push(indent(`"${event.id}": ${payload};`, 1));
+		lines.push(indent(`${eventKey(event.id, event.pattern === true)}: ${payload};`, 1));
+		for (const shape of event.addressed ?? []) {
+			lines.push(indent(generateJSDoc(`Addressed form of \`${event.id}\`: ${event.description}`), 1));
+			lines.push(indent(`${eventKey(shape, true)}: ${payload};`, 1));
+		}
 	}
 
 	lines.push("}");
 	lines.push("");
 
 	lines.push(generateJSDoc("An event id the host emits."));
-	const union = events.map((e) => `"${e.id}"`).join(" | ");
-	lines.push(`type XriptEventId = ${union};`);
+	const ids = events.flatMap((e) => [eventIdType(e.id, e.pattern === true), ...(e.addressed ?? []).map((shape) => eventIdType(shape, true))]);
+	lines.push(`type XriptEventId = ${ids.join(" | ")};`);
+	lines.push("");
+
+	lines.push(
+		generateJSDoc(
+			"The arguments each event's handlers receive. The runtime spreads an object payload's values as positional arguments, in the payload's own key order, so a payload type with declared fields becomes those fields in declaration order; a host that builds the payload in that order matches the types. Any other payload arrives as one argument, and no payload as none.",
+		),
+	);
+	lines.push("interface XriptEventArgs {");
+	for (const event of events) {
+		const args = eventHandlerArgs(event.payload, types);
+		lines.push(indent(`${eventKey(event.id, event.pattern === true)}: ${args};`, 1));
+		for (const shape of event.addressed ?? []) lines.push(indent(`${eventKey(shape, true)}: ${args};`, 1));
+	}
+	lines.push("}");
+	lines.push("");
+
+	lines.push(generateJSDoc("An event id a mod may emit: one declared with `\"emit\": \"mods\"`."));
+	const modIds = events
+		.filter((e) => e.emit === "mods")
+		.flatMap((e) => [eventIdType(e.id, e.pattern === true), ...(e.addressed ?? []).map((shape) => eventIdType(shape, true))]);
+	lines.push(`type XriptModEventId = ${modIds.length > 0 ? modIds.join(" | ") : "never"};`);
 
 	return lines.join("\n");
+}
+
+/**
+ * An event id as a type. A shape's `<name>` segments become `${string}`, so a pattern id or an
+ * addressed form types every concrete id that fits it.
+ */
+function eventIdType(id: string, shape: boolean): string {
+	if (!shape || !id.includes("<")) return `"${id}"`;
+	const template = id
+		.split(".")
+		.map((segment) => (/^<[A-Za-z_][A-Za-z0-9_]*>$/.test(segment) ? "${string}" : segment.replace(/[`\\$]/g, "\\$&")))
+		.join(".");
+	return `\`${template}\``;
+}
+
+function eventKey(id: string, shape: boolean): string {
+	const type = eventIdType(id, shape);
+	return type.startsWith("`") ? `[id: ${type}]` : type;
 }
 
 function generateEventsGlobal(declare = false): string {
 	const lines: string[] = [];
 
+	const prefix = declare ? "declare " : "";
+	lines.push(generateJSDoc("What `events.on` and `events.once` return. `id` is a storable token for `events.cancel`."));
+	lines.push(`${prefix}interface XriptSubscription {`);
+	lines.push(indent("readonly id: string;", 1));
+	lines.push(indent("readonly event: string;", 1));
+	lines.push(indent("cancel(): XriptCancelResult;", 1));
+	lines.push("}");
+	lines.push("");
+	lines.push(generateJSDoc("What `events.cancel` reports: whether this call cancelled it, and whether a `once` had already fired."));
+	lines.push(`${prefix}interface XriptCancelResult {`);
+	lines.push(indent("cancelled: boolean;", 1));
+	lines.push(indent("spent: boolean;", 1));
+	lines.push("}");
+	lines.push("");
+	lines.push(generateJSDoc("Subscription options. `match` runs the handler only when every listed top-level payload key is strictly equal to the given value."));
+	lines.push(`${prefix}interface XriptSubscribeOptions {`);
+	lines.push(indent("match?: Record<string, unknown>;", 1));
+	lines.push("}");
+	lines.push("");
+	lines.push(generateJSDoc("An events catalogue entry, the shape the manifest's `events` and `events.declare` share."));
+	lines.push(`${prefix}interface XriptEventEntry {`);
+	lines.push(indent("id: string;", 1));
+	lines.push(indent("description: string;", 1));
+	lines.push(indent("payload?: unknown;", 1));
+	lines.push(indent("capability?: string;", 1));
+	lines.push(indent('emit?: "host" | "mods";', 1));
+	lines.push(indent("pattern?: boolean;", 1));
+	lines.push(indent("addressed?: string[];", 1));
+	lines.push(indent("keys?: string[];", 1));
+	lines.push("}");
+	lines.push("");
+	lines.push(generateJSDoc("One event's listeners broken down by owner. `untracked` counts listeners no mod owns."));
+	lines.push(`${prefix}interface XriptSubscribers {`);
+	lines.push(indent("event: string;", 1));
+	lines.push(indent("total: number;", 1));
+	lines.push(indent("owners: Array<{ owner: string; count: number }>;", 1));
+	lines.push(indent("repeated: string[];", 1));
+	lines.push(indent("untracked: number;", 1));
+	lines.push("}");
+	lines.push("");
+
+	const handler = "(...args: XriptEventArgs[K]) => unknown";
+	const untyped = "(...args: any[]) => unknown";
+	const members: Array<[string, string[]]> = [
+		[
+			"Subscribes a handler to a declared event. The payload type is inferred from a manifest-declared id; an event declared at runtime is untyped.",
+			[
+				`function on<K extends XriptEventId>(id: K, handler: ${handler}, options?: XriptSubscribeOptions): XriptSubscription;`,
+				`function on(id: string, handler: ${untyped}, options?: XriptSubscribeOptions): XriptSubscription;`,
+			],
+		],
+		[
+			"Alias of `events.on`.",
+			[
+				`function subscribe<K extends XriptEventId>(id: K, handler: ${handler}, options?: XriptSubscribeOptions): XriptSubscription;`,
+				`function subscribe(id: string, handler: ${untyped}, options?: XriptSubscribeOptions): XriptSubscription;`,
+			],
+		],
+		[
+			"Subscribes for one delivery. The subscription is spent before the handler runs, so a throwing handler does not resubscribe.",
+			[
+				`function once<K extends XriptEventId>(id: K, handler: ${handler}, options?: XriptSubscribeOptions): XriptSubscription;`,
+				`function once(id: string, handler: ${untyped}, options?: XriptSubscribeOptions): XriptSubscription;`,
+			],
+		],
+		["Cancels a subscription by its id or the object `on` returned. Another owner's needs `events.off`.", ["function cancel(subscription: string | XriptSubscription): XriptCancelResult;"]],
+		["Drops the caller's listeners on an event (everyone's with `events.off`) and returns how many.", ["function off(id: string): number;"]],
+		[
+			"Emits an event declared with `\"emit\": \"mods\"`, running its handlers in subscription order.",
+			["function emit<K extends XriptModEventId>(id: K, data?: XriptEvents[K]): unknown[];", "function emit(id: string, data?: unknown): unknown[];"],
+		],
+		[
+			"`emit` delivered as a promise: the same checks and the same results, resolved, and a refused emit rejects instead of throwing. Where the bus spans workers that yield, it awaits a handler on another worker instead of blocking.",
+			["function emitAsync<K extends XriptModEventId>(id: K, data?: XriptEvents[K]): Promise<unknown[]>;", "function emitAsync(id: string, data?: unknown): Promise<unknown[]>;"],
+		],
+		["Cancels every subscription an owner holds (the caller's when omitted; another owner's needs `events.off`) and returns how many.", ["function cancelOwned(owner?: string | null): number;"]],
+		["Claims an event-id namespace for the calling mod (needs `events.claim`). False when another mod holds it.", ["function claim(prefix: string): boolean;"]],
+		["Every claim, longest prefix first.", ["function namespaces(): Array<{ prefix: string; owner: string }>;"]],
+		["The owner of the most specific claim covering an id, or null.", ["function ownerOf(id: string): string | null;"]],
+		["Adds an event to the catalogue at runtime (needs `events.declare`).", ["function declare(entry: XriptEventEntry): XriptEventEntry;"]],
+		["The catalogue entry an id resolves to, or null.", ["function describe(id: string): XriptEventEntry | null;"]],
+		["Every declared entry, manifest-declared and runtime-declared.", ["function catalogue(): XriptEventEntry[];"]],
+		["Every event currently holding a listener.", ["function names(): string[];"]],
+		["Listeners on one event, or on all of them.", ["function listenerCount(id?: string): number;"]],
+		["One event's listeners broken down by owner.", ["function subscribers(id: string): XriptSubscribers;"]],
+	];
+
 	lines.push(
 		generateJSDoc(
-			"The in-sandbox `events` global. A mod subscribes to the host's broadcast catalog by event id; the handler receives that event's declared payload. Subscribing to a capability-gated event without the grant throws a `CapabilityDeniedError` at registration time.",
+			"The in-sandbox `events` global: the events bus. A mod subscribes to the host's catalogue by event id; the handler receives that event's payload. Subscribing to a capability-gated event without the grant throws a `CapabilityDeniedError` at registration time.",
 		),
 	);
-	lines.push(`${declare ? "declare " : ""}namespace events {`);
-	lines.push(
-		indent(
-			generateJSDoc("Subscribes a handler to a declared host event. The payload type is inferred from the event id."),
-			1,
-		),
-	);
-	lines.push(indent("function on<K extends XriptEventId>(id: K, handler: (payload: XriptEvents[K]) => void): void;", 1));
-	lines.push("");
-	lines.push(indent(generateJSDoc("Alias of `events.on`."), 1));
-	lines.push(indent("function subscribe<K extends XriptEventId>(id: K, handler: (payload: XriptEvents[K]) => void): void;", 1));
+	lines.push(`${prefix}namespace events {`);
+	members.forEach(([doc, signatures], index) => {
+		if (index > 0) lines.push("");
+		lines.push(indent(generateJSDoc(doc), 1));
+		for (const signature of signatures) lines.push(indent(signature, 1));
+	});
 	lines.push("}");
 
 	return lines.join("\n");

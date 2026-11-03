@@ -1288,6 +1288,628 @@
 				"v": "<b>hi</b>"
 			},
 			"expect": true
+		},
+		{
+			"id": "str-exponent-from-1e21",
+			"expression": "str(1e21)",
+			"expect": "1e+21"
+		},
+		{
+			"id": "str-exponent-below-1e-6",
+			"expression": "str(1e-7)",
+			"expect": "1e-7"
+		},
+		{
+			"id": "str-exponent-fraction",
+			"expression": "str(1.5e-7)",
+			"expect": "1.5e-7"
+		},
+		{
+			"id": "str-plain-at-1e-6",
+			"expression": "str(0.000001)",
+			"expect": "0.000001"
+		},
+		{
+			"id": "str-integer-past-int64",
+			"expression": "str(1e20)",
+			"expect": "100000000000000000000",
+			"note": "An integer above 2^63 still prints in full. Casting through a 64-bit integer saturates or wraps."
+		},
+		{
+			"id": "str-huge-exponent",
+			"expression": "str(1.5e300)",
+			"expect": "1.5e+300"
+		},
+		{
+			"id": "str-shortest-round-trip",
+			"expression": "str(0.1 + 0.2)",
+			"expect": "0.30000000000000004"
+		},
+		{
+			"id": "str-shortest-tie-is-nearest",
+			"expression": "str(v)",
+			"bindings": {
+				"v": 1964567690431249.2
+			},
+			"expect": "1964567690431249.2",
+			"note": "The value is exactly ...249.25. Two 17-digit strings round-trip; the one nearest the exact value wins, and on an exact tie the even digit."
+		},
+		{
+			"id": "concat-renders-exponent",
+			"expression": "'n=' + 1e21",
+			"expect": "n=1e+21"
+		},
+		{
+			"id": "join-renders-exponent",
+			"expression": "join(v, '|')",
+			"bindings": {
+				"v": [
+					1e+21,
+					0.5
+				]
+			},
+			"expect": "1e+21|0.5"
+		},
+		{
+			"id": "round-just-below-half",
+			"expression": "round(0.49999999999999994)",
+			"expect": 0,
+			"note": "Adding 0.5 and flooring rounds this up to 1, because the sum rounds to exactly 1."
+		},
+		{
+			"id": "round-large-odd-integer",
+			"expression": "round(4503599627370497)",
+			"expect": 4503599627370497
+		},
+		{
+			"id": "fixed-exact-value-below-half",
+			"expression": "fixed(1.45, 1)",
+			"expect": "1.4",
+			"note": "1.45 is stored as 1.4499999999999999556, so it rounds down. Scaling by ten first lands on 14.5 and rounds the wrong way."
+		},
+		{
+			"id": "fixed-exact-tie-away-from-zero",
+			"expression": "fixed(0.125, 2)",
+			"expect": "0.13"
+		},
+		{
+			"id": "fixed-negative-tie-away-from-zero",
+			"expression": "fixed(-1.5, 0)",
+			"expect": "-2"
+		},
+		{
+			"id": "fixed-negative-rounds-to-zero-keeps-sign",
+			"expression": "fixed(-0.0001, 2)",
+			"expect": "-0.00"
+		},
+		{
+			"id": "fixed-from-1e21-is-str",
+			"expression": "fixed(1e21, 2)",
+			"expect": "1e+21"
+		},
+		{
+			"id": "fixed-twenty-digits-is-exact",
+			"expression": "fixed(0.1, 20)",
+			"expect": "0.10000000000000000555"
+		},
+		{
+			"id": "string-length-counts-code-units",
+			"expression": "len(v)",
+			"bindings": {
+				"v": "😀a"
+			},
+			"expect": 3
+		},
+		{
+			"id": "string-length-member-counts-code-units",
+			"expression": "v.length",
+			"bindings": {
+				"v": "😀a"
+			},
+			"expect": 3
+		},
+		{
+			"id": "slice-counts-code-units",
+			"expression": "slice(v, 2)",
+			"bindings": {
+				"v": "😀ab"
+			},
+			"expect": "ab"
+		},
+		{
+			"id": "at-indexes-code-units",
+			"expression": "at(v, 2)",
+			"bindings": {
+				"v": "😀a"
+			},
+			"expect": "a"
+		},
+		{
+			"id": "index-reads-a-code-unit",
+			"expression": "v[2]",
+			"bindings": {
+				"v": "😀a"
+			},
+			"expect": "a"
+		},
+		{
+			"id": "pad-measures-code-units",
+			"expression": "pad(v, 3, '*')",
+			"bindings": {
+				"v": "😀"
+			},
+			"expect": "*😀"
+		},
+		{
+			"id": "strings-order-by-code-unit",
+			"expression": "v > '\\uFFFF'",
+			"bindings": {
+				"v": "😀"
+			},
+			"expect": false
+		},
+		{
+			"id": "trim-uses-javascript-whitespace",
+			"expression": "trim(v)",
+			"bindings": {
+				"v": "\uFEFF x \u0085"
+			},
+			"expect": "x \u0085",
+			"note": "U+FEFF is whitespace and U+0085 is not."
+		},
+		{
+			"id": "trim-strips-line-separators",
+			"expression": "trim(v)",
+			"bindings": {
+				"v": "\u2028\u3000x\u00A0"
+			},
+			"expect": "x"
+		},
+		{
+			"id": "upper-full-mapping-expands",
+			"expression": "upper('ß')",
+			"expect": "SS"
+		},
+		{
+			"id": "upper-ligature-expands",
+			"expression": "upper('ﬁ')",
+			"expect": "FI"
+		},
+		{
+			"id": "upper-dotless-i",
+			"expression": "upper('ı')",
+			"expect": "I"
+		},
+		{
+			"id": "lower-final-sigma",
+			"expression": "lower('ΟΔΟΣ')",
+			"expect": "οδος"
+		},
+		{
+			"id": "lower-medial-sigma",
+			"expression": "lower('ΣΑΣ Α')",
+			"expect": "σας α"
+		},
+		{
+			"id": "lower-lone-sigma-is-medial",
+			"expression": "lower('Σ')",
+			"expect": "σ"
+		},
+		{
+			"id": "lower-dotted-capital-i-expands",
+			"expression": "len(lower('İ'))",
+			"expect": 2
+		},
+		{
+			"id": "num-reads-hex",
+			"expression": "num('0x10')",
+			"expect": 16
+		},
+		{
+			"id": "num-reads-binary",
+			"expression": "num('0b11')",
+			"expect": 3
+		},
+		{
+			"id": "num-rejects-infinity",
+			"expression": "num('Infinity')",
+			"expect": null
+		},
+		{
+			"id": "num-rejects-separators",
+			"expression": "num('1_000')",
+			"expect": null
+		},
+		{
+			"id": "num-accepts-trailing-point",
+			"expression": "num('5.')",
+			"expect": 5
+		},
+		{
+			"id": "num-accepts-leading-point",
+			"expression": "num(' .5 ')",
+			"expect": 0.5
+		},
+		{
+			"id": "num-accepts-signed-exponent",
+			"expression": "num('-1.5E+2')",
+			"expect": -150
+		},
+		{
+			"id": "depth-64-groups-parse",
+			"expression": "((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((hp))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))",
+			"expect": 35
+		},
+		{
+			"id": "depth-64-calls-parse",
+			"expression": "abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(-1))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))",
+			"expect": 1
+		},
+		{
+			"id": "depth-mixed-brackets-count-together",
+			"expression": "((((((((((((((((((((((((((((((((abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(-1))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))",
+			"expect": 1
+		},
+		{
+			"id": "whitespace-ascii-set-separates-tokens",
+			"expression": "hp\u000b+\f1\t-\r\n1",
+			"expect": 35
+		},
+		{
+			"id": "slice-halves-rejoin-into-the-pair",
+			"expression": "slice(v, 0, 1) + slice(v, 1)",
+			"bindings": {
+				"v": "😀ab"
+			},
+			"expect": "😀ab"
+		},
+		{
+			"id": "index-units-rejoin-into-the-pair",
+			"expression": "v[0] + v[1] == '😀'",
+			"bindings": {
+				"v": "😀a"
+			},
+			"expect": true
+		},
+		{
+			"id": "at-units-rejoin-into-the-pair",
+			"expression": "at(v, 0) + at(v, 1)",
+			"bindings": {
+				"v": "😀a"
+			},
+			"expect": "😀"
+		},
+		{
+			"id": "a-half-pair-has-length-one",
+			"expression": "len(slice(v, 0, 1))",
+			"bindings": {
+				"v": "😀"
+			},
+			"expect": 1
+		},
+		{
+			"id": "a-half-pair-is-found-in-the-whole",
+			"expression": "has(v, slice(v, 1, 2))",
+			"bindings": {
+				"v": "😀"
+			},
+			"expect": true
+		},
+		{
+			"id": "escaped-surrogates-are-the-pair",
+			"expression": "'\\uD83D\\uDE00' == v",
+			"bindings": {
+				"v": "😀"
+			},
+			"expect": true
+		},
+		{
+			"id": "escaped-halves-concatenate-into-the-pair",
+			"expression": "'\\uD83D' + '\\uDE00'",
+			"expect": "😀"
+		},
+		{
+			"id": "pad-fill-counts-code-units",
+			"expression": "pad('a', 3, v)",
+			"bindings": {
+				"v": "😀"
+			},
+			"expect": "😀a"
+		},
+		{
+			"id": "strings-order-astral-below-private-use",
+			"expression": "v < '\\uE000'",
+			"bindings": {
+				"v": "😀"
+			},
+			"expect": true
+		},
+		{
+			"id": "slice-huge-start-is-empty",
+			"expression": "slice('abc', 1e300)",
+			"expect": ""
+		},
+		{
+			"id": "slice-huge-end-runs-to-the-end",
+			"expression": "slice('abc', 1, 1e300)",
+			"expect": "bc"
+		},
+		{
+			"id": "slice-huge-negative-start-is-the-whole",
+			"expression": "slice('abc', -1e300)",
+			"expect": "abc"
+		},
+		{
+			"id": "slice-fraction-truncates-toward-zero",
+			"expression": "slice('abcd', 1.9, -1.5)",
+			"expect": "bc"
+		},
+		{
+			"id": "num-reads-octal",
+			"expression": "num('0o17')",
+			"expect": 15
+		},
+		{
+			"id": "num-reads-trimmed-uppercase-hex",
+			"expression": "num(' 0X1f ')",
+			"expect": 31
+		},
+		{
+			"id": "num-rejects-signed-hex",
+			"expression": "num('-0x10')",
+			"expect": null
+		},
+		{
+			"id": "num-rejects-bare-prefix",
+			"expression": "num('0x')",
+			"expect": null
+		},
+		{
+			"id": "num-rejects-bad-hex-digit",
+			"expression": "num('0x1g')",
+			"expect": null
+		},
+		{
+			"id": "num-rounds-long-hex-to-even",
+			"expression": "num('0x20000000000001')",
+			"expect": 9007199254740992
+		},
+		{
+			"id": "num-rounds-long-hex-up-to-even",
+			"expression": "num('0x20000000000003')",
+			"expect": 9007199254740996
+		},
+		{
+			"id": "num-accepts-trailing-point",
+			"expression": "num('5.')",
+			"expect": 5
+		},
+		{
+			"id": "num-rejects-blank",
+			"expression": "num('   ')",
+			"expect": null
+		},
+		{
+			"id": "literal-point-needs-a-digit-member-read",
+			"expression": "1.e5",
+			"expect": null
+		},
+		{
+			"id": "literal-point-needs-a-digit-length",
+			"expression": "5.length",
+			"expect": null
+		},
+		{
+			"id": "literal-leading-point-then-a-digit-exponent",
+			"expression": "0.5e1",
+			"expect": 5
+		},
+		{
+			"id": "index-fractional-array-is-null",
+			"expression": "effects[0.5]",
+			"expect": null
+		},
+		{
+			"id": "index-fractional-negative-array-is-null",
+			"expression": "effects[-1.5]",
+			"expect": null
+		},
+		{
+			"id": "index-fractional-string-is-null",
+			"expression": "name[1.5]",
+			"expect": null
+		},
+		{
+			"id": "index-fractional-reads-object-key",
+			"expression": "v[1.5]",
+			"bindings": {
+				"v": {
+					"1": "one",
+					"1.5": "one and a half"
+				}
+			},
+			"expect": "one and a half"
+		},
+		{
+			"id": "index-number-reads-object-key-as-str",
+			"expression": "v[1e21]",
+			"bindings": {
+				"v": {
+					"1e+21": "big"
+				}
+			},
+			"expect": "big"
+		},
+		{
+			"id": "index-string-numeral-reads-array",
+			"expression": "effects['1']",
+			"expect": "slow"
+		},
+		{
+			"id": "index-string-numeral-reads-as-number",
+			"expression": "effects['01'] + effects[' 1 '] + effects['1.0'] + effects['1e0'] + effects['0x1']",
+			"expect": "slowslowslowslowslow"
+		},
+		{
+			"id": "index-blank-string-reads-element-zero",
+			"expression": "effects['']",
+			"expect": "burn"
+		},
+		{
+			"id": "index-negative-string-numeral-is-null",
+			"expression": "effects['-1']",
+			"expect": null
+		},
+		{
+			"id": "index-string-numeral-never-indexes-a-string",
+			"expression": "name['1']",
+			"expect": null
+		},
+		{
+			"id": "index-infinity-string-is-null",
+			"expression": "effects['Infinity']",
+			"expect": null
+		},
+		{
+			"id": "binding-drops-constructor-key",
+			"expression": "v.constructor",
+			"bindings": {
+				"v": {
+					"a": 2,
+					"constructor": 1,
+					"prototype": 3,
+					"__proto__": {
+						"x": 4
+					}
+				}
+			},
+			"expect": null
+		},
+		{
+			"id": "binding-drops-own-proto-key",
+			"expression": "v['__proto__']",
+			"bindings": {
+				"v": {
+					"a": 2,
+					"constructor": 1,
+					"prototype": 3,
+					"__proto__": {
+						"x": 4
+					}
+				}
+			},
+			"expect": null
+		},
+		{
+			"id": "binding-drops-prototype-key",
+			"expression": "has(v, 'prototype')",
+			"bindings": {
+				"v": {
+					"a": 2,
+					"constructor": 1,
+					"prototype": 3,
+					"__proto__": {
+						"x": 4
+					}
+				}
+			},
+			"expect": false
+		},
+		{
+			"id": "binding-dropped-keys-do-not-count",
+			"expression": "len(v)",
+			"bindings": {
+				"v": {
+					"a": 2,
+					"constructor": 1,
+					"prototype": 3,
+					"__proto__": {
+						"x": 4
+					}
+				}
+			},
+			"expect": 1
+		},
+		{
+			"id": "binding-keeps-other-keys",
+			"expression": "v.a",
+			"bindings": {
+				"v": {
+					"a": 2,
+					"constructor": 1,
+					"prototype": 3,
+					"__proto__": {
+						"x": 4
+					}
+				}
+			},
+			"expect": 2
+		},
+		{
+			"id": "binding-drops-keys-at-every-depth",
+			"expression": "v",
+			"bindings": {
+				"v": [
+					{
+						"__proto__": 1,
+						"b": [
+							{
+								"constructor": 2,
+								"c": 3
+							}
+						]
+					}
+				]
+			},
+			"expect": [
+				{
+					"b": [
+						{
+							"c": 3
+						}
+					]
+				}
+			]
+		},
+		{
+			"id": "literal-overflow-is-null",
+			"expression": "1e999",
+			"expect": null
+		},
+		{
+			"id": "literal-overflow-is-falsy",
+			"expression": "1e999 ? 'big' : 'null'",
+			"expect": "null"
+		},
+		{
+			"id": "literal-overflow-does-not-order",
+			"expression": "1e999 > 1",
+			"expect": false
+		},
+		{
+			"id": "literal-overflow-falls-through-nullish",
+			"expression": "1e999 ?? 'fallback'",
+			"expect": "fallback"
+		},
+		{
+			"id": "literal-overflow-past-max-double",
+			"expression": "1.7976931348623159e308",
+			"expect": null
+		},
+		{
+			"id": "literal-largest-double-is-finite",
+			"expression": "1.7976931348623157e308 > 1",
+			"expect": true
+		},
+		{
+			"id": "literal-underflow-is-zero",
+			"expression": "1e-999",
+			"expect": 0
+		},
+		{
+			"id": "question-dot-digit-spaced-is-a-conditional",
+			"expression": "hp ? .5 : 1",
+			"expect": 0.5
 		}
 	],
 	"rejects": [
@@ -1615,6 +2237,101 @@
 			"id": "reject-node-limit",
 			"expression": "1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1",
 			"reason": "exceeds the node limit"
+		},
+		{
+			"id": "reject-depth-65-groups",
+			"expression": "(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((hp)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))",
+			"reason": "parentheses, brackets, and call arguments nest at most 64 deep, so a parse runs in bounded stack"
+		},
+		{
+			"id": "reject-depth-65-calls",
+			"expression": "abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(1)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))",
+			"reason": "call argument lists count toward the nesting bound"
+		},
+		{
+			"id": "reject-depth-mixed",
+			"expression": "(((((((((((((((((((((((((((((((((abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(abs(1)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))",
+			"reason": "groups and call arguments count toward the same nesting bound"
+		},
+		{
+			"id": "reject-depth-5000-groups",
+			"expression": "((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((1))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))",
+			"reason": "a deep nest is a parse error, never a stack overflow"
+		},
+		{
+			"id": "reject-whitespace-no-break-space",
+			"expression": "hp\u00A0+ 1",
+			"reason": "whitespace between tokens is space, tab, LF, CR, VT, or FF only; U+00A0 is an unexpected character"
+		},
+		{
+			"id": "reject-whitespace-line-separator",
+			"expression": "hp\u2028",
+			"reason": "U+2028 is not token whitespace"
+		},
+		{
+			"id": "reject-whitespace-ideographic-space",
+			"expression": "(\u3000hp)",
+			"reason": "U+3000 is not token whitespace"
+		},
+		{
+			"id": "reject-whitespace-next-line",
+			"expression": "hp +\u0085 1",
+			"reason": "U+0085 is not token whitespace"
+		},
+		{
+			"id": "reject-whitespace-byte-order-mark",
+			"expression": "\uFEFFhp",
+			"reason": "U+FEFF is not token whitespace"
+		},
+		{
+			"id": "reject-unicode-escape-leading-space",
+			"expression": "'\\u 041'",
+			"reason": "a \\u escape is exactly four hex digits; a space is not one"
+		},
+		{
+			"id": "reject-unicode-escape-trailing-space",
+			"expression": "'\\u041 '",
+			"reason": "a \\u escape is exactly four hex digits"
+		},
+		{
+			"id": "reject-unicode-escape-short",
+			"expression": "'\\u41'",
+			"reason": "a \\u escape is exactly four hex digits"
+		},
+		{
+			"id": "reject-unicode-escape-braced",
+			"expression": "'\\u{41}'",
+			"reason": "the braced \\u{...} form is not in the grammar"
+		},
+		{
+			"id": "reject-literal-trailing-point",
+			"expression": "5.",
+			"reason": "a decimal point must be followed by a digit, so `5.` is the number 5 and a dangling member access"
+		},
+		{
+			"id": "reject-literal-trailing-point-in-call",
+			"expression": "fixed(hp, 5.)",
+			"reason": "a decimal point must be followed by a digit"
+		},
+		{
+			"id": "reject-literal-double-point",
+			"expression": "1..2",
+			"reason": "a decimal point must be followed by a digit"
+		},
+		{
+			"id": "reject-literal-leading-point-exponent",
+			"expression": ".5e1",
+			"reason": "a literal that opens with its decimal point takes no exponent; `.5e1` is `.5` followed by the name `e1` (JavaScript reads it as 5; kept as the TypeScript implementation tokenizes it)"
+		},
+		{
+			"id": "reject-literal-leading-point-signed-exponent",
+			"expression": "min(.25E-2, 1)",
+			"reason": "a literal that opens with its decimal point takes no exponent"
+		},
+		{
+			"id": "reject-question-dot-digit-reads-as-optional-chaining",
+			"expression": "hp?.5:1",
+			"reason": "`?.` is refused as optional chaining even before a digit, where JavaScript would read a conditional; write `hp ? .5 : 1` (a known deviation from JavaScript)"
 		}
 	],
 	"interpolation": [
@@ -1837,6 +2554,31 @@
 		{
 			"id": "interp-nested-open-is-an-error",
 			"text": "{{ hp {{ maxHp }} }}",
+			"invalid": true
+		},
+		{
+			"id": "interp-site-trims-js-whitespace",
+			"text": "{{\u00A0hp\u3000}}",
+			"segments": [
+				{
+					"kind": "expr",
+					"source": "hp"
+				}
+			]
+		},
+		{
+			"id": "interp-site-body-non-ascii-space-is-an-error",
+			"text": "{{ hp\u0085 }}",
+			"invalid": true
+		},
+		{
+			"id": "interp-padded-unicode-escape-is-an-error",
+			"text": "{{ '\\u 411' }}",
+			"invalid": true
+		},
+		{
+			"id": "interp-trailing-point-is-an-error",
+			"text": "{{1.}}",
 			"invalid": true
 		}
 	],

@@ -12,7 +12,7 @@ export interface DataLeaf {
 	value: unknown;
 }
 
-const MOD_SCHEMA = "https://xript.dev/schema/mod-manifest/v0.9.json";
+const MOD_SCHEMA = "https://xript.dev/schema/mod-manifest/v0.10.json";
 const SAMPLE_STRINGS: Record<string, string> = { name: "Aria", time: "12:00", weather: "clear", biome: "plains" };
 const SAMPLE_NAMES = ["Aria", "Bram", "Cole"];
 const SAMPLE_COUNTS = [3, 1, 12];
@@ -223,7 +223,7 @@ export function buildModPackage(authored: AuthoredFragment): ModPackage {
 	const hostLabel = typeof host.title === "string" ? host.title : typeof host.name === "string" ? host.name : "the host";
 	const manifest: Json = {
 		$schema: MOD_SCHEMA,
-		xript: "0.9",
+		xript: "0.10",
 		name: modName,
 		version: "1.0.0",
 		description: `A fragment for the "${slotId}" slot of ${hostLabel}.`,

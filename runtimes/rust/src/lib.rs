@@ -1,17 +1,30 @@
 pub mod callback;
+pub mod caller_context;
 pub mod cap_match;
 pub mod capability;
 pub mod commands;
 pub mod debug;
+mod deprecation;
+#[cfg_attr(not(feature = "threads"), allow(dead_code))]
+mod bus_hub;
 mod error;
+mod event_bus;
 pub mod fragment;
+#[cfg(feature = "threads")]
 pub mod handle;
+pub mod local;
+mod host_call;
 mod manifest;
+mod manifest_builders;
+mod marshal;
 pub mod mod_load;
 pub mod module;
 pub mod pending;
+#[cfg(feature = "threads")]
 pub mod pool;
+pub mod retained;
 mod sandbox;
+pub mod value;
 mod yielding;
 
 pub use capability::{
@@ -22,7 +35,11 @@ pub use debug::{
     instrument_source, Breakpoint, DebugFidelity, DebugOptions, DebugSession, Scope, SourceBreakpoint,
     StackFrame, StopReason, StoppedEvent, Variable, DEBUG_THREAD_ID,
 };
-pub use callback::{Callback, CallbackError, CALLBACK_MARKER};
+pub use callback::{Callback, CallbackError, ExpiredCause, CALLBACK_MARKER};
+pub use caller_context::{CallerContext, CallerGuard};
+pub use deprecation::{Deprecation, DeprecationSink};
+pub use host_call::{CallerHostFn, HostCallInfo};
+pub use retained::{RetainError, RetainedCallback, DEFAULT_MAX_RETAINED_CALLBACKS};
 pub use cap_match::{granted_satisfies, satisfies};
 pub use commands::{
     classify_fill, is_valid_command_id, merge_command_args, resolve_command, resolve_commands,
@@ -63,7 +80,7 @@ pub use fragment::vocabulary::{
     sanitize_tree, DiagnosticCode, DiagnosticSeverity, FragmentDiagnostic, VocabularyOptions,
 };
 pub use manifest::{
-    is_role_identifier, resolve_extends, Binding, Capability, Contributions, EntryBlock, EventDefinition,
+    is_role_identifier, resolve_extends, AccessorBinding, Binding, Capability, Contributions, EntryBlock, EventDefinition,
     ExecutionIntent, ExportDecl, Extends, FieldDefinition, FragmentBinding, FragmentDeclaration,
     FragmentEvent,
     FragmentHandler, FunctionBinding,
@@ -71,20 +88,24 @@ pub use manifest::{
     NamespaceBinding, Parameter, ProviderRole, ResolvedIntent, Slot,
     TypeDefinition, HOOK_SLOT_ACCEPT, ROLE_SLOT_ACCEPT,
 };
+#[cfg(feature = "threads")]
 pub use handle::{
     BlockingHandle, CallInfo, ShutdownReport, WorkerHealth, WorkerState, XriptHandle,
 };
+#[cfg(feature = "threads")]
 pub use pool::{
     CallDescriptor, CallKind, HealthConfig, HookDispatch, IntentRouter, Lane, ModPlacement,
     PoolConfig, PoolMod, PoolRouter, PoolShutdownReport, PoolStats, PoolView, Route, Saturation,
     WedgePolicy, WedgedWorker, WorkerId, WorkerRef, XriptPool,
 };
 pub use pending::{CallToken, DropPolicy, Pending};
+pub use value::{special, Special, XriptValue, SPECIAL_MARKER};
+pub use local::{create_local_runtime, LocalHostBindings, LocalNamespaceBuilder};
 pub use sandbox::{
     AsyncHostFn, AuditDecision, AuditEvent, AuditSink, CancellationToken, ConsoleHandler, ExecutionResult,
-    HardLimits, HostBindings, HostFn, HostNamespaceMember, LogSeverity, NamespaceBuilder,
+    AccessorGetFn, AccessorSetFn, HardLimits, HostAccessor, HostBindings, HostFn, HostNamespaceMember, LogSeverity, NamespaceBuilder,
     resolve_role_all_from, resolve_role_from, resolve_slot_from, CallTokenScope, RoleResolution,
-    RuntimeMode, RuntimeOptions, RuntimeProbe, SharedMods, SlotContribution, TaggedResult, HandlerIndex,
+    RuntimeMode, RuntimeOptions, RuntimeProbe, SharedMods, SlotContribution, TaggedResult, HandlerIndex, FILL_INDEX,
     XriptRuntime,
 };
 
@@ -923,6 +944,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn accepts_deprecated_events_alias_for_fragment_handlers() {
         let json = r#"{
             "xript": "0.3",
@@ -1046,6 +1068,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn evaluates_data_if() {
         let source = r#"<div data-if="health < 50" class="warning">low!</div>"#;
         let mut bindings = std::collections::HashMap::new();
@@ -1514,12 +1537,14 @@ mod tests {
         assert!(output.contains("<p>ok</p>"));
     }
 
+    #[cfg(feature = "threads")]
     #[test]
     fn handle_is_send_and_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<handle::XriptHandle>();
     }
 
+    #[cfg(feature = "threads")]
     #[test]
     fn handle_executes_code() {
         let handle = handle::XriptHandle::new(
@@ -1547,6 +1572,7 @@ mod tests {
         assert_eq!(result.value, serde_json::json!(4));
     }
 
+    #[cfg(feature = "threads")]
     #[test]
     fn handle_returns_manifest_name() {
         let handle = handle::XriptHandle::new(
@@ -1573,6 +1599,7 @@ mod tests {
         assert_eq!(handle.manifest_name(), "test-app");
     }
 
+    #[cfg(feature = "threads")]
     #[test]
     fn handle_works_across_threads() {
         let handle = handle::XriptHandle::new(
@@ -1604,6 +1631,7 @@ mod tests {
         assert_eq!(result.value, serde_json::json!(2));
     }
 
+    #[cfg(feature = "threads")]
     #[test]
     fn handle_propagates_errors() {
         let handle = handle::XriptHandle::new(
@@ -1632,6 +1660,7 @@ mod tests {
         assert!(matches!(result.unwrap_err(), XriptError::Script(_)));
     }
 
+    #[cfg(feature = "threads")]
     #[test]
     fn handle_load_mod_works() {
         let app_manifest = r#"{
@@ -3197,13 +3226,15 @@ mod tests {
         });
 
         let resume_session = session.clone();
+        let stopped = stop_count.clone();
         let watchdog = std::thread::spawn(move || {
             // Waits for the pause however long a loaded machine takes to reach
             // it: resuming before the breakpoint is hit would leave the
-            // execution paused forever.
+            // execution paused forever. The stop event is the signal, not a
+            // non-empty stack: frames exist as soon as the script is running.
             while !exec.is_finished() {
                 std::thread::sleep(std::time::Duration::from_millis(5));
-                if !resume_session.stack_trace().is_empty() {
+                if stopped.load(Ordering::SeqCst) >= 1 {
                     resume_session.resume();
                     break;
                 }
@@ -3599,6 +3630,7 @@ mod tests {
         assert_eq!(phased.value, serde_json::json!(true));
     }
 
+    #[cfg(feature = "threads")]
     #[test]
     fn handle_emit_delivers_event() {
         let manifest = r#"{
@@ -3631,6 +3663,7 @@ mod tests {
             debug_clock: None,
             interrupted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            lane: None,
         }
     }
 

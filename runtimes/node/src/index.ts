@@ -65,8 +65,10 @@ import { grantedSatisfies } from "./capabilities.js";
 import type { DebugOptions, DebugSession } from "./debug-types.js";
 
 export { MissingBindingsError } from "./errors.js";
-export type { CallbackFailure } from "./errors.js";
-export { AmbiguousExportError, BindingError, CallbackError, CapabilityDeniedError, CommandInputError, ExecutionLimitError, CancellationError, InvokeError, ManifestValidationError, ModEntryError, MissingEntryScriptError, ImportDeniedError, CommonJSDetectedError, ModuleUnsupportedError, LibraryUnavailableError, LibraryRegistrationError } from "./errors.js";
+export type { CallbackFailure, RetainFailure } from "./errors.js";
+export type { RetainedCallback } from "./retained.js";
+export type { HostCallback } from "./callbacks.js";
+export { AmbiguousExportError, BindingError, CallbackError, RetainError, CapabilityDeniedError, CommandInputError, ExecutionLimitError, CancellationError, InvokeError, ManifestValidationError, ModEntryError, MissingEntryScriptError, ImportDeniedError, CommonJSDetectedError, ModuleUnsupportedError, LibraryUnavailableError, LibraryRegistrationError } from "./errors.js";
 export { ModManifestValidationError } from "./fragment.js";
 export { modEntryScripts, modEntryExports, modEntryFormat } from "./fragment.js";
 export { looksLikeMarkup } from "./mod-diagnostics.js";
@@ -128,24 +130,46 @@ export type {
 	DiscoveryResult,
 	DiscoveredMod,
 } from "./shapes.js";
-export type { HostBindings, HostFunction, HostNamespace, ExecutionResult, FireHookOptions, FragmentOp, FragmentOpName, RawFragmentOp, ConsoleHandler, LogSeverity, AuditEvent, AuditDecision, HardLimits } from "./sandbox.js";
+export type { HostBindings, HostFunction, HostNamespace, HostAccessor, ExecutionResult, FireHookOptions, FragmentOp, FragmentOpName, RawFragmentOp, ConsoleHandler, LogSeverity, AuditEvent, AuditDecision, HardLimits } from "./sandbox.js";
+export { withCaller } from "./with-caller.js";
+export type { HostCallInfo, CallerAwareFunction } from "./with-caller.js";
+export type { EmitResult } from "./event-bus.js";
+export type { Deprecation, DeprecationCode, DeprecationHandler } from "./deprecations.js";
+import type { DeprecationHandler } from "./deprecations.js";
 export type { ModManifest, ModEntry, ExportDeclaration, ModInstance, FragmentInstance, FragmentUpdateResult, FragmentHandler, FragmentHandlerDeclaration, FragmentEvent, FragmentEventDeclaration, FragmentDeclaration, SlotDeclaration, ModContributions, ProviderRole, NodeRef, FragmentContentType, FragmentTree, FragmentNode, FragmentElement, PropValue, FormatProfile, FragmentDiagnostic, FragmentOptions, FragmentRepeat, RepeatKey, RepeatMode, RepeatPatchOp, RepeatSite, RepeatState, FragmentBinding, FragmentCondition, BoundTree, ModInstanceOptions, ModManifestIssue, NormalizedMod, HookFill } from "./fragment.js";
 export type { FragmentText, SanitizedFragment } from "@xriptjs/sanitize";
 export type { ParsedCapability } from "./capabilities.js";
 
 /** The host manifest a runtime was created from, as `XriptRuntime.manifest` exposes it. */
+/** One entry of the events catalogue, as the manifest declares it or `declareEvent` adds it. */
+export interface HostEventDeclaration {
+	id: string;
+	description: string;
+	payload?: unknown;
+	capability?: string;
+	/** Who may emit it: the host only (the default) or mods as well. */
+	emit?: "host" | "mods";
+	/** The id is a family shape whose `<segment>`s vary, with no generic form. */
+	pattern?: boolean;
+	/** Companion shapes emitted alongside this generic event, carrying the subject's id. */
+	addressed?: string[];
+	/** The payload's top-level keys, which a subscription's `match` may name. */
+	keys?: string[];
+}
+
 export interface Manifest {
 	xript: string;
 	name: string;
 	version?: string;
 	bindings?: Record<string, unknown>;
 	hooks?: Record<string, unknown>;
-	events?: Array<{ id: string; description: string; payload?: unknown; capability?: string }>;
+	events?: HostEventDeclaration[];
 	capabilities?: Record<string, unknown>;
 	limits?: {
 		timeout_ms?: number;
 		memory_mb?: number;
 		max_stack_depth?: number;
+		max_retained_callbacks?: number;
 	};
 	slots?: SlotDeclaration[];
 	formats?: Record<string, unknown>;
@@ -197,6 +221,17 @@ export interface RuntimeOptions {
 	/** Push channel for sanitization findings, at load and at op time. */
 	onFragmentDiagnostic?: FragmentDiagnosticListener;
 	/**
+	 * Receives deprecation notices (`spec/deprecations.md`). Each code is delivered at most once
+	 * per runtime; without a handler it warns once on `console.warn`.
+	 */
+	onDeprecation?: DeprecationHandler;
+	/**
+	 * Runs every hook and event fire under the script timeout (a hook's own `limits.timeout_ms`
+	 * where it declares one), a fresh budget per fire. A fire that overruns throws the
+	 * execution-limit error. Off by default: handlers run without a budget.
+	 */
+	budgetHandlers?: boolean;
+	/**
 	 * What `loadMod` does when a mod's entry cannot run (a script that was not supplied, or
 	 * one that throws). Defaults to `"throw"`. `"report"` records the failure on
 	 * `ModInstance.diagnostics` and loads the mod anyway, for a host that would rather boot
@@ -225,6 +260,17 @@ export interface XriptRuntime {
 	invokeModExportAsync(mod: string, name: string, args: unknown[]): Promise<unknown>;
 	fireHook(hookName: string, options?: FireHookOptions): unknown[];
 	emit(eventId: string, payload?: unknown): unknown[];
+	/**
+	 * Cancels every event subscription `modId` holds and returns how many there were. For
+	 * re-running one mod's scripts without unloading it; `null` clears unattributed listeners.
+	 */
+	cancelOwned(modId: string | null): number;
+	/**
+	 * Adds an event to the catalogue while the runtime is live. The entry takes the manifest's
+	 * `events` shape; once declared it can be subscribed to, emitted, and described. Throws a
+	 * `BindingError` for a malformed entry or an id already declared by someone else.
+	 */
+	declareEvent(entry: HostEventDeclaration): HostEventDeclaration;
 	fireFragmentHook(fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>): FragmentOp[];
 	loadMod(modManifest: unknown, options?: ModLoadOptions): ModInstance;
 	loadModAsync(modManifest: unknown, options?: ModLoadOptions): Promise<ModInstance>;
@@ -254,6 +300,12 @@ export interface XriptRuntime {
 	invokeCommand(command: ResolvedCommand, callArgs?: Record<string, unknown> | null): unknown;
 	invokeCommandAsync(command: ResolvedCommand, callArgs?: Record<string, unknown> | null): Promise<unknown>;
 	debugSession(): DebugSession | null;
+	/**
+	 * Releases every retained callback the named mod supplied, which is what unloading the mod
+	 * does, and returns how many. Calling one afterwards fails as `released`.
+	 */
+	releaseRetained(modName: string): number;
+	/** Disposes the runtime, releasing every retained callback. */
 	dispose(): void;
 }
 
@@ -492,7 +544,7 @@ export function createRuntime(manifest: unknown, options: RuntimeOptions): Xript
 
 	function fireHookWithFills(hookName: string, fireOptions?: FireHookOptions): unknown[] {
 		const results = sandbox.fireHook(hookName, fireOptions);
-		if (fireOptions?.phase !== undefined) return results;
+		if (fireOptions?.phase) return results;
 		for (const fill of hookFillRegistry) {
 			if (fill.hook !== hookName) continue;
 			const denied = deniedCapability(fill.mod, fill.handler);
@@ -502,7 +554,7 @@ export function createRuntime(manifest: unknown, options: RuntimeOptions): Xript
 				continue;
 			}
 			try {
-				results.push(invokeModExport(fill.mod, fill.handler, hookFillArgs(fireOptions?.data)));
+				results.push(invokeModExport(fill.mod, fill.handler, hookFillArgs(fireOptions?.data), slotTimeoutMs(hookName)));
 			} catch {
 				results.push(undefined);
 			}
@@ -533,6 +585,8 @@ export function createRuntime(manifest: unknown, options: RuntimeOptions): Xript
 		hardLimits: options.hardLimits,
 		cancellation: options.cancellation,
 		debug: options.debug,
+		onDeprecation: options.onDeprecation,
+		budgetHandlers: options.budgetHandlers,
 	});
 
 	function declaredOwner(name: string): string | undefined {
@@ -637,6 +691,8 @@ export function createRuntime(manifest: unknown, options: RuntimeOptions): Xript
 		},
 		fireHook: fireHookWithFills,
 		emit: sandbox.emit,
+		cancelOwned: sandbox.cancelOwned,
+		declareEvent: (entry: HostEventDeclaration) => sandbox.declareEvent(entry) as HostEventDeclaration,
 		fireFragmentHook: fireFragmentHookFinalized,
 
 		loadMod(modManifest: unknown, modOptions?: ModLoadOptions): ModInstance {
@@ -662,6 +718,7 @@ export function createRuntime(manifest: unknown, options: RuntimeOptions): Xript
 			let failure: Error | null = missingEntryScript(mod, scripts, sources);
 			if (failure === null) {
 				sandbox.setExportOwner(validated.name);
+				sandbox.callerContext.enter(validated.name);
 				try {
 					for (const script of scripts) {
 						try {
@@ -674,6 +731,7 @@ export function createRuntime(manifest: unknown, options: RuntimeOptions): Xript
 						}
 					}
 				} finally {
+					sandbox.callerContext.leave();
 					sandbox.setExportOwner(null);
 				}
 			}
@@ -703,20 +761,22 @@ export function createRuntime(manifest: unknown, options: RuntimeOptions): Xript
 			if (failure === null) {
 				sandbox.setExportOwner(validated.name);
 				try {
-					for (const script of scripts) {
-						try {
-							const code = suppliedSource(sources, script) as string;
-							assertNoCommonJS(code);
-							if (format === "module") {
-								await sandbox.evaluateModule(validated.name, code);
-							} else {
-								sandbox.execute(code);
+					await sandbox.callerContext.runAsync(validated.name, async () => {
+						for (const script of scripts) {
+							try {
+								const code = suppliedSource(sources, script) as string;
+								assertNoCommonJS(code);
+								if (format === "module") {
+									await sandbox.evaluateModule(validated.name, code);
+								} else {
+									sandbox.execute(code);
+								}
+							} catch (err) {
+								failure = entryFailure(mod, script, err);
+								break;
 							}
-						} catch (err) {
-							failure = entryFailure(mod, script, err);
-							break;
 						}
-					}
+					});
 				} finally {
 					sandbox.setExportOwner(null);
 				}
@@ -781,6 +841,10 @@ export function createRuntime(manifest: unknown, options: RuntimeOptions): Xript
 				command.mod,
 				effectiveSlotTimeoutMs(command.slot),
 			);
+		},
+
+		releaseRetained(modName: string): number {
+			return sandbox.releaseRetained(modName);
 		},
 
 		dispose() {

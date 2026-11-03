@@ -13,8 +13,10 @@ mod builtins;
 mod eval;
 mod interpolate;
 mod parser;
+mod reference;
 mod repeat;
 mod value;
+mod xvalue;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -30,12 +32,13 @@ pub use interpolate::{
     contains_interpolation, resolve_segments, segment_text, segments_to_source, SegmentIssue,
     SegmentResult, TextSegment,
 };
-pub use parser::{parse, parse_with_limit, DEFAULT_MAX_EXPRESSION_NODES};
+pub use parser::{parse, parse_with_limit, DEFAULT_MAX_EXPRESSION_NODES, MAX_EXPRESSION_DEPTH};
+pub use reference::{expression_reference, EXPRESSION_REFERENCE};
 pub use repeat::{
     evaluate_repeat_items, parse_repeat_header, repeat_scope, RepeatHeader, MAX_REPEAT_COPIES,
     REPEAT_INDEX_NAME,
 };
-pub use value::{format_number, is_truthy, render};
+pub use value::{format_fixed, format_number, is_truthy, render};
 
 thread_local! {
     /// Parsed expressions, keyed by source. Fragments re-render far more often than they
@@ -71,7 +74,10 @@ pub fn evaluate(source: &str, bindings: &Bindings) -> Value {
 
 /// `data-if`: the expression's truth. An unparseable or failing expression is `false`.
 pub fn evaluate_condition(source: &str, bindings: &Bindings) -> bool {
-    is_truthy(&evaluate(source, bindings))
+    match parse_cached(source) {
+        Ok(expression) => xvalue::truthy(&eval::eval(&expression.ast, bindings)),
+        Err(_) => false,
+    }
 }
 
 /// Classifies a `data-bind` body. A bare identifier is an lvalue and keeps two-way

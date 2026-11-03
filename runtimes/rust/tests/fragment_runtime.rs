@@ -234,6 +234,7 @@ fn a_bound_value_is_routed_through_the_props_sink() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn data_if_records_visibility_without_pruning_the_node() {
     let decl = declaration("f", "application/x-ratatui+json", "");
     let source = r#"["Block",{"data-if":"alive"}]"#;

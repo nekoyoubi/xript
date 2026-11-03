@@ -33,6 +33,9 @@ const REALM_SOURCE = `"use strict";
 		define: function (target, key, value) {
 			defineProperty(target, key, { value: value, writable: true, enumerable: true, configurable: true });
 		},
+		accessor: function (target, key, get, set) {
+			defineProperty(target, key, { get: get, set: set, enumerable: true, configurable: false });
+		},
 		freeze: function (target) { return freeze(target); },
 		date: function (time) { return new Date(time); },
 		regexp: function (source, flags) { return new RegExp(source, flags); },
@@ -79,6 +82,7 @@ interface RealmHelpers {
 	object(): Record<string, unknown>;
 	array(): unknown[];
 	define(target: object, key: string, value: unknown): void;
+	accessor(target: object, key: string, get: unknown, set: unknown): void;
 	freeze<T>(target: T): T;
 	date(time: number): Date;
 	regexp(source: string, flags: string): RegExp;
@@ -90,6 +94,18 @@ interface RealmHelpers {
 	promise(executor: (resolve: (v: unknown) => void, reject: (e: unknown) => void) => void): Promise<unknown>;
 	error(kind: string, ctorName: string, message: string): Error;
 	wrap(invoke: (self: unknown, args: ArrayLike<unknown>) => [boolean, unknown], name: string): (...args: unknown[]) => unknown;
+}
+
+/**
+ * A host-side placeholder for an accessor binding. Where one sits in a value crossing into the
+ * sandbox, the context-realm copy gets a live accessor property in its place, whose getter and
+ * setter wrap these host functions, instead of a snapshot of a value.
+ */
+export class LiveAccessor {
+	constructor(
+		readonly get: () => unknown,
+		readonly set: (value: unknown) => void,
+	) {}
 }
 
 const BUILTIN_ERRORS = new Set(["Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError", "EvalError", "URIError"]);
@@ -107,6 +123,13 @@ export class RealmBridge {
 	private readonly helpers: RealmHelpers;
 	private readonly wrappers = new WeakMap<object, unknown>();
 
+	/**
+	 * Maps a retained-callback handle crossing in back to the script function it stands for,
+	 * returning `undefined` for anything that is not a handle (and throwing for one that may not
+	 * cross here). Every other value is re-created by the ordinary rules.
+	 */
+	resolveRetained?: (value: object) => unknown;
+
 	constructor(context: vm.Context) {
 		this.helpers = vm.runInContext(REALM_SOURCE, context, { filename: "xript-realm.js" }) as RealmHelpers;
 	}
@@ -121,6 +144,11 @@ export class RealmBridge {
 		const source = value as object;
 		const prior = seen.get(source);
 		if (prior !== undefined) return prior;
+
+		if (this.resolveRetained && typeof value === "object") {
+			const original = this.resolveRetained(source);
+			if (original !== undefined) return original;
+		}
 
 		if (typeof value === "function") {
 			if (this.isContextValue(source)) return value;
@@ -182,6 +210,11 @@ export class RealmBridge {
 			Object.defineProperty(copy, key, { value: this.toHost(record[key], seen), writable: true, enumerable: true, configurable: true });
 		}
 		return copy;
+	}
+
+	/** Defines a live, non-configurable accessor property on a context-realm object. */
+	defineAccessor(target: object, key: string, accessor: LiveAccessor): void {
+		this.helpers.accessor(target, key, this.wrapFunction(accessor.get, "get"), this.wrapFunction(accessor.set, "set"));
 	}
 
 	/** Re-creates a thrown value in the context realm; a context-realm value passes through. */
@@ -267,7 +300,11 @@ export class RealmBridge {
 		const copy = Array.isArray(source) ? helpers.array() : helpers.object();
 		seen.set(source, copy);
 		const record = source as Record<string, unknown>;
-		for (const key of Object.keys(record)) helpers.define(copy, key, this.toContext(record[key], seen));
+		for (const key of Object.keys(record)) {
+			const value = record[key];
+			if (value instanceof LiveAccessor) this.defineAccessor(copy, key, value);
+			else helpers.define(copy, key, this.toContext(value, seen));
+		}
 		return Object.isFrozen(source) ? helpers.freeze(copy) : copy;
 	}
 }

@@ -123,6 +123,7 @@ impl<T> Slot<T> {
 pub(crate) struct Completer<T> {
     slot: Arc<Slot<T>>,
     done: bool,
+    before_delivery: Option<Box<dyn FnOnce() + Send>>,
 }
 
 impl<T: Send + 'static> Completer<T> {
@@ -131,7 +132,18 @@ impl<T: Send + 'static> Completer<T> {
         self.deliver(value);
     }
 
-    fn deliver(&self, value: Result<T>) {
+    /// Runs `hook` just before the result is published, however the call
+    /// ends, so bookkeeping about the call is settled by the time any
+    /// consumer can observe the result.
+    #[cfg(feature = "threads")]
+    pub(crate) fn before_delivery(&mut self, hook: impl FnOnce() + Send + 'static) {
+        self.before_delivery = Some(Box::new(hook));
+    }
+
+    fn deliver(&mut self, value: Result<T>) {
+        if let Some(hook) = self.before_delivery.take() {
+            hook();
+        }
         let mut waiters = self.slot.waiters.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             *self.slot.value.get() = Some(value);
@@ -161,6 +173,9 @@ impl<T> Drop for Completer<T> {
         }
         // The worker went away without replying. Fail the call rather than
         // leaving the consumer parked forever.
+        if let Some(hook) = self.before_delivery.take() {
+            hook();
+        }
         let mut waiters = self.slot.waiters.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             *self.slot.value.get() = Some(Err(XriptError::Engine(
@@ -212,6 +227,7 @@ impl<T: Send + 'static> Pending<T> {
             Completer {
                 slot: slot.clone(),
                 done: false,
+                before_delivery: None,
             },
             Self {
                 slot,
@@ -401,6 +417,33 @@ mod tests {
         let pending = Pending::ready(Ok(3u32));
         assert!(pending.is_ready());
         assert_eq!(pending.wait().unwrap(), 3);
+    }
+
+    #[test]
+    fn the_before_delivery_hook_runs_before_a_waiter_sees_the_result() {
+        for _ in 0..200 {
+            let settled = Arc::new(AtomicBool::new(false));
+            let (mut completer, pending) = Pending::<u32>::new(CallToken::new());
+            let flag = settled.clone();
+            completer.before_delivery(move || {
+                std::thread::sleep(Duration::from_micros(50));
+                flag.store(true, Ordering::SeqCst);
+            });
+            std::thread::spawn(move || completer.complete(Ok(1)));
+            assert_eq!(pending.wait().unwrap(), 1);
+            assert!(settled.load(Ordering::SeqCst));
+        }
+    }
+
+    #[test]
+    fn the_before_delivery_hook_runs_when_the_completer_is_dropped() {
+        let settled = Arc::new(AtomicBool::new(false));
+        let (mut completer, pending) = Pending::<u32>::new(CallToken::new());
+        let flag = settled.clone();
+        completer.before_delivery(move || flag.store(true, Ordering::SeqCst));
+        drop(completer);
+        assert!(pending.wait().is_err());
+        assert!(settled.load(Ordering::SeqCst));
     }
 
     #[test]

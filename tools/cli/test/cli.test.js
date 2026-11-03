@@ -38,7 +38,7 @@ describe("xript CLI dispatcher", () => {
 		assert.equal(exitCode, 0);
 		const [toolchain, speaks] = stdout.trim().split(/\r?\n/);
 		assert.match(toolchain, /^\d+\.\d+\.\d+$/);
-		assert.equal(speaks, "manifest versions: 0.6, 0.7, 0.8, 0.9 (default 0.9)");
+		assert.equal(speaks, "manifest versions: 0.6, 0.7, 0.8, 0.9, 0.10 (default 0.10)");
 	});
 
 	test("no arguments shows help and exits 1", async () => {

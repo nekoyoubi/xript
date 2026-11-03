@@ -13,6 +13,8 @@ use std::time::{Duration, Instant};
 use crate::error::{Result, XriptError};
 use crate::manifest::{Binding, Manifest, NamespaceBinding};
 
+mod presence;
+
 pub type HostFn =
     Arc<dyn Fn(&[serde_json::Value]) -> std::result::Result<serde_json::Value, String> + Send + Sync>;
 
@@ -118,18 +120,22 @@ pub struct HardLimits {
 
 pub struct HostBindings {
     bindings: HashMap<String, HostBinding>,
+    accessors: HashMap<String, HostAccessor>,
 }
 
 /// A member of a nested host namespace. `Namespace` recurses to arbitrary depth.
 pub enum HostNamespaceMember {
     Function(HostFn),
     AsyncFunction(AsyncHostFn),
+    /// A sync function that receives [`HostCallInfo`](crate::HostCallInfo) ahead of its arguments.
+    CallerFunction(crate::host_call::CallerHostFn),
     Property(serde_json::Value),
     Namespace(HashMap<String, HostNamespaceMember>),
 }
 
 enum HostBinding {
     Function(HostFn),
+    FunctionWithCaller(crate::host_call::CallerHostFn),
     AsyncFunction(AsyncHostFn),
     Namespace(HashMap<String, HostFn>),
     AsyncNamespace(HashMap<String, AsyncHostFn>),
@@ -140,77 +146,22 @@ enum HostBinding {
     NestedNamespace(HashMap<String, HostNamespaceMember>),
 }
 
-impl HostBindings {
-    /// Whether a top-level name is supplied at all, and (for a namespace) whether
-    /// a member path beneath it resolves to something callable.
-    fn supplies(&self, path: &[String]) -> bool {
-        let Some((head, rest)) = path.split_first() else {
-            return false;
-        };
-        let Some(binding) = self.bindings.get(head) else {
-            return false;
-        };
-        match binding {
-            HostBinding::Function(_) | HostBinding::AsyncFunction(_) => rest.is_empty(),
-            HostBinding::Namespace(members) => rest.len() == 1 && members.contains_key(&rest[0]),
-            HostBinding::AsyncNamespace(members) => rest.len() == 1 && members.contains_key(&rest[0]),
-            HostBinding::MixedNamespace { functions, .. } => {
-                rest.len() == 1 && functions.contains_key(&rest[0])
-            }
-            HostBinding::NestedNamespace(members) => nested_supplies(members, rest),
-        }
-    }
-}
+pub use presence::{missing_binding_names, AccessorGetFn, AccessorSetFn, HostAccessor};
 
-/// Every binding the manifest declares that `host_bindings` does not supply, fully
-/// qualified and sorted.
-///
-/// A declared-but-unsupplied binding still installs — as a stub that throws when a mod
-/// calls it — so the manifest and the host's actual wiring could disagree indefinitely
-/// with nothing to catch it. A mod author reads the manifest, ships against a binding
-/// that is documented and absent, and the failure lands on a user.
-pub fn missing_binding_names(
-    manifest: &crate::manifest::Manifest,
-    host_bindings: &HostBindings,
-) -> Vec<String> {
-    let mut missing = Vec::new();
-    if let Some(bindings) = manifest.bindings.as_ref() {
-        collect_missing(bindings, host_bindings, &mut Vec::new(), &mut missing);
-    }
-    missing.sort();
-    missing
-}
-
-fn collect_missing(
-    bindings: &HashMap<String, Binding>,
-    host: &HostBindings,
-    path: &mut Vec<String>,
-    out: &mut Vec<String>,
+fn resolve_member_callers(
+    members: &mut HashMap<String, HostNamespaceMember>,
+    caller: &crate::caller_context::CallerContext,
+    prefix: &str,
 ) {
-    for (name, binding) in bindings {
-        path.push(name.clone());
-        match binding {
-            Binding::Namespace(ns) => collect_missing(&ns.members, host, path, out),
-            _ => {
-                if !host.supplies(path) {
-                    out.push(path.join("."));
-                }
+    for (name, member) in members.iter_mut() {
+        let qualified = format!("{prefix}.{name}");
+        match member {
+            HostNamespaceMember::CallerFunction(f) => {
+                *member = HostNamespaceMember::Function(crate::host_call::bind_caller(f.clone(), caller, qualified));
             }
+            HostNamespaceMember::Namespace(inner) => resolve_member_callers(inner, caller, &qualified),
+            _ => {}
         }
-        path.pop();
-    }
-}
-
-fn nested_supplies(members: &HashMap<String, HostNamespaceMember>, path: &[String]) -> bool {
-    let Some((head, rest)) = path.split_first() else {
-        return false;
-    };
-    match members.get(head) {
-        Some(HostNamespaceMember::Function(_)) | Some(HostNamespaceMember::AsyncFunction(_)) => {
-            rest.is_empty()
-        }
-        Some(HostNamespaceMember::Namespace(inner)) => nested_supplies(inner, rest),
-        _ => false,
     }
 }
 
@@ -218,7 +169,14 @@ impl HostBindings {
     pub fn new() -> Self {
         Self {
             bindings: HashMap::new(),
+            accessors: HashMap::new(),
         }
+    }
+
+    /// Moves every binding of `other` into this set; `other` wins a name
+    /// both register.
+    pub(crate) fn absorb(&mut self, other: HostBindings) {
+        self.bindings.extend(other.bindings);
     }
 
     pub fn add_function<F>(&mut self, name: impl Into<String>, f: F)
@@ -230,6 +188,38 @@ impl HostBindings {
     {
         self.bindings
             .insert(name.into(), HostBinding::Function(Arc::new(f)));
+    }
+
+    /// Registers a sync function that receives [`HostCallInfo`](crate::HostCallInfo),
+    /// naming the calling mod and the binding, ahead of the script's arguments.
+    pub fn add_function_with_caller<F>(&mut self, name: impl Into<String>, f: F)
+    where
+        F: Fn(&crate::HostCallInfo, &[serde_json::Value]) -> std::result::Result<serde_json::Value, String>
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.bindings
+            .insert(name.into(), HostBinding::FunctionWithCaller(Arc::new(f)));
+    }
+
+    /// Replaces every caller-aware function with an ordinary one bound to
+    /// `caller`, so registration only ever sees the existing shapes.
+    fn resolve_callers(mut self, caller: &crate::caller_context::CallerContext) -> Self {
+        for (name, binding) in self.bindings.iter_mut() {
+            match binding {
+                HostBinding::FunctionWithCaller(f) => {
+                    *binding = HostBinding::Function(crate::host_call::bind_caller(
+                        f.clone(),
+                        caller,
+                        name.clone(),
+                    ));
+                }
+                HostBinding::NestedNamespace(members) => resolve_member_callers(members, caller, name),
+                _ => {}
+            }
+        }
+        self
     }
 
     pub fn add_namespace(&mut self, name: impl Into<String>, members: HashMap<String, HostFn>) {
@@ -290,6 +280,15 @@ impl HostBindings {
             .insert(name.into(), HostBinding::NestedNamespace(members));
     }
 
+    /// Register an accessor for a binding the manifest declares with
+    /// `accessor`, by its dotted path (`"clock.now"`, or `"phase"` for a
+    /// top-level one). Its value is computed on every read. Accessors sit
+    /// beside the namespace registrations rather than inside them, so a
+    /// namespace keeps registering its functions exactly as before.
+    pub fn add_accessor(&mut self, path: impl Into<String>, accessor: HostAccessor) {
+        self.accessors.insert(path.into(), accessor);
+    }
+
     /// Fluent entry point for building a namespace. Accumulate members via
     /// [`NamespaceBuilder::bind`], [`NamespaceBuilder::bind_sync`], and
     /// [`NamespaceBuilder::property`], then [`NamespaceBuilder::finish`] to
@@ -341,6 +340,14 @@ impl<'a> NamespaceBuilder<'a> {
     /// Add an eager property value.
     pub fn property(mut self, name: impl Into<String>, value: serde_json::Value) -> Self {
         self.properties.insert(name.into(), value);
+        self
+    }
+
+    /// Add an accessor member: a value computed on every read (and stored on
+    /// every assignment when the accessor carries a setter).
+    pub fn accessor(self, name: impl Into<String>, accessor: HostAccessor) -> Self {
+        let path = format!("{}.{}", self.name, name.into());
+        self.owner.add_accessor(path, accessor);
         self
     }
 
@@ -460,6 +467,26 @@ pub struct RuntimeOptions {
     /// script sees it; [`RuntimeMode::Async`] hands script a pending promise
     /// and lets other work on the runtime proceed while it waits.
     pub mode: RuntimeMode,
+    /// Receives each deprecation notice this runtime raises, once per code.
+    /// Without one, each notice is written once to stderr. The codes are
+    /// listed in `spec/deprecations.md`.
+    pub on_deprecation: Option<crate::deprecation::DeprecationSink>,
+    /// Values cross the host boundary the way the JavaScript runtimes pass
+    /// them, instead of the way JSON flattens them:
+    ///
+    /// - `undefined`, `NaN`, `Infinity`, `-Infinity` and `-0` travel as
+    ///   marker objects (`{ "$xript": "NaN" }`, see [`crate::value`]) instead
+    ///   of `null` (or `0`, for `-0`). A script value crossing out is encoded at any depth; a marker
+    ///   crossing in (a binding's return, a hook or event payload, an export's
+    ///   arguments) is decoded back to the real value, so `echo(Infinity,
+    ///   undefined, 1)` round-trips.
+    /// - A script number with an integral value reaches the host as an
+    ///   integer whichever path produced it, so `util.clamp(15, 0, 10)` and
+    ///   `10` both read `Number(10)` rather than the first reading `10.0`.
+    ///
+    /// Off by default: with it off, every value reaches the host exactly as it
+    /// always has.
+    pub value_fidelity: bool,
 }
 
 /// The engine a runtime is built on, and with it what `await` on an async
@@ -633,6 +660,10 @@ pub(crate) struct InterruptFrame {
     pub(crate) debug_clock: Option<Arc<std::sync::atomic::AtomicU64>>,
     pub(crate) interrupted: Arc<AtomicBool>,
     pub(crate) cancelled: Arc<AtomicBool>,
+    /// The caller lane of the yielding call this frame budgets, or `None` for
+    /// a region that is not one (every frame on a sync runtime). A laned frame
+    /// governs only while its lane is the one running.
+    pub(crate) lane: Option<u64>,
 }
 
 /// Interrupt frames are keyed by the thread that pushed them. QuickJS calls
@@ -640,7 +671,7 @@ pub(crate) struct InterruptFrame {
 /// must only ever observe its own frames: `XriptRuntime` is `Send + Sync`, and
 /// a shared runtime executed from two threads would otherwise let one thread's
 /// deadline govern (or its guard pop) the other's live region.
-type InterruptFrames = Arc<std::sync::Mutex<HashMap<std::thread::ThreadId, Vec<InterruptFrame>>>>;
+pub(crate) type InterruptFrames = Arc<std::sync::Mutex<HashMap<std::thread::ThreadId, Vec<InterruptFrame>>>>;
 
 /// Recovers the frame map even if a prior holder panicked. The map carries no
 /// invariant a panic could break, and treating poisoning as fatal would leave
@@ -649,6 +680,56 @@ fn lock_frames(
     frames: &InterruptFrames,
 ) -> std::sync::MutexGuard<'_, HashMap<std::thread::ThreadId, Vec<InterruptFrame>>> {
     frames.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Pushes `frame` onto the calling thread's stack in `frames`; see
+/// [`XriptRuntime::push_interrupt_frame`].
+pub(crate) fn push_frame(frames: &InterruptFrames, mut frame: InterruptFrame) -> InterruptGuard {
+    let thread = std::thread::current().id();
+    if frame.call_token.is_none() {
+        frame.call_token = current_call_token();
+    }
+    lock_frames(frames).entry(thread).or_default().push(frame);
+    InterruptGuard {
+        frames: frames.clone(),
+        thread,
+    }
+}
+
+/// Whether the interrupt handler would stop the calling thread's execution now:
+/// a live frame's deadline has passed or one of its tokens is cancelled. Read
+/// by code that waits in host code and must give the handler its chance.
+pub(crate) fn would_interrupt(frames: &InterruptFrames, probe: &RuntimeProbe) -> bool {
+    frames_spent(&governing_frames(frames, probe))
+}
+
+/// The frames that govern the calling thread's execution now, for a wait that
+/// outlives the call into host code and must keep honoring its budget.
+pub(crate) fn governing_frames(frames: &InterruptFrames, probe: &RuntimeProbe) -> Vec<InterruptFrame> {
+    let frames = lock_frames(frames);
+    probe.governing(frames.get(&std::thread::current().id()).map(Vec::as_slice).unwrap_or(&[]))
+}
+
+/// Whether any of `stack` has run past its deadline or been cancelled.
+pub(crate) fn frames_spent(stack: &[InterruptFrame]) -> bool {
+    let now = Instant::now();
+    stack.iter().any(|frame| {
+        let cancelled = frame.token.as_ref().is_some_and(|t| t.is_cancelled())
+            || frame.call_token.as_ref().is_some_and(|t| t.is_cancelled());
+        let paused = frame
+            .debug_clock
+            .as_ref()
+            .map(|c| Duration::from_millis(c.load(Ordering::Relaxed)))
+            .unwrap_or_default();
+        cancelled || now >= frame.deadline + paused
+    })
+}
+
+/// Whether an execution region is live on the calling thread.
+pub(crate) fn frames_live_on_this_thread(frames: &InterruptFrames) -> bool {
+    lock_frames(frames)
+        .get(&std::thread::current().id())
+        .is_some_and(|stack| !stack.is_empty())
 }
 
 /// Pops the frame it pushed when dropped, including on unwind, so a panic
@@ -815,14 +896,78 @@ pub(crate) fn call_cancelled() -> bool {
 /// One handler's result, tagged with who registered it.
 ///
 /// `index` is the handler's position within its own mod's handlers for that
-/// hook or event. Together with the mod's pool-wide load sequence this is what
-/// lets segments returned by several workers be merged back into the order a
-/// single runtime would have produced.
+/// hook or event. A hook fill's index starts at [`FILL_INDEX`], because a
+/// single runtime runs every handler before any fill. Together with the mod's
+/// pool-wide load sequence this is what lets segments returned by several
+/// workers be merged back into the order a single runtime would have produced.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TaggedResult {
     pub mod_id: String,
     pub index: u32,
     pub value: serde_json::Value,
+}
+
+/// Where a hook fill's [`TaggedResult::index`] starts: the n-th fill a mod
+/// holds on a hook is tagged `FILL_INDEX + n`, above every handler index.
+pub const FILL_INDEX: u32 = 1 << 31;
+
+/// A hook result with what a pool needs to merge it back into single-runtime
+/// order: the handler's registration sequence, or `None` for a hook fill,
+/// which runs after every handler.
+#[derive(Debug, Clone)]
+pub(crate) struct OrderedResult {
+    #[cfg_attr(not(feature = "threads"), allow(dead_code))]
+    pub(crate) seq: Option<u64>,
+    pub(crate) tagged: TaggedResult,
+}
+
+pub(crate) fn untag(tagged: Vec<TaggedResult>) -> Vec<serde_json::Value> {
+    tagged.into_iter().map(|t| t.value).collect()
+}
+
+/// How a fire hands its payload to handlers.
+#[derive(Debug, Clone)]
+pub(crate) enum HookArgs {
+    /// `fire_hook` and `emit`'s slice: one plain object spreads to its values,
+    /// anything else is the argument list itself.
+    Payload(Vec<serde_json::Value>),
+    /// The single `data` value of a JavaScript host's fire: none is no
+    /// arguments, a plain object spreads to its values, anything else is the
+    /// one argument.
+    Data(Option<serde_json::Value>),
+}
+
+impl HookFire {
+    /// The arguments a hook fill's export receives: a payload as given, and a
+    /// `data` value spread the way handlers receive it.
+    pub(crate) fn fill_args(&self) -> Vec<serde_json::Value> {
+        match &self.args {
+            HookArgs::Payload(payload) => payload.clone(),
+            HookArgs::Data(None) => Vec::new(),
+            HookArgs::Data(Some(serde_json::Value::Object(object))) => object.values().cloned().collect(),
+            HookArgs::Data(Some(value)) => vec![value.clone()],
+        }
+    }
+}
+
+/// One hook fire: an optional phase and how its payload spreads.
+#[derive(Debug, Clone)]
+pub(crate) struct HookFire {
+    pub phase: Option<String>,
+    pub args: HookArgs,
+}
+
+impl HookFire {
+    pub(crate) fn payload(payload: &[serde_json::Value]) -> Self {
+        Self { phase: None, args: HookArgs::Payload(payload.to_vec()) }
+    }
+
+    /// An empty `phase` is no phase: the fire runs what an unphased fire runs,
+    /// hook fills included.
+    pub(crate) fn phase(phase: &str, data: Option<&serde_json::Value>) -> Self {
+        let phase = (!phase.is_empty()).then(|| phase.to_string());
+        Self { phase, args: HookArgs::Data(data.cloned()) }
+    }
 }
 
 /// The hook and event ids one mod's handlers answer to.
@@ -852,6 +997,13 @@ pub struct RuntimeProbe {
     current: std::sync::atomic::AtomicUsize,
     names: std::sync::RwLock<Vec<String>>,
     yielding: AtomicBool,
+    /// The runtime's caller context, so an async binding can resume the call
+    /// that awaited it in that call's own lane.
+    caller: std::sync::OnceLock<crate::caller_context::CallerContext>,
+    /// The budget of every yielding call in flight, by caller lane, so work
+    /// run in a call's lane is charged to that call whichever call's poll it
+    /// runs inside.
+    lane_frames: std::sync::Mutex<HashMap<u64, InterruptFrame>>,
 }
 
 const NO_BINDING: usize = usize::MAX;
@@ -863,11 +1015,51 @@ impl Default for RuntimeProbe {
             current: std::sync::atomic::AtomicUsize::new(NO_BINDING),
             names: std::sync::RwLock::new(Vec::new()),
             yielding: AtomicBool::new(false),
+            caller: std::sync::OnceLock::new(),
+            lane_frames: std::sync::Mutex::new(HashMap::new()),
         }
     }
 }
 
 impl RuntimeProbe {
+    /// Records the budget a yielding call runs under, for its lane.
+    pub(crate) fn budget_lane(&self, lane: u64, frame: InterruptFrame) {
+        self.lane_frames.lock().unwrap_or_else(|p| p.into_inner()).insert(lane, frame);
+    }
+
+    /// Forgets a lane's budget once its call is over.
+    pub(crate) fn release_lane(&self, lane: u64) {
+        self.lane_frames.lock().unwrap_or_else(|p| p.into_inner()).remove(&lane);
+    }
+
+    /// The frames that govern the bytecode running now on this thread: those
+    /// that belong to no lane, and the running lane's own. Another call's frame
+    /// does not apply to work run in a different call's lane, even inside that
+    /// call's poll. With nothing else to go by (a lane whose call is over), the
+    /// thread's frames all apply, so no work runs unbudgeted.
+    pub(crate) fn governing(&self, stack: &[InterruptFrame]) -> Vec<InterruptFrame> {
+        let active = self.caller.get().map(|caller| caller.active_lane()).unwrap_or(0);
+        let mut chosen: Vec<InterruptFrame> = stack
+            .iter()
+            .filter(|frame| frame.lane.is_none() || frame.lane == Some(active))
+            .cloned()
+            .collect();
+        if !chosen.iter().any(|frame| frame.lane == Some(active))
+            && let Some(frame) = self
+                .lane_frames
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .get(&active)
+                .cloned()
+        {
+            chosen.push(frame);
+        }
+        if chosen.is_empty() {
+            chosen = stack.to_vec();
+        }
+        chosen
+    }
+
     /// True when the runtime was built in [`RuntimeMode::Async`]. There, a
     /// call awaiting an async host binding parks without running bytecode or
     /// occupying the thread, so a stalled heartbeat means a wedge only while
@@ -1029,6 +1221,10 @@ impl EngineRt {
 }
 
 pub struct XriptRuntime {
+    /// Holds its own handle on the context, so the functions it keeps are
+    /// released under the runtime lock before the QuickJS runtime goes away.
+    retained: Arc<crate::retained::RetainedRegistry>,
+    caller: crate::caller_context::CallerContext,
     engine: Engine,
     mode: RuntimeMode,
     manifest: Arc<Manifest>,
@@ -1056,6 +1252,11 @@ pub struct XriptRuntime {
     entry_errors: crate::mod_load::EntryErrorPolicy,
     on_mod_diagnostic: Option<crate::mod_load::ModDiagnosticSink>,
     probe: Arc<RuntimeProbe>,
+    stash: Arc<crate::marshal::Stash>,
+    value_fidelity: bool,
+    bus_token: String,
+    #[cfg_attr(not(feature = "threads"), allow(dead_code))]
+    bus_peer: Option<crate::bus_hub::BusPeer>,
 }
 
 impl std::fmt::Debug for XriptRuntime {
@@ -1119,6 +1320,19 @@ impl XriptRuntime {
         loaded_mods: SharedMods,
         probe: Arc<RuntimeProbe>,
         options: RuntimeOptions,
+    ) -> Result<Self> {
+        Self::with_peer(manifest, loaded_mods, probe, options, None)
+    }
+
+    /// [`with_shared_probe`](Self::with_shared_probe) holding a seat on a
+    /// shared bus, so this runtime's events bus is the one every runtime on
+    /// the same hub sees.
+    pub(crate) fn with_peer(
+        manifest: Arc<Manifest>,
+        loaded_mods: SharedMods,
+        probe: Arc<RuntimeProbe>,
+        options: RuntimeOptions,
+        bus_peer: Option<crate::bus_hub::BusPeer>,
     ) -> Result<Self> {
         crate::manifest::validate_structure(&manifest)?;
 
@@ -1216,24 +1430,61 @@ impl XriptRuntime {
         let debug = options
             .debug
             .map(crate::debug::DebugSession::new);
+        let bus_token = crate::event_bus::bus_token();
+        let deprecations = crate::deprecation::DeprecationChannel::new(options.on_deprecation.clone());
 
+        let caller = crate::caller_context::CallerContext::new();
+        let _ = probe.caller.set(caller.clone());
+        let retained = crate::retained::RetainedRegistry::new(&manifest, caller.clone());
 
-
-        engine.with(|ctx| -> Result<()> {
+        let stash = Arc::new(crate::marshal::Stash::default());
+        let value_fidelity = options.value_fidelity;
+        let interrupt_frames: InterruptFrames = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let hook_seq: Arc<dyn Fn(&str) -> u64 + Send + Sync> = match bus_peer.clone() {
+            Some(peer) => Arc::new(move |hook: &str| peer.hub.next_hook_seq(peer.worker, hook)),
+            None => {
+                let counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
+                Arc::new(move |_: &str| counter.fetch_add(1, Ordering::Relaxed) + 1)
+            }
+        };
+        let seat = bus_peer.clone().map(|peer| {
+            let frames = interrupt_frames.clone();
+            let beat = probe.clone();
+            let budget: Option<crate::event_bus::BudgetSnapshot> = (mode == RuntimeMode::Async).then(|| {
+                let frames = interrupt_frames.clone();
+                let probe = probe.clone();
+                Arc::new(move || governing_frames(&frames, &probe)) as crate::event_bus::BudgetSnapshot
+            });
+            crate::event_bus::Seat {
+                peer,
+                stopped: Arc::new(move || {
+                    beat.heartbeat.fetch_add(1, Ordering::Relaxed);
+                    would_interrupt(&frames, &beat)
+                }),
+                budget,
+            }
+        });
+        let shadowed = engine.with(|ctx| -> Result<Vec<String>> {
+            crate::marshal::Kit::install(&ctx, value_fidelity).map_err(|e| XriptError::Engine(e.to_string()))?;
+            stash.install(&ctx).map_err(|e| XriptError::Engine(e.to_string()))?;
+            crate::retained::install(&ctx, &retained).map_err(|e| XriptError::Engine(e.to_string()))?;
             remove_dangerous_globals(&ctx)?;
             register_console(&ctx, options.console)?;
-            register_bindings(&ctx, &manifest, options.host_bindings, &granted, &audit, &probe)?;
-            register_hooks(&ctx, &manifest, &granted)?;
-            register_events(&ctx, &manifest, &granted)?;
+            let host_bindings = options.host_bindings.resolve_callers(&caller);
+            register_bindings(&ctx, &manifest, host_bindings, &granted, &audit, &probe)?;
+            crate::deprecation::stash_shadowable(&ctx, &manifest)?;
+            register_hooks(&ctx, &manifest, &granted, hook_seq.clone())?;
+            crate::event_bus::install(&ctx, &manifest, &granted, &caller, &bus_token, seat.as_ref())?;
             register_fragment_hooks(&ctx)?;
             register_exports_surface(&ctx)?;
+            let shadowed = crate::deprecation::replaced_bindings(&ctx, &manifest)?;
             if let Some(ref session) = debug {
                 crate::debug::register_debug_probe(&ctx, session)?;
             }
-            Ok(())
+            Ok(shadowed)
         })?;
+        crate::deprecation::raise_shadowed(&deprecations, &shadowed);
 
-        let interrupt_frames: InterruptFrames = Arc::new(std::sync::Mutex::new(HashMap::new()));
         let handler_frames = interrupt_frames.clone();
         let handler_probe = probe.clone();
         engine.set_interrupt_handler(Box::new(move || {
@@ -1244,9 +1495,10 @@ impl XriptRuntime {
                 .heartbeat
                 .fetch_add(1, Ordering::Relaxed);
             let frames = lock_frames(&handler_frames);
-            let Some(stack) = frames.get(&std::thread::current().id()) else {
-                return false;
-            };
+            let stack = handler_probe.governing(
+                frames.get(&std::thread::current().id()).map(Vec::as_slice).unwrap_or(&[]),
+            );
+            drop(frames);
             if stack.is_empty() {
                 return false;
             }
@@ -1281,7 +1533,19 @@ impl XriptRuntime {
             }
         }) as Box<dyn FnMut() -> bool + Send>);
 
+        retained.attach(crate::retained::Attachment {
+            context: match &engine {
+                Engine::Sync { ctx, .. } => crate::retained::ContextHandle::Sync(ctx.clone()),
+                Engine::Async { ctx, .. } => crate::retained::ContextHandle::Async(ctx.clone()),
+            },
+            frames: interrupt_frames.clone(),
+            timeout_ms: effective_timeout_ms,
+            cancellation: cancellation.clone(),
+        });
+
         Ok(Self {
+            retained,
+            caller,
             engine,
             mode,
             manifest,
@@ -1307,7 +1571,34 @@ impl XriptRuntime {
             entry_errors,
             on_mod_diagnostic,
             probe,
+            stash,
+            value_fidelity,
+            bus_token,
+            bus_peer,
         })
+    }
+
+    /// Runs every request another runtime on this runtime's shared bus queued
+    /// for it, and returns how many. A runtime with no seat has none.
+    #[cfg_attr(not(feature = "threads"), allow(dead_code))]
+    pub(crate) fn serve_bus(&self) -> Result<usize> {
+        let Some(ref peer) = self.bus_peer else {
+            return Ok(0);
+        };
+        if !peer.hub.pending(peer.worker) {
+            return Ok(0);
+        }
+        let result = self.execute(&crate::event_bus::serve_inbox_source(&self.bus_token))?;
+        Ok(result.value.as_u64().unwrap_or(0) as usize)
+    }
+
+    /// What the host receives for a script `undefined` on this runtime.
+    fn undefined_value(&self) -> serde_json::Value {
+        if self.value_fidelity {
+            crate::value::special::undefined()
+        } else {
+            serde_json::Value::Null
+        }
     }
 
     /// Pushes an interrupt frame onto the calling thread's stack and returns a
@@ -1316,19 +1607,8 @@ impl XriptRuntime {
     /// many inner regions come and go. Frames are per-thread, so a shared
     /// runtime driven from several threads keeps each thread's deadline and
     /// cancellation to itself.
-    pub(crate) fn push_interrupt_frame(&self, mut frame: InterruptFrame) -> InterruptGuard {
-        let thread = std::thread::current().id();
-        if frame.call_token.is_none() {
-            frame.call_token = current_call_token();
-        }
-        lock_frames(&self.interrupt_frames)
-            .entry(thread)
-            .or_default()
-            .push(frame);
-        InterruptGuard {
-            frames: self.interrupt_frames.clone(),
-            thread,
-        }
+    pub(crate) fn push_interrupt_frame(&self, frame: InterruptFrame) -> InterruptGuard {
+        push_frame(&self.interrupt_frames, frame)
     }
 
     /// Live frame count for the calling thread.
@@ -1424,6 +1704,7 @@ impl XriptRuntime {
             },
             interrupted: Arc::new(AtomicBool::new(false)),
             cancelled: Arc::new(AtomicBool::new(false)),
+            lane: None,
         }
     }
 
@@ -1447,7 +1728,9 @@ impl XriptRuntime {
         let body_watch = watch.clone();
 
         let call = rquickjs::async_with!(ctx => |ctx| {
-            let settled = match ctx.eval::<Value, _>(code.as_str()) {
+            let evaluated = ctx.eval::<Value, _>(code.as_str());
+            drain_jobs(&ctx);
+            let settled = match evaluated {
                 Ok(val) => match Promise::from_value(val.clone()) {
                     Ok(promise) => {
                         match crate::yielding::Abortable::new(promise.into_future::<Value>(), body_watch).await {
@@ -1514,6 +1797,7 @@ impl XriptRuntime {
             debug_clock: self.debug.as_ref().map(|d| d.paused_clock()),
             interrupted: interrupted.clone(),
             cancelled: cancelled.clone(),
+            lane: None,
         });
 
         let result = self.engine.with(|ctx| {
@@ -1772,11 +2056,13 @@ impl XriptRuntime {
         })?;
 
         self.set_export_owner(Some(mod_name));
+        let caller = self.caller.enter(Some(mod_name.to_string()));
         let evaluated = if is_module {
             self.eval_module_entry(mod_name, source).await
         } else {
             self.eval_script_entry(mod_name, source)
         };
+        drop(caller);
         self.set_export_owner(None);
         evaluated
     }
@@ -1799,6 +2085,7 @@ impl XriptRuntime {
             debug_clock: None,
             interrupted: interrupted.clone(),
             cancelled: cancelled.clone(),
+            lane: None,
         });
 
         self.engine.with(|ctx| {
@@ -1855,6 +2142,7 @@ impl XriptRuntime {
                 Ok(pair) => pair,
                 Err(_) => return Err(module_eval_error(&ctx, &mod_name, &cancelled, &interrupted)),
             };
+            drain_jobs(&ctx);
             match crate::yielding::Abortable::new(promise.into_future::<Value>(), body_watch).await {
                 Ok(Ok(_)) => harvest_named_exports(&ctx, &evaluated),
                 Ok(Err(_)) => Err(module_eval_error(&ctx, &mod_name, &cancelled, &interrupted)),
@@ -1878,6 +2166,7 @@ impl XriptRuntime {
             debug_clock: None,
             interrupted: interrupted.clone(),
             cancelled: cancelled.clone(),
+            lane: None,
         });
 
         self.library_registry.load_phase.store(true, Ordering::Relaxed);
@@ -2096,38 +2385,37 @@ impl XriptRuntime {
             });
         }
 
-        let args_json = serde_json::to_string(args).unwrap_or_else(|_| "[]".into());
+        let _caller = self.caller.enter(owner.map(str::to_string));
+        let args = self.stash.put(serde_json::Value::Array(args.to_vec()));
         let escaped_name = escape_js_string(name);
         let owner_expr = match owner {
             Some(owner) => format!("'{}'", escape_js_string(owner)),
             None => "undefined".to_string(),
         };
         let yielding = self.mode == RuntimeMode::Async;
-        let escaped_args = args_json.replace('\\', "\\\\").replace('`', "\\`");
         let code = format!(
             r#"({async_kw}function() {{
                 var fn = globalThis.__xript_lookup_export('{name}', {owner});
                 if (typeof fn !== 'function') {{
-                    return JSON.stringify({{ __xript_err: "export {name} not found" }});
+                    return {{ __xript_err: "export {name} not found" }};
                 }}
                 try {{
-                    var args = JSON.parse(`{args}`);
-                    var result = {await_kw}fn.apply(null, args);
-                    return JSON.stringify({{ __xript_ok: result === undefined ? null : result }});
+                    var args = {take} || [];
+                    return {{ __xript_ok: {await_kw}fn.apply(null, args) }};
                 }} catch (e) {{
-                    return JSON.stringify({{ __xript_err: (e && e.message) ? e.message : String(e) }});
+                    return {{ __xript_err: (e && e.message) ? e.message : String(e) }};
                 }}
             }})()"#,
+            take = args.expr(),
             name = escaped_name,
             owner = owner_expr,
-            args = escaped_args,
             async_kw = if yielding { "async " } else { "" },
             await_kw = if yielding { "await " } else { "" },
         );
 
-        let result = self.execute_within_async(&code, timeout_override_ms).await?;
-        let raw = result.value.as_str().unwrap_or("{}");
-        let envelope: serde_json::Value = serde_json::from_str(raw).unwrap_or(serde_json::Value::Null);
+        let result = self.execute_within_async(&code, timeout_override_ms).await;
+        drop(args);
+        let envelope = result?.value;
         if let Some(err) = envelope.get("__xript_err").and_then(|v| v.as_str()) {
             return Err(XriptError::Invoke {
                 export: name.to_string(),
@@ -2143,28 +2431,26 @@ impl XriptRuntime {
     /// Fires a host-declared hook, invoking every registered sandbox handler in
     /// registration order with the spread payload (object payloads spread to
     /// positional args per the hook's declared params, anything else passed as a
-    /// single argument). Per-handler errors are swallowed to `undefined`; the
-    /// collected results are returned in registration order. An unknown hook id
-    /// fires nothing and returns an empty list.
+    /// single argument), then its hook fills. Per-handler errors are swallowed to
+    /// `undefined`; the collected results are returned in registration order. An
+    /// unknown hook id fires nothing and returns an empty list.
+    ///
+    /// Every handler of a phased hook runs here, whatever phase it registered
+    /// for; [`fire_hook_phase`](Self::fire_hook_phase) runs one phase alone.
     pub fn fire_hook(
         &self,
         hook: &str,
         payload: &[serde_json::Value],
     ) -> Result<Vec<serde_json::Value>> {
-        Ok(self
-            .fire_hook_tagged(hook, payload)?
-            .into_iter()
-            .map(|tagged| tagged.value)
-            .collect())
+        Ok(untag(self.fire_hook_tagged(hook, payload)?))
     }
 
     /// [`fire_hook`](Self::fire_hook) with each result tagged by the mod that
     /// registered the handler and its index within that mod's handlers for this
     /// hook.
     ///
-    /// Additive: `fire_hook` keeps its exact signature and behavior. The tags
-    /// exist so a pool can merge segments from several workers back into a
-    /// single deterministic order — see `spec/hooks.md`.
+    /// The tags exist so a pool can merge segments from several workers back
+    /// into a single deterministic order — see `spec/hooks.md`.
     pub fn fire_hook_tagged(&self, hook: &str, payload: &[serde_json::Value]) -> Result<Vec<TaggedResult>> {
         pollster::block_on(self.fire_hook_tagged_async(hook, payload))
     }
@@ -2172,17 +2458,97 @@ impl XriptRuntime {
     /// [`fire_hook`](Self::fire_hook) as a future. Handlers run in registration
     /// order and their return values are collected as they are, unawaited.
     pub async fn fire_hook_async(&self, hook: &str, payload: &[serde_json::Value]) -> Result<Vec<serde_json::Value>> {
-        Ok(self
-            .fire_hook_tagged_async(hook, payload)
-            .await?
-            .into_iter()
-            .map(|tagged| tagged.value)
-            .collect())
+        Ok(untag(self.fire_hook_tagged_async(hook, payload).await?))
     }
 
     /// [`fire_hook_tagged`](Self::fire_hook_tagged) as a future.
     pub async fn fire_hook_tagged_async(&self, hook: &str, payload: &[serde_json::Value]) -> Result<Vec<TaggedResult>> {
-        let mut results = self.dispatch_to_registry("__xript_hooks", hook, payload, true).await?;
+        self.fire_hook_with(hook, &HookFire::payload(payload)).await
+    }
+
+    /// Fires one phase of a phased hook: only the handlers registered through
+    /// `hooks.<hook>.<phase>(fn)` run, in registration order. `data` is the
+    /// single payload value, spread as the JavaScript runtimes spread it: none
+    /// passes no arguments, a plain object passes its values in key order,
+    /// anything else is the one argument. A phase the hook does not declare (or
+    /// a hook with no phases, or an unknown hook) runs nothing and returns an
+    /// empty list. Hook fills are unphased and do not run on a phased fire. An
+    /// empty `phase` is no phase, and runs what an unphased fire runs.
+    pub fn fire_hook_phase(
+        &self,
+        hook: &str,
+        phase: &str,
+        data: Option<&serde_json::Value>,
+    ) -> Result<Vec<serde_json::Value>> {
+        Ok(untag(self.fire_hook_phase_tagged(hook, phase, data)?))
+    }
+
+    /// [`fire_hook_phase`](Self::fire_hook_phase) with each result tagged by
+    /// the mod that registered the handler.
+    pub fn fire_hook_phase_tagged(
+        &self,
+        hook: &str,
+        phase: &str,
+        data: Option<&serde_json::Value>,
+    ) -> Result<Vec<TaggedResult>> {
+        pollster::block_on(self.fire_hook_phase_tagged_async(hook, phase, data))
+    }
+
+    /// [`fire_hook_phase`](Self::fire_hook_phase) as a future.
+    pub async fn fire_hook_phase_async(
+        &self,
+        hook: &str,
+        phase: &str,
+        data: Option<&serde_json::Value>,
+    ) -> Result<Vec<serde_json::Value>> {
+        Ok(untag(self.fire_hook_phase_tagged_async(hook, phase, data).await?))
+    }
+
+    /// [`fire_hook_phase_tagged`](Self::fire_hook_phase_tagged) as a future.
+    pub async fn fire_hook_phase_tagged_async(
+        &self,
+        hook: &str,
+        phase: &str,
+        data: Option<&serde_json::Value>,
+    ) -> Result<Vec<TaggedResult>> {
+        self.fire_hook_with(hook, &HookFire::phase(phase, data)).await
+    }
+
+    /// Runs one hook fire, phased or not. Phased fires refuse an undeclared
+    /// phase; unphased fires run the hook fills after the handlers. The fire's
+    /// handlers share one budget: the hook's own `limits.timeout_ms` where it
+    /// declares one, the manifest's otherwise.
+    pub(crate) async fn fire_hook_with(&self, hook: &str, fire: &HookFire) -> Result<Vec<TaggedResult>> {
+        Ok(self
+            .fire_hook_ordered(hook, fire)
+            .await?
+            .into_iter()
+            .map(|ordered| ordered.tagged)
+            .collect())
+    }
+
+    /// [`fire_hook_with`](Self::fire_hook_with), keeping each handler's
+    /// registration sequence for a pool to merge by.
+    pub(crate) async fn fire_hook_ordered(&self, hook: &str, fire: &HookFire) -> Result<Vec<OrderedResult>> {
+        let def = self.manifest.effective_hooks().remove(hook);
+        let budget = def.as_ref().and_then(|def| def.timeout_ms());
+        if let Some(ref phase) = fire.phase {
+            let declared = def
+                .as_ref()
+                .and_then(|def| def.phases.as_ref())
+                .is_some_and(|phases| phases.iter().any(|p| p == phase));
+            if !declared {
+                return Ok(Vec::new());
+            }
+            return self
+                .dispatch_to_registry("__xript_hooks", hook, Some(phase), &fire.args, budget)
+                .await;
+        }
+
+        let mut results = self
+            .dispatch_to_registry("__xript_hooks", hook, None, &fire.args, budget)
+            .await?;
+        let fill_budget = self.manifest.slot_timeout_ms(hook);
         let fills: Vec<crate::fragment::HookFillDecl> = self
             .hook_fills
             .lock()
@@ -2192,31 +2558,33 @@ impl XriptRuntime {
             .cloned()
             .collect();
         let mut counters: HashMap<String, u32> = HashMap::new();
-        for tagged in &results {
-            let next = counters.entry(tagged.mod_id.clone()).or_default();
-            *next = (*next).max(tagged.index + 1);
-        }
         for fill in fills {
-            let index = counters.entry(fill.mod_name.clone()).or_default();
+            let index = counters.entry(fill.mod_name.clone()).or_insert(FILL_INDEX);
             let at = *index;
             *index += 1;
             if let Some(capability) = self.denied_capability(&fill.mod_name, &fill.handler) {
                 self.audit_hook_fill_denial(&fill.mod_name, &fill.handler, hook, &capability);
-                results.push(TaggedResult {
-                    mod_id: fill.mod_name.clone(),
-                    index: at,
-                    value: serde_json::Value::Null,
+                results.push(OrderedResult {
+                    seq: None,
+                    tagged: TaggedResult {
+                        mod_id: fill.mod_name.clone(),
+                        index: at,
+                        value: self.undefined_value(),
+                    },
                 });
                 continue;
             }
             let value = self
-                .invoke_export_in_async(&fill.handler, payload, Some(&fill.mod_name), None)
+                .invoke_export_in_async(&fill.handler, &fire.fill_args(), Some(&fill.mod_name), fill_budget)
                 .await
-                .unwrap_or(serde_json::Value::Null);
-            results.push(TaggedResult {
-                mod_id: fill.mod_name.clone(),
-                index: at,
-                value,
+                .unwrap_or_else(|_| self.undefined_value());
+            results.push(OrderedResult {
+                seq: None,
+                tagged: TaggedResult {
+                    mod_id: fill.mod_name.clone(),
+                    index: at,
+                    value,
+                },
             });
         }
         Ok(results)
@@ -2232,11 +2600,7 @@ impl XriptRuntime {
         event: &str,
         payload: &[serde_json::Value],
     ) -> Result<Vec<serde_json::Value>> {
-        Ok(self
-            .emit_tagged(event, payload)?
-            .into_iter()
-            .map(|tagged| tagged.value)
-            .collect())
+        Ok(untag(self.emit_tagged(event, payload)?))
     }
 
     /// [`emit`](Self::emit) with each result tagged by the subscribing mod and
@@ -2247,63 +2611,234 @@ impl XriptRuntime {
 
     /// [`emit`](Self::emit) as a future.
     pub async fn emit_async(&self, event: &str, payload: &[serde_json::Value]) -> Result<Vec<serde_json::Value>> {
-        Ok(self
-            .emit_tagged_async(event, payload)
-            .await?
-            .into_iter()
-            .map(|tagged| tagged.value)
-            .collect())
+        Ok(untag(self.emit_tagged_async(event, payload).await?))
     }
 
     /// [`emit_tagged`](Self::emit_tagged) as a future.
     pub async fn emit_tagged_async(&self, event: &str, payload: &[serde_json::Value]) -> Result<Vec<TaggedResult>> {
-        self.dispatch_to_registry("__xript_event_handlers", event, payload, false).await
+        #[cfg(feature = "threads")]
+        if self.mode == RuntimeMode::Async
+            && let Some(ref peer) = self.bus_peer
+        {
+            return self.emit_stepped(peer, event, payload).await;
+        }
+        let (code, ticket) = if self.value_fidelity {
+            let ticket = self.stash.put(serde_json::Value::Array(payload.to_vec()));
+            let code = format!(
+                "(function () {{ return globalThis.__xript_bus.api.emit({token}, {event}, {take} || []) \
+                 .map(function (r) {{ return {{ owner: r.owner, value: r.value }}; }}); }})()",
+                token = serde_json::to_string(&self.bus_token).unwrap_or_default(),
+                event = serde_json::to_string(event).unwrap_or_default(),
+                take = ticket.expr(),
+            );
+            (code, Some(ticket))
+        } else {
+            (crate::event_bus::emit_source(&self.bus_token, event, payload), None)
+        };
+        let restore = self.caller.restore_point();
+        let result = self.execute_async(&code).await;
+        drop(restore);
+        drop(ticket);
+        let parsed = match result?.value {
+            serde_json::Value::String(raw) => serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null),
+            other => other,
+        };
+        let mut counters: HashMap<String, u32> = HashMap::new();
+        Ok(parsed
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|entry| {
+                let mod_id = entry.get("owner").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let counter = counters.entry(mod_id.clone()).or_default();
+                let index = *counter;
+                *counter += 1;
+                TaggedResult {
+                    mod_id,
+                    index,
+                    value: entry.get("value").cloned().unwrap_or(serde_json::Value::Null),
+                }
+            })
+            .collect())
+    }
+
+    /// A host emit on a yielding runtime that shares its bus: the kernel walks
+    /// the subscriptions a delivery at a time, local handlers run in line, and
+    /// a handler another worker holds is awaited rather than blocked on, so the
+    /// thread runs other calls, and serves what other workers ask of it, while
+    /// the answer is outstanding. The whole emit spends one budget.
+    #[cfg(feature = "threads")]
+    async fn emit_stepped(
+        &self,
+        peer: &crate::bus_hub::BusPeer,
+        event: &str,
+        payload: &[serde_json::Value],
+    ) -> Result<Vec<TaggedResult>> {
+        let deadline = Instant::now() + Duration::from_millis(self.effective_timeout_ms);
+        let call_token = current_call_token();
+        let remaining = || -> Result<u64> {
+            if self.cancellation.as_ref().is_some_and(|t| t.is_cancelled())
+                || call_token.as_ref().is_some_and(|t| t.is_cancelled())
+            {
+                return Err(XriptError::Cancelled);
+            }
+            let left = deadline.saturating_duration_since(Instant::now()).as_millis() as u64;
+            if left == 0 {
+                return Err(XriptError::ExecutionLimit { limit: "timeout_ms".into() });
+            }
+            Ok(left)
+        };
+        let token = serde_json::to_string(&self.bus_token).unwrap_or_default();
+        let call = |method: &str, rest: &str| format!("globalThis.__xript_bus.api.{method}({token}{rest})");
+        let ticket = self.stash.put(serde_json::Value::Array(payload.to_vec()));
+        let begun = self
+            .execute_within_async(
+                &call("begin", &format!(", {}, {} || []", serde_json::to_string(event).unwrap_or_default(), ticket.expr())),
+                Some(remaining()?),
+            )
+            .await;
+        drop(ticket);
+        let session = begun?.value.as_i64().unwrap_or(-1);
+        if session < 0 {
+            return Ok(Vec::new());
+        }
+        loop {
+            let step = self.execute_within_async(&call("step", &format!(", {session}")), Some(remaining()?)).await?;
+            let step: serde_json::Value =
+                serde_json::from_str(step.value.as_str().unwrap_or("{}")).unwrap_or(serde_json::Value::Null);
+            let (Some(worker), Some(request)) = (
+                step.get("remote").and_then(|w| w.as_u64()),
+                step.get("request").and_then(|r| r.as_str()),
+            ) else {
+                break;
+            };
+            let asked = peer.hub.call(worker as usize, request);
+            let outcome = AwaitAnswer::new(peer.hub.clone(), asked, deadline, &remaining).await?;
+            let resume = format!(", {session}, {}", serde_json::to_string(&outcome).unwrap_or_default());
+            self.execute_within_async(&call("resume", &resume), Some(remaining()?)).await?;
+        }
+        let finished = self
+            .execute_within_async(
+                &format!(
+                    "(function () {{ return {}.map(function (r) {{ return {{ owner: r.owner, value: r.value }}; }}); }})()",
+                    call("finish", &format!(", {session}"))
+                ),
+                Some(remaining()?),
+            )
+            .await?;
+        let mut counters: HashMap<String, u32> = HashMap::new();
+        Ok(finished
+            .value
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|entry| {
+                let mod_id = entry.get("owner").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let counter = counters.entry(mod_id.clone()).or_default();
+                let index = *counter;
+                *counter += 1;
+                TaggedResult {
+                    mod_id,
+                    index,
+                    value: entry.get("value").cloned().unwrap_or_else(|| self.undefined_value()),
+                }
+            })
+            .collect())
+    }
+
+    /// Cancels every event subscription `mod_id` holds and returns how many
+    /// there were. For re-running one mod's scripts without unloading it;
+    /// `None` clears the listeners no mod owns.
+    pub fn cancel_owned(&self, mod_id: Option<&str>) -> Result<usize> {
+        let result = self.execute(&crate::event_bus::cancel_owned_source(&self.bus_token, mod_id))?;
+        Ok(result.value.as_u64().unwrap_or(0) as usize)
+    }
+
+    /// Adds an event to the catalogue while the runtime is live. `entry` takes
+    /// the manifest's `events` shape; once declared it can be subscribed to,
+    /// emitted, and described. Returns the entry as stored. A malformed entry,
+    /// or an id the manifest or another owner already declared, is an
+    /// [`XriptError::Binding`] carrying the bus's reason.
+    pub fn declare_event(&self, entry: serde_json::Value) -> Result<serde_json::Value> {
+        let result = self.execute(&crate::event_bus::declare_source(&self.bus_token, &entry))?;
+        let envelope: serde_json::Value =
+            serde_json::from_str(result.value.as_str().unwrap_or("{}")).unwrap_or(serde_json::Value::Null);
+        if let Some(message) = envelope.get("err").and_then(|v| v.as_str()) {
+            let message = message.strip_prefix("declareEvent(): ").unwrap_or(message);
+            return Err(XriptError::Binding {
+                binding: "declareEvent".into(),
+                message: message.to_string(),
+            });
+        }
+        Ok(envelope.get("ok").cloned().unwrap_or(serde_json::Value::Null))
     }
 
     async fn dispatch_to_registry(
         &self,
         registry: &str,
         id: &str,
-        payload: &[serde_json::Value],
-        hook_shaped: bool,
-    ) -> Result<Vec<TaggedResult>> {
-        let payload_json = serde_json::to_string(payload).unwrap_or_else(|_| "[]".into());
-        let escaped_id = id.replace('\\', "\\\\").replace('\'', "\\'");
-        let escaped_payload = payload_json.replace('\\', "\\\\").replace('`', "\\`");
-        let _ = hook_shaped;
+        phase: Option<&str>,
+        args: &HookArgs,
+        budget_ms: Option<u64>,
+    ) -> Result<Vec<OrderedResult>> {
+        let (raw, data_mode) = match args {
+            HookArgs::Payload(payload) => (Some(serde_json::Value::Array(payload.clone())), false),
+            HookArgs::Data(data) => (data.clone(), true),
+        };
+        let raw = raw.map(|raw| self.stash.put(raw));
+        let take = raw.as_ref().map(|ticket| ticket.expr()).unwrap_or_else(|| "undefined".to_string());
+        let phase_expr = match phase {
+            Some(phase) => format!("'{}'", js_string_escape(phase)),
+            None => "undefined".to_string(),
+        };
         let code = format!(
             r#"(function() {{
+                var raw = {take};
                 var registry = globalThis['{registry}'] || {{}};
                 var entries = registry['{id}'] || [];
-                var args = JSON.parse(`{payload}`);
-                var spread = (args.length === 1 && args[0] !== null && typeof args[0] === 'object' && !Array.isArray(args[0]))
-                    ? Object.keys(args[0]).map(function(k) {{ return args[0][k]; }})
-                    : args;
+                var phase = {phase};
+                var spread;
+                if ({data_mode}) {{
+                    spread = raw === undefined ? []
+                        : (raw !== null && typeof raw === 'object' && !Array.isArray(raw)) ? Object.values(raw)
+                        : [raw];
+                }} else {{
+                    var args = raw || [];
+                    spread = (args.length === 1 && args[0] !== null && typeof args[0] === 'object' && !Array.isArray(args[0]))
+                        ? Object.values(args[0])
+                        : args;
+                }}
                 var results = [];
                 for (var i = 0; i < entries.length; i++) {{
                     var entry = entries[i];
+                    if (phase !== undefined && !(entry && entry.phase === phase)) continue;
                     var handler = (entry && entry.handler) || entry;
                     var modId = (entry && entry.modId) || '';
-                    if (typeof handler !== 'function') {{ results.push({{ modId: modId, value: null }}); continue; }}
+                    var seq = (entry && typeof entry.seq === 'number') ? entry.seq : i;
                     try {{
-                        var r = handler.apply(null, spread);
-                        results.push({{ modId: modId, value: r === undefined ? null : r }});
+                        results.push({{ modId: modId, seq: seq, value: {call_as}(modId, handler, spread) }});
                     }} catch (e) {{
-                        results.push({{ modId: modId, value: null }});
+                        results.push({{ modId: modId, seq: seq, value: undefined }});
                     }}
                 }}
-                return JSON.stringify(results);
+                return results;
             }})()"#,
+            take = take,
             registry = registry,
-            id = escaped_id,
-            payload = escaped_payload,
+            id = js_string_escape(id),
+            phase = phase_expr,
+            data_mode = data_mode,
+            call_as = crate::retained::CALL_AS_GLOBAL,
         );
 
-        let result = self.execute_async(&code).await?;
-        let raw = result.value.as_str().unwrap_or("[]");
-        let parsed: serde_json::Value =
-            serde_json::from_str(raw).unwrap_or(serde_json::Value::Null);
-        let entries = parsed.as_array().cloned().unwrap_or_default();
+        let result = self.execute_within_async(&code, budget_ms).await;
+        drop(raw);
+        let entries = match result?.value {
+            serde_json::Value::Array(entries) => entries,
+            _ => Vec::new(),
+        };
         let mut counters: HashMap<String, u32> = HashMap::new();
         Ok(entries
             .into_iter()
@@ -2316,10 +2851,13 @@ impl XriptRuntime {
                 let counter = counters.entry(mod_id.clone()).or_default();
                 let index = *counter;
                 *counter += 1;
-                TaggedResult {
-                    mod_id,
-                    index,
-                    value: entry.get("value").cloned().unwrap_or(serde_json::Value::Null),
+                OrderedResult {
+                    seq: entry.get("seq").and_then(|v| v.as_u64()),
+                    tagged: TaggedResult {
+                        mod_id,
+                        index,
+                        value: entry.get("value").cloned().unwrap_or(serde_json::Value::Null),
+                    },
                 }
             })
             .collect())
@@ -2347,7 +2885,6 @@ impl XriptRuntime {
                     }}
                 }}
                 scan('__xript_hooks', out.hooks);
-                scan('__xript_event_handlers', out.events);
                 return JSON.stringify(out);
             }})()"#
         );
@@ -2359,6 +2896,13 @@ impl XriptRuntime {
                 .unwrap_or_default(),
             Err(_) => HandlerIndex::default(),
         };
+        if let Ok(result) = self.execute(&crate::event_bus::subscribed_events_source(mod_id)) {
+            index.events = result
+                .value
+                .as_str()
+                .and_then(|raw| serde_json::from_str(raw).ok())
+                .unwrap_or_default();
+        }
         for fill in self.hook_fills.lock().unwrap().iter() {
             if fill.mod_name == mod_id && !index.hooks.contains(&fill.hook) {
                 index.hooks.push(fill.hook.clone());
@@ -2371,6 +2915,18 @@ impl XriptRuntime {
     /// wedged one.
     pub fn probe(&self) -> Arc<RuntimeProbe> {
         self.probe.clone()
+    }
+
+    /// Releases every retained callback `mod_name` supplied, as unloading the
+    /// mod does, and returns how many it released. Calling one afterwards
+    /// fails with [`CallbackError::Released`](crate::CallbackError::Released).
+    pub fn release_retained(&self, mod_name: &str) -> usize {
+        self.retained.release_mod(mod_name)
+    }
+
+    /// Which mod is running on this runtime right now.
+    pub fn caller_context(&self) -> &crate::caller_context::CallerContext {
+        &self.caller
     }
 
     /// Returns the loaded fragment contributions targeting `slot_id`, ordered by
@@ -2530,10 +3086,9 @@ impl XriptRuntime {
         lifecycle: &str,
         bindings: Option<&serde_json::Value>,
     ) -> Result<Vec<crate::fragment::ops::FragmentOp>> {
-        let bindings_json = match bindings {
-            Some(b) => serde_json::to_string(b).unwrap_or("{}".into()),
-            None => "{}".into(),
-        };
+        let bindings = self
+            .stash
+            .put(bindings.cloned().unwrap_or_else(|| serde_json::Value::Object(Default::default())));
 
         let code = format!(
             r#"(function() {{
@@ -2541,7 +3096,7 @@ impl XriptRuntime {
                 var key = "fragment:{lifecycle}:{fid}";
                 var list = handlers[key] || [];
                 var results = [];
-                var bindingsObj = JSON.parse('{bindings_json}');
+                var bindingsObj = {take};
                 for (var i = 0; i < list.length; i++) {{
                     var ops = [];
                     var proxy = {{
@@ -2561,10 +3116,12 @@ impl XriptRuntime {
             }})()"#,
             lifecycle = lifecycle,
             fid = fragment_id,
-            bindings_json = bindings_json.replace('\'', "\\'"),
+            take = bindings.expr(),
         );
 
-        let result = self.execute_async(&code).await?;
+        let result = self.execute_async(&code).await;
+        drop(bindings);
+        let result = result?;
         let raw: Vec<serde_json::Value> = serde_json::from_str::<Vec<Vec<serde_json::Value>>>(
             result.value.as_str().unwrap_or("[]"),
         )
@@ -2776,9 +3333,8 @@ fn register_exports_surface(ctx: &Ctx<'_>) -> Result<()> {
 }
 
 fn make_throwing_function<'js>(ctx: &Ctx<'js>, message: &str) -> Result<Function<'js>> {
-    let escaped = message.replace('\\', "\\\\").replace('"', "\\\"");
-    let script = format!("(function() {{ throw new Error(\"{}\"); }})", escaped);
-    ctx.eval::<Function, _>(script.as_str())
+    crate::marshal::Kit::of(ctx)
+        .and_then(|kit| kit.thrower(message))
         .map_err(|e| XriptError::Engine(e.to_string()))
 }
 
@@ -2863,12 +3419,23 @@ fn register_bindings(
     audit: &Option<AuditSink>,
     probe: &Arc<RuntimeProbe>,
 ) -> Result<()> {
+    presence::install_probe(ctx, manifest, &host_bindings)?;
     let Some(ref bindings) = manifest.bindings else {
         return Ok(());
     };
 
     for (name, binding) in bindings {
+        let supplied = presence::top_level(&host_bindings, name);
+        if presence::omits(binding, &supplied) {
+            ctx.globals()
+                .set(name.as_str(), Value::new_undefined(ctx.clone()))
+                .map_err(|e| XriptError::Engine(e.to_string()))?;
+            continue;
+        }
         match binding {
+            Binding::Accessor(acc_def) => {
+                presence::install_accessor(ctx, &ctx.globals(), name, name, acc_def, &supplied, granted, audit, probe)?;
+            }
             Binding::Function(func_def) => {
                 if let Some(ref cap) = func_def.capability {
                     if !crate::cap_match::granted_satisfies(granted, cap) {
@@ -2919,6 +3486,7 @@ fn register_bindings(
     Ok(())
 }
 
+#[derive(Clone, Copy)]
 enum HostNsView<'a> {
     Sync(&'a HashMap<String, HostFn>),
     Async(&'a HashMap<String, AsyncHostFn>),
@@ -2953,13 +3521,13 @@ fn register_namespace_binding(
         _ => HostNsView::None,
     };
 
-    let ns_obj = build_namespace_object(ctx, name, &ns_def.members, &host_view, granted, audit, probe)?;
+    let ns_obj = build_namespace_object(ctx, name, &ns_def.members, &host_view, host_bindings, granted, audit, probe)?;
 
     ctx.globals()
-        .set(name, ns_obj)
+        .set(name, ns_obj.clone())
         .map_err(|e| XriptError::Engine(e.to_string()))?;
 
-    deep_freeze(ctx, name)?;
+    deep_freeze(ctx, ns_obj)?;
 
     Ok(())
 }
@@ -2969,6 +3537,7 @@ fn build_namespace_object<'js>(
     path: &str,
     members: &HashMap<String, Binding>,
     host_view: &HostNsView<'_>,
+    host: &HostBindings,
     granted: &HashSet<String>,
     audit: &Option<AuditSink>,
     probe: &Arc<RuntimeProbe>,
@@ -2977,12 +3546,24 @@ fn build_namespace_object<'js>(
 
     for (member_name, member_binding) in members {
         let full_name = format!("{}.{}", path, member_name);
+        let supplied = presence::member(host, host_view, member_name, &full_name);
+        if presence::omits(member_binding, &supplied) {
+            ns_obj
+                .set(member_name.as_str(), Value::new_undefined(ctx.clone()))
+                .map_err(|e| XriptError::Engine(e.to_string()))?;
+            continue;
+        }
 
         match member_binding {
+            Binding::Accessor(acc_def) => {
+                presence::install_accessor(
+                    ctx, &ns_obj, member_name, &full_name, acc_def, &supplied, granted, audit, probe,
+                )?;
+            }
             Binding::Namespace(sub_ns) => {
                 let sub_view = nested_host_view(host_view, member_name);
                 let sub_obj =
-                    build_namespace_object(ctx, &full_name, &sub_ns.members, &sub_view, granted, audit, probe)?;
+                    build_namespace_object(ctx, &full_name, &sub_ns.members, &sub_view, host, granted, audit, probe)?;
                 ns_obj
                     .set(member_name.as_str(), sub_obj)
                     .map_err(|e| XriptError::Engine(e.to_string()))?;
@@ -3080,6 +3661,7 @@ fn resolve_namespace_member<'js>(
             Some(HostNamespaceMember::Property(value)) => {
                 return json_to_js(ctx, value);
             }
+            Some(HostNamespaceMember::CallerFunction(_)) => {}
             Some(HostNamespaceMember::Namespace(_)) => {
                 return Err(XriptError::Binding {
                     binding: full_name.to_string(),
@@ -3098,31 +3680,22 @@ fn resolve_namespace_member<'js>(
     Ok(make_throwing_function(ctx, &msg)?.into_value())
 }
 
-fn deep_freeze(ctx: &Ctx<'_>, name: &str) -> Result<()> {
-    let escaped = name.replace('\'', "\\'");
-    let script = format!(
-        r#"(function() {{
-            var seen = [];
-            function freeze(o) {{
-                if (o === null || typeof o !== 'object') return;
-                if (seen.indexOf(o) !== -1) return;
-                seen.push(o);
-                var keys = Object.getOwnPropertyNames(o);
-                for (var i = 0; i < keys.length; i++) {{
-                    freeze(o[keys[i]]);
-                }}
-                Object.freeze(o);
-            }}
-            freeze(globalThis['{}']);
-        }})()"#,
-        escaped
-    );
-    ctx.eval::<(), _>(script.as_str())
-        .map_err(|e| XriptError::Engine(e.to_string()))?;
-    Ok(())
+fn deep_freeze<'js>(ctx: &Ctx<'js>, root: Object<'js>) -> Result<()> {
+    crate::marshal::Kit::of(ctx)
+        .and_then(|kit| kit.deep_freeze(root.into_value()))
+        .map_err(|e| XriptError::Engine(e.to_string()))
 }
 
-fn register_hooks(ctx: &Ctx<'_>, manifest: &Manifest, granted: &HashSet<String>) -> Result<()> {
+/// Installs `hooks`. Every registration takes a sequence number from
+/// `next_seq`: increasing in registration order, and on a pool shared by every
+/// worker, so handlers living on several workers sort back into the order one
+/// runtime would run them.
+fn register_hooks(
+    ctx: &Ctx<'_>,
+    manifest: &Manifest,
+    granted: &HashSet<String>,
+    next_seq: Arc<dyn Fn(&str) -> u64 + Send + Sync>,
+) -> Result<()> {
     let hooks = manifest.effective_hooks();
 
     if hooks.is_empty() {
@@ -3150,13 +3723,13 @@ fn register_hooks(ctx: &Ctx<'_>, manifest: &Manifest, granted: &HashSet<String>)
                             )
                         } else {
                             format!(
-                                "globalThis.hooks['{hook}']['{phase}'] = function(handler) {{ globalThis.__xript_hooks['{hook}'].push({{ phase: '{phase}', modId: globalThis.__xript_export_owner || '', handler: handler }}); }};",
+                                "globalThis.hooks['{hook}']['{phase}'] = function(handler) {{ globalThis.__xript_hooks['{hook}'].push({{ seq: nextSeq('{hook}'), phase: '{phase}', modId: globalThis.__xript_export_owner || '', handler: handler }}); }};",
                                 hook = hook_name, phase = phase
                             )
                         }
                     } else {
                         format!(
-                            "globalThis.hooks['{hook}']['{phase}'] = function(handler) {{ globalThis.__xript_hooks['{hook}'].push({{ phase: '{phase}', modId: globalThis.__xript_export_owner || '', handler: handler }}); }};",
+                            "globalThis.hooks['{hook}']['{phase}'] = function(handler) {{ globalThis.__xript_hooks['{hook}'].push({{ seq: nextSeq('{hook}'), phase: '{phase}', modId: globalThis.__xript_export_owner || '', handler: handler }}); }};",
                             hook = hook_name, phase = phase
                         )
                     };
@@ -3173,13 +3746,13 @@ fn register_hooks(ctx: &Ctx<'_>, manifest: &Manifest, granted: &HashSet<String>)
                     )
                 } else {
                     format!(
-                        "globalThis.hooks['{hook}'] = function(handler) {{ globalThis.__xript_hooks['{hook}'].push({{ modId: globalThis.__xript_export_owner || '', handler: handler }}); }};",
+                        "globalThis.hooks['{hook}'] = function(handler) {{ globalThis.__xript_hooks['{hook}'].push({{ seq: nextSeq('{hook}'), modId: globalThis.__xript_export_owner || '', handler: handler }}); }};",
                         hook = hook_name
                     )
                 }
             } else {
                 format!(
-                    "globalThis.hooks['{hook}'] = function(handler) {{ globalThis.__xript_hooks['{hook}'].push({{ modId: globalThis.__xript_export_owner || '', handler: handler }}); }};",
+                    "globalThis.hooks['{hook}'] = function(handler) {{ globalThis.__xript_hooks['{hook}'].push({{ seq: nextSeq('{hook}'), modId: globalThis.__xript_export_owner || '', handler: handler }}); }};",
                     hook = hook_name
                 )
             };
@@ -3190,8 +3763,12 @@ fn register_hooks(ctx: &Ctx<'_>, manifest: &Manifest, granted: &HashSet<String>)
 
     hook_setup.push_str("Object.freeze(globalThis.hooks);\n");
 
-    ctx.eval::<(), _>(hook_setup.as_str())
-        .map_err(|e| XriptError::Engine(e.to_string()))?;
+    let engine = |e: rquickjs::Error| XriptError::Engine(e.to_string());
+    let setup: Function = ctx
+        .eval(format!("(function (nextSeq) {{\n{hook_setup}}})"))
+        .map_err(engine)?;
+    let next = Function::new(ctx.clone(), move |hook: String| next_seq(&hook) as f64).map_err(engine)?;
+    setup.call::<_, ()>((next,)).map_err(engine)?;
 
     Ok(())
 }
@@ -3234,130 +3811,27 @@ fn register_fragment_hooks(ctx: &Ctx<'_>) -> Result<()> {
     Ok(())
 }
 
-/// Injects the `events` global and the `__xript_event_handlers` registry,
-/// mirroring the hook gate model: a subscription is admitted only when the
-/// event's declared capability is satisfied by the granted set, otherwise
-/// `events.on` for that id is a throwing stub baked at injection.
-fn register_events(ctx: &Ctx<'_>, manifest: &Manifest, granted: &HashSet<String>) -> Result<()> {
-    let Some(ref events) = manifest.events else {
-        return Ok(());
-    };
-
-    let mut setup = String::from("globalThis.__xript_event_handlers = {};\n");
-    setup.push_str("globalThis.__xript_event_gates = {};\n");
-
-    for event in events {
-        let id = js_string_escape(&event.id);
-        setup.push_str(&format!("globalThis.__xript_event_handlers['{id}'] = [];\n"));
-
-        let admitted = match event.capability {
-            Some(ref cap) => crate::cap_match::granted_satisfies(granted, cap),
-            None => true,
-        };
-
-        if admitted {
-            setup.push_str(&format!("globalThis.__xript_event_gates['{id}'] = true;\n"));
-        } else {
-            let cap = js_string_escape(event.capability.as_deref().unwrap_or(""));
-            setup.push_str(&format!(
-                "globalThis.__xript_event_gates['{id}'] = \"{cap}\";\n"
-            ));
-        }
-    }
-
-    setup.push_str(
-        r#"
-        function __xript_event_subscribe(id, handler) {
-            var gate = globalThis.__xript_event_gates[id];
-            if (gate === undefined) {
-                throw new Error("event \"" + id + "\" is not declared by the host");
-            }
-            if (gate !== true) {
-                throw new Error("events.on(\"" + id + "\") requires the \"" + gate + "\" capability");
-            }
-            if (typeof handler !== 'function') {
-                throw new Error("events.on(\"" + id + "\") handler must be a function");
-            }
-            globalThis.__xript_event_handlers[id].push({ modId: globalThis.__xript_export_owner || '', handler: handler });
-        }
-        globalThis.events = Object.freeze({
-            on: __xript_event_subscribe,
-            subscribe: __xript_event_subscribe,
-        });
-    "#,
-    );
-
-    ctx.eval::<(), _>(setup.as_str())
-        .map_err(|e| XriptError::Engine(e.to_string()))?;
-
-    Ok(())
-}
-
 fn js_string_escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('\'', "\\'").replace('"', "\\\"")
 }
 
-/// The sandbox side of a bridged binding: refuses a non-function where the
-/// manifest declares a function parameter, then serializes the arguments with
-/// every script function swapped for a numeric callback marker and hands the
-/// functions to the bridge alongside the JSON.
-const BRIDGE_WRAPPER: &str = r#"(function (bridge, marker, checks, name, settle) {
-    var stringify = JSON.stringify;
-    var parse = JSON.parse;
-    var slice = Array.prototype.slice;
-    return function () {
-        var args = slice.call(arguments);
-        for (var i = 0; i < checks.length; i++) {
-            var check = checks[i];
-            var value = args[check.index];
-            if (typeof value === 'function') continue;
-            if (check.optional && (value === undefined || value === null)) continue;
-            throw new TypeError(name + '(): parameter "' + check.name + '" expects a function, got ' + (value === null ? 'null' : typeof value));
-        }
-        var fns = [];
-        var json = stringify(args, function (key, v) {
-            if (typeof v === 'function') {
-                var m = {};
-                m[marker] = fns.length;
-                fns[fns.length] = v;
-                return m;
-            }
-            return v;
-        });
-        return settle(bridge(json, fns), parse);
-    };
-})"#;
-
-const SYNC_SETTLE: &str = "(function (raw, parse) { var envelope = parse(raw); if (envelope.__xript_err !== undefined) { throw new Error(envelope.__xript_err); } return envelope.__xript_ok; })";
-
-const ASYNC_SETTLE: &str = "(function (raw, parse) { var envelope = parse(raw); if (envelope.__xript_err !== undefined) { return Promise.reject(new Error(envelope.__xript_err)); } return Promise.resolve(envelope.__xript_ok); })";
-
-const YIELD_SETTLE: &str = "(function (pending, parse) { return pending.then(function (raw) { var envelope = parse(raw); if (envelope.__xript_err !== undefined) { throw new Error(envelope.__xript_err); } return envelope.__xript_ok; }); })";
-
 const ASYNC_IN_CALLBACK_MESSAGE: &str =
     "cannot be called from inside a callback passed to a binding: it is async, and a callback runs synchronously";
 
-fn bridge_envelope(result: std::result::Result<serde_json::Value, String>) -> String {
-    match result {
-        Ok(value) => serde_json::to_string(&serde_json::json!({ "__xript_ok": value }))
-            .unwrap_or("{\"__xript_ok\":null}".into()),
-        Err(msg) => serde_json::to_string(&serde_json::json!({ "__xript_err": msg })).unwrap(),
-    }
-}
-
-/// Runs one bridged binding call: resolves its callbacks, invokes the host
-/// through `call`, and ends the call with the script's own exception when a
-/// callback demands it (a budget stop, or a throw the host passed through).
+/// Runs one bridged binding call: resolves its callbacks and invokes the host
+/// through `call`. The outer error ends the call with the script's own
+/// exception when a callback demands it (a budget stop, or a throw the host
+/// passed through); the inner result is what the host answered.
 fn run_bridged_call<'js>(
     ctx: &Ctx<'js>,
     binding: &str,
     args_json: &str,
     functions: Vec<Function<'js>>,
     call: impl FnOnce(&[serde_json::Value]) -> std::result::Result<serde_json::Value, String>,
-) -> rquickjs::Result<String> {
+) -> rquickjs::Result<std::result::Result<serde_json::Value, String>> {
     let mut args: Vec<serde_json::Value> = match serde_json::from_str(args_json) {
         Ok(a) => a,
-        Err(e) => return Ok(bridge_envelope(Err(format!("invalid args: {}", e)))),
+        Err(e) => return Ok(Err(format!("invalid args: {}", e))),
     };
     let scope = crate::callback::CallScope::new(ctx.clone(), binding, functions);
     scope.resolve_markers(&mut args);
@@ -3365,7 +3839,37 @@ fn run_bridged_call<'js>(
     if let Some(exception) = scope.outcome(result.as_ref().err().map(String::as_str)) {
         return Err(ctx.throw(exception));
     }
-    Ok(bridge_envelope(result))
+    Ok(result)
+}
+
+/// The host's answer as the sandbox sees it: the value built natively, or a
+/// thrown `Error` carrying the host's message.
+fn answer_sync<'js>(
+    ctx: &Ctx<'js>,
+    answer: std::result::Result<serde_json::Value, String>,
+) -> rquickjs::Result<Value<'js>> {
+    match answer.and_then(|value| crate::marshal::host_to_js(ctx, &value)) {
+        Ok(value) => Ok(value),
+        Err(message) => Err(rquickjs::Exception::throw_message(ctx, &message)),
+    }
+}
+
+/// Settles `resolve`/`reject` with the host's answer: the value built natively,
+/// or an `Error` carrying the host's message.
+fn settle_answer<'js>(
+    ctx: &Ctx<'js>,
+    resolve: &Function<'js>,
+    reject: &Function<'js>,
+    answer: std::result::Result<serde_json::Value, String>,
+) -> rquickjs::Result<()> {
+    let built = answer.and_then(|value| crate::marshal::host_to_js(ctx, &value));
+    match built {
+        Ok(value) => resolve.call((value,)),
+        Err(message) => {
+            let error = rquickjs::Exception::from_message(ctx.clone(), &message)?;
+            reject.call((error,))
+        }
+    }
 }
 
 fn install_bridge<'js>(
@@ -3373,27 +3877,13 @@ fn install_bridge<'js>(
     name: &str,
     bridge_fn: Function<'js>,
     checks: &[crate::callback::FunctionParamCheck],
-    settle: &str,
 ) -> Result<Function<'js>> {
-    let checks_json = serde_json::to_string(checks).map_err(|e| XriptError::Engine(e.to_string()))?;
-    let name_json = serde_json::to_string(name).map_err(|e| XriptError::Engine(e.to_string()))?;
-    let marker_json = serde_json::to_string(crate::callback::CALLBACK_MARKER)
-        .map_err(|e| XriptError::Engine(e.to_string()))?;
-
-    ctx.globals()
-        .set("__xript_tmp_bridge", bridge_fn)
-        .map_err(|e| XriptError::Engine(e.to_string()))?;
-
-    let wrapper: Function = ctx
-        .eval(format!(
-            "{BRIDGE_WRAPPER}(__xript_tmp_bridge, {marker_json}, {checks_json}, {name_json}, {settle})"
-        ))
-        .map_err(|e| XriptError::Engine(e.to_string()))?;
-
-    ctx.eval::<(), _>("delete globalThis.__xript_tmp_bridge")
-        .map_err(|e| XriptError::Engine(e.to_string()))?;
-
-    Ok(wrapper)
+    let engine = |e: rquickjs::Error| XriptError::Engine(e.to_string());
+    let checks = serde_json::to_value(checks).map_err(|e| XriptError::Engine(e.to_string()))?;
+    let checks = crate::marshal::to_js(ctx, &checks).map_err(engine)?;
+    crate::marshal::Kit::of(ctx)
+        .and_then(|kit| kit.bridge(bridge_fn, checks, name))
+        .map_err(engine)
 }
 
 fn async_binding<'js>(
@@ -3404,7 +3894,8 @@ fn async_binding<'js>(
     checks: &[crate::callback::FunctionParamCheck],
 ) -> Result<Function<'js>> {
     if probe.yielding() {
-        create_yielding_host_function(ctx, name, f, checks)
+        let caller = probe.caller.get().cloned().unwrap_or_default();
+        create_yielding_host_function(ctx, name, f, checks, caller)
     } else {
         create_async_host_function(ctx, name, f, checks)
     }
@@ -3415,11 +3906,17 @@ fn async_binding<'js>(
 /// The call's callback scope travels with the future and is entered for every
 /// poll, so callbacks passed to the binding stay callable until it settles,
 /// as they do on a sync runtime, and expire when it does.
+///
+/// The call that awaited the binding resumes in the caller lane it was running
+/// in, and the job queue is drained there, so the continuation is credited to
+/// its own mod whichever call happens to be driving the runtime when the host
+/// future settles.
 fn create_yielding_host_function<'js>(
     ctx: &Ctx<'js>,
     name: &str,
     f: AsyncHostFn,
     checks: &[crate::callback::FunctionParamCheck],
+    caller: crate::caller_context::CallerContext,
 ) -> Result<Function<'js>> {
     let binding = name.to_string();
     let bridge_fn = Function::new(
@@ -3435,7 +3932,7 @@ fn create_yielding_host_function<'js>(
             let mut args: Vec<serde_json::Value> = match serde_json::from_str(&args_json) {
                 Ok(a) => a,
                 Err(e) => {
-                    resolve.call::<_, ()>((bridge_envelope(Err(format!("invalid args: {}", e))),))?;
+                    settle_answer(&ctx, &resolve, &reject, Err(format!("invalid args: {}", e)))?;
                     return Ok(promise.into_value());
                 }
             };
@@ -3445,12 +3942,17 @@ fn create_yielding_host_function<'js>(
             if let Some(exception) = scope.outcome(None) {
                 return Err(ctx.throw(exception));
             }
+            let settle_ctx = ctx.clone();
+            let caller = caller.clone();
+            let lane = caller.active_lane();
             ctx.spawn(async move {
                 let result = std::future::poll_fn(|cx| scope.run(|| pending.as_mut().poll(cx))).await;
+                let _lane = caller.activate(lane);
                 let _ = match scope.outcome(result.as_ref().err().map(String::as_str)) {
                     Some(exception) => reject.call::<_, ()>((exception,)),
-                    None => resolve.call::<_, ()>((bridge_envelope(result),)),
+                    None => settle_answer(&settle_ctx, &resolve, &reject, result),
                 };
+                drain_jobs(&settle_ctx);
             });
             Ok(promise.into_value())
         },
@@ -3462,7 +3964,75 @@ fn create_yielding_host_function<'js>(
         ))
     })?;
 
-    install_bridge(ctx, name, bridge_fn, checks, YIELD_SETTLE)
+    install_bridge(ctx, name, bridge_fn, checks)
+}
+
+/// Awaits a peer's answer to one forwarded delivery, giving up at the emit's
+/// deadline or on cancellation. A watcher thread wakes it to re-check, since
+/// nothing else would while no answer arrives.
+#[cfg(feature = "threads")]
+pub(crate) struct AwaitAnswer<R: Fn() -> Result<u64>> {
+    hub: Arc<crate::bus_hub::BusHub>,
+    ticket: u64,
+    deadline: Instant,
+    remaining: R,
+    watching: Option<Arc<AtomicBool>>,
+}
+
+#[cfg(feature = "threads")]
+impl<R: Fn() -> Result<u64>> AwaitAnswer<R> {
+    pub(crate) fn new(hub: Arc<crate::bus_hub::BusHub>, ticket: u64, deadline: Instant, remaining: R) -> Self {
+        Self { hub, ticket, deadline, remaining, watching: None }
+    }
+}
+
+#[cfg(feature = "threads")]
+impl<R: Fn() -> Result<u64> + Unpin> std::future::Future for AwaitAnswer<R> {
+    type Output = Result<String>;
+
+    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+        if let std::task::Poll::Ready(outcome) = self.hub.poll_answer(self.ticket, cx) {
+            return std::task::Poll::Ready(Ok(outcome));
+        }
+        if let Err(stopped) = (self.remaining)() {
+            self.hub.abandon(self.ticket);
+            return std::task::Poll::Ready(Err(stopped));
+        }
+        if self.watching.is_none() {
+            let done = Arc::new(AtomicBool::new(false));
+            let watcher = done.clone();
+            let waker = cx.waker().clone();
+            let deadline = self.deadline;
+            std::thread::spawn(move || {
+                while !watcher.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(5));
+                    if Instant::now() >= deadline {
+                        waker.wake_by_ref();
+                        return;
+                    }
+                    waker.wake_by_ref();
+                }
+            });
+            self.watching = Some(done);
+        }
+        std::task::Poll::Pending
+    }
+}
+
+#[cfg(feature = "threads")]
+impl<R: Fn() -> Result<u64>> Drop for AwaitAnswer<R> {
+    fn drop(&mut self) {
+        if let Some(ref done) = self.watching {
+            done.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
+/// Runs every queued promise job now, in whatever caller lane is in force, so
+/// the continuations a call queued run as that call rather than as whichever
+/// call next drives the runtime.
+pub(crate) fn drain_jobs(ctx: &Ctx<'_>) {
+    while ctx.execute_pending_job() {}
 }
 
 fn create_host_function<'js>(
@@ -3474,17 +4044,21 @@ fn create_host_function<'js>(
     let binding = name.to_string();
     let bridge_fn = Function::new(
         ctx.clone(),
-        move |ctx: Ctx<'js>, args_json: String, functions: Vec<Function<'js>>| -> rquickjs::Result<String> {
-            run_bridged_call(&ctx, &binding, &args_json, functions, |args| f(args))
+        move |ctx: Ctx<'js>, args_json: String, functions: Vec<Function<'js>>| -> rquickjs::Result<Value<'js>> {
+            let answer = run_bridged_call(&ctx, &binding, &args_json, functions, |args| f(args))?;
+            answer_sync(&ctx, answer)
         },
     )
     .map_err(|e| {
         XriptError::Engine(format!("failed to create host function '{}': {}", name, e))
     })?;
 
-    install_bridge(ctx, name, bridge_fn, checks, SYNC_SETTLE)
+    install_bridge(ctx, name, bridge_fn, checks)
 }
 
+/// An async host binding on a sync runtime: the host future is driven to
+/// completion on the interpreter thread and script receives an already
+/// settled promise.
 fn create_async_host_function<'js>(
     ctx: &Ctx<'js>,
     name: &str,
@@ -3494,16 +4068,19 @@ fn create_async_host_function<'js>(
     let binding = name.to_string();
     let bridge_fn = Function::new(
         ctx.clone(),
-        move |ctx: Ctx<'js>, args_json: String, functions: Vec<Function<'js>>| -> rquickjs::Result<String> {
+        move |ctx: Ctx<'js>, args_json: String, functions: Vec<Function<'js>>| -> rquickjs::Result<Value<'js>> {
             if crate::callback::inside_callback() {
                 return Err(rquickjs::Exception::throw_message(
                     &ctx,
                     &format!("{binding}(): {ASYNC_IN_CALLBACK_MESSAGE}"),
                 ));
             }
-            run_bridged_call(&ctx, &binding, &args_json, functions, |args| {
+            let answer = run_bridged_call(&ctx, &binding, &args_json, functions, |args| {
                 pollster::block_on(f(args))
-            })
+            })?;
+            let (promise, resolve, reject) = ctx.promise()?;
+            settle_answer(&ctx, &resolve, &reject, answer)?;
+            Ok(promise.into_value())
         },
     )
     .map_err(|e| {
@@ -3513,7 +4090,7 @@ fn create_async_host_function<'js>(
         ))
     })?;
 
-    install_bridge(ctx, name, bridge_fn, checks, ASYNC_SETTLE)
+    install_bridge(ctx, name, bridge_fn, checks)
 }
 
 /// Outcome of awaiting a top-level promise. Distinguishing rejection
@@ -3585,7 +4162,7 @@ fn format_rejection<'js>(ctx: &Ctx<'js>, val: &Value<'js>) -> String {
         }
     }
     let json = js_value_to_json(ctx, val);
-    if matches!(json, serde_json::Value::Null) {
+    if json.is_null() || crate::value::special::is_undefined(&json) {
         "(rejected with non-serializable value)".to_string()
     } else {
         json.to_string()
@@ -3593,52 +4170,9 @@ fn format_rejection<'js>(ctx: &Ctx<'js>, val: &Value<'js>) -> String {
 }
 
 pub(crate) fn json_to_js<'js>(ctx: &Ctx<'js>, value: &serde_json::Value) -> Result<Value<'js>> {
-    let serialized = serde_json::to_string(value)
-        .map_err(|e| XriptError::Engine(format!("json_to_js serialize: {e}")))?;
-    let escaped = serialized.replace('\\', "\\\\").replace('`', "\\`");
-    let script = format!("JSON.parse(`{}`)", escaped);
-    ctx.eval::<Value, _>(script.as_str())
-        .map_err(|e| XriptError::Engine(format!("json_to_js eval: {e}")))
+    crate::marshal::to_js(ctx, value).map_err(|e| XriptError::Engine(format!("json_to_js: {e}")))
 }
 
 pub(crate) fn js_value_to_json<'a>(ctx: &Ctx<'a>, val: &Value<'a>) -> serde_json::Value {
-    if val.is_undefined() || val.is_null() {
-        return serde_json::Value::Null;
-    }
-
-    if let Some(b) = val.as_bool() {
-        return serde_json::Value::Bool(b);
-    }
-
-    if let Some(n) = val.as_int() {
-        return serde_json::json!(n);
-    }
-
-    if let Some(n) = val.as_float() {
-        if n.is_finite() {
-            return serde_json::json!(n);
-        }
-        return serde_json::Value::Null;
-    }
-
-    if let Some(s) = val.as_string() {
-        if let Ok(s) = s.to_string() {
-            return serde_json::Value::String(s);
-        }
-    }
-
-    let json_global: std::result::Result<Object, _> = ctx.globals().get("JSON");
-    if let Ok(json_obj) = json_global {
-        let stringify: std::result::Result<Function, _> = json_obj.get("stringify");
-        if let Ok(func) = stringify {
-            let result: std::result::Result<String, _> = func.call((val.clone(),));
-            if let Ok(json_str) = result {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json_str) {
-                    return v;
-                }
-            }
-        }
-    }
-
-    serde_json::Value::Null
+    crate::marshal::to_json(ctx, val)
 }

@@ -23,6 +23,11 @@ let bindings = serde_json::from_value(json!({ "hp": 35, "maxHp": 100 })).unwrap(
 assert!(is_truthy(&evaluate("hp / maxHp < 0.5", &bindings)));
 ```
 
+`EXPRESSION_REFERENCE` is the grammar's machine-readable reference as JSON text, and
+`expression_reference()` returns it parsed: builtin signatures, descriptions, and examples,
+operators by precedence, evaluation rules, and the fragment attributes that carry
+expressions. An editor reads it for completion and hover help.
+
 ## License
 
 MIT

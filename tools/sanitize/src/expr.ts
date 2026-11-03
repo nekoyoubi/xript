@@ -8,7 +8,10 @@
  * anywhere in the pipeline: the parser produces an AST and the evaluator walks it.
  *
  * Semantics are pinned by `spec/expression-tests.json`, not by "whatever JavaScript does".
+ * Strings are UTF-16 code units, measured, indexed, and ordered exactly as JavaScript does.
  */
+
+import { EXPRESSION_REFERENCE, builtinArity } from "./expression-reference.js";
 
 export type ExprValue =
 	| string
@@ -69,32 +72,21 @@ export interface ParseExpressionOptions {
 export const DEFAULT_MAX_EXPRESSION_NODES = 256;
 
 /**
- * Builtin call arity, as `[min, max]`. `Infinity` marks a variadic tail.
- * A builtin is not a capability channel: the table is closed and extended only by
+ * How deeply parentheses, index brackets, and call argument lists may nest. A grouping
+ * parenthesis adds no AST node, so the node cap alone would let `((((…))))` recurse the
+ * parser until the host's stack gave out; this bound keeps every parse inside a fixed stack.
+ */
+export const MAX_EXPRESSION_DEPTH = 64;
+
+/**
+ * Builtin call arity, as `[min, max]`. `Infinity` marks a variadic tail. Derived from the
+ * signatures in `spec/expression-reference.json`, so the table and its documentation are one
+ * source. A builtin is not a capability channel: the table is closed and extended only by
  * spec revision, so a host cannot register one.
  */
-export const BUILTINS: Readonly<Record<string, readonly [number, number]>> = Object.freeze({
-	abs: [1, 1],
-	round: [1, 1],
-	floor: [1, 1],
-	ceil: [1, 1],
-	min: [1, Infinity],
-	max: [1, Infinity],
-	clamp: [3, 3],
-	fixed: [2, 2],
-	upper: [1, 1],
-	lower: [1, 1],
-	trim: [1, 1],
-	pad: [2, 3],
-	slice: [2, 3],
-	len: [1, 1],
-	has: [2, 2],
-	join: [1, 2],
-	at: [2, 2],
-	str: [1, 1],
-	num: [1, 1],
-	bool: [1, 1],
-});
+export const BUILTINS: Readonly<Record<string, readonly [number, number]>> = Object.freeze(
+	Object.fromEntries(EXPRESSION_REFERENCE.builtins.map((builtin) => [builtin.name, builtinArity(builtin)])),
+);
 
 export const BUILTIN_NAMES: readonly string[] = Object.freeze(Object.keys(BUILTINS));
 
@@ -263,6 +255,7 @@ class Parser {
 	private readonly tokens: Token[];
 	private index = 0;
 	private count = 0;
+	private depth = 0;
 	private readonly names: string[] = [];
 
 	constructor(private readonly source: string, private readonly maxNodes: number) {
@@ -311,11 +304,27 @@ class Parser {
 	}
 
 	private node<T extends ExprAst>(node: T): T {
+		this.reserve();
+		return node;
+	}
+
+	/** Counts a node against the cap. Called before recursing where a node wraps its operand. */
+	private reserve(): void {
 		this.count++;
 		if (this.count > this.maxNodes) {
 			this.fail(0, `expression exceeds the ${this.maxNodes}-node limit`);
 		}
-		return node;
+	}
+
+	/** Parses one bracketed level: a group, an index, or a call's arguments. */
+	private nested<T>(pos: number, parse: () => T): T {
+		this.depth++;
+		if (this.depth > MAX_EXPRESSION_DEPTH) {
+			this.fail(pos, `expression nests deeper than ${MAX_EXPRESSION_DEPTH} levels`);
+		}
+		const result = parse();
+		this.depth--;
+		return result;
 	}
 
 	private parseExpr(): ExprAst {
@@ -393,7 +402,8 @@ class Parser {
 	private parseUnary(): ExprAst {
 		if (this.at("!") || this.at("-") || this.at("+")) {
 			const op = this.next().value as "!" | "-" | "+";
-			return this.node({ t: "unary", op, arg: this.parseUnary() });
+			this.reserve();
+			return { t: "unary", op, arg: this.parseUnary() };
 		}
 		return this.parsePostfix();
 	}
@@ -407,8 +417,8 @@ class Parser {
 				target = this.node({ t: "member", obj: target, name: token.value });
 				continue;
 			}
-			if (this.eat("[")) {
-				const index = this.parseExpr();
+			if (this.at("[")) {
+				const index = this.nested(this.next().pos, () => this.parseExpr());
 				this.expect("]");
 				target = this.node({ t: "index", obj: target, index });
 				continue;
@@ -453,12 +463,12 @@ class Parser {
 						`unknown function '${token.value}' — the builtin table is ${BUILTIN_NAMES.join(", ")}`,
 					);
 				}
-				this.next();
 				const args: ExprAst[] = [];
-				if (!this.at(")")) {
+				this.nested(this.next().pos, () => {
+					if (this.at(")")) return;
 					args.push(this.parseExpr());
 					while (this.eat(",")) args.push(this.parseExpr());
-				}
+				});
 				this.expect(")");
 				if (args.length < arity[0] || args.length > arity[1]) {
 					const expected = arity[1] === Infinity
@@ -473,8 +483,8 @@ class Parser {
 			return this.node({ t: "name", name: token.value });
 		}
 
-		if (this.eat("(")) {
-			const inner = this.parseExpr();
+		if (this.at("(")) {
+			const inner = this.nested(this.next().pos, () => this.parseExpr());
 			this.expect(")");
 			return inner;
 		}
@@ -578,11 +588,15 @@ function compare(op: "<" | "<=" | ">" | ">=", left: ExprValue, right: ExprValue)
 	return false;
 }
 
+function unitAt(text: string, index: number): ExprValue {
+	const resolved = index < 0 ? text.length + index : index;
+	return resolved >= 0 && resolved < text.length ? text[resolved] : null;
+}
+
 function readMember(target: ExprValue, key: string | number): ExprValue {
 	if (target === null || typeof target !== "object") {
 		if (typeof target === "string" && typeof key === "number") {
-			const index = key < 0 ? target.length + key : key;
-			return index >= 0 && index < target.length ? target[index] : null;
+			return Number.isInteger(key) ? unitAt(target, key) : null;
 		}
 		if (typeof target === "string" && key === "length") return target.length;
 		return null;
@@ -677,10 +691,7 @@ function callBuiltin(name: string, args: ExprValue[]): ExprValue {
 			const coll = args[0];
 			const i = asNumber(args[1]);
 			if (i === null || !Number.isInteger(i)) return null;
-			if (typeof coll === "string") {
-				const index = i < 0 ? coll.length + i : i;
-				return index >= 0 && index < coll.length ? coll[index] : null;
-			}
+			if (typeof coll === "string") return unitAt(coll, i);
 			if (Array.isArray(coll)) {
 				const index = i < 0 ? coll.length + i : i;
 				return index >= 0 && index < coll.length ? (coll[index] ?? null) : null;
@@ -729,7 +740,7 @@ export function toExprValue(value: unknown): ExprValue {
 
 function evalNode(node: ExprAst, bindings: Record<string, unknown>): ExprValue {
 	switch (node.t) {
-		case "num": return node.v;
+		case "num": return finite(node.v);
 		case "str": return node.v;
 		case "bool": return node.v;
 		case "null": return null;

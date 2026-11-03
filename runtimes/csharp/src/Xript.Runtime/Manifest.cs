@@ -44,6 +44,10 @@ public record Manifest
     [JsonPropertyName("libraries")]
     public Dictionary<string, LibraryDef>? Libraries { get; init; }
 
+    /// <summary>Custom type definitions, keyed by type name.</summary>
+    [JsonPropertyName("types")]
+    public Dictionary<string, JsonElement>? Types { get; init; }
+
     /// <summary>
     /// Fragment formats this host declares, keyed by media type. Each entry names a
     /// <c>syntax</c>, the <c>vocabularies</c> in scope, and an optional inline <c>nodes</c>
@@ -80,6 +84,7 @@ public record Manifest
                 {
                     Description = slot.Description ?? "",
                     Capability = slot.Capability,
+                    Limits = slot.Limits?.TimeoutMs is { } timeoutMs ? new ExecutionLimits { TimeoutMs = timeoutMs } : null,
                 };
             }
         }
@@ -121,6 +126,22 @@ public record EventDeclaration
 
     [JsonPropertyName("capability")]
     public string? Capability { get; init; }
+
+    /// <summary>Who may emit it: <c>host</c> (the default) or <c>mods</c> as well.</summary>
+    [JsonPropertyName("emit")]
+    public string? Emit { get; init; }
+
+    /// <summary>The id is a family shape whose <c>&lt;segment&gt;</c>s vary, with no generic form.</summary>
+    [JsonPropertyName("pattern")]
+    public bool? Pattern { get; init; }
+
+    /// <summary>Companion shapes emitted alongside this generic event, carrying the subject's id.</summary>
+    [JsonPropertyName("addressed")]
+    public List<string>? Addressed { get; init; }
+
+    /// <summary>The payload's top-level keys, which a subscription's <c>match</c> may name.</summary>
+    [JsonPropertyName("keys")]
+    public List<string>? Keys { get; init; }
 }
 
 public record Slot
@@ -250,6 +271,7 @@ public record FragmentDeclaration
     /// the rename.
     /// </summary>
     [JsonPropertyName("events")]
+    [Obsolete("Use Handlers. The fragment handler array was renamed from 'events' to 'handlers'.")]
     public List<FragmentHandlerDeclaration>? Events { get; init; }
 
     [JsonPropertyName("priority")]
@@ -263,7 +285,9 @@ public record FragmentDeclaration
     [JsonPropertyName("interpolate")]
     public bool? Interpolate { get; init; }
 
+#pragma warning disable CS0618 // the alias is still read for manifests authored before the rename
     public List<FragmentHandlerDeclaration> ResolveHandlers() => Handlers ?? Events ?? [];
+#pragma warning restore CS0618
 }
 
 /// <summary>
@@ -325,6 +349,13 @@ public record HookDef
 
     [JsonPropertyName("deprecated")]
     public string? Deprecated { get; init; }
+
+    /// <summary>
+    /// This hook's own budget. Its <c>timeout_ms</c> replaces the manifest's for each fire,
+    /// clamped by the embedder's hard limit.
+    /// </summary>
+    [JsonPropertyName("limits")]
+    public ExecutionLimits? Limits { get; init; }
 }
 
 public record CapabilityDef
@@ -352,6 +383,29 @@ public record ParameterDef
 
     [JsonPropertyName("required")]
     public bool? Required { get; init; }
+
+    /// <summary>The inverse alias of <c>required</c>: <c>optional: true</c> means <c>required: false</c>.</summary>
+    [JsonPropertyName("optional")]
+    public bool? Optional { get; init; }
+
+    /// <summary>
+    /// A rest parameter: it absorbs every remaining argument, and <c>type</c> names the type of
+    /// each one. Only the last parameter may be variadic.
+    /// </summary>
+    [JsonPropertyName("variadic")]
+    public bool? Variadic { get; init; }
+
+    /// <summary>
+    /// Whether a caller may omit this parameter: <c>required: false</c>, <c>optional: true</c>,
+    /// a <c>default</c>, or a variadic rest parameter. Descriptive only: no runtime checks
+    /// argument count against the declared parameters.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsOptional => Required == false || Optional == true || Default is not null || IsVariadic;
+
+    /// <summary>Whether this is a rest parameter.</summary>
+    [JsonIgnore]
+    public bool IsVariadic => Variadic == true;
 }
 
 /// <summary>
@@ -376,4 +430,8 @@ public record ExecutionLimits
 
     [JsonPropertyName("max_stack_depth")]
     public int? MaxStackDepth { get; init; }
+
+    /// <summary>How many retained callbacks the runtime holds at once (default 10000).</summary>
+    [JsonPropertyName("max_retained_callbacks")]
+    public int? MaxRetainedCallbacks { get; init; }
 }

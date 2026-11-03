@@ -163,7 +163,7 @@ let (slow, quick) = futures::join!(
 );
 ```
 
-Every call has an `*_async` twin: `execute_async`, `execute_within_async`, `load_mod_async`, `invoke_export_async`, `invoke_mod_export_async`, `invoke_mod_export_within_async`, `invoke_command_async`, `fire_hook_async`, `fire_hook_tagged_async`, `emit_async`, `emit_tagged_async`, `fire_fragment_hook_async`, plus `idle()` to settle work a script started without awaiting. The plain methods keep working and drive one call to completion on the calling thread. On a sync-mode runtime the `*_async` methods complete on first poll.
+Every call has an `*_async` twin: `execute_async`, `execute_within_async`, `load_mod_async`, `invoke_export_async`, `invoke_mod_export_async`, `invoke_mod_export_within_async`, `invoke_command_async`, `fire_hook_async`, `fire_hook_tagged_async`, `fire_hook_phase_async`, `fire_hook_phase_tagged_async`, `emit_async`, `emit_tagged_async`, `fire_fragment_hook_async`, plus `idle()` to settle work a script started without awaiting. The plain methods keep working and drive one call to completion on the calling thread. On a sync-mode runtime the `*_async` methods complete on first poll.
 
 `XriptHandle` and `XriptPool` built from async-mode options run calls concurrently on their runtime thread. A call is started, and polled once, in queue order, so everything it does before its first `await` happens in send order; after that, whichever host future settles first continues first. `load_mod` stays a barrier. `in_flight()` reports the oldest parked call and `in_flight_all()` every one, `kill()` cancels them all, and `shutdown()` waits for them. The pool's wedge detector does not count a call parked on an async binding as wedged: a yielding worker is wedged only when its thread is inside a sync binding.
 
@@ -175,6 +175,72 @@ What holds and what differs in async mode:
 - **Executor-agnostic host futures**: futures are polled by whichever thread drives the call. A future that needs a particular reactor (a `tokio` timer, for example) must be driven from inside that executor.
 - **Interleaved budgets**: promise jobs belonging to one call can run while another call is being polled, and are charged to that call for that slice. Every budget stays bounded; per-call attribution across interleaved calls is approximate.
 - **Sync bindings and debugging** still hold the thread: a sync binding runs in line, and a paused debug session blocks the interpreter as it does in sync mode.
+
+### Hook phases
+
+`fire_hook(hook, &payload)` runs every handler registered for a hook, whatever phase it registered under. `fire_hook_phase(hook, phase, data)` runs one phase alone, the way the JavaScript runtimes' `fireHook(hook, { phase, data })` does:
+
+```rust
+rt.fire_hook_phase("save", "pre", Some(&json!({ "path": "/a" })))?;   // only hooks.save.pre handlers
+rt.fire_hook_phase("save", "post", None)?;                             // no arguments
+```
+
+`data` is a single value: a plain object spreads to its values in key order, anything else is the one argument, and `None` passes nothing. A phase the hook does not declare, a hook with no phases, and an unknown hook all run nothing and return an empty list. Hook fills are unphased and never run on a phased fire. `fire_hook_phase_tagged` and the `_async` twins mirror `fire_hook`'s; `XriptHandle`, `BlockingHandle` and `XriptPool` each have `fire_hook_phase` too.
+
+### Values across the boundary
+
+A host binding's arguments and return, hook and event payloads, export arguments, and every result are `serde_json::Value`. Two opt-ins make that boundary carry what JavaScript hosts see:
+
+- **`RuntimeOptions::value_fidelity`** (off by default). `undefined`, `NaN`, `Infinity` and `-Infinity` cross as one-key marker objects instead of `null`: `{ "$xript": "undefined" }`, `{ "$xript": "NaN" }`, `{ "$xript": "Infinity" }`, `{ "$xript": "-Infinity" }`. A script value crossing out is encoded at any depth, so `echo(Infinity, undefined, 1)` reaches the binding as `[{"$xript":"Infinity"}, {"$xript":"undefined"}, 1]`; a marker crossing in is decoded back to the real value. It also returns an integral script number as an integer on every path: without it, `util.math.clamp(15, 0, 10)` reads `Number(10.0)` while `10` reads `Number(10)`. The `value` module builds and reads markers: `special::undefined()`, `special::nan()`, `special::infinity()`, `special::neg_infinity()`, `special::number(f64)`, `special::as_f64(&value)`, `special::is_undefined(&value)`, the `Special` enum, and the `XriptValue` trait (`value.as_js_number()`, `value.is_undefined()`, `value.special()`).
+- **The `preserve_order` cargo feature** (off by default). Objects keep the key order the host wrote, in both directions, so `Object.keys`, `for..in`, `JSON.stringify` and a hook payload spread to arguments all see authored order. Without it, `serde_json` sorts keys, and `{ x, a }` calls a handler as `(a, x)`.
+
+### Local (non-`Send`) bindings
+
+`HostFn` is `Send + Sync` because the same bindings may serve a handle or a pool on threads of their own. A host whose state is not `Send` (an `Rc`, a `RefCell`, a handle into a single-threaded engine) and that drives an `XriptRuntime` on one thread can register closures with no such bound:
+
+```rust
+use xript_runtime::{create_local_runtime, LocalHostBindings, RuntimeOptions};
+
+let state = Rc::new(RefCell::new(Vec::new()));
+let mut local = LocalHostBindings::new();
+let sink = state.clone();
+local.add_function("note", move |args| { sink.borrow_mut().push(args[0].clone()); Ok(Value::Null) });
+local.namespace("store").bind_sync("len", { let s = state.clone(); move |_| Ok(json!(s.borrow().len())) }).finish();
+
+let rt = create_local_runtime(manifest, RuntimeOptions::default(), local)?;
+```
+
+`LocalHostBindings` is not part of `RuntimeOptions`, which is all an `XriptHandle` or `XriptPool` is built from, so local bindings can only ever reach an `XriptRuntime` (`XriptRuntime::with_local_bindings` or `create_local_runtime`). Because an `XriptRuntime` is itself `Send`, each local closure stays bound to the thread that registered it: called from another thread it throws in the script, and dropped on another thread it is leaked rather than dropped there. Async local bindings (`add_async_function`, `namespace(..).bind`) may return non-`Send` futures.
+
+### Cargo features
+
+| Feature | Default | What it does |
+|---|---|---|
+| `threads` | on | `XriptHandle`, `XriptPool`, and the watcher thread an async-mode call uses to notice its deadline while parked. Turn it off for a target with no threads; an async-mode call then re-polls itself while parked, so `timeout_ms` and cancellation still bound it. |
+| `preserve_order` | off | Authored object key order across the host boundary (see above). |
+| `bindgen` | off | Generates the QuickJS bindings with bindgen instead of using the ones `rquickjs-sys` ships (enables `rquickjs/bindgen`). Needed for targets without prebuilt bindings. Requires libclang. |
+
+### Building for emscripten
+
+`rquickjs-sys` 0.10 ships no bindings for `wasm32-unknown-emscripten`, and its `wasm32-wasip1` ones assume a 64-bit layout, wrong for 32-bit wasm. Build with the `bindgen` feature so bindings are generated for the real target, with libclang installed and pointed at the emscripten sysroot, and compile QuickJS's C as position-independent code so it can link into a `SIDE_MODULE=2`:
+
+```toml
+xript-runtime = { version = "0.10", default-features = false, features = ["bindgen"] }
+```
+
+```sh
+rustup target add wasm32-unknown-emscripten
+export LIBCLANG_PATH=/path/to/llvm/lib
+export BINDGEN_EXTRA_CLANG_ARGS_wasm32_unknown_emscripten="--sysroot=$EMSDK/upstream/emscripten/cache/sysroot"
+export CFLAGS_wasm32_unknown_emscripten="-fPIC"
+cargo build --target wasm32-unknown-emscripten
+```
+
+Without admin rights, `python -m pip install --target <dir> libclang` provides libclang; point `LIBCLANG_PATH` at `<dir>/clang/native`.
+
+A host executable linking the runtime may need a growable heap and a larger stack than emscripten's defaults: `RUSTFLAGS="-C link-arg=-sALLOW_MEMORY_GROWTH=1 -C link-arg=-sSTACK_SIZE=4MB"`. A release build of a small probe host comes to about 1.5 MB of uncompressed wasm.
+
+For a pthreads build, keep the `threads` feature, add `-pthread` to `CFLAGS_wasm32_unknown_emscripten` (`-fPIC -pthread`), and build the rest of the module with `-pthread` too. Without pthreads, leave `threads` off: `XriptHandle` and `XriptPool` spawn std threads, which abort on a no-threads build.
 
 ## When to use this vs `@xriptjs/runtime`
 

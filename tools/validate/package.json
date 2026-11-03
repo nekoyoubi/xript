@@ -1,6 +1,6 @@
 {
 	"name": "@xriptjs/validate",
-	"version": "0.9.0",
+	"version": "0.10.0",
 	"description": "Validate xript manifests against the specification schema.",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -41,7 +41,7 @@
 		"provenance": true
 	},
 	"dependencies": {
-		"@xriptjs/sanitize": "^0.9.0",
+		"@xriptjs/sanitize": "^0.10.0",
 		"ajv": "^8.17.1",
 		"ajv-formats": "^3.0.1"
 	},

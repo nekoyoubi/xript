@@ -11,7 +11,7 @@ namespace Xript.Runtime;
 /// <c>Visibility</c> is keyed by <c>data-if</c> expression text, so two nodes carrying the
 /// same condition collapse into one entry. Deprecated in favour of <see cref="Conditions"/>.
 /// </summary>
-public record FragmentResult(string FragmentId, string Html, Dictionary<string, bool> Visibility)
+public record FragmentResult(string FragmentId, string Html, [property: Obsolete("Keyed by data-if expression text, so two nodes with the same condition collide. Use Conditions.")] Dictionary<string, bool> Visibility)
 {
     /// <summary>Every <c>data-if</c> in the bound tree, keyed by tree position, not by text.</summary>
     public IReadOnlyList<FragmentCondition> Conditions { get; init; } = [];
@@ -46,7 +46,7 @@ public record FragmentOp(
     NodeRef Target,
     PropValue? Value = null,
     string? Prop = null,
-    string? Attr = null);
+    [property: Obsolete("Alias of Prop, populated only for setAttr and removeAttr. Read Prop.")] string? Attr = null);
 
 /// <summary>Thrown when a fragment names a format no vocabulary resolves.</summary>
 public sealed class FragmentFormatException : Exception
@@ -564,7 +564,9 @@ public sealed class FragmentInstance
         // `Tree` identically instead of only the one a regex could see.
         var html = FragmentSanitizer.ProjectsToHtml(Profile) ? FragmentTree.ToHtml(bound.Tree, Profile) : "";
 
+#pragma warning disable CS0618 // the deprecated projection is still populated for existing readers
         return new FragmentResult(_declaration.Id, html, bound.Visibility)
+#pragma warning restore CS0618
         {
             Tree = bound.Tree,
             Conditions = bound.Conditions,

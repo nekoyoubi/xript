@@ -5,10 +5,27 @@ import type { DebugOptions, DebugSession } from "./debug-types.js";
 import { createDebugController } from "./debug-session.js";
 import { instrumentSource } from "./debug-instrument.js";
 import { grantedSatisfies } from "./capabilities.js";
-import { RealmBridge } from "./realm.js";
-import { CallbackScope, functionParamChecks, functionParamViolation, type CallbackTracker } from "./callbacks.js";
+import { LiveAccessor, RealmBridge } from "./realm.js";
+import { CallbackScope, describeThrown, functionParamChecks, functionParamViolation, isThenable, type CallbackTracker } from "./callbacks.js";
+import { CallerContext } from "./caller-context.js";
+import { CallbackError } from "./errors.js";
+import { DEFAULT_MAX_RETAINED_CALLBACKS, RetainedRegistry, retainPositions, type DeclaredTypes, type RetainedRecord } from "./retained.js";
 import { trackContextRejections } from "./rejection-sink.js";
 import type { NodeRef } from "./fragment.js";
+import { resolveCallerAware } from "./with-caller.js";
+import { installEventBus, type EmitResult } from "./event-bus.js";
+import {
+	DeprecationChannel,
+	SHADOWING_BUILTINS,
+	UNTIMED,
+	reportShadowedBindings,
+	unbudgetedHandlerClock,
+	type DeprecationHandler,
+	type HandlerClock,
+} from "./deprecations.js";
+import { hostAccessorFor, isAccessorBinding, omitsBinding, presenceProbe, providedBindingPaths, type HostAccessor } from "./presence.js";
+
+export { missingBindingNames } from "./presence.js";
 
 /**
  * Refuses a dynamic `import(...)` from sandbox code with a branded error. The refusal is a
@@ -36,6 +53,7 @@ interface Manifest {
 	capabilities?: Record<string, CapabilityDef>;
 	libraries?: Record<string, LibraryDef>;
 	limits?: ExecutionLimits;
+	types?: DeclaredTypes;
 }
 
 interface LibraryDef {
@@ -51,6 +69,7 @@ interface Slot {
 	description?: string;
 	capability?: string;
 	payload?: unknown;
+	limits?: { timeout_ms?: number };
 }
 
 const HOOK_SLOT_ACCEPT = "application/x-xript-hook";
@@ -67,6 +86,7 @@ function effectiveHooks(manifest: Manifest): Record<string, HookDef> {
 		hooks[slot.id] = {
 			description: slot.description ?? "",
 			capability: slot.capability,
+			...(slot.limits?.timeout_ms !== undefined ? { limits: { timeout_ms: slot.limits.timeout_ms } } : {}),
 		};
 	}
 	return hooks;
@@ -89,7 +109,7 @@ interface HookDef {
 	deprecated?: string;
 }
 
-type Binding = FunctionBinding | NamespaceBinding;
+type Binding = FunctionBinding | NamespaceBinding | AccessorBinding;
 
 interface FunctionBinding {
 	description: string;
@@ -98,11 +118,22 @@ interface FunctionBinding {
 	async?: boolean;
 	capability?: string;
 	deprecated?: string;
+	optional?: boolean;
 }
 
 interface NamespaceBinding {
 	description: string;
 	members: Record<string, Binding>;
+	optional?: boolean;
+}
+
+interface AccessorBinding {
+	description: string;
+	accessor: "get" | "get-set";
+	type?: unknown;
+	capability?: string;
+	deprecated?: string;
+	optional?: boolean;
 }
 
 interface Parameter {
@@ -110,6 +141,9 @@ interface Parameter {
 	type: unknown;
 	default?: unknown;
 	required?: boolean;
+	optional?: boolean;
+	variadic?: boolean;
+	retain?: boolean;
 }
 
 interface CapabilityDef {
@@ -121,6 +155,7 @@ interface ExecutionLimits {
 	timeout_ms?: number;
 	memory_mb?: number;
 	max_stack_depth?: number;
+	max_retained_callbacks?: number;
 }
 
 /**
@@ -136,9 +171,10 @@ interface ExecutionLimits {
  */
 export type HostFunction = (...args: any[]) => unknown;
 export interface HostNamespace {
-	[key: string]: HostFunction | HostNamespace;
+	[key: string]: HostFunction | HostNamespace | HostAccessor;
 }
-export type HostBindings = Record<string, HostFunction | HostNamespace>;
+export type HostBindings = Record<string, HostFunction | HostNamespace | HostAccessor>;
+export type { HostAccessor };
 
 export type LogSeverity = "trace" | "debug" | "info" | "warn" | "error";
 
@@ -194,6 +230,10 @@ export interface SandboxOptions {
 	hardLimits?: HardLimits;
 	cancellation?: CancellationToken;
 	debug?: DebugOptions;
+	/** Receives deprecation notices; without it each code warns once on `console.warn`. */
+	onDeprecation?: DeprecationHandler;
+	/** Runs each hook and event fire under the script timeout, a fresh budget per fire. */
+	budgetHandlers?: boolean;
 }
 
 export interface ExecutionResult {
@@ -201,33 +241,12 @@ export interface ExecutionResult {
 	duration_ms: number;
 }
 
-/**
- * Every binding the manifest declares that the host did not supply, fully qualified and sorted.
- * A declared-but-unsupplied binding installs as a stub that throws only when a mod calls it, so
- * without this the manifest and the host's wiring could disagree indefinitely.
- */
-export function missingBindingNames(
-	bindings: Record<string, Binding> | undefined,
-	hostBindings: Record<string, unknown> | undefined,
-	prefix = "",
-): string[] {
-	if (!bindings) return [];
-	const missing: string[] = [];
-	for (const [name, binding] of Object.entries(bindings)) {
-		const qualified = prefix ? `${prefix}.${name}` : name;
-		const supplied = hostBindings?.[name];
-		if (isNamespace(binding)) {
-			const nested = typeof supplied === "object" && supplied !== null ? (supplied as Record<string, unknown>) : undefined;
-			missing.push(...missingBindingNames(binding.members, nested, qualified));
-		} else if (typeof supplied !== "function") {
-			missing.push(qualified);
-		}
-	}
-	return missing.sort();
-}
-
 function isNamespace(binding: Binding): binding is NamespaceBinding {
 	return "members" in binding;
+}
+
+function isAccessor(binding: Binding): binding is AccessorBinding {
+	return isAccessorBinding(binding);
 }
 
 const CONSOLE_METHOD_SEVERITY: Record<string, LogSeverity> = {
@@ -331,7 +350,11 @@ function buildSandboxGlobal(options: SandboxOptions, tracker: CallbackTracker): 
 
 	if (manifest.bindings) {
 		for (const [name, binding] of Object.entries(manifest.bindings)) {
-			if (isNamespace(binding)) {
+			if (omitsBinding(binding, hostBindings, name)) {
+				globals[name] = undefined;
+			} else if (isAccessor(binding)) {
+				globals[name] = buildAccessor(name, name, binding, hostBindings, grantedCapabilities, audit, tracker);
+			} else if (isNamespace(binding)) {
 				globals[name] = buildNamespace(
 					name,
 					binding,
@@ -362,9 +385,10 @@ function buildFunction(
 	hostFn: HostFunction | undefined,
 	grantedCapabilities: Set<string>,
 	audit?: (event: AuditEvent) => void,
-	tracker: CallbackTracker = { depth: 0 },
+	tracker: CallbackTracker = { depth: 0, scopes: [] },
 ): HostFunction {
 	const functionChecks = functionParamChecks(binding.params);
+	const retainAt = retainPositions(binding.params, tracker.types);
 	return (...args: unknown[]) => {
 		if (binding.capability && !grantedSatisfies(grantedCapabilities, binding.capability)) {
 			throw new CapabilityDeniedError(qualifiedName, binding.capability);
@@ -383,8 +407,9 @@ function buildFunction(
 
 		emitAudit(audit, qualifiedName, binding.capability ?? null);
 
-		const scope = new CallbackScope(qualifiedName, tracker);
+		const scope = new CallbackScope(qualifiedName, tracker, retainAt);
 		let result: unknown;
+		tracker.scopes.push(scope);
 		try {
 			result = hostFn(...scope.wrapArgs(args));
 		} catch (e) {
@@ -394,6 +419,9 @@ function buildFunction(
 			if (e instanceof CapabilityDeniedError || e instanceof BindingError) throw e;
 			const message = e instanceof Error ? e.message : String(e);
 			throw new BindingError(qualifiedName, message);
+		} finally {
+			const open = tracker.scopes.lastIndexOf(scope);
+			if (open !== -1) tracker.scopes.splice(open, 1);
 		}
 
 		if (result !== null && typeof result === "object" && typeof (result as { then?: unknown }).then === "function") {
@@ -417,19 +445,51 @@ function buildFunction(
 const ASYNC_IN_CALLBACK_MESSAGE =
 	"cannot be called from inside a callback passed to a binding: it is async, and a callback runs synchronously";
 
+/**
+ * An accessor binding's getter and setter, built as ordinary binding wrappers so each access is
+ * capability-gated, audited, and error-marshalled exactly as a function call. Without a setter,
+ * assignment throws a `TypeError` in strict and sloppy code alike.
+ */
+function buildAccessor(
+	qualifiedName: string,
+	propName: string,
+	binding: AccessorBinding,
+	hostContainer: unknown,
+	grantedCapabilities: Set<string>,
+	audit?: (event: AuditEvent) => void,
+	tracker: CallbackTracker = { depth: 0, scopes: [] },
+): LiveAccessor {
+	const supplied = hostAccessorFor(hostContainer, propName, binding.accessor);
+	const gate: FunctionBinding = { description: binding.description, capability: binding.capability };
+	const get = buildFunction(qualifiedName, gate, supplied?.get, grantedCapabilities, audit, tracker);
+	const set =
+		binding.accessor === "get-set"
+			? buildFunction(qualifiedName, gate, supplied?.set, grantedCapabilities, audit, tracker)
+			: () => {
+					throw new TypeError(`${qualifiedName} is read-only: the host declares no setter`);
+				};
+	return new LiveAccessor(get, (value) => {
+		set(value);
+	});
+}
+
 function buildNamespace(
 	namespaceName: string,
 	binding: NamespaceBinding,
 	hostNs: HostNamespace | undefined,
 	grantedCapabilities: Set<string>,
 	audit?: (event: AuditEvent) => void,
-	tracker: CallbackTracker = { depth: 0 },
+	tracker: CallbackTracker = { depth: 0, scopes: [] },
 ): Record<string, unknown> {
 	const ns: Record<string, unknown> = {};
 
 	for (const [memberName, memberBinding] of Object.entries(binding.members)) {
 		const qualifiedName = `${namespaceName}.${memberName}`;
-		if (isNamespace(memberBinding)) {
+		if (omitsBinding(memberBinding, hostNs, memberName)) {
+			ns[memberName] = undefined;
+		} else if (isAccessor(memberBinding)) {
+			ns[memberName] = buildAccessor(qualifiedName, memberName, memberBinding, hostNs, grantedCapabilities, audit, tracker);
+		} else if (isNamespace(memberBinding)) {
 			const nestedHostNs = hostNs ? (hostNs[memberName] as HostNamespace | undefined) : undefined;
 			ns[memberName] = buildNamespace(qualifiedName, memberBinding, nestedHostNs, grantedCapabilities, audit, tracker);
 		} else {
@@ -483,18 +543,31 @@ export interface RawFragmentOp {
 	value?: unknown;
 }
 
-type HookHandlerEntry = { fn: (...args: unknown[]) => unknown };
+type HookHandlerEntry = { fn: (...args: unknown[]) => unknown; owner?: string | null };
 
 interface HandlerRegistry {
 	handlers: Map<string, HookHandlerEntry[]>;
 	register(key: string, entry: HookHandlerEntry): void;
+	/** Runs `body` as the mod that registered `entry`. */
+	dispatch<T>(entry: HookHandlerEntry, body: () => T): T;
 }
 
-function createHandlerRegistry(): HandlerRegistry {
+/** A handler belongs to the mod running when it registered; dispatch runs it as that mod. */
+function createHandlerRegistry(caller: CallerContext, clock: HandlerClock = UNTIMED): HandlerRegistry {
 	const handlers = new Map<string, HookHandlerEntry[]>();
 	return {
 		handlers,
+		dispatch: (entry, body) =>
+			caller.run(entry.owner ?? null, () => {
+				clock.start(caller.depth);
+				try {
+					return body();
+				} finally {
+					clock.stop(caller.depth);
+				}
+			}),
 		register(key: string, entry: HookHandlerEntry) {
+			entry.owner = caller.current();
 			let list = handlers.get(key);
 			if (!list) {
 				list = [];
@@ -564,70 +637,6 @@ function buildHooksGlobal(
 	return Object.freeze(hooksObj);
 }
 
-function buildEventsGlobal(
-	manifest: Manifest,
-	grantedCapabilities: Set<string>,
-	eventRegistry: HandlerRegistry,
-): Record<string, unknown> {
-	const eventDefs = new Map<string, EventDef>();
-	if (manifest.events) {
-		for (const def of manifest.events) {
-			eventDefs.set(def.id, def);
-		}
-	}
-
-	function subscribe(eventId: string, handler: (...args: unknown[]) => unknown): void {
-		const def = eventDefs.get(eventId);
-		if (!def) {
-			throw new BindingError(`events.on(${eventId})`, "event is not declared in the host manifest");
-		}
-		if (def.capability && !grantedSatisfies(grantedCapabilities, def.capability)) {
-			throw new CapabilityDeniedError(`events.on(${eventId})`, def.capability);
-		}
-		if (typeof handler !== "function") {
-			throw new BindingError(`events.on(${eventId})`, "expected a handler function");
-		}
-		eventRegistry.register(eventId, { fn: handler });
-	}
-
-	const eventsObj = {
-		on: subscribe,
-		subscribe,
-	};
-
-	return Object.freeze(eventsObj);
-}
-
-function emitFromRegistry(
-	eventRegistry: HandlerRegistry,
-	manifest: Manifest,
-	eventId: string,
-	payload: unknown,
-	toContext: (value: unknown) => unknown,
-): unknown[] {
-	const declared = manifest.events?.some((def) => def.id === eventId) ?? false;
-	if (!declared) return [];
-
-	const entries = eventRegistry.handlers.get(eventId);
-	if (!entries || entries.length === 0) return [];
-
-	const args = payload !== undefined
-		? (typeof payload === "object" && payload !== null && !Array.isArray(payload)
-			? Object.values(payload as Record<string, unknown>)
-			: [payload])
-		: [];
-
-	const results: unknown[] = [];
-	for (const entry of entries) {
-		try {
-			results.push(entry.fn(...args.map((arg) => toContext(arg))));
-		} catch {
-			results.push(undefined);
-		}
-	}
-	return results;
-}
-
 function fireHookFromRegistry(
 	hookRegistry: HandlerRegistry,
 	manifest: Manifest,
@@ -648,9 +657,6 @@ function fireHookFromRegistry(
 		registryKey = hookName;
 	}
 
-	const entries = hookRegistry.handlers.get(registryKey);
-	if (!entries || entries.length === 0) return [];
-
 	const data = options?.data;
 	const args = data !== undefined
 		? (typeof data === "object" && data !== null && !Array.isArray(data)
@@ -658,14 +664,22 @@ function fireHookFromRegistry(
 			: [data])
 		: [];
 
+	// A value that cannot cross into the sandbox (a released retained callback) fails the fire,
+	// as it does in every other runtime, rather than being swallowed with a handler's throw.
+	const prepared = args.map((arg) => toContext(arg));
+
+	const entries = hookRegistry.handlers.get(registryKey);
+	if (!entries || entries.length === 0) return [];
+
 	const results: unknown[] = [];
-	for (const entry of entries) {
+	entries.forEach((entry, index) => {
+		const handlerArgs = index === 0 ? prepared : args.map((arg) => toContext(arg));
 		try {
-			results.push(entry.fn(...args.map((arg) => toContext(arg))));
+			results.push(hookRegistry.dispatch(entry, () => entry.fn(...handlerArgs)));
 		} catch {
 			results.push(undefined);
 		}
-	}
+	});
 	return results;
 }
 
@@ -694,7 +708,7 @@ function fireFragmentHookFromRegistry(
 			replaceChildren(target: string, content: unknown) { ops.push({ op: "replaceChildren", selector: target, value: content }); },
 		};
 		try {
-			entry.fn(toContext(bindings), toContext(fragmentProxy));
+			fragmentRegistry.dispatch(entry, () => entry.fn(toContext(bindings), toContext(fragmentProxy)));
 		} catch {
 			// swallow errors from individual handlers
 		}
@@ -739,9 +753,19 @@ export interface SandboxResult {
 	setExportOwner: (owner: string | null) => void;
 	fireHook: (hookName: string, options?: FireHookOptions) => unknown[];
 	emit: (eventId: string, payload?: unknown) => unknown[];
+	/** {@link emit} with each result tagged by the mod that subscribed the handler. */
+	emitTagged: (eventId: string, payload?: unknown) => EmitResult[];
+	/** Cancels every subscription `owner` holds and returns how many there were. */
+	cancelOwned: (owner: string | null) => number;
+	/** Adds an event to the catalogue at runtime; returns the entry as stored. */
+	declareEvent: (entry: unknown) => unknown;
 	fireFragmentHook: (fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>) => RawFragmentOp[];
 	debugSession: () => DebugSession | null;
-	/** Releases the process-level rejection containment this sandbox registered. */
+	/** Releases every retained callback the named mod supplied, returning how many. */
+	releaseRetained: (modName: string) => number;
+	/** Which mod is running right now. */
+	callerContext: CallerContext;
+	/** Releases every retained callback and the process-level rejection containment this sandbox registered. */
 	dispose: () => void;
 }
 
@@ -805,9 +829,11 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 	const limits = manifest.limits || {};
 	const hard = options.hardLimits || {};
 	const timeoutMs = clampLimit(limits.timeout_ms ?? 5000, hard.timeout_ms) ?? 5000;
-	const hookRegistry = createHandlerRegistry();
-	const fragmentRegistry = createHandlerRegistry();
-	const eventRegistry = createHandlerRegistry();
+	const callerContext = new CallerContext();
+	const deprecations = new DeprecationChannel(options.onDeprecation);
+	const clock: HandlerClock = options.budgetHandlers ? UNTIMED : unbudgetedHandlerClock(timeoutMs, deprecations);
+	const hookRegistry = createHandlerRegistry(callerContext, clock);
+	const fragmentRegistry = createHandlerRegistry(callerContext);
 	const exportRegistry = new Map<string, Map<string, HostFunction>>([["", new Map()]]);
 	let exportOwner = "";
 
@@ -819,14 +845,19 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 		return created;
 	}
 
-	function resolveExport(name: string, owner: string | undefined): HostFunction | undefined {
-		if (owner !== undefined) return exportRegistry.get(owner)?.get(name);
+	/** The export and the mod that owns it (`null` for one a host-run script registered). */
+	function resolveExport(name: string, owner: string | undefined): { fn: HostFunction; owner: string | null } | undefined {
+		const found = (bucketOwner: string) => {
+			const fn = exportRegistry.get(bucketOwner)?.get(name);
+			return fn ? { fn, owner: bucketOwner === "" ? null : bucketOwner } : undefined;
+		};
+		if (owner !== undefined) return found(owner);
 		const owners: string[] = [];
 		for (const [candidate, bucket] of exportRegistry) {
 			if (bucket.has(name)) owners.push(candidate);
 		}
 		if (owners.length > 1) throw new AmbiguousExportError(name, owners);
-		return owners.length === 1 ? exportRegistry.get(owners[0])!.get(name) : undefined;
+		return owners.length === 1 ? found(owners[0]) : undefined;
 	}
 
 	function setExportOwner(owner: string | null): void {
@@ -834,10 +865,15 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 		ownerBucket(exportOwner);
 	}
 
-	const tracker: CallbackTracker = { depth: 0 };
-	const sandboxGlobals = buildSandboxGlobal(options, tracker);
+	const tracker: CallbackTracker = { depth: 0, scopes: [], caller: callerContext, types: manifest.types };
+	const retained = new RetainedRegistry(limits.max_retained_callbacks ?? DEFAULT_MAX_RETAINED_CALLBACKS, invokeRetained);
+	tracker.retained = retained;
+	const sandboxGlobals = buildSandboxGlobal(
+		{ ...options, hostBindings: resolveCallerAware(options.hostBindings, callerContext) },
+		tracker,
+	);
+	const shadowed = SHADOWING_BUILTINS.filter((name) => Object.prototype.hasOwnProperty.call(sandboxGlobals, name));
 	sandboxGlobals.hooks = buildHooksGlobal(manifest, grantedCapabilities, hookRegistry, fragmentRegistry);
-	sandboxGlobals.events = buildEventsGlobal(manifest, grantedCapabilities, eventRegistry);
 
 	const debugController = options.debug ? createDebugController(options.debug, "instrumented") : null;
 	if (debugController) {
@@ -856,7 +892,10 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 			ownerBucket(exportOwner).set(name, fn as HostFunction);
 		},
 	});
-	sandboxGlobals.xript = Object.freeze({ exports: exportsApi });
+	sandboxGlobals.xript = Object.freeze({
+		exports: exportsApi,
+		has: presenceProbe(providedBindingPaths(manifest.bindings, options.hostBindings)),
+	});
 
 	const contextGlobal: Record<string, unknown> = {};
 	const context = vm.createContext(contextGlobal, {
@@ -867,13 +906,18 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 	});
 	const releaseRejectionSink = trackContextRejections(context);
 	const realm = new RealmBridge(context);
+	realm.resolveRetained = (value) => retained.resolve(value, callerContext.current());
 	vm.runInContext(CONTEXT_PRELUDE, context, { filename: "xript-prelude.js" });
 	const toContext = (value: unknown): unknown => realm.toContext(value);
 	tracker.toContext = toContext;
 	tracker.toHost = (value) => realm.toHost(value);
+	const contextGlobalThis = vm.runInContext("globalThis", context) as object;
 	for (const [name, value] of Object.entries(sandboxGlobals)) {
-		contextGlobal[name] = realm.toContext(value);
+		if (value instanceof LiveAccessor) realm.defineAccessor(contextGlobalThis, name, value);
+		else contextGlobal[name] = realm.toContext(value);
 	}
+	const bus = installEventBus(context, realm, manifest.events, grantedCapabilities, callerContext, clock);
+	reportShadowedBindings(deprecations, shadowed);
 
 	function cleanStack(err: Error): void {
 		if (!err.stack) return;
@@ -920,12 +964,31 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 		return converted;
 	}
 
+	/**
+	 * A deadline stop terminates the script without running the `finally` blocks of the host
+	 * code it was inside (binding calls, running callbacks, caller frames), so every
+	 * `runInContext` marks that state first and puts it back when the run throws.
+	 */
+	function runGuarded<T>(run: () => T): T {
+		const depth = tracker.depth;
+		const scopes = tracker.scopes.length;
+		const callers = callerContext.depth;
+		try {
+			return run();
+		} catch (e) {
+			tracker.depth = depth;
+			tracker.scopes.length = scopes;
+			callerContext.unwindTo(callers);
+			throw e;
+		}
+	}
+
 	function execute(code: string): ExecutionResult {
 		if (cancellation?.cancelled) throw new CancellationError();
 		const start = performance.now();
 		const script = new vm.Script(code, { filename: "xript-script.js", ...DENY_IMPORT });
 		try {
-			const value = script.runInContext(context, { timeout: timeoutMs });
+			const value = runGuarded(() => script.runInContext(context, { timeout: timeoutMs }));
 			const duration_ms = performance.now() - start;
 			return { value: realm.toHost(value), duration_ms };
 		} catch (e) {
@@ -939,7 +1002,7 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 		const wrappedCode = `(async () => { ${code} })()`;
 		const script = new vm.Script(wrappedCode, { filename: "xript-script.js", ...DENY_IMPORT });
 		try {
-			const promise = script.runInContext(context, { timeout: timeoutMs });
+			const promise = runGuarded(() => script.runInContext(context, { timeout: timeoutMs }));
 			const value = await promise;
 			const duration_ms = performance.now() - start;
 			return { value: realm.toHost(value), duration_ms };
@@ -976,19 +1039,45 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 		globals.__xript_call_fn = fn;
 		globals.__xript_call_args = toContext(args);
 		try {
-			return invokeScript.runInContext(context, { timeout: budgetMs });
+			return runGuarded(() => invokeScript.runInContext(context, { timeout: budgetMs }));
 		} finally {
 			delete globals.__xript_call_fn;
 			delete globals.__xript_call_args;
 		}
 	}
 
+	/**
+	 * Calls a retained callback. Inside a running binding call it runs re-entrantly on that
+	 * script call's budget, exactly as a call-scoped callback does; between script calls it gets
+	 * a fresh budget of its own, and a stop fails only this call.
+	 */
+	function invokeRetained(record: RetainedRecord, args: unknown[]): unknown {
+		const fn = record.fn as HostFunction;
+		const inner = tracker.scopes[tracker.scopes.length - 1];
+		if (inner) return callerContext.run(record.owner, () => inner.invoke(fn, args, record.binding));
+		if (cancellation?.cancelled) throw new CancellationError();
+		return callerContext.run(record.owner, () => {
+			let result: unknown;
+			tracker.depth++;
+			try {
+				result = callWithBudget(fn, args, timeoutMs);
+			} catch (e) {
+				if (isTimeoutError(e)) throw new CallbackError(record.binding, "limit");
+				throw new CallbackError(record.binding, "threw", describeThrown(e));
+			} finally {
+				tracker.depth--;
+			}
+			if (isThenable(result)) throw new CallbackError(record.binding, "promise");
+			return realm.toHost(result);
+		});
+	}
+
 	function invokeExport(name: string, args: unknown[], owner?: string, timeoutOverrideMs?: number): unknown {
 		if (cancellation?.cancelled) throw new CancellationError();
-		const fn = resolveExport(name, owner);
-		if (!fn) throw new InvokeError(name, `export ${name} not found`);
+		const found = resolveExport(name, owner);
+		if (!found) throw new InvokeError(name, `export ${name} not found`);
 		try {
-			return realm.toHost(callWithBudget(fn, args, callTimeoutMs(timeoutOverrideMs)));
+			return realm.toHost(callerContext.run(found.owner, () => callWithBudget(found.fn, args, callTimeoutMs(timeoutOverrideMs))));
 		} catch (e) {
 			if (isTimeoutError(e)) return wrapTimeoutError(e);
 			const message = e instanceof Error ? e.message : String(e);
@@ -1003,10 +1092,12 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 		timeoutOverrideMs?: number,
 	): Promise<unknown> {
 		if (cancellation?.cancelled) throw new CancellationError();
-		const fn = resolveExport(name, owner);
-		if (!fn) throw new InvokeError(name, `export ${name} not found`);
+		const found = resolveExport(name, owner);
+		if (!found) throw new InvokeError(name, `export ${name} not found`);
 		try {
-			return realm.toHost(await callWithBudget(fn, args, callTimeoutMs(timeoutOverrideMs)));
+			return realm.toHost(
+				await callerContext.runAsync(found.owner, async () => callWithBudget(found.fn, args, callTimeoutMs(timeoutOverrideMs))),
+			);
 		} catch (e) {
 			if (isTimeoutError(e)) return wrapTimeoutError(e);
 			const message = e instanceof Error ? e.message : String(e);
@@ -1090,13 +1181,63 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 		return harvested;
 	}
 
+	const fireScript = new vm.Script("__xript_fire_fn()", { filename: "xript-fire.js", ...DENY_IMPORT });
+
+	/**
+	 * Runs one hook or event fire under `limitMs` when the host opted into handler budgets.
+	 * `vm`'s timeout applies only to code it is running, so the fire is entered from a script;
+	 * a failure from the fire itself is carried out of the realm untouched.
+	 */
+	function runFire<T>(limitMs: number | undefined, fire: () => T): T {
+		if (limitMs === undefined) return fire();
+		let value: T | undefined;
+		let failure: { error: unknown } | undefined;
+		contextGlobal.__xript_fire_fn = realm.toContext(() => {
+			try {
+				value = fire();
+			} catch (error) {
+				failure = { error };
+			}
+		});
+		try {
+			runGuarded(() => fireScript.runInContext(context, { timeout: limitMs }));
+		} catch (e) {
+			if (isTimeoutError(e)) {
+				throw new ExecutionLimitError(
+					"timeout_ms",
+					`Script timed out after ${limitMs}ms. Optimize your script or ask the app developer to increase the limit.`,
+				);
+			}
+			throw e;
+		} finally {
+			delete contextGlobal.__xript_fire_fn;
+		}
+		if (failure) throw failure.error;
+		return value as T;
+	}
+
+	function hookLimitMs(hookName: string): number | undefined {
+		if (!options.budgetHandlers) return undefined;
+		const override = effectiveHooks(manifest)[hookName]?.limits?.timeout_ms;
+		return override === undefined ? timeoutMs : (clampLimit(override, hard.timeout_ms) ?? timeoutMs);
+	}
+
 	function fireHook(hookName: string, opts?: FireHookOptions): unknown[] {
-		return fireHookFromRegistry(hookRegistry, manifest, hookName, opts, toContext).map((result) => realm.toHost(result));
+		return runFire(hookLimitMs(hookName), () => fireHookFromRegistry(hookRegistry, manifest, hookName, opts, toContext)).map(
+			(result) => realm.toHost(result),
+		);
+	}
+
+	function emitTagged(eventId: string, payload?: unknown): EmitResult[] {
+		return runFire(options.budgetHandlers ? timeoutMs : undefined, () => bus.emit(eventId, payload === undefined ? [] : [payload]));
 	}
 
 	function emit(eventId: string, payload?: unknown): unknown[] {
-		return emitFromRegistry(eventRegistry, manifest, eventId, payload, toContext).map((result) => realm.toHost(result));
+		return emitTagged(eventId, payload).map((result) => result.value);
 	}
+
+	const cancelOwned = (owner: string | null): number => bus.cancelOwned(owner);
+	const declareEvent = (entry: unknown): unknown => bus.declare(entry);
 
 	function fireFragmentHook(fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>): RawFragmentOp[] {
 		return fireFragmentHookFromRegistry(fragmentRegistry, fragmentId, lifecycle, bindings, toContext);
@@ -1107,8 +1248,13 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 	}
 
 	function dispose(): void {
+		retained.releaseAll();
 		releaseRejectionSink();
 	}
 
-	return { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, setExportOwner, fireHook, emit, fireFragmentHook, debugSession, dispose };
+	function releaseRetained(modName: string): number {
+		return retained.releaseOwner(modName);
+	}
+
+	return { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, setExportOwner, fireHook, emit, emitTagged, cancelOwned, declareEvent, callerContext, fireFragmentHook, debugSession, releaseRetained, dispose };
 }

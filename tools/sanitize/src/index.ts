@@ -64,6 +64,7 @@ export {
 	BUILTINS,
 	BUILTIN_NAMES,
 	DEFAULT_MAX_EXPRESSION_NODES,
+	MAX_EXPRESSION_DEPTH,
 	type ExprAst,
 	type ExprValue,
 	type ExpressionKind,
@@ -71,6 +72,20 @@ export {
 	type ParseExpressionResult,
 	type ParseExpressionOptions,
 } from "./expr.js";
+
+export {
+	EXPRESSION_REFERENCE,
+	builtinArity,
+	type ExpressionReference,
+	type ExpressionReferenceExample,
+	type ExpressionTypeName,
+	type BuiltinReference,
+	type BuiltinParam,
+	type OperatorReference,
+	type RuleReference,
+	type AttributeReference,
+	type ScopeNameReference,
+} from "./expression-reference.js";
 
 export {
 	segmentText,

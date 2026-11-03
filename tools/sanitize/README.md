@@ -67,6 +67,17 @@ Sanitizes JSML (J5ML) nodes directly. Returns the sanitized tree, its HTML conve
 
 Converts JSML nodes to an HTML string without sanitization.
 
+### `EXPRESSION_REFERENCE`
+
+The machine-readable reference for XEG, the expression grammar behind `data-if`, `data-bind`, `data-each`, `data-key`, and `{{ }}`: every builtin's parameters, return type, description, and examples, the operators by precedence, the evaluation rules, and the attributes that carry expressions. Read it to drive completion and hover help in an editor instead of writing your own descriptions. It is deeply frozen, and `BUILTINS` is derived from its signatures.
+
+```typescript
+import { EXPRESSION_REFERENCE } from "@xriptjs/sanitize";
+
+const round = EXPRESSION_REFERENCE.builtins.find((b) => b.name === "round");
+// round.params → [{ name: "x", type: "number" }], round.returns → "number | null"
+```
+
 ### Types
 
 ```typescript

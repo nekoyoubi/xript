@@ -39,6 +39,33 @@ export interface LintResult {
  * names. Iterating the array as a record names each capability by its index, which is how
  * a mod manifest linted by mistake produced findings about a capability called "0".
  */
+/**
+ * The globals every runtime installs itself, and which side wins when a top-level binding uses
+ * the same name. The precedence is documented in `spec/bindings.md` ("Built-in Globals").
+ */
+const BUILTIN_GLOBALS: Record<string, { what: string; wins: string; instead: string }> = {
+	events: {
+		what: "the events bus",
+		wins: "the runtime's `events` replaces the binding, so mods never see it",
+		instead: "Mods already get an events bus from `events`; declare the host's events under `events` in the manifest instead of a binding.",
+	},
+	hooks: {
+		what: "hook registration",
+		wins: "the runtime's `hooks` replaces the binding, so mods never see it",
+		instead: "Declare lifecycle events as event-typed slots rather than shadowing `hooks`.",
+	},
+	xript: {
+		what: "the exports API, `xript.exports`",
+		wins: "which one survives differs by runtime and by the binding's shape, and mods can lose `xript.exports`",
+		instead: "Nothing a host adds should live under `xript`.",
+	},
+	console: {
+		what: "logging",
+		wins: "the host's binding replaces the runtime's `console`, so `console.log` and its siblings stop reaching the runtime's console handler",
+		instead: "To route mod logs, pass a console handler to the runtime rather than a binding.",
+	},
+};
+
 function capabilityDeclarations(manifest: { capabilities?: unknown }): Record<string, unknown> {
 	const declared = manifest.capabilities;
 	if (typeof declared !== "object" || declared === null || Array.isArray(declared)) return {};
@@ -232,9 +259,13 @@ function typeRefSites(manifest: HostManifest): { refs: TypeRefSite[]; params: Pa
 		for (const [name, def] of Object.entries(bindings as Record<string, unknown>)) {
 			if (typeof def !== "object" || def === null) continue;
 			const qualified = prefix ? `${prefix}.${name}` : name;
-			const d = def as { members?: unknown; params?: unknown[]; returns?: unknown };
+			const d = def as { members?: unknown; params?: unknown[]; returns?: unknown; accessor?: unknown; type?: unknown };
 			if (d.members !== undefined) {
 				walk(d.members, qualified);
+				continue;
+			}
+			if (d.accessor !== undefined) {
+				add(d.type, `accessor "${qualified}"`);
 				continue;
 			}
 			addParams(d.params, `binding "${qualified}"`);
@@ -338,9 +369,13 @@ function functionTypesOutsideParams(manifest: HostManifest): string[] {
 		for (const [name, def] of Object.entries(bindings as Record<string, unknown>)) {
 			if (typeof def !== "object" || def === null) continue;
 			const qualified = prefix ? `${prefix}.${name}` : name;
-			const d = def as { members?: unknown; returns?: unknown };
+			const d = def as { members?: unknown; returns?: unknown; accessor?: unknown; type?: unknown };
 			if (d.members !== undefined) {
 				walk(d.members, qualified);
+				continue;
+			}
+			if (d.accessor !== undefined) {
+				if (containsFunctionType(d.type)) found.push(`accessor "${qualified}" value`);
 				continue;
 			}
 			if (containsFunctionType(returnTypeRef(d.returns))) found.push(`binding "${qualified}" return`);
@@ -351,7 +386,8 @@ function functionTypesOutsideParams(manifest: HostManifest): string[] {
 	const hooks = (manifest as { hooks?: Record<string, { params?: unknown[] }> }).hooks ?? {};
 	for (const [hookName, def] of Object.entries(hooks)) {
 		for (const param of def?.params ?? []) {
-			const p = param as { name?: string; type?: unknown };
+			const p = param as { name?: string; type?: unknown; retain?: unknown };
+			if (p?.retain === true) continue;
 			if (containsFunctionType(p?.type)) found.push(`hook "${hookName}" parameter "${p?.name ?? "?"}"`);
 		}
 	}
@@ -491,9 +527,10 @@ export function lintManifests(host: unknown, mods: unknown[] = [], options: Lint
 	}
 
 	// A script function crosses the boundary only as an argument to a binding call, where it
-	// arrives as a call-scoped callback. Anywhere else (a binding's return value, a hook's
-	// arguments, an event payload) it is marshalled as data and arrives as nothing, so a
-	// declaration promising one there promises something no runtime delivers.
+	// arrives as a callback. Anywhere else (a binding's return value, a hook's arguments, an
+	// event payload) it is marshalled as data and arrives as nothing, so a declaration promising
+	// one there promises something no runtime delivers. A position marked `retain` is the
+	// exception: a retained callback the host passes back arrives as the script's own function.
 	for (const where of functionTypesOutsideParams(hostManifest)) {
 		findings.push({
 			severity: "warn",
@@ -524,6 +561,17 @@ export function lintManifests(host: unknown, mods: unknown[] = [], options: Lint
 				suggestion: `Rename it so it does not start with \`xript\` (any case). The namespace is reserved so generated identifiers like \`XriptSlots\` and the \`xript\` sandbox global never collide with a host's own declarations in the emitted \`.d.ts\`.`,
 			});
 		}
+	}
+
+	for (const name of hostBindingNames) {
+		if (!Object.prototype.hasOwnProperty.call(BUILTIN_GLOBALS, name)) continue;
+		const builtin = BUILTIN_GLOBALS[name];
+		findings.push({
+			severity: "warn",
+			code: "binding-shadows-builtin",
+			message: `binding "${name}" collides with the runtime's built-in \`${name}\` global (${builtin.what}); ${builtin.wins}`,
+			suggestion: `Rename the binding, or move it under a namespace. ${builtin.instead}`,
+		});
 	}
 
 	// A record type "Foo" makes typegen emit a `FooAccessor` interface of typed get/set accessors

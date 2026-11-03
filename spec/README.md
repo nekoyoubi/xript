@@ -13,6 +13,7 @@ The xript specification defines how applications expose functionality to scripts
 - [execution.md](./execution.md): execution limits, what can and cannot be interrupted, host bindings, pool wedge detection, and Rust async mode
 - [commands.md](./commands.md): the command slot kind (`application/x-xript-command`), bound arguments, resolution, and invocation
 - [security.md](./security.md): security guarantees and conformance checklist
+- [deprecations.md](./deprecations.md): the deprecation channel, every code it raises, and the deprecated APIs with what to use instead
 - [fragments.md](./fragments.md): the fragment protocol (the semantics of fragment-format slots)
 - [fragment-formats.md](./fragment-formats.md): fragment-format vocabularies, the prop-sink safety model, and the tree contract
 - [expressions.md](./expressions.md): the xript Expression Grammar (XEG) behind `data-if`, `data-bind`, and `{{ }}` interpolation
@@ -22,6 +23,13 @@ The xript specification defines how applications expose functionality to scripts
 - [command-tests.json](./command-tests.json): command slot conformance corpus (branch order, normalization, bound args, resolution)
 - [expression-tests.json](./expression-tests.json): expression conformance corpus (evaluation, refused sources, interpolation, and the safety cases)
 - [marshal-tests.json](./marshal-tests.json): host-to-sandbox marshalling conformance corpus (a host value's keys are data, an own `__proto__` included)
-- [callback-tests.json](./callback-tests.json): call-scoped callback conformance corpus (script functions passed into host bindings)
+- [callback-tests.json](./callback-tests.json): callback conformance corpus (script functions passed into host bindings, call-scoped and retained)
+- [deprecation-tests.json](./deprecation-tests.json): deprecation channel conformance corpus (the notice shape, once-per-runtime delivery, and `binding-shadows-builtin`)
+- [event-bus-tests.json](./event-bus-tests.json): events bus conformance corpus (every bus verb, ownership, id resolution, and caller-aware bindings)
+- [optional-binding-tests.json](./optional-binding-tests.json): optional binding conformance corpus (an omitted optional binding is `undefined`, the missing-bindings report, and the `xript.has` probe)
+- [accessor-tests.json](./accessor-tests.json): accessor binding conformance corpus (a getter per read, a setter per write, read-only refusal, gating, and error marshalling)
+- [value-fidelity-tests.json](./value-fidelity-tests.json): `undefined`, `NaN` and the infinities across the host boundary, in marker spelling, under value fidelity
+- [key-order-tests.json](./key-order-tests.json): authored object key order across the host boundary and through a hook payload spread
+- [hook-phase-tests.json](./hook-phase-tests.json): firing one phase of a phased hook (which handlers run, how `data` spreads, refused phases)
 - [escape-tests.json](./escape-tests.json): code-generation conformance corpus (every `.constructor` chain a script can walk, through its own values and the host's, ends in a `TypeError`)
 - [fragment-applier-tests.json](./fragment-applier-tests.json): fragment op applier conformance table, run by a host through `runFragmentApplierConformance`

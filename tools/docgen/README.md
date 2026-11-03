@@ -58,6 +58,7 @@ Reads a manifest JSON file and generates markdown documentation.
 - Hook documentation with handler signatures and phase listings
 - Custom type documentation with field tables, including record-type fields
 - Provider-role documentation for mod contributions
+- An Expressions section, when any slot takes fragments: the attributes that carry XEG expressions, every builtin's signature, the operators by precedence, and the evaluation rules, generated from the expression reference so a host's docs tell its modders exactly what they can write
 - Usage examples (when provided in the manifest)
 
 ## Documentation

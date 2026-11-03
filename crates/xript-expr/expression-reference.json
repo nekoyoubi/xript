@@ -1,0 +1,676 @@
+{
+	"$schema": "https://xript.dev/schema/expression-reference/v0.10.json",
+	"$comment": "Machine-readable reference for XEG, the xript Expression Grammar. Normative alongside spec/expressions.md: every runtime's builtin table is held to `builtins` here, and every example is a conformance case each evaluator runs against the defaultBindings of spec/expression-tests.json unless it carries its own `bindings`. Editors and tooling read this file for completion and hover text rather than restating it.",
+	"grammar": "XEG",
+	"types": [
+		{ "name": "any", "summary": "Any value in the XEG domain: null, a boolean, a finite number, a string, an array, or an object." },
+		{ "name": "null", "summary": "The absent value. Every evaluation failure yields it, it is falsy, and it renders as the empty string." },
+		{ "name": "boolean", "summary": "`true` or `false`." },
+		{ "name": "number", "summary": "A finite double. A computation that would produce `Infinity` or `NaN` produces `null` instead." },
+		{ "name": "string", "summary": "A sequence of UTF-16 code units, exactly as JavaScript holds it. Lengths, indices, and ordering count code units, so a character outside the Basic Multilingual Plane, such as an emoji, has length 2, and its two halves rejoin into it when concatenated." },
+		{ "name": "array", "summary": "An ordered list of values, read from a binding. XEG has no array literal." },
+		{ "name": "object", "summary": "A map of own string keys to values, read from a binding. XEG has no object literal, and an inherited key is never found." }
+	],
+	"builtins": [
+		{
+			"name": "abs",
+			"category": "numeric",
+			"params": [{ "name": "x", "type": "number" }],
+			"returns": "number | null",
+			"summary": "The absolute value of `x`.",
+			"description": "Returns `null` when `x` is not a number; a numeric string is not coerced.",
+			"examples": [
+				{ "expression": "abs(-3)", "expect": 3 },
+				{ "expression": "abs('3')", "expect": null }
+			]
+		},
+		{
+			"name": "round",
+			"category": "numeric",
+			"params": [{ "name": "x", "type": "number" }],
+			"returns": "number | null",
+			"summary": "`x` rounded to the nearest integer, with a half rounding up.",
+			"description": "A half always rounds toward positive infinity, matching JavaScript's `Math.round`: `round(2.5)` is `3` and `round(-2.5)` is `-2`. It is neither half away from zero nor half to even. Returns `null` when `x` is not a number.",
+			"examples": [
+				{ "expression": "round(2.5)", "expect": 3 },
+				{ "expression": "round(-2.5)", "expect": -2 },
+				{ "expression": "round(hp / maxHp * 10)", "expect": 4 }
+			]
+		},
+		{
+			"name": "floor",
+			"category": "numeric",
+			"params": [{ "name": "x", "type": "number" }],
+			"returns": "number | null",
+			"summary": "The largest integer less than or equal to `x`.",
+			"description": "Rounds toward negative infinity, so `floor(-1.5)` is `-2`. Returns `null` when `x` is not a number.",
+			"examples": [
+				{ "expression": "floor(1.9)", "expect": 1 },
+				{ "expression": "floor(-1.5)", "expect": -2 }
+			]
+		},
+		{
+			"name": "ceil",
+			"category": "numeric",
+			"params": [{ "name": "x", "type": "number" }],
+			"returns": "number | null",
+			"summary": "The smallest integer greater than or equal to `x`.",
+			"description": "Rounds toward positive infinity, so `ceil(-1.5)` is `-1`. Returns `null` when `x` is not a number.",
+			"examples": [
+				{ "expression": "ceil(1.1)", "expect": 2 },
+				{ "expression": "ceil(-1.5)", "expect": -1 }
+			]
+		},
+		{
+			"name": "min",
+			"category": "numeric",
+			"params": [{ "name": "values", "type": "number", "variadic": true }],
+			"returns": "number | null",
+			"summary": "The smallest of one or more numbers.",
+			"description": "Takes at least one argument. If any argument is not a number the result is `null`, rather than the minimum of the ones that are.",
+			"examples": [
+				{ "expression": "min(3, 1, 2)", "expect": 1 },
+				{ "expression": "min(hp, 'x')", "expect": null }
+			]
+		},
+		{
+			"name": "max",
+			"category": "numeric",
+			"params": [{ "name": "values", "type": "number", "variadic": true }],
+			"returns": "number | null",
+			"summary": "The largest of one or more numbers.",
+			"description": "Takes at least one argument. If any argument is not a number the result is `null`, rather than the maximum of the ones that are.",
+			"examples": [
+				{ "expression": "max(3, 1, 2)", "expect": 3 },
+				{ "expression": "max(hp, maxHp)", "expect": 100 }
+			]
+		},
+		{
+			"name": "clamp",
+			"category": "numeric",
+			"params": [
+				{ "name": "x", "type": "number" },
+				{ "name": "lo", "type": "number" },
+				{ "name": "hi", "type": "number" }
+			],
+			"returns": "number | null",
+			"summary": "`x` limited to the range `lo` to `hi`, inclusive.",
+			"description": "Returns `null` when any argument is not a number, or when `lo` is greater than `hi`; an inverted range is an error, not a swap.",
+			"examples": [
+				{ "expression": "clamp(150, 0, 100)", "expect": 100 },
+				{ "expression": "clamp(-5, 0, 100)", "expect": 0 },
+				{ "expression": "clamp(5, 10, 0)", "expect": null }
+			]
+		},
+		{
+			"name": "fixed",
+			"category": "numeric",
+			"params": [
+				{ "name": "x", "type": "number" },
+				{ "name": "digits", "type": "number" }
+			],
+			"returns": "string | null",
+			"summary": "`x` as a string with exactly `digits` decimal places.",
+			"description": "Matches JavaScript's `Number.prototype.toFixed`: the exact binary value of `x` is rounded to `digits` places, a half rounding away from zero. Because the value is exact, `fixed(1.005, 2)` is `\"1.00\"`, since `1.005` is stored just below the half. `digits` must be an integer from 0 to 20, otherwise the result is `null`. When the magnitude of `x` is 1e21 or more the result is `str(x)`.",
+			"examples": [
+				{ "expression": "fixed(3.14159, 2)", "expect": "3.14" },
+				{ "expression": "fixed(2, 2)", "expect": "2.00" },
+				{ "expression": "fixed(0.125, 2)", "expect": "0.13" },
+				{ "expression": "fixed(1.005, 2)", "expect": "1.00" },
+				{ "expression": "fixed(hp / 3, 1)", "expect": "11.7" }
+			]
+		},
+		{
+			"name": "upper",
+			"category": "string",
+			"params": [{ "name": "s", "type": "string" }],
+			"returns": "string | null",
+			"summary": "`s` converted to uppercase.",
+			"description": "Uses Unicode's default full case mapping, independent of locale, so a character can expand: `upper('ß')` is `\"SS\"`. Returns `null` when `s` is not a string.",
+			"examples": [
+				{ "expression": "upper(name)", "expect": "HERO" },
+				{ "expression": "upper('straße')", "expect": "STRASSE" }
+			]
+		},
+		{
+			"name": "lower",
+			"category": "string",
+			"params": [{ "name": "s", "type": "string" }],
+			"returns": "string | null",
+			"summary": "`s` converted to lowercase.",
+			"description": "Uses Unicode's default full case mapping, independent of locale, including the final-sigma rule: a capital sigma at the end of a word lowercases to `ς`. Returns `null` when `s` is not a string.",
+			"examples": [
+				{ "expression": "lower(name)", "expect": "hero" },
+				{ "expression": "lower('ΟΔΟΣ')", "expect": "οδος" }
+			]
+		},
+		{
+			"name": "trim",
+			"category": "string",
+			"params": [{ "name": "s", "type": "string" }],
+			"returns": "string | null",
+			"summary": "`s` with leading and trailing whitespace removed.",
+			"description": "Whitespace is JavaScript's set: tab, vertical tab, form feed, space, no-break space, U+FEFF, every Unicode space separator, and the line terminators LF, CR, U+2028, and U+2029. U+0085 is not whitespace. Returns `null` when `s` is not a string.",
+			"examples": [
+				{ "expression": "trim(label)", "expect": "padded" },
+				{ "expression": "trim(3)", "expect": null }
+			]
+		},
+		{
+			"name": "pad",
+			"category": "string",
+			"params": [
+				{ "name": "s", "type": "string" },
+				{ "name": "width", "type": "number" },
+				{ "name": "fill", "type": "string", "optional": true, "default": " " }
+			],
+			"returns": "string | null",
+			"summary": "`s` padded at the start to `width` UTF-16 code units.",
+			"description": "Pads at the start, so numbers align right, like JavaScript's `padStart`. `fill` repeats and is cut to fit, counting code units, and defaults to a space. A string already `width` long or longer comes back unchanged. `width` must be an integer from 0 to 4096 and `fill` a non-empty string, otherwise the result is `null`.",
+			"examples": [
+				{ "expression": "pad('7', 3, '0')", "expect": "007" },
+				{ "expression": "pad('ab', 5, 'xy')", "expect": "xyxab" },
+				{ "expression": "pad(name, 2)", "expect": "Hero" }
+			]
+		},
+		{
+			"name": "slice",
+			"category": "string",
+			"params": [
+				{ "name": "s", "type": "string" },
+				{ "name": "start", "type": "number" },
+				{ "name": "end", "type": "number", "optional": true }
+			],
+			"returns": "string | null",
+			"summary": "The UTF-16 code units of `s` from `start` up to but not including `end`.",
+			"description": "Matches JavaScript's `String.prototype.slice`: a negative index counts from the end, an index past either end is clamped, and a fractional index is truncated toward zero. Omitting `end` runs to the end of the string. Works on strings only; returns `null` for anything else.",
+			"examples": [
+				{ "expression": "slice('hello', 1, 3)", "expect": "el" },
+				{ "expression": "slice('hello', -3)", "expect": "llo" },
+				{ "expression": "slice(name, 0, 99)", "expect": "Hero" }
+			]
+		},
+		{
+			"name": "len",
+			"category": "collection",
+			"params": [{ "name": "value", "type": "string | array | object" }],
+			"returns": "number | null",
+			"summary": "The size of a string, array, or object.",
+			"description": "Counts UTF-16 code units for a string, as JavaScript's `length` does, elements for an array, and own keys for an object. Returns `null` for anything else.",
+			"examples": [
+				{ "expression": "len(effects)", "expect": 2 },
+				{ "expression": "len(name)", "expect": 4 },
+				{ "expression": "len(player.stats)", "expect": 2 },
+				{ "expression": "len(hp)", "expect": null }
+			]
+		},
+		{
+			"name": "has",
+			"category": "collection",
+			"params": [
+				{ "name": "collection", "type": "string | array | object" },
+				{ "name": "key", "type": "any" }
+			],
+			"returns": "boolean | null",
+			"summary": "Whether `collection` contains `key`.",
+			"description": "Reads as membership: a substring for a string, an element by strict equality for an array, an own key for an object. A non-string key is never found in a string or an object, and an inherited key is never found. Returns `null` when `collection` is none of the three.",
+			"examples": [
+				{ "expression": "has(effects, 'burn')", "expect": true },
+				{ "expression": "has(name, 'er')", "expect": true },
+				{ "expression": "has(player, 'stats')", "expect": true },
+				{ "expression": "has(hp, 3)", "expect": null }
+			]
+		},
+		{
+			"name": "join",
+			"category": "collection",
+			"params": [
+				{ "name": "array", "type": "array" },
+				{ "name": "separator", "type": "string", "optional": true, "default": "," }
+			],
+			"returns": "string | null",
+			"summary": "The elements of `array` rendered with `str` and joined by `separator`.",
+			"description": "`separator` defaults to a comma. Returns `null` when `array` is not an array or `separator` is not a string.",
+			"examples": [
+				{ "expression": "join(effects, ', ')", "expect": "burn, slow" },
+				{ "expression": "join(effects)", "expect": "burn,slow" }
+			]
+		},
+		{
+			"name": "at",
+			"category": "collection",
+			"params": [
+				{ "name": "collection", "type": "string | array" },
+				{ "name": "index", "type": "number" }
+			],
+			"returns": "any",
+			"summary": "The element or UTF-16 code unit of `collection` at `index`.",
+			"description": "A negative index counts from the end. An index out of range, a fractional index, or a `collection` that is neither a string nor an array yields `null`.",
+			"examples": [
+				{ "expression": "at(effects, 0)", "expect": "burn" },
+				{ "expression": "at(effects, -1)", "expect": "slow" },
+				{ "expression": "at(name, 1)", "expect": "e" },
+				{ "expression": "at(effects, 5)", "expect": null }
+			]
+		},
+		{
+			"name": "str",
+			"category": "coercion",
+			"params": [{ "name": "value", "type": "any" }],
+			"returns": "string",
+			"summary": "`value` rendered as a string, exactly as `data-bind` and interpolation render it.",
+			"description": "`null` renders as the empty string, a boolean as `true` or `false`, a number as JavaScript's `String(number)` would (shortest round-trip digits, exponent form below 1e-6 and from 1e21 up), an array as its rendered elements joined by commas, and an object as `[object Object]`.",
+			"examples": [
+				{ "expression": "str(nothing)", "expect": "" },
+				{ "expression": "str(hp)", "expect": "35" },
+				{ "expression": "str(effects)", "expect": "burn,slow" },
+				{ "expression": "str(1e21)", "expect": "1e+21" }
+			]
+		},
+		{
+			"name": "num",
+			"category": "coercion",
+			"params": [{ "name": "value", "type": "any" }],
+			"returns": "number | null",
+			"summary": "`value` converted to a number.",
+			"description": "A number passes through, `true` is 1 and `false` is 0, and a string is converted as JavaScript's `Number(string)` converts it: trimmed, then read as a decimal literal (an optional sign, digits with an optional decimal point, an optional exponent) or an unsigned `0x`, `0o`, or `0b` integer. An empty string, `Infinity`, a value too large for a double, and anything JavaScript reads as `NaN` yield `null`.",
+			"examples": [
+				{ "expression": "num(' 42 ')", "expect": 42 },
+				{ "expression": "num('1.5e3')", "expect": 1500 },
+				{ "expression": "num(alive)", "expect": 1 },
+				{ "expression": "num('0x10')", "expect": 16 },
+				{ "expression": "num('1_000')", "expect": null }
+			]
+		},
+		{
+			"name": "bool",
+			"category": "coercion",
+			"params": [{ "name": "value", "type": "any" }],
+			"returns": "boolean",
+			"summary": "Whether `value` is truthy.",
+			"description": "`null`, `false`, `0`, and the empty string are falsy. Everything else is truthy, including an empty array and an empty object.",
+			"examples": [
+				{ "expression": "bool(zero)", "expect": false },
+				{ "expression": "bool(empty)", "expect": true },
+				{ "expression": "bool(blank)", "expect": false }
+			]
+		}
+	],
+	"operators": [
+		{
+			"symbol": "? :",
+			"name": "conditional",
+			"form": "ternary",
+			"precedence": 1,
+			"associativity": "right",
+			"summary": "`test ? a : b` evaluates to `a` when `test` is truthy and `b` otherwise.",
+			"description": "Selects a value, never a branch of markup. Only the chosen side is evaluated.",
+			"examples": [
+				{ "expression": "hp < 50 ? 'hurt' : 'fine'", "expect": "hurt" }
+			]
+		},
+		{
+			"symbol": "??",
+			"name": "nullish coalescing",
+			"form": "binary",
+			"precedence": 2,
+			"associativity": "left",
+			"summary": "`a ?? b` is `a` unless `a` is `null`, in which case it is `b`.",
+			"description": "Only `null` falls through. `0`, `false`, and the empty string are kept, which is what separates it from `||`. A failed computation is `null`, so `??` also supplies a fallback for one.",
+			"examples": [
+				{ "expression": "nothing ?? 'none'", "expect": "none" },
+				{ "expression": "zero ?? 5", "expect": 0 }
+			]
+		},
+		{
+			"symbol": "||",
+			"name": "logical or",
+			"form": "binary",
+			"precedence": 3,
+			"associativity": "left",
+			"summary": "`a || b` is `a` when `a` is truthy, otherwise `b`.",
+			"description": "Returns one of its operands, not a boolean, and does not evaluate `b` when `a` is truthy.",
+			"examples": [
+				{ "expression": "blank || 'anonymous'", "expect": "anonymous" }
+			]
+		},
+		{
+			"symbol": "&&",
+			"name": "logical and",
+			"form": "binary",
+			"precedence": 4,
+			"associativity": "left",
+			"summary": "`a && b` is `a` when `a` is falsy, otherwise `b`.",
+			"description": "Returns one of its operands, not a boolean, and does not evaluate `b` when `a` is falsy.",
+			"examples": [
+				{ "expression": "alive && hp", "expect": 35 }
+			]
+		},
+		{
+			"symbol": "===",
+			"name": "equal",
+			"form": "binary",
+			"precedence": 5,
+			"associativity": "left",
+			"summary": "Strict equality between two primitives.",
+			"description": "No coercion: `1 === '1'` is false. Two arrays or two objects are never equal, even to themselves, because XEG has no identity to compare.",
+			"examples": [
+				{ "expression": "name === 'Hero'", "expect": true },
+				{ "expression": "effects === effects", "expect": false }
+			]
+		},
+		{
+			"symbol": "==",
+			"name": "equal (loose spelling)",
+			"form": "binary",
+			"precedence": 5,
+			"associativity": "left",
+			"summary": "Another spelling of `===`.",
+			"description": "Accepted so existing `data-if` bodies keep working. It is strict: `1 == '1'` is false.",
+			"examples": [
+				{ "expression": "score == '7'", "expect": false }
+			]
+		},
+		{
+			"symbol": "!==",
+			"name": "not equal",
+			"form": "binary",
+			"precedence": 5,
+			"associativity": "left",
+			"summary": "The negation of `===`.",
+			"description": "Two arrays or two objects are always unequal.",
+			"examples": [
+				{ "expression": "name !== 'Villain'", "expect": true }
+			]
+		},
+		{
+			"symbol": "!=",
+			"name": "not equal (loose spelling)",
+			"form": "binary",
+			"precedence": 5,
+			"associativity": "left",
+			"summary": "Another spelling of `!==`.",
+			"description": "It is strict: `1 != '1'` is true.",
+			"examples": [
+				{ "expression": "score != '7'", "expect": true }
+			]
+		},
+		{
+			"symbol": "<",
+			"name": "less than",
+			"form": "binary",
+			"precedence": 6,
+			"associativity": "left",
+			"summary": "Whether `a` orders before `b`.",
+			"description": "Defined on two numbers or two strings; strings order by UTF-16 code unit, as JavaScript's `<` does. Mixed types are `false`, not a coercion.",
+			"examples": [
+				{ "expression": "hp < maxHp", "expect": true },
+				{ "expression": "hp < '50'", "expect": false }
+			]
+		},
+		{
+			"symbol": "<=",
+			"name": "less than or equal",
+			"form": "binary",
+			"precedence": 6,
+			"associativity": "left",
+			"summary": "Whether `a` orders before or equal to `b`.",
+			"description": "Defined on two numbers or two strings; strings order by UTF-16 code unit, as JavaScript's `<` does. Mixed types are `false`.",
+			"examples": [
+				{ "expression": "hp <= 35", "expect": true }
+			]
+		},
+		{
+			"symbol": ">",
+			"name": "greater than",
+			"form": "binary",
+			"precedence": 6,
+			"associativity": "left",
+			"summary": "Whether `a` orders after `b`.",
+			"description": "Defined on two numbers or two strings; strings order by UTF-16 code unit, as JavaScript's `<` does. Mixed types are `false`.",
+			"examples": [
+				{ "expression": "'b' > 'a'", "expect": true }
+			]
+		},
+		{
+			"symbol": ">=",
+			"name": "greater than or equal",
+			"form": "binary",
+			"precedence": 6,
+			"associativity": "left",
+			"summary": "Whether `a` orders after or equal to `b`.",
+			"description": "Defined on two numbers or two strings; strings order by UTF-16 code unit, as JavaScript's `<` does. Mixed types are `false`.",
+			"examples": [
+				{ "expression": "score >= 7", "expect": true }
+			]
+		},
+		{
+			"symbol": "+",
+			"name": "add or concatenate",
+			"form": "binary",
+			"precedence": 7,
+			"associativity": "left",
+			"summary": "Numeric addition, or string concatenation when either side is a string.",
+			"description": "Two numbers add. When either side is a string and the other is a primitive, both render with `str` and concatenate. Anything else, including an array or object operand, is `null`.",
+			"examples": [
+				{ "expression": "hp + 5", "expect": 40 },
+				{ "expression": "'HP: ' + hp", "expect": "HP: 35" },
+				{ "expression": "effects + 'x'", "expect": null }
+			]
+		},
+		{
+			"symbol": "-",
+			"name": "subtract",
+			"form": "binary",
+			"precedence": 7,
+			"associativity": "left",
+			"summary": "Numeric subtraction.",
+			"description": "Defined on numbers only; anything else is `null`.",
+			"examples": [
+				{ "expression": "maxHp - hp", "expect": 65 }
+			]
+		},
+		{
+			"symbol": "*",
+			"name": "multiply",
+			"form": "binary",
+			"precedence": 8,
+			"associativity": "left",
+			"summary": "Numeric multiplication.",
+			"description": "Defined on numbers only; anything else is `null`, and a non-finite result is `null`.",
+			"examples": [
+				{ "expression": "hp * 2", "expect": 70 }
+			]
+		},
+		{
+			"symbol": "/",
+			"name": "divide",
+			"form": "binary",
+			"precedence": 8,
+			"associativity": "left",
+			"summary": "Numeric division.",
+			"description": "Defined on numbers only. Division by zero is `null`, not `Infinity` or `NaN`.",
+			"examples": [
+				{ "expression": "hp / maxHp", "expect": 0.35 },
+				{ "expression": "hp / zero", "expect": null }
+			]
+		},
+		{
+			"symbol": "%",
+			"name": "remainder",
+			"form": "binary",
+			"precedence": 8,
+			"associativity": "left",
+			"summary": "The remainder of numeric division, taking the sign of the dividend.",
+			"description": "Defined on numbers only. A remainder by zero is `null`.",
+			"examples": [
+				{ "expression": "hp % 10", "expect": 5 },
+				{ "expression": "hp % zero", "expect": null }
+			]
+		},
+		{
+			"symbol": "!",
+			"name": "not",
+			"form": "prefix",
+			"precedence": 9,
+			"associativity": "right",
+			"summary": "`true` when the operand is falsy, `false` otherwise.",
+			"description": "Always returns a boolean.",
+			"examples": [
+				{ "expression": "!dead", "expect": true },
+				{ "expression": "!empty", "expect": false }
+			]
+		},
+		{
+			"symbol": "-",
+			"name": "negate",
+			"form": "prefix",
+			"precedence": 9,
+			"associativity": "right",
+			"summary": "The numeric negation of the operand.",
+			"description": "Defined on numbers only; anything else is `null`.",
+			"examples": [
+				{ "expression": "-hp", "expect": -35 }
+			]
+		},
+		{
+			"symbol": "+",
+			"name": "plus",
+			"form": "prefix",
+			"precedence": 9,
+			"associativity": "right",
+			"summary": "The operand unchanged when it is a number.",
+			"description": "Does not coerce: `+'3'` is `null`. Use `num` to parse a string.",
+			"examples": [
+				{ "expression": "+hp", "expect": 35 },
+				{ "expression": "+'3'", "expect": null }
+			]
+		},
+		{
+			"symbol": ".",
+			"name": "member",
+			"form": "postfix",
+			"precedence": 10,
+			"associativity": "left",
+			"summary": "`a.key` reads an own key of an object.",
+			"description": "A key the object does not own, or a member of anything that is not an object, is `null`. `length` on a string or an array is its length, counting UTF-16 code units for a string.",
+			"examples": [
+				{ "expression": "player.stats.str", "expect": 12 },
+				{ "expression": "nothing.anything", "expect": null },
+				{ "expression": "effects.length", "expect": 2 }
+			]
+		},
+		{
+			"symbol": "[ ]",
+			"name": "index",
+			"form": "postfix",
+			"precedence": 10,
+			"associativity": "left",
+			"summary": "`a[i]` reads an array element, a string's UTF-16 code unit, or an object key.",
+			"description": "A whole number indexes an array or a string, counting from the end when negative; a fractional one is `null`. A number on an object reads the key `str` of it spells, so `o[1.5]` reads `\"1.5\"`. A string reads an object key or `length`; on an array it reads the element its JavaScript `Number` value names (`\"1\"`, `\" 1 \"`, and `\"0x1\"` all read element 1, a blank string reads element 0, and a negative one is `null`). Anything out of range or not owned is `null`.",
+			"examples": [
+				{ "expression": "effects[1]", "expect": "slow" },
+				{ "expression": "effects[-1]", "expect": "slow" },
+				{ "expression": "player['name']", "expect": "Hero" }
+			]
+		},
+		{
+			"symbol": "( )",
+			"name": "call",
+			"form": "postfix",
+			"precedence": 10,
+			"associativity": "left",
+			"summary": "`name(args)` calls a builtin.",
+			"description": "Only a builtin can be called, and only by name: an identifier in call position is never looked up in the bindings, and a binding value is never callable. An unknown name or a wrong argument count is a parse error.",
+			"examples": [
+				{ "expression": "round(hp / 3)", "expect": 12 }
+			]
+		}
+	],
+	"rules": [
+		{
+			"id": "truthiness",
+			"title": "Truthiness",
+			"summary": "`null`, `false`, `0`, and the empty string are falsy. Everything else is truthy, including an empty array and an empty object."
+		},
+		{
+			"id": "totality",
+			"title": "Nothing throws",
+			"summary": "Any evaluation failure yields `null`: a type mismatch, a missing key, an index out of range, a division by zero, or a non-finite result. `null` is falsy for `data-if` and renders as the empty string for `data-bind` and interpolation."
+		},
+		{
+			"id": "identifiers",
+			"title": "Identifiers",
+			"summary": "An identifier resolves only against the fill's declared bindings and, inside a `data-each` template, the names that template binds. An undeclared identifier is a validate-time error and `null` at runtime. Nothing reaches a host global."
+		},
+		{
+			"id": "literals",
+			"title": "Literals",
+			"summary": "Numbers (`42`, `3.5`, `.5`, `2e3`; a decimal point is always followed by a digit, and a literal that opens with its point takes no exponent), strings in single or double quotes with the escapes `\\n`, `\\t`, `\\r`, `\\b`, `\\f`, `\\0`, and `\\uXXXX`, `true`, `false`, and `null`. There are no array, object, template, or regular-expression literals."
+		},
+		{
+			"id": "absent",
+			"title": "Deliberately absent",
+			"summary": "No assignment, increment, comma operator, arrow function, `function`, `new`, `typeof`, `in`, `instanceof`, `delete`, optional chaining, bitwise operator, or method call on a value. Every expression is a total, pure function of its bindings."
+		}
+	],
+	"attributes": [
+		{
+			"name": "data-if",
+			"value": "expression",
+			"summary": "Shows the node when the expression is truthy and hides it when it is falsy.",
+			"description": "The result is reported to the host in `conditions`, keyed by the node's position, and the host hides the node by whatever means its renderer has. The tree is never pruned. An expression that fails or does not parse is `false`.",
+			"examples": [
+				{ "markup": "<div data-if=\"hp < 50\">You're hurting!</div>" }
+			]
+		},
+		{
+			"name": "data-bind",
+			"value": "expression",
+			"summary": "Writes the expression's value into the node: its text, or the prop the vocabulary names with `bindTo`.",
+			"description": "The value renders with `str`, so `null` writes the empty string. A bare binding name is writable: an `input` or `change` handler can push a new value back through the binding's path, and a name whose binding is absent writes nothing so the authored fallback survives. Any other expression is read-only, and a write-back handler aimed at one is a lint error.",
+			"examples": [
+				{ "markup": "<span data-bind=\"hp\">0</span>" },
+				{ "markup": "<span data-bind=\"round(hp / maxHp * 100)\">0</span>" }
+			]
+		},
+		{
+			"name": "data-each",
+			"value": "repeat header",
+			"summary": "Renders the node once per element of an array.",
+			"description": "The header is `item in expr` or `(item, index) in expr`. The expression is evaluated in the enclosing scope and must yield an array; anything else renders zero copies. Each copy has the item, the optional index name, and `$index` in scope for every expression inside it, shadowing bindings of the same name. Repeat names are values with no host path, so they are not writable. One render produces at most 10,000 copies across every repeat.",
+			"examples": [
+				{ "markup": "<li data-each=\"effect in effects\"><span data-bind=\"effect\"></span></li>" },
+				{ "markup": "<li data-each=\"(member, i) in party\" data-key=\"member.id\">{{ i + 1 }}. {{ member.name }}</li>" }
+			]
+		},
+		{
+			"name": "data-key",
+			"value": "expression",
+			"modifies": "data-each",
+			"summary": "Names each repeated copy's identity, so an update patches copies by key instead of replacing them.",
+			"description": "Evaluated per copy with the item in scope. A key must be a string or a finite number, and `1` and `\"1\"` are different keys. A duplicate or invalid key drops the whole repeat to positional keying and reports a diagnostic. On a node without `data-each` it does nothing, and lint warns.",
+			"examples": [
+				{ "markup": "<li data-each=\"member in party\" data-key=\"member.id\"></li>" }
+			]
+		},
+		{
+			"name": "{{ }}",
+			"value": "expression",
+			"site": "text",
+			"summary": "Interpolates an expression's value into a text node.",
+			"description": "Active only in a fill that sets `\"interpolate\": true`, and only in text nodes; an attribute value is never an interpolation site. The value renders with `str` and stays text, so it can never become markup. `\\{{` writes a literal `{{`.",
+			"examples": [
+				{ "markup": "<p>Health: {{ hp }}/{{ maxHp }}</p>" }
+			]
+		}
+	],
+	"scopeNames": [
+		{
+			"name": "$index",
+			"scope": "data-each",
+			"summary": "The zero-based position of the current copy inside a `data-each` template.",
+			"description": "Bound in every copy whether or not the header names an index. Inside nested repeats it refers to the innermost one."
+		}
+	]
+}

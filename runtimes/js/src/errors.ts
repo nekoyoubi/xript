@@ -24,10 +24,38 @@ export class CapabilityDeniedError extends Error {
 
 /**
  * Why a call to a script callback did not return a value: the script function threw, the
- * binding call that received it already returned, it returned a promise, or the calling
- * script ran out of its execution budget.
+ * binding call that received it already returned (or a retained callback is not valid where
+ * it was used), it returned a promise, the calling script ran out of its execution budget, or
+ * the host released the retained callback.
  */
-export type CallbackFailure = "threw" | "expired" | "promise" | "limit";
+export type CallbackFailure = "threw" | "expired" | "promise" | "limit" | "released";
+
+/** Why a callback could not be retained. */
+export type RetainFailure = "undeclared" | "limit";
+
+/**
+ * Thrown on the host by `callback.retain()` when the callback cannot be retained: it is not at
+ * a parameter or field the manifest marks `"retain": true` (`undeclared`), or the runtime already
+ * holds `max_retained_callbacks` retained callbacks (`limit`).
+ */
+export class RetainError extends Error {
+	public readonly binding: string;
+	public readonly reason: RetainFailure;
+
+	constructor(binding: string, reason: RetainFailure, limit?: number) {
+		super(
+			reason === "undeclared"
+				? `${binding}(): callback cannot be retained; only a callback at a parameter or field the manifest marks "retain": true can be retained`
+				: `${binding}(): callback cannot be retained; the runtime already holds max_retained_callbacks (${limit}) retained callbacks`,
+		);
+		this.name = "RetainError";
+		this.binding = binding;
+		this.reason = reason;
+	}
+}
+
+/** Why `expired` applies: the binding call ended, or a retained callback left its runtime or mod. */
+export type ExpiredCause = "call" | "foreign";
 
 /**
  * Thrown on the host when a callback a script passed to a binding cannot produce a value.
@@ -39,8 +67,13 @@ export class CallbackError extends Error {
 	public readonly reason: CallbackFailure;
 	public readonly scriptError?: { name?: string; message?: string };
 
-	constructor(binding: string, reason: CallbackFailure, scriptError?: { name?: string; message?: string }) {
-		super(callbackFailureMessage(binding, reason, scriptError));
+	constructor(
+		binding: string,
+		reason: CallbackFailure,
+		scriptError?: { name?: string; message?: string },
+		expiredCause: ExpiredCause = "call",
+	) {
+		super(callbackFailureMessage(binding, reason, scriptError, expiredCause));
 		this.name = "CallbackError";
 		this.binding = binding;
 		this.reason = reason;
@@ -51,17 +84,22 @@ export class CallbackError extends Error {
 function callbackFailureMessage(
 	binding: string,
 	reason: CallbackFailure,
-	scriptError?: { name?: string; message?: string },
+	scriptError: { name?: string; message?: string } | undefined,
+	expiredCause: ExpiredCause,
 ): string {
 	switch (reason) {
 		case "threw":
 			return scriptError?.message ?? "callback threw";
 		case "expired":
-			return `${binding}(): callback expired; a callback passed to a binding can only be called while that binding call is running`;
+			return expiredCause === "foreign"
+				? `${binding}(): callback expired; a retained callback crosses back only into the runtime and mod that supplied it`
+				: `${binding}(): callback expired; a callback passed to a binding can only be called while that binding call is running`;
 		case "promise":
 			return `${binding}(): callback returned a promise; callbacks passed to a binding are synchronous and must return a settled value`;
 		case "limit":
 			return `${binding}(): callback stopped by the calling script's execution limit`;
+		case "released":
+			return `${binding}(): callback released; the host released this retained callback`;
 	}
 }
 

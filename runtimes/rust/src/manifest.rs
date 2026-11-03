@@ -170,13 +170,27 @@ pub struct LibraryDef {
 /// A host-declared broadcast event. The host emits it by id; sandbox mods
 /// subscribe through `events.on(id, handler)`. `payload` is a codegen/docs hint;
 /// `capability` gates subscription at registration time through the same gate
-/// model hooks use.
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+/// model hooks use. `emit` says who may emit it (`"host"`, the default, or
+/// `"mods"`), `pattern` marks an id whose `<segment>`s vary, `addressed` lists
+/// companion shapes emitted alongside a generic event, and `keys` names the
+/// payload's top-level keys a subscription's `match` may use.
+#[derive(Debug, Clone, Deserialize, serde::Serialize, PartialEq)]
 pub struct EventDefinition {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capability: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub addressed: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keys: Option<Vec<String>>,
 }
 
 /// A custom type definition in `manifest.types`. An object type carries `fields`
@@ -200,6 +214,9 @@ pub struct FieldDefinition {
     pub optional: bool,
     pub default: Option<serde_json::Value>,
     pub r#enum: Option<Vec<serde_json::Value>>,
+    /// A function-typed field whose callback the host may retain.
+    #[serde(default)]
+    pub retain: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -293,7 +310,7 @@ impl Manifest {
         match kind {
             "bindings" => self.binding_at(id).and_then(|b| match b {
                 Binding::Function(f) => f.execution,
-                Binding::Namespace(_) => None,
+                Binding::Namespace(_) | Binding::Accessor(_) => None,
             }),
             "hooks" => self.hooks.as_ref()?.get(id).and_then(|h| h.execution),
             "slots" => self
@@ -313,7 +330,7 @@ impl Manifest {
         for segment in segments {
             match current {
                 Binding::Namespace(ns) => current = ns.members.get(segment)?,
-                Binding::Function(_) => return None,
+                Binding::Function(_) | Binding::Accessor(_) => return None,
             }
         }
         Some(current)
@@ -372,6 +389,10 @@ impl Manifest {
                         r#async: None,
                         deprecated: None,
                         execution: slot.execution,
+                        limits: slot.limits.map(|limits| Limits {
+                            timeout_ms: limits.timeout_ms,
+                            ..Limits::default()
+                        }),
                     },
                 );
             }
@@ -549,6 +570,7 @@ pub struct FragmentDeclaration {
     pub handlers: Option<Vec<FragmentHandler>>,
     /// Deprecated alias for `handlers`. Accepted on deserialize for
     /// back-compat; `handlers` wins when both are present.
+    #[deprecated(note = "renamed to `handlers`; read handlers through `resolved_handlers()`")]
     pub events: Option<Vec<FragmentHandler>>,
     pub priority: Option<i32>,
     /// Turns on `{{ expr }}` interpolation for this fill's text nodes. Off by default:
@@ -560,6 +582,7 @@ pub struct FragmentDeclaration {
 impl FragmentDeclaration {
     /// Resolves the fragment's DOM-event handlers, preferring `handlers` and
     /// falling back to the deprecated `events` alias.
+    #[allow(deprecated)]
     pub fn resolved_handlers(&self) -> Option<&Vec<FragmentHandler>> {
         self.handlers.as_ref().or(self.events.as_ref())
     }
@@ -595,6 +618,7 @@ pub type FragmentEvent = FragmentHandler;
 #[serde(untagged)]
 pub enum Binding {
     Namespace(NamespaceBinding),
+    Accessor(AccessorBinding),
     Function(FunctionBinding),
 }
 
@@ -608,12 +632,37 @@ pub struct FunctionBinding {
     pub deprecated: Option<String>,
     /// The cost of calling this host function.
     pub execution: Option<ExecutionIntent>,
+    /// A conforming host may omit this binding.
+    pub optional: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct NamespaceBinding {
     pub description: String,
     pub members: HashMap<String, Binding>,
+    /// A conforming host may omit this namespace.
+    pub optional: Option<bool>,
+}
+
+/// A binding that reads as a value the host computes on every read, and with
+/// `get-set` stores on every assignment.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AccessorBinding {
+    pub description: String,
+    pub accessor: AccessorMode,
+    pub r#type: Option<serde_json::Value>,
+    pub capability: Option<String>,
+    pub deprecated: Option<String>,
+    /// A conforming host may omit this accessor.
+    pub optional: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub enum AccessorMode {
+    #[serde(rename = "get")]
+    Get,
+    #[serde(rename = "get-set")]
+    GetSet,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -623,6 +672,30 @@ pub struct Parameter {
     pub description: Option<String>,
     pub default: Option<serde_json::Value>,
     pub required: Option<bool>,
+    /// The inverse alias of `required`: `optional: true` means `required: false`.
+    pub optional: Option<bool>,
+    /// A rest parameter: `type` names the type of every remaining argument.
+    #[serde(default)]
+    pub variadic: bool,
+    /// A function-typed parameter whose callback the host may retain.
+    #[serde(default)]
+    pub retain: bool,
+}
+
+impl Parameter {
+    /// Whether a caller may omit this parameter: `required: false`,
+    /// `optional: true`, a `default`, or a variadic rest parameter.
+    ///
+    /// Descriptive only. No runtime checks argument count against the
+    /// declared parameters; a binding receives whatever the script passed.
+    pub fn is_optional(&self) -> bool {
+        self.required == Some(false) || self.optional == Some(true) || self.default.is_some() || self.variadic
+    }
+
+    /// Whether this is a rest parameter.
+    pub fn is_variadic(&self) -> bool {
+        self.variadic
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -635,6 +708,16 @@ pub struct HookDef {
     pub deprecated: Option<String>,
     /// The cost of firing this hook, handler fan-out included.
     pub execution: Option<ExecutionIntent>,
+    /// This hook's own budget. Its `timeout_ms` replaces the manifest's for
+    /// each fire, clamped by the embedder's hard limit.
+    pub limits: Option<Limits>,
+}
+
+impl HookDef {
+    /// The budget this hook declares for one fire, if it declares one.
+    pub fn timeout_ms(&self) -> Option<u64> {
+        self.limits.as_ref().and_then(|limits| limits.timeout_ms)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -647,16 +730,28 @@ pub struct Capability {
 /// declares one. Pinned by `spec/slot-limit-tests.json`.
 pub const DEFAULT_TIMEOUT_MS: u64 = 5000;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct Limits {
     pub timeout_ms: Option<u64>,
     pub memory_mb: Option<u64>,
     pub max_stack_depth: Option<usize>,
+    /// How many retained callbacks the runtime holds at once.
+    pub max_retained_callbacks: Option<usize>,
 }
 
 impl Binding {
     pub fn is_namespace(&self) -> bool {
         matches!(self, Binding::Namespace(_))
+    }
+
+    /// Whether a conforming host may omit this binding.
+    pub fn is_optional(&self) -> bool {
+        let optional = match self {
+            Binding::Namespace(ns) => ns.optional,
+            Binding::Accessor(acc) => acc.optional,
+            Binding::Function(f) => f.optional,
+        };
+        optional.unwrap_or(false)
     }
 }
 

@@ -453,7 +453,7 @@ fn a_debug_breakpoint_pauses_and_resumes_in_async_mode() {
     });
     while !exec.is_finished() {
         std::thread::sleep(Duration::from_millis(5));
-        if !session.stack_trace().is_empty() {
+        if stops.load(Ordering::SeqCst) >= 1 {
             session.resume();
             break;
         }

@@ -89,13 +89,13 @@ public static class Interpolation
             {
                 issues.Add(new SegmentIssue(i, "nested '{{' inside an interpolation site"));
             }
-            else if (!ExpressionParser.TryParse(body.Trim(), out _, out var error))
+            else if (!ExpressionParser.TryParse(XegText.Trim(body), out _, out var error))
             {
                 issues.Add(new SegmentIssue(i + Open.Length + error!.Position, error.Message));
             }
 
             Flush();
-            segments.Add(new TextSegment.Expr(body.Trim()));
+            segments.Add(new TextSegment.Expr(XegText.Trim(body)));
             i = close + Close.Length;
         }
 

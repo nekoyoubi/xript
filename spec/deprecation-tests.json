@@ -1,0 +1,105 @@
+{
+	"description": "Conformance corpus for the deprecation channel. Every runtime constructs a runtime from each case's `manifest`, supplying a host function for every path in `provided`, with a deprecation handler that records each notice it receives. The recorded notices must equal `expect` exactly, in order, with every field compared as a string.",
+	"notes": [
+		"A notice is exactly `{ code, message, replacement }`. JS and Node pass the host's `onDeprecation` option a plain object; Rust passes `on_deprecation` a `Deprecation`; C# passes `OnDeprecation` a `Deprecation` record. The harness compares those three fields.",
+		"A code is raised at most once per runtime, whether or not a handler is set. `runtimes`, when present, constructs that many runtimes from the same host in turn; each one must raise `expect` on its own.",
+		"`binding-shadows-builtin` fires at construction when a top-level host binding is replaced by the runtime's own global of the same name. It names every replaced binding in one notice, in the fixed order events, hooks, xript. A binding named `console` wins over the runtime's console, so it raises nothing. Whether `events` and `xript` are replaced differs by runtime in some host shapes (see `spec/bindings.md`, Built-in Globals), so the cases here use only shapes where every runtime replaces the binding: `events` with events declared, and `hooks` supplied as a function.",
+		"`unbudgeted-handler` is raised only by runtimes that run hook and event handlers without a budget by default (JS and Node); each pins it in its own tests. See `spec/deprecations.md`."
+	],
+	"cases": [
+		{
+			"name": "a host binding named events that the built-in replaces raises binding-shadows-builtin once",
+			"manifest": {
+				"xript": "0.10",
+				"name": "shadow-probe",
+				"bindings": { "events": { "description": "A host binding the runtime's events global replaces." } },
+				"events": [{ "id": "tick", "description": "Fired once per frame." }]
+			},
+			"provided": ["events"],
+			"expect": [
+				{
+					"code": "binding-shadows-builtin",
+					"message": "host bindings replaced by a built-in global of the same name, which mods see instead: events",
+					"replacement": "Rename the binding or move it under a namespace."
+				}
+			]
+		},
+		{
+			"name": "a host function named hooks raises binding-shadows-builtin",
+			"manifest": {
+				"xript": "0.10",
+				"name": "shadow-probe",
+				"bindings": { "hooks": { "description": "A host binding the runtime's hooks global replaces." } }
+			},
+			"provided": ["hooks"],
+			"expect": [
+				{
+					"code": "binding-shadows-builtin",
+					"message": "host bindings replaced by a built-in global of the same name, which mods see instead: hooks",
+					"replacement": "Rename the binding or move it under a namespace."
+				}
+			]
+		},
+		{
+			"name": "every replaced binding is named in one notice, events before hooks",
+			"manifest": {
+				"xript": "0.10",
+				"name": "shadow-probe",
+				"bindings": {
+					"hooks": { "description": "Replaced by the runtime's hooks global." },
+					"events": { "description": "Replaced by the runtime's events global." }
+				},
+				"events": [{ "id": "tick", "description": "Fired once per frame." }]
+			},
+			"provided": ["hooks", "events"],
+			"expect": [
+				{
+					"code": "binding-shadows-builtin",
+					"message": "host bindings replaced by a built-in global of the same name, which mods see instead: events, hooks",
+					"replacement": "Rename the binding or move it under a namespace."
+				}
+			]
+		},
+		{
+			"name": "each runtime raises the notice once for itself",
+			"manifest": {
+				"xript": "0.10",
+				"name": "shadow-probe",
+				"bindings": { "hooks": { "description": "Replaced by the runtime's hooks global." } }
+			},
+			"provided": ["hooks"],
+			"runtimes": 2,
+			"expect": [
+				{
+					"code": "binding-shadows-builtin",
+					"message": "host bindings replaced by a built-in global of the same name, which mods see instead: hooks",
+					"replacement": "Rename the binding or move it under a namespace."
+				}
+			]
+		},
+		{
+			"name": "a host binding named console wins and raises nothing",
+			"manifest": {
+				"xript": "0.10",
+				"name": "shadow-probe",
+				"bindings": { "console": { "description": "A host binding that replaces the runtime's console." } }
+			},
+			"provided": ["console"],
+			"expect": []
+		},
+		{
+			"name": "ordinary bindings raise nothing",
+			"manifest": {
+				"xript": "0.10",
+				"name": "shadow-probe",
+				"bindings": {
+					"save": { "description": "Saves." },
+					"game": { "description": "Game surface.", "members": { "events": { "description": "Lists the game's events." } } }
+				},
+				"events": [{ "id": "tick", "description": "Fired once per frame." }]
+			},
+			"provided": ["save", "game.events"],
+			"expect": []
+		}
+	]
+}

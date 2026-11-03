@@ -1,6 +1,6 @@
 {
-	"$schema": "https://xript.dev/schema/manifest/v0.9.json",
-	"xript": "0.9",
+	"$schema": "https://xript.dev/schema/manifest/v0.10.json",
+	"xript": "0.10",
 	"name": "dashboard-app",
 	"title": "Dashboard Application",
 	"version": "1.0.0",

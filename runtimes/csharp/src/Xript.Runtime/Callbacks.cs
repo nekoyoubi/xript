@@ -75,6 +75,20 @@ public sealed class XriptCallback
             throw new CallbackException(Binding, "expired");
         return scope.Invoke(_index, args);
     }
+
+    /// <summary>
+    /// Keeps the callback past the binding call so the host can call it later. Succeeds only for
+    /// a callback at a position the manifest marks <c>"retain": true</c>, or for a script function
+    /// this mod already retained, which returns that same retained callback. Throws
+    /// <see cref="RetainException"/> when refused and <see cref="CallbackException"/> (expired)
+    /// once the binding call has returned.
+    /// </summary>
+    public RetainedCallback Retain()
+    {
+        if (!CallbackScope.TryFind(_scope, _nonce, out var scope))
+            throw new CallbackException(Binding, "expired");
+        return scope.Retain(_index);
+    }
 }
 
 /// <summary>One binding call's callbacks on the sandbox side.</summary>
@@ -93,7 +107,13 @@ internal sealed class CallbackScope : IDisposable
     private readonly JsValue[] _functions;
     private readonly Func<JsonElement, JsValue> _toJs;
     private readonly Func<JsValue, JsonElement> _toJson;
+    private readonly RetainPositions _positions;
+    private readonly RetainedRegistry? _registry;
+    private readonly bool[] _retainable;
     private readonly List<(CallbackException Error, JsValue Original)> _thrown = [];
+
+    [ThreadStatic]
+    private static List<CallbackScope>? _open;
 
     /// <summary>A budget stop raised inside a callback; the binding call must end with it.</summary>
     internal Exception? Fatal { get; private set; }
@@ -103,16 +123,41 @@ internal sealed class CallbackScope : IDisposable
         string binding,
         JsValue functions,
         Func<JsonElement, JsValue> toJs,
-        Func<JsValue, JsonElement> toJson)
+        Func<JsValue, JsonElement> toJson,
+        RetainPositions? positions = null,
+        RetainedRegistry? registry = null)
     {
         _engine = engine;
         _binding = binding;
         _toJs = toJs;
         _toJson = toJson;
+        _positions = positions ?? RetainPositions.None;
+        _registry = registry;
         _functions = functions is ObjectInstance array && functions.IsArray()
             ? Enumerable.Range(0, (int)array.Get("length").AsNumber()).Select(i => array.Get(i.ToString())).ToArray()
             : [];
+        _retainable = new bool[_functions.Length];
         Live[_id] = this;
+        (_open ??= []).Add(this);
+    }
+
+    /// <summary>The innermost binding call of <paramref name="engine"/> running on this thread, if any.</summary>
+    internal static CallbackScope? Innermost(Engine engine)
+    {
+        if (_open is null) return null;
+        for (var i = _open.Count - 1; i >= 0; i--)
+        {
+            if (ReferenceEquals(_open[i]._engine, engine))
+                return _open[i];
+        }
+        return null;
+    }
+
+    internal RetainedCallback Retain(int index)
+    {
+        if (_registry is null || index < 0 || index >= _functions.Length)
+            throw new RetainException(_binding, "undeclared");
+        return _registry.Retain(_functions[index], _retainable[index], _binding);
     }
 
     internal static bool TryFind(long id, long nonce, out CallbackScope scope)
@@ -130,22 +175,24 @@ internal sealed class CallbackScope : IDisposable
     internal JsonElement[] ResolveMarkers(JsonElement[] args)
     {
         if (_functions.Length == 0) return args;
-        return args.Select(arg =>
+        return args.Select((arg, index) =>
         {
             var node = JsonNode.Parse(arg.GetRawText());
-            node = Resolve(node);
+            node = Resolve(node, [index]);
             return JsonSerializer.SerializeToElement(node);
         }).ToArray();
     }
 
-    private JsonNode? Resolve(JsonNode? node)
+    private JsonNode? Resolve(JsonNode? node, List<object> path)
     {
         switch (node)
         {
             case JsonArray array:
                 for (var i = 0; i < array.Count; i++)
                 {
-                    var resolved = Resolve(array[i]);
+                    path.Add(i);
+                    var resolved = Resolve(array[i], path);
+                    path.RemoveAt(path.Count - 1);
                     if (!ReferenceEquals(resolved, array[i]))
                     {
                         array[i] = null;
@@ -160,12 +207,15 @@ internal sealed class CallbackScope : IDisposable
                     && value.TryGetValue<double>(out var number)
                     && number >= 0 && number < _functions.Length && number == Math.Floor(number))
                 {
+                    _retainable[(int)number] = _positions.Matches(path);
                     return new JsonObject { [XriptCallback.Marker] = $"{_id}:{(int)number}:{_nonce}:{_binding}" };
                 }
                 foreach (var key in obj.Select(p => p.Key).ToList())
                 {
                     var current = obj[key];
-                    var resolved = Resolve(current);
+                    path.Add(key);
+                    var resolved = Resolve(current, path);
+                    path.RemoveAt(path.Count - 1);
                     if (!ReferenceEquals(resolved, current))
                     {
                         obj[key] = null;
@@ -180,32 +230,47 @@ internal sealed class CallbackScope : IDisposable
 
     internal JsonElement Invoke(int index, JsonElement[] args)
     {
-        if (Fatal is not null)
-            throw new CallbackException(_binding, "limit");
         if (index < 0 || index >= _functions.Length)
+        {
+            if (Fatal is not null)
+                throw new CallbackException(_binding, "limit");
             throw new CallbackException(_binding, "expired");
+        }
+        return InvokeFunction(_functions[index], args, _binding);
+    }
+
+    /// <summary>
+    /// Calls a script function re-entrantly inside this binding call, on the calling script's
+    /// budget. A budget stop becomes the call's fatal outcome and a throw is remembered so a host
+    /// that lets it escape rethrows the script's own error; <paramref name="binding"/> names the
+    /// binding the function was passed to, in every failure.
+    /// </summary>
+    internal JsonElement InvokeFunction(JsValue function, JsonElement[] args, string binding)
+    {
+        if (Fatal is not null)
+            throw new CallbackException(binding, "limit");
 
         var jsArgs = args.Select(_toJs).ToArray();
         JsValue result;
         try
         {
-            result = _engine.Call(_functions[index], JsValue.Undefined, jsArgs);
+            result = _engine.Call(function, JsValue.Undefined, jsArgs);
         }
         catch (JavaScriptException ex)
         {
             var (name, message) = Describe(ex.Error, ex.Message);
-            var error = new CallbackException(_binding, "threw", name, message);
+            var error = new CallbackException(binding, "threw", name, message);
             _thrown.Add((error, ex.Error));
             throw error;
         }
         catch (Exception ex) when (IsBudgetStop(ex))
         {
             Fatal = ex;
-            throw new CallbackException(_binding, "limit");
+            throw new CallbackException(binding, "limit");
         }
 
         if (IsThenable(result))
-            throw new CallbackException(_binding, "promise");
+            throw new CallbackException(binding, "promise");
         return _toJson(result);
     }
 
@@ -228,18 +293,22 @@ internal sealed class CallbackScope : IDisposable
         }
     }
 
-    public void Dispose() => Live.TryRemove(_id, out _);
+    public void Dispose()
+    {
+        Live.TryRemove(_id, out _);
+        _open?.Remove(this);
+    }
 
-    private static bool IsBudgetStop(Exception ex) =>
+    internal static bool IsBudgetStop(Exception ex) =>
         ex is ExecutionCanceledException or TimeoutException or MemoryLimitExceededException or RecursionDepthOverflowException;
 
-    private static bool IsThenable(JsValue value)
+    internal static bool IsThenable(JsValue value)
     {
         if (value.IsPromise()) return true;
         return value is ObjectInstance obj && obj.Get("then") is { } then && then.IsObject() && then.AsObject() is Jint.Native.Function.Function;
     }
 
-    private static (string? Name, string Message) Describe(JsValue error, string fallback)
+    internal static (string? Name, string Message) Describe(JsValue error, string fallback)
     {
         if (error is ObjectInstance obj)
         {
@@ -271,6 +340,7 @@ internal sealed record FunctionParamCheck(int Index, string Name, bool Optional)
                 if (IsFunctionType(type))
                 {
                     var optional = (param.TryGetProperty("required", out var required) && required.ValueKind == JsonValueKind.False)
+                        || (param.TryGetProperty("optional", out var optionalFlag) && optionalFlag.ValueKind == JsonValueKind.True)
                         || param.TryGetProperty("default", out _);
                     checks.Add(new FunctionParamCheck(index, name, optional));
                 }

@@ -251,3 +251,33 @@ fn the_node_limit_is_enforced_at_parse_time() {
     let err = parse(&deep).expect_err("must exceed the limit");
     assert!(err.message.contains("node limit"), "{}", err.message);
 }
+
+#[test]
+fn reference_examples() {
+    let corpus = corpus();
+    let defaults = bindings_from(&corpus["defaultBindings"]);
+    let reference = xript_expr::expression_reference();
+    let mut failures = Vec::new();
+    let mut count = 0;
+
+    for section in ["builtins", "operators"] {
+        for entry in reference[section].as_array().unwrap() {
+            for example in entry["examples"].as_array().unwrap() {
+                count += 1;
+                let expression = example["expression"].as_str().unwrap();
+                let bindings = if example.get("bindings").is_some() {
+                    bindings_from(&example["bindings"])
+                } else {
+                    defaults.clone()
+                };
+                let actual = evaluate(expression, &bindings);
+                if !values_equal(&actual, &example["expect"]) {
+                    failures.push(format!("{}: `{expression}` -> {actual} (expected {})", entry["name"], example["expect"]));
+                }
+            }
+        }
+    }
+
+    assert!(count > 0, "the reference carries examples");
+    assert!(failures.is_empty(), "{} example(s) diverged:\n{}", failures.len(), failures.join("\n"));
+}

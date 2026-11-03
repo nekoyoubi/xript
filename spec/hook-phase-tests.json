@@ -1,0 +1,122 @@
+{
+  "description": "Conformance corpus for firing one phase of a phased hook. Every runtime loads `mod`, runs `setup` once, then fires each case's `hook` at `phase` with `data` as the single payload value (absent when the case has no `data` key), and the results must equal `expected`, in order. Only the handlers registered for that phase run. A phase the hook does not declare, a hook with no phases, and an unknown hook all run nothing and return an empty list. Hook fills are unphased and never run on a phased fire. A `phase` of \"\" is no phase: the fire runs exactly what an unphased fire runs, hook fills included.",
+  "notes": [
+    "The JavaScript runtimes fire with `fireHook(hook, { phase, data })`, the Rust runtime with `fire_hook_phase(hook, phase, data)` where `data` is an `Option`, and the C# runtime with `FireHook(hook, new FireHookOptions { Phase, Data })`.",
+    "A plain object `data` spreads to its values in key order; any other `data` is the one argument; no `data` passes no arguments. Keys here are written in code-point order so a host that sorts object keys spreads them the same way.",
+    "`mod` fills the `ping` event slot with an export, loaded from `mod.source` as its entry script `mod.js`, before `setup` runs.",
+    "What an unphased fire does with phased handlers is not pinned here, so the empty phase is pinned only on hooks without phases."
+  ],
+  "manifest": {
+    "xript": "0.10",
+    "name": "hook-phase-probe",
+    "hooks": {
+      "save": { "description": "a phased save", "phases": ["pre", "post"] },
+      "tick": { "description": "an unphased tick" }
+    },
+    "slots": [
+      { "id": "ping", "accepts": ["application/x-xript-hook"], "description": "an event slot mods fill" }
+    ]
+  },
+  "mod": {
+    "manifest": {
+      "xript": "0.10",
+      "name": "ping-filler",
+      "version": "1.0.0",
+      "entry": { "script": "mod.js", "exports": { "onPing": { "description": "answers ping" } } },
+      "fills": { "ping": [{ "handler": "onPing" }] }
+    },
+    "source": "xript.exports.register('onPing', function (x) { return 'fill:' + x; });"
+  },
+  "setup": "hooks.save.pre(function (a, b) { return 'pre1:' + a + ',' + b; }); hooks.save.post(function (a, b) { return 'post:' + a + ',' + b; }); hooks.save.pre(function () { return 'pre2:' + arguments.length; }); hooks.tick(function (x) { return 'tick:' + x; }); hooks.ping(function (x) { return 'ping:' + x; });",
+  "cases": [
+    {
+      "name": "only the named phase's handlers run, in registration order",
+      "hook": "save",
+      "phase": "pre",
+      "data": { "a": 1, "b": 2 },
+      "expected": ["pre1:1,2", "pre2:2"]
+    },
+    {
+      "name": "the other phase runs its own handler",
+      "hook": "save",
+      "phase": "post",
+      "data": { "a": "x", "b": "y" },
+      "expected": ["post:x,y"]
+    },
+    {
+      "name": "a non-object payload is the one argument",
+      "hook": "save",
+      "phase": "post",
+      "data": "s",
+      "expected": ["post:s,undefined"]
+    },
+    {
+      "name": "an array payload is the one argument, not spread",
+      "hook": "save",
+      "phase": "post",
+      "data": [1, 2],
+      "expected": ["post:1,2,undefined"]
+    },
+    {
+      "name": "no payload passes no arguments",
+      "hook": "save",
+      "phase": "pre",
+      "expected": ["pre1:undefined,undefined", "pre2:0"]
+    },
+    {
+      "name": "an undeclared phase runs nothing",
+      "hook": "save",
+      "phase": "during",
+      "data": { "a": 1 },
+      "expected": []
+    },
+    {
+      "name": "a hook without phases runs nothing on a phased fire",
+      "hook": "tick",
+      "phase": "pre",
+      "data": 1,
+      "expected": []
+    },
+    {
+      "name": "an unknown hook runs nothing",
+      "hook": "nope",
+      "phase": "pre",
+      "data": 1,
+      "expected": []
+    },
+    {
+      "name": "the empty phase is no phase: an unphased hook's handlers run",
+      "hook": "tick",
+      "phase": "",
+      "data": 7,
+      "expected": ["tick:7"]
+    },
+    {
+      "name": "the empty phase runs an event slot's handlers, then its fills",
+      "hook": "ping",
+      "phase": "",
+      "data": 3,
+      "expected": ["ping:3", "fill:3"]
+    },
+    {
+      "name": "the empty phase spreads an object payload to handlers and fills alike",
+      "hook": "ping",
+      "phase": "",
+      "data": { "a": "x" },
+      "expected": ["ping:x", "fill:x"]
+    },
+    {
+      "name": "the empty phase with no payload passes no arguments",
+      "hook": "ping",
+      "phase": "",
+      "expected": ["ping:undefined", "fill:undefined"]
+    },
+    {
+      "name": "a named phase still never runs fills",
+      "hook": "ping",
+      "phase": "pre",
+      "data": 3,
+      "expected": []
+    }
+  ]
+}

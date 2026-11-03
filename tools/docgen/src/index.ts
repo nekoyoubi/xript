@@ -14,6 +14,9 @@ import {
 	HOST_BINDING_THREAD_CONTRACT,
 	resolveFormatProfile,
 	FormatProfileError,
+	BUILTIN_FORMAT_IDS,
+	EXPRESSION_REFERENCE,
+	type BuiltinReference,
 	typeRefToMarkdown,
 	typeRefToTypeScript,
 	typeRefToRestArray,
@@ -85,7 +88,7 @@ interface LibraryDef {
 	deprecated?: string;
 }
 
-type Binding = FunctionBinding | NamespaceBinding;
+type Binding = FunctionBinding | NamespaceBinding | AccessorBinding;
 
 interface FunctionBinding {
 	description: string;
@@ -95,11 +98,22 @@ interface FunctionBinding {
 	capability?: string;
 	examples?: Example[];
 	deprecated?: string;
+	optional?: boolean;
 }
 
 interface NamespaceBinding {
 	description: string;
 	members: Record<string, Binding>;
+	optional?: boolean;
+}
+
+interface AccessorBinding {
+	description: string;
+	accessor: "get" | "get-set";
+	type?: TypeRef;
+	capability?: string;
+	deprecated?: string;
+	optional?: boolean;
 }
 
 interface Parameter {
@@ -110,6 +124,7 @@ interface Parameter {
 	required?: boolean;
 	optional?: boolean;
 	variadic?: boolean;
+	retain?: boolean;
 }
 
 type TypeRef = string | ComplexTypeRef;
@@ -143,6 +158,7 @@ interface FieldDefinition {
 	default?: unknown;
 	enum?: unknown[];
 	open?: boolean;
+	retain?: boolean;
 }
 
 interface ProviderRole {
@@ -159,6 +175,10 @@ interface EventDef {
 	description: string;
 	payload?: TypeRef;
 	capability?: string;
+	emit?: "host" | "mods";
+	pattern?: boolean;
+	addressed?: string[];
+	keys?: string[];
 }
 
 interface FragmentHandler {
@@ -207,6 +227,60 @@ function isNamespace(binding: Binding): binding is NamespaceBinding {
 	return "members" in binding;
 }
 
+function isAccessor(binding: Binding): binding is AccessorBinding {
+	return typeof (binding as AccessorBinding).accessor === "string";
+}
+
+/** The note an optional binding carries wherever it is documented. */
+function optionalNote(binding: Binding, path: string): string[] {
+	if (binding.optional !== true) return [];
+	return [
+		`> **Optional:** a host may omit this. Where it is omitted it is \`undefined\`, so check with \`xript.has(${JSON.stringify(path)})\` before use.`,
+		"",
+	];
+}
+
+function accessorSignature(name: string, binding: AccessorBinding): string {
+	const type = binding.type !== undefined ? typeRefToCode(binding.type) : "unknown";
+	return `${binding.accessor === "get" ? "readonly " : ""}${name}: ${type}`;
+}
+
+function accessorModeText(binding: AccessorBinding): string {
+	return binding.accessor === "get"
+		? "Read live: every read asks the host for the current value. Read-only: assigning throws a `TypeError`."
+		: "Read and written live: every read asks the host for the current value, and every assignment hands the new value to the host.";
+}
+
+function appendAccessor(lines: string[], heading: string, path: string, name: string, binding: AccessorBinding): void {
+	lines.push(heading);
+	lines.push("");
+	if (binding.deprecated) {
+		lines.push(`> **Deprecated:** ${binding.deprecated}`);
+		lines.push("");
+	}
+	lines.push(...optionalNote(binding, path));
+	if (binding.description) {
+		lines.push(binding.description);
+		lines.push("");
+	}
+	lines.push("```typescript");
+	lines.push(accessorSignature(name, binding));
+	lines.push("```");
+	lines.push("");
+	lines.push(accessorModeText(binding));
+	lines.push("");
+	if (binding.capability) {
+		lines.push(`**${describeCapability(binding.capability)}**`);
+		lines.push("");
+	}
+}
+
+function generateAccessorPage(name: string, binding: AccessorBinding): DocPage {
+	const lines: string[] = [];
+	appendAccessor(lines, `# ${name}`, name, name, binding);
+	return { slug: `bindings/${name}`, title: name, content: lines.join("\n") };
+}
+
 function formatTypeRef(ref: TypeRef): string {
 	return typeRefToMarkdown(ref);
 }
@@ -236,16 +310,44 @@ function refersToFunction(ref: TypeRef): boolean {
 	return walk(resolveTypeWords(parseTypeRef(ref)));
 }
 
-/** Explains the call-scoped lifetime once, under a table whose parameters take a callback. */
+/**
+ * Explains each callback lifetime once, under a table whose parameters take a callback: the
+ * call-scoped default, and separately the parameters marked `retain`.
+ */
 function callbackNote(params: Parameter[]): string[] {
-	const callbacks = params.filter((p) => refersToFunction(p.type)).map((p) => `\`${p.name}\``);
-	if (callbacks.length === 0) return [];
-	const [subject, pronoun] =
-		callbacks.length === 1 ? [`${callbacks[0]} is a callback`, "it"] : [`${callbacks.join(", ")} are callbacks`, "them"];
-	return [
-		`> ${subject}: the app may call ${pronoun} only while this call is running, synchronously, and every call spends your script's execution budget.`,
-		"",
-	];
+	const names = (list: Parameter[]) => list.map((p) => `\`${p.name}\``);
+	const callbacks = params.filter((p) => refersToFunction(p.type));
+	const scoped = names(callbacks.filter((p) => p.retain !== true));
+	const retained = names(callbacks.filter((p) => p.retain === true));
+	const lines: string[] = [];
+	if (scoped.length > 0) {
+		const [subject, pronoun] =
+			scoped.length === 1 ? [`${scoped[0]} is a callback`, "it"] : [`${scoped.join(", ")} are callbacks`, "them"];
+		lines.push(
+			`> ${subject}: the app may call ${pronoun} only while this call is running, synchronously, and every call spends your script's execution budget.`,
+			"",
+		);
+	}
+	if (retained.length > 0) {
+		lines.push(`> ${retainedSubject(retained)}${RETAINED_EXPLANATION}`, "");
+	}
+	return lines;
+}
+
+const RETAINED_EXPLANATION =
+	": the app may keep it and call it after this call returns, until it releases it or your mod unloads. A call made from inside another binding call spends that script's execution budget; a call made between script calls runs on a fresh one.";
+
+function retainedSubject(names: string[]): string {
+	return names.length === 1 ? `${names[0]} is a retained callback` : `${names.join(", ")} are retained callbacks`;
+}
+
+/** Explains the retained fields of a type once, under its field table. */
+function retainedFieldNote(fields: Record<string, FieldDefinition>): string[] {
+	const retained = Object.entries(fields)
+		.filter(([, field]) => field.retain === true && refersToFunction(field.type))
+		.map(([name]) => `\`${name}\``);
+	if (retained.length === 0) return [];
+	return [`> ${retainedSubject(retained)}${RETAINED_EXPLANATION}`, ""];
 }
 
 function isOptionalParam(param: Parameter): boolean {
@@ -268,9 +370,10 @@ function parameterRows(params: Parameter[]): string[] {
 		const req = p.variadic || isOptionalParam(p) ? "No" : "Yes";
 		const name = p.variadic ? `\`...${p.name}\`` : `\`${p.name}\``;
 		const variadicNote = p.variadic ? " Variadic: takes zero or more arguments, each of this type." : "";
+		const retainNote = p.retain === true ? " Retained: the app may call it after this call returns." : "";
 		const desc = escapeCell(p.description || "");
 		const defaultNote = p.default !== undefined ? ` (default: \`${JSON.stringify(p.default)}\`)` : "";
-		return `| ${name} | ${formatTypeRef(p.type)} | ${req} | ${`${desc}${defaultNote}${variadicNote}`.trim()} |`;
+		return `| ${name} | ${formatTypeRef(p.type)} | ${req} | ${`${desc}${defaultNote}${variadicNote}${retainNote}`.trim()} |`;
 	});
 }
 
@@ -327,7 +430,7 @@ function collectCapabilityRequirements(manifest: Manifest, options?: DocgenOptio
 			reqs.push({
 				capability: binding.capability,
 				kind: "binding",
-				label: `\`${qualified}()\``,
+				label: isAccessor(binding) ? `\`${qualified}\`` : `\`${qualified}()\``,
 				link: `./bindings/${topLevelName}${ext}`,
 			});
 		}
@@ -381,6 +484,25 @@ function linkExt(options?: DocgenOptions): string {
  * intent is half of what a host routes on: the host slot the export fills makes its own claim,
  * and the two are widened, with the more expensive claim winning.
  */
+/** Per-event notes for the declaration fields the events table has no column for. */
+function eventDetailLines(events: EventDef[]): string[] {
+	const details: string[] = [];
+	for (const event of events) {
+		const notes: string[] = [];
+		if (event.pattern) notes.push("a family shape: a concrete id fills each `<segment>` with exactly one `.` segment");
+		if (event.emit === "mods") notes.push("mods may emit it with `events.emit`");
+		if (event.addressed && event.addressed.length > 0) {
+			notes.push(`emitted alongside its addressed form${event.addressed.length > 1 ? "s" : ""} ${event.addressed.map((shape) => `\`${shape}\``).join(", ")}`);
+		}
+		if (event.keys && event.keys.length > 0) {
+			notes.push(`a subscription may \`match\` on ${event.keys.map((key) => `\`${key}\``).join(", ")}`);
+		}
+		if (notes.length > 0) details.push(`- \`${event.id}\`: ${notes.join("; ")}`);
+	}
+	if (details.length === 0) return [];
+	return ["### Event details", "", ...details, ""];
+}
+
 function generateExportsSection(manifest: Manifest): string[] {
 	const entry = manifest.entry;
 	const exports = entry && typeof entry === "object" && !Array.isArray(entry) ? entry.exports : undefined;
@@ -487,13 +609,27 @@ function generateIndexPage(manifest: Manifest, options?: DocgenOptions): DocPage
 
 		const topLevel: string[] = [];
 		const namespaces: string[] = [];
+		const values: string[] = [];
 
 		for (const [name, binding] of Object.entries(manifest.bindings)) {
 			if (isNamespace(binding)) {
 				namespaces.push(name);
+			} else if (isAccessor(binding)) {
+				values.push(name);
 			} else {
 				topLevel.push(name);
 			}
+		}
+
+		if (values.length > 0) {
+			lines.push("### Global Values");
+			lines.push("");
+			for (const name of values) {
+				const binding = manifest.bindings[name];
+				const ext = linkExt(options);
+				lines.push(`- [\`${name}\`](./bindings/${name}${ext})${binding.description ? `: ${binding.description}` : ""}`);
+			}
+			lines.push("");
 		}
 
 		if (topLevel.length > 0) {
@@ -572,6 +708,11 @@ function generateIndexPage(manifest: Manifest, options?: DocgenOptions): DocPage
 			}
 		}
 		lines.push("");
+		lines.push(
+			"Beyond `on`, the `events` bus offers `once`, `cancel`, `off`, `emit` and `emitAsync` (for an event declared `\"emit\": \"mods\"`), `cancelOwned`, `claim`, `namespaces`, `ownerOf`, `declare`, `describe`, `catalogue`, `names`, `listenerCount`, and `subscribers`. A subscription belongs to the mod that made it; cancelling or dropping another mod's needs the `events.off` capability, claiming a namespace needs `events.claim`, and declaring an event at runtime needs `events.declare`.",
+		);
+		lines.push("");
+		lines.push(...eventDetailLines(manifest.events));
 	}
 
 	if (manifest.libraries && Object.keys(manifest.libraries).length > 0) {
@@ -647,6 +788,7 @@ function generateIndexPage(manifest: Manifest, options?: DocgenOptions): DocPage
 	}
 
 	lines.push(...generateFormatsSection(manifest));
+	lines.push(...generateExpressionsSection(manifest));
 
 	if (manifest.capabilities && !Array.isArray(manifest.capabilities)) {
 		lines.push("## Capabilities");
@@ -809,6 +951,7 @@ function generateFunctionPage(name: string, binding: FunctionBinding, manifest?:
 		lines.push(`> **Deprecated:** ${binding.deprecated}`);
 		lines.push("");
 	}
+	lines.push(...optionalNote(binding, name));
 	if (binding.description) {
 		lines.push(binding.description);
 		lines.push("");
@@ -885,6 +1028,7 @@ function appendNamespaceMember(
 		lines.push(`> **Deprecated:** ${fn.deprecated}`);
 		lines.push("");
 	}
+	lines.push(...optionalNote(fn, `${qualifiedPrefix}.${memberName}`));
 	lines.push(fn.description);
 	lines.push("");
 	lines.push("```typescript");
@@ -938,8 +1082,16 @@ function appendNamespaceMembers(
 	manifest?: Manifest,
 ): void {
 	for (const [memberName, memberBinding] of Object.entries(members)) {
+		const path = `${qualifiedPrefix}.${memberName}`;
 		if (isNamespace(memberBinding)) {
-			appendNamespaceMembers(lines, `${qualifiedPrefix}.${memberName}`, memberBinding.members, manifest);
+			if (memberBinding.optional === true) {
+				lines.push(`### ${path}`);
+				lines.push("");
+				lines.push(...optionalNote(memberBinding, path));
+			}
+			appendNamespaceMembers(lines, path, memberBinding.members, manifest);
+		} else if (isAccessor(memberBinding)) {
+			appendAccessor(lines, `### ${path}`, path, memberName, memberBinding);
 		} else {
 			appendNamespaceMember(lines, qualifiedPrefix, memberName, memberBinding as FunctionBinding, manifest);
 		}
@@ -951,6 +1103,7 @@ function generateNamespacePage(name: string, binding: NamespaceBinding, manifest
 
 	lines.push(`# ${name}`);
 	lines.push("");
+	lines.push(...optionalNote(binding, name));
 	if (binding.description) {
 		lines.push(binding.description);
 		lines.push("");
@@ -1000,7 +1153,10 @@ function generateTypePage(name: string, def: TypeDefinition): DocPage {
 		lines.push("|-------|------|----------|---------|----------------|-------------|");
 		for (const [fieldName, field] of Object.entries(def.fields)) {
 			const req = field.default !== undefined ? "Yes" : field.optional ? "No" : "Yes";
-			const desc = escapeCell(field.description || "");
+			const baseDesc = escapeCell(field.description || "");
+			const desc = field.retain === true
+				? `${baseDesc}${baseDesc ? " " : ""}Retained: the app may call it after the call that received it returns.`
+				: baseDesc;
 			const def_ = field.default !== undefined ? `\`${JSON.stringify(field.default)}\`` : "-";
 			const allowed = Array.isArray(field.enum) && field.enum.length > 0
 				? field.enum.map((v) => `\`${JSON.stringify(v)}\``).join(", ")
@@ -1008,6 +1164,7 @@ function generateTypePage(name: string, def: TypeDefinition): DocPage {
 			lines.push(`| \`${fieldName}\` | ${formatTypeRef(field.type)} | ${req} | ${def_} | ${allowed} | ${desc} |`);
 		}
 		lines.push("");
+		lines.push(...retainedFieldNote(def.fields));
 		lines.push("## TypeScript");
 		lines.push("");
 		lines.push("```typescript");
@@ -1216,6 +1373,69 @@ function renderChildren(children: NodeDefinition["children"]): string {
  * The built-in `html` vocabulary is not enumerated — a format that scopes it in accepts every HTML
  * element, which is documented elsewhere; only the nodes the host declared are worth a table here.
  */
+/** Slots whose fills are fragments: they accept a built-in fragment format or one the host declares. */
+function fragmentSlots(manifest: Manifest): SlotDef[] {
+	const declared = manifest.formats && typeof manifest.formats === "object" ? Object.keys(manifest.formats) : [];
+	const fragmentFormats = new Set<string>([...BUILTIN_FORMAT_IDS, ...declared]);
+	return (manifest.slots ?? []).filter((slot) => slot.accepts.some((format) => fragmentFormats.has(format)));
+}
+
+/** `pad(s: string, width: number, fill?: string = " "): string | null` */
+function builtinSignature(builtin: BuiltinReference): string {
+	const params = builtin.params.map((param) => {
+		const name = param.variadic ? `...${param.name}` : param.name;
+		const fallback = param.default !== undefined ? ` = ${JSON.stringify(param.default)}` : "";
+		return `${name}${param.optional ? "?" : ""}: ${param.type}${fallback}`;
+	});
+	return `${builtin.name}(${params.join(", ")}): ${builtin.returns}`;
+}
+
+/**
+ * What a modder can write inside a fragment, generated from the XEG reference. Present only
+ * when a slot takes fragments, since that is the only place a mod writes an expression.
+ */
+function generateExpressionsSection(manifest: Manifest): string[] {
+	const slots = fragmentSlots(manifest);
+	if (slots.length === 0) return [];
+	const reference = EXPRESSION_REFERENCE;
+
+	const lines: string[] = ["## Expressions", ""];
+	lines.push(
+		`Fragments filled into ${slots.map((slot) => `\`${slot.id}\``).join(", ")} can compute what they show with XEG, the xript expression grammar. An expression reads only the names its fill declares in \`bindings\` (and, inside a \`data-each\` template, the names that template binds), calls only the builtins below, and never throws: anything that fails is \`null\`, which is falsy and renders as nothing.`,
+		"",
+		"### Where expressions appear",
+		"",
+		"| Attribute | Value | What it does |",
+		"|-----------|-------|--------------|",
+		...reference.attributes.map((attr) => `| \`${escapeCell(attr.name)}\` | ${escapeCell(attr.value)} | ${escapeCell(attr.summary)} |`),
+		"",
+	);
+	for (const scopeName of reference.scopeNames) {
+		lines.push(`\`${scopeName.name}\` is in scope inside every \`${scopeName.scope}\` copy: ${scopeName.summary.charAt(0).toLowerCase()}${scopeName.summary.slice(1)}`, "");
+	}
+
+	lines.push("### Builtins", "", "| Builtin | Signature | Summary |", "|---------|-----------|---------|");
+	for (const builtin of reference.builtins) {
+		lines.push(`| \`${builtin.name}\` | \`${escapeCell(builtinSignature(builtin))}\` | ${escapeCell(builtin.summary)} |`);
+	}
+	lines.push("");
+
+	lines.push("### Operators", "", "Higher precedence binds tighter.", "", "| Precedence | Operator | Summary |", "|------------|----------|---------|");
+	for (const op of [...reference.operators].sort((a, b) => b.precedence - a.precedence)) {
+		lines.push(`| ${op.precedence} | \`${escapeCell(op.symbol)}\` ${escapeCell(op.name)} | ${escapeCell(op.summary)} |`);
+	}
+	lines.push("");
+
+	lines.push("### Rules", "");
+	for (const rule of reference.rules) lines.push(`- **${rule.title}.** ${rule.summary}`);
+	lines.push(
+		"",
+		"The full reference, with every builtin's edge cases and examples, is at [xript.dev/spec/expression-builtins](https://xript.dev/spec/expression-builtins/) and [xript.dev/spec/expression-operators](https://xript.dev/spec/expression-operators/).",
+		"",
+	);
+	return lines;
+}
+
 function generateFormatsSection(manifest: Manifest): string[] {
 	const formats = manifest.formats;
 	if (!formats || typeof formats !== "object" || Object.keys(formats).length === 0) return [];
@@ -1282,6 +1502,8 @@ export function generateDocs(manifest: unknown, options?: DocgenOptions): Docgen
 		for (const [name, binding] of Object.entries(m.bindings)) {
 			if (isNamespace(binding)) {
 				pages.push(generateNamespacePage(name, binding, m));
+			} else if (isAccessor(binding)) {
+				pages.push(generateAccessorPage(name, binding));
 			} else {
 				pages.push(generateFunctionPage(name, binding, m));
 			}

@@ -513,6 +513,16 @@ describe("callbacks only cross as binding parameters", () => {
 		const reported = lintManifests(host, []).findings.filter((f) => f.code === "callback-does-not-cross");
 		assert.ok(!reported.some((f) => f.message.includes('"find"')));
 	});
+
+	it("stays quiet about a hook parameter marked retain, the declared round trip", () => {
+		const retaining = {
+			...host,
+			hooks: { onTick: { description: "Fires.", params: [{ name: "done", type: { function: {} }, retain: true }] } },
+		};
+		const reported = lintManifests(retaining, []).findings.filter((f) => f.code === "callback-does-not-cross");
+		assert.ok(!reported.some((f) => f.message.includes('hook "onTick"')), reported.map((f) => f.message).join(" | "));
+		assert.equal(reported.length, 2);
+	});
 });
 
 describe("reserved xript identifier namespace", () => {

@@ -54,4 +54,23 @@ public class RuntimeOptions
     /// contained and does not change whether a mod loads.
     /// </summary>
     public Action<ModDiagnostic>? OnModDiagnostic { get; set; }
+
+    /// <summary>
+    /// Receives each <see cref="Deprecation"/> the runtime raises, at most once per code per
+    /// runtime. Without a handler each code is written once to <see cref="System.Console.Error"/>.
+    /// A throwing handler is contained. The codes are listed in <c>spec/deprecations.md</c>.
+    /// </summary>
+    public Action<Deprecation>? OnDeprecation { get; set; }
+
+    /// <summary>
+    /// Values cross the host boundary the way the JavaScript runtimes pass them, instead of
+    /// the way JSON flattens them: <c>undefined</c>, <c>NaN</c>, <c>Infinity</c>,
+    /// <c>-Infinity</c> and <c>-0</c> travel as marker objects (see <see cref="XriptValue"/>)
+    /// instead of <c>null</c> (or <c>0</c>, for <c>-0</c>). A script value crossing out is encoded at any depth; a marker crossing in
+    /// (a binding's return, a hook or event payload, an export's arguments) is decoded back to
+    /// the real value. Integral numbers already reach a .NET host as integers on every path,
+    /// with or without this option. Off by default: with it off, every value reaches the host
+    /// exactly as it always has.
+    /// </summary>
+    public bool ValueFidelity { get; set; }
 }
