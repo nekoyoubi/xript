@@ -7,7 +7,8 @@
 use serde_json::Value;
 
 use crate::ast::Expression;
-use crate::eval::{evaluate_ast, Bindings};
+use crate::eval::{eval, Bindings};
+use crate::xvalue::X;
 
 /// The implicit index name, in scope inside every copy.
 pub const REPEAT_INDEX_NAME: &str = "$index";
@@ -140,8 +141,8 @@ pub fn parse_repeat_header(source: &str) -> Result<RepeatHeader, String> {
 /// The elements a header repeats over. A failing expression and a non-array value are
 /// both empty: a repeat renders zero copies rather than aborting the render.
 pub fn evaluate_repeat_items(header: &RepeatHeader, bindings: &Bindings) -> Vec<Value> {
-    match evaluate_ast(&header.expression.ast, bindings) {
-        Value::Array(items) => items,
+    match eval(&header.expression.ast, bindings) {
+        X::Arr(items) => items,
         _ => Vec::new(),
     }
 }

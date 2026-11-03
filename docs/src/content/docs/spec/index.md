@@ -12,6 +12,7 @@ The specification is the contract every runtime, tool, and host implements. The 
 - [Mod Manifest](/spec/mod-manifest/) — what a mod declares: capabilities, entry, and `fills` keyed by host slot id
 - [Fragments](/spec/fragments/): the inert-template protocol (`data-bind`, `data-if`, `data-each`, handlers, and the command buffer)
 - [Fragment Formats](/spec/fragment-formats/) — the format catalog a slot's `accepts` names
+- [Expressions (XEG)](/spec/expressions/) — the one grammar behind `data-if`, `data-bind`, `data-each`, and `{{ }}`, with its [builtins](/spec/expression-builtins/) and [operators](/spec/expression-operators/) generated from the expression reference
 - [Capabilities](/spec/capabilities/) — default-deny grants, prefix subsumption, and the read/write mode lattice
 - [Bindings](/spec/bindings/) — host functions and namespaces, error vocabulary, naming grammars
 - [Hooks](/spec/hooks/) — event-typed slots and the dispatch contract

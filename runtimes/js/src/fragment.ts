@@ -141,6 +141,8 @@ export interface Parameter {
 	type: unknown;
 	default?: unknown;
 	required?: boolean;
+	optional?: boolean;
+	variadic?: boolean;
 }
 
 export interface FragmentDeclaration {

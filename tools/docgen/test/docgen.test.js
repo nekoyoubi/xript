@@ -680,8 +680,26 @@ describe("callback parameters", () => {
 
 	it("explains the callback lifetime under a table that takes one", () => {
 		const notes = page.match(/> `fn` is a callback: the app may call it only while this call is running/g) ?? [];
-		assert.equal(notes.length, 2);
+		assert.equal(notes.length, 3);
 		assert.ok(page.includes("> `test` is a callback"));
+	});
+
+	it("explains a retained parameter apart from the call-scoped note", () => {
+		const retained = page.match(/> `fn` is a retained callback: the app may keep it and call it after this call returns/g) ?? [];
+		assert.equal(retained.length, 2);
+		assert.ok(page.includes("> `fns` is a retained callback"));
+	});
+
+	it("marks a retained parameter in its table row", () => {
+		assert.ok(page.includes("| `fn` | `(...args: any[]) => any` | Yes | Retained: the app may call it after this call returns. |"), page);
+		assert.ok(page.includes("| `...fns` | `(...args: any[]) => any` | No | Variadic: takes zero or more arguments, each of this type. Retained: the app may call it after this call returns. |"), page);
+	});
+
+	it("marks a retained field of a declared type and explains it under the field table", () => {
+		const typePage = generateDocs(corpus.manifest).pages.find((pg) => pg.slug === "types/KeepOptions").content;
+		assert.ok(typePage.includes("Retained: the app may call it after the call that received it returns."), typePage);
+		assert.ok(typePage.includes("> `onDone` is a retained callback"), typePage);
+		assert.ok(!typePage.includes("`onError` is a retained callback"), typePage);
 	});
 
 	it("adds no note where no parameter is a callback", () => {

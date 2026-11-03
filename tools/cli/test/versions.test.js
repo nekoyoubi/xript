@@ -14,7 +14,7 @@ import { createServer, loadGuidanceIndex, loadGuidanceTopic } from "../dist/inde
 
 const execFileAsync = promisify(execFile);
 const CLI = resolve(dirname(fileURLToPath(import.meta.url)), "../dist/cli.js");
-const VERSIONS = ["0.6", "0.7", "0.8", "0.9"];
+const VERSIONS = ["0.6", "0.7", "0.8", "0.9", "0.10"];
 
 async function run(...args) {
 	try {
@@ -111,7 +111,7 @@ describe("mcp version argument", () => {
 		const info = JSON.parse(textOf(await client.callTool({ name: "xript_server_info", arguments: {} })));
 		assert.equal(info.toolchainVersion, "0.0.0-test");
 		assert.deepEqual(info.manifestVersions, VERSIONS);
-		assert.equal(info.defaultManifestVersion, "0.9");
+		assert.equal(info.defaultManifestVersion, "0.10");
 		assert.match(info.versionConvention, /version/);
 	});
 

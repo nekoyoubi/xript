@@ -60,6 +60,9 @@ internal static class ManifestValidator
 
             if (limits.MaxStackDepth is <= 0)
                 issues.Add(new("/limits/max_stack_depth", "'max_stack_depth' must be a positive number"));
+
+            if (limits.MaxRetainedCallbacks is < 0)
+                issues.Add(new("/limits/max_retained_callbacks", "'max_retained_callbacks' must not be negative"));
         }
 
         if (issues.Count > 0)

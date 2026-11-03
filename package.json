@@ -1,6 +1,6 @@
 {
 	"name": "xript",
-	"version": "0.9.0",
+	"version": "0.10.0",
 	"private": true,
 	"workspaces": [
 		"docs",
@@ -14,6 +14,7 @@
 		"worktrees:sweep": "node scripts/sweep-worktrees.mjs",
 		"docs:dev": "npm run dev -w @xriptjs/docs",
 		"docs:build": "npm run build -w @xriptjs/docs",
-		"check:schema-aliases": "node docs/scripts/check-schema-aliases.mjs"
+		"check:schema-aliases": "node docs/scripts/check-schema-aliases.mjs",
+		"fuzz:xeg": "node scripts/xeg-fuzz/fuzz.mjs"
 	}
 }

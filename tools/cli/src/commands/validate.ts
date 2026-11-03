@@ -182,7 +182,7 @@ function printHelp(): void {
 	console.log("Auto-detects app vs mod manifests.");
 	console.log("");
 	console.log("Options:");
-	console.log("  --spec <version>  Validate against this manifest version's schema (0.6, 0.7, 0.8, 0.9);");
+	console.log("  --spec <version>  Validate against this manifest version's schema (0.6, 0.7, 0.8, 0.9, 0.10);");
 	console.log("                    defaults to the manifest's $schema, then its xript field");
 	console.log("  --cross           Cross-validate an app manifest against a mod manifest");
 	console.log("  --no-fill-payloads  With --cross, skip validating fills against slot payload schemas");

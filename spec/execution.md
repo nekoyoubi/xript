@@ -11,6 +11,9 @@ A manifest's `limits` block sets the default budget for every call into the sand
 | `timeout_ms` | wall-clock time of one call | the engine's interrupt mechanism (see below) |
 | `memory_mb` | heap of the whole runtime | the engine's allocator limit |
 | `max_stack_depth` | recursion of the whole runtime | the engine's stack limit |
+| `max_retained_callbacks` | retained callbacks held by the whole runtime | the runtime, refusing a retain beyond it |
+
+A retained callback the host calls between script calls gets a fresh `timeout_ms` budget of its own, like an export invocation; one it calls from inside a binding call spends that script call's budget (see [Retained callbacks](./bindings.md#retained-callbacks)).
 
 The embedder may pass **hard limits** that clamp the manifest's: the effective value of each is the smaller of the two, so a manifest can never buy more than the application embedding the runtime allows. A slot may declare its own `limits.timeout_ms`, which replaces the manifest's for calls into that slot's fills and is clamped by the hard limit the same way (see [manifest.md](./manifest.md)). `memory_mb` and `max_stack_depth` are properties of a runtime at the moment it is created, so they have no per-call or per-slot form.
 
@@ -62,4 +65,4 @@ A worker meeting both is marked unhealthy, leaves routing, and has its queued ca
 - the runtime's cancellation token, a handle's per-call token, and dropping an in-flight call all reach a parked call, observed within a few milliseconds;
 - a pool does not count a parked call as wedged. A yielding worker is wedged only when its thread is inside a **sync** binding, which still runs in line and still cannot be interrupted.
 
-Promise jobs belonging to one call can run while another is being driven, and count against the call being driven for that slice. Every budget stays bounded; attribution across interleaved calls is approximate.
+Promise jobs belonging to one call can run while another is being driven. Each call has a caller lane of its own, and the interrupt handler applies only the budget of the lane whose work is running, so a continuation is charged to the call it belongs to: a slow call keeps running under its own deadline even inside another call's poll, and another call's tighter deadline never stops it. The same lane credits the work to the right mod (see [Caller Identity](./bindings.md#caller-identity)). `timeout_ms` is still wall-clock, so a call that is ready to continue while the thread is busy with another call's bytecode keeps spending its own time while it waits; that is waiting, not being charged for the other call's work. Work in the lane of a call that has already finished, a continuation that outlived it, runs under the budget of whichever call is being driven, so nothing runs unbudgeted.

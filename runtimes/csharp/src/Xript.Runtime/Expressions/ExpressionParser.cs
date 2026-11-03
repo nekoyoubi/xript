@@ -16,6 +16,13 @@ public static class ExpressionParser
     public const int DefaultMaxExpressionNodes = 256;
 
     /// <summary>
+    /// How deeply parentheses, index brackets, and call argument lists may nest. A grouping
+    /// parenthesis adds no AST node, so the node cap alone would let <c>((((…))))</c> recurse
+    /// the parser until the host's stack gave out; this bound keeps every parse inside a fixed stack.
+    /// </summary>
+    public const int MaxExpressionDepth = 64;
+
+    /// <summary>
     /// Words the grammar refuses as identifiers. Each names a JavaScript capability XEG does
     /// not have; rejecting them by name makes the error say so instead of surfacing as an
     /// anonymous syntax error two tokens later.
@@ -45,7 +52,7 @@ public static class ExpressionParser
         {
             var ch = source[i];
 
-            if (char.IsWhiteSpace(ch)) { i++; continue; }
+            if (ch is ' ' or '\t' or '\n' or '\r' or '\v' or '\f') { i++; continue; }
 
             if (char.IsAsciiDigit(ch) || (ch == '.' && i + 1 < source.Length && char.IsAsciiDigit(source[i + 1])))
             {
@@ -62,7 +69,8 @@ public static class ExpressionParser
                     i++;
                     while (i < source.Length && char.IsAsciiDigit(source[i])) i++;
                 }
-                if (i < source.Length && (source[i] == 'e' || source[i] == 'E'))
+                // A literal that opens with its point takes no exponent, matching the TypeScript tokenizer.
+                if (source[start] != '.' && i < source.Length && (source[i] == 'e' || source[i] == 'E'))
                 {
                     var j = i + 1;
                     if (j < source.Length && (source[j] == '+' || source[j] == '-')) j++;
@@ -105,8 +113,9 @@ public static class ExpressionParser
                                 if (i + 4 >= source.Length)
                                     throw new ExpressionException(i, "invalid unicode escape");
                                 var hex = source.Substring(i + 1, 4);
-                                if (!int.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var code))
+                                if (!hex.All(char.IsAsciiHexDigit))
                                     throw new ExpressionException(i, "invalid unicode escape");
+                                var code = int.Parse(hex, NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture);
                                 builder.Append((char)code);
                                 i += 4;
                                 break;
@@ -212,12 +221,28 @@ public static class ExpressionParser
             if (!Eat(value)) throw new ExpressionException(Peek.Pos, $"expected '{value}'");
         }
 
+        public int Depth;
+
         public T Node<T>(T node) where T : Ast
+        {
+            Reserve();
+            return node;
+        }
+
+        /// <summary>Counts a node against the cap. Called before recursing where a node wraps its operand.</summary>
+        public void Reserve()
         {
             Count++;
             if (Count > MaxNodes)
                 throw new ExpressionException(0, $"expression exceeds the {MaxNodes}-node limit");
-            return node;
+        }
+
+        /// <summary>Enters one bracketed level: a group, an index, or a call's arguments.</summary>
+        public void Enter(int pos)
+        {
+            Depth++;
+            if (Depth > MaxExpressionDepth)
+                throw new ExpressionException(pos, $"expression nests deeper than {MaxExpressionDepth} levels");
         }
     }
 
@@ -360,7 +385,8 @@ public static class ExpressionParser
         else if (c.At("+")) op = UnaryOp.Plus;
         else return ParsePostfix(c);
         c.Next();
-        return c.Node(new Ast.Unary(op, ParseUnary(c)));
+        c.Reserve();
+        return new Ast.Unary(op, ParseUnary(c));
     }
 
     private static Ast ParsePostfix(Cursor c)
@@ -376,9 +402,11 @@ public static class ExpressionParser
                 target = c.Node(new Ast.Member(target, token.Text));
                 continue;
             }
-            if (c.Eat("["))
+            if (c.At("["))
             {
+                c.Enter(c.Next().Pos);
                 var key = ParseExpr(c);
+                c.Depth--;
                 c.Expect("]");
                 target = c.Node(new Ast.Index(target, key));
                 continue;
@@ -424,13 +452,14 @@ public static class ExpressionParser
                         ?? throw new ExpressionException(
                             token.Pos,
                             $"unknown function '{token.Text}' -- only builtins are callable");
-                    c.Next();
+                    c.Enter(c.Next().Pos);
                     var args = new List<Ast>();
                     if (!c.At(")"))
                     {
                         args.Add(ParseExpr(c));
                         while (c.Eat(",")) args.Add(ParseExpr(c));
                     }
+                    c.Depth--;
                     c.Expect(")");
                     if (args.Count < arity.Min || args.Count > arity.Max)
                     {
@@ -449,8 +478,9 @@ public static class ExpressionParser
 
             case TokenType.Punct when token.Text == "(":
             {
-                c.Next();
+                c.Enter(c.Next().Pos);
                 var inner = ParseExpr(c);
+                c.Depth--;
                 c.Expect(")");
                 return inner;
             }

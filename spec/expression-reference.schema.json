@@ -1,0 +1,147 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://xript.dev/schema/expression-reference/v0.10.json",
+	"title": "xript Expression Reference",
+	"description": "The machine-readable reference for XEG, the xript Expression Grammar: builtin signatures, operators, evaluation rules, and the fragment attributes that carry expressions. Every runtime ships it and holds its builtin table to it, and every example is a conformance case.",
+	"type": "object",
+	"required": ["grammar", "types", "builtins", "operators", "rules", "attributes", "scopeNames"],
+	"additionalProperties": false,
+	"properties": {
+		"$schema": { "type": "string" },
+		"$comment": { "type": "string" },
+		"grammar": { "const": "XEG" },
+		"types": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"required": ["name", "summary"],
+				"additionalProperties": false,
+				"properties": {
+					"name": { "enum": ["any", "null", "boolean", "number", "string", "array", "object"] },
+					"summary": { "type": "string" }
+				}
+			}
+		},
+		"builtins": {
+			"type": "array",
+			"items": { "$ref": "#/$defs/builtin" }
+		},
+		"operators": {
+			"type": "array",
+			"items": { "$ref": "#/$defs/operator" }
+		},
+		"rules": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"required": ["id", "title", "summary"],
+				"additionalProperties": false,
+				"properties": {
+					"id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+					"title": { "type": "string" },
+					"summary": { "type": "string" }
+				}
+			}
+		},
+		"attributes": {
+			"type": "array",
+			"items": { "$ref": "#/$defs/attribute" }
+		},
+		"scopeNames": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"required": ["name", "scope", "summary"],
+				"additionalProperties": false,
+				"properties": {
+					"name": { "type": "string" },
+					"scope": { "type": "string" },
+					"summary": { "type": "string" },
+					"description": { "type": "string" }
+				}
+			}
+		}
+	},
+	"$defs": {
+		"typeExpr": {
+			"description": "One XEG type name, or several joined with ` | `.",
+			"type": "string",
+			"pattern": "^(any|null|boolean|number|string|array|object)( \\| (any|null|boolean|number|string|array|object))*$"
+		},
+		"example": {
+			"description": "A conformance case. Evaluated against the defaultBindings of spec/expression-tests.json unless `bindings` is given.",
+			"type": "object",
+			"required": ["expression", "expect"],
+			"additionalProperties": false,
+			"properties": {
+				"expression": { "type": "string" },
+				"bindings": { "type": "object" },
+				"expect": {}
+			}
+		},
+		"param": {
+			"type": "object",
+			"required": ["name", "type"],
+			"additionalProperties": false,
+			"properties": {
+				"name": { "type": "string", "pattern": "^[a-z][A-Za-z0-9]*$" },
+				"type": { "$ref": "#/$defs/typeExpr" },
+				"optional": { "type": "boolean", "description": "May be omitted. Only trailing parameters are optional." },
+				"default": { "description": "The value an omitted optional parameter takes." },
+				"variadic": { "type": "boolean", "description": "The last parameter repeats: one or more arguments of this type." }
+			}
+		},
+		"builtin": {
+			"type": "object",
+			"required": ["name", "category", "params", "returns", "summary", "description", "examples"],
+			"additionalProperties": false,
+			"properties": {
+				"name": { "type": "string", "pattern": "^[a-z][a-z0-9]*$" },
+				"category": { "enum": ["numeric", "string", "collection", "coercion"] },
+				"params": { "type": "array", "items": { "$ref": "#/$defs/param" } },
+				"returns": { "$ref": "#/$defs/typeExpr" },
+				"summary": { "type": "string" },
+				"description": { "type": "string" },
+				"examples": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/example" } }
+			}
+		},
+		"operator": {
+			"type": "object",
+			"required": ["symbol", "name", "form", "precedence", "associativity", "summary", "description", "examples"],
+			"additionalProperties": false,
+			"properties": {
+				"symbol": { "type": "string" },
+				"name": { "type": "string" },
+				"form": { "enum": ["prefix", "binary", "ternary", "postfix"] },
+				"precedence": { "type": "integer", "minimum": 1, "description": "Binding strength. Higher binds tighter." },
+				"associativity": { "enum": ["left", "right"] },
+				"summary": { "type": "string" },
+				"description": { "type": "string" },
+				"examples": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/example" } }
+			}
+		},
+		"attribute": {
+			"type": "object",
+			"required": ["name", "value", "summary", "description", "examples"],
+			"additionalProperties": false,
+			"properties": {
+				"name": { "type": "string" },
+				"value": { "enum": ["expression", "repeat header"] },
+				"modifies": { "type": "string", "description": "The attribute this one only has meaning beside." },
+				"site": { "enum": ["text"], "description": "Present when the expression lives in content rather than an attribute value." },
+				"summary": { "type": "string" },
+				"description": { "type": "string" },
+				"examples": {
+					"type": "array",
+					"minItems": 1,
+					"items": {
+						"type": "object",
+						"required": ["markup"],
+						"additionalProperties": false,
+						"properties": { "markup": { "type": "string" } }
+					}
+				}
+			}
+		}
+	}
+}

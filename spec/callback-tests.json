@@ -1,14 +1,19 @@
 {
-  "description": "Conformance corpus for script functions crossing into host bindings as call-scoped callbacks. Every runtime builds the `probe` host below, runs each case's script, and asserts the outcome.",
+  "description": "Conformance corpus for script functions crossing into host bindings as callbacks, call-scoped by default and retained where the manifest marks a position `retain`. Every runtime builds the `probe` host below, loads each case's `mods` (if any), runs its `script` (if any), asserts the outcome, then runs its `after` steps in order.",
   "notes": [
     "The probe host is the same in every runtime. Each `probe` binding takes `(path, callArgs, ...payload)`, except `stash`, `kind`, and the typed bindings. `path` addresses a value inside the payload: its first element indexes the payload arguments, and each later element is an object key or an array index.",
     "`probe.call` resolves the callback at `path`, calls it with `callArgs` (each marshalled host to sandbox), and returns what it returned (marshalled sandbox to host) unchanged. It does not catch, so an error the callback throws propagates out of the binding call.",
     "`probe.catchCall` resolves and calls the same way, but catches. It returns `{ \"kind\": \"returned\", \"value\": v }` on success, and on failure `{ \"kind\": k }` where `k` is `threw` (the callback threw; the object also carries `message`, the thrown error's message), `promise` (the callback returned a promise), or `expired`. It must never swallow an execution-limit stop: a callback that exhausts the calling script's budget ends the script whatever the host does.",
     "`probe.kind` returns `\"callback\"` when the value at `path` is a callback, `\"missing\"` when nothing is there, and otherwise the JSON type name of the value (`null`, `boolean`, `number`, `string`, `array`, `object`).",
     "`probe.stash` keeps the callback at `path` for the test to call after `execute` returns, then returns null. Calling it then must fail as expired, and the error must name the binding.",
-    "`probe.typed`, `probe.typedOptional`, and `probe.typedSignature` count their invocations and return `\"called\"` (or `\"absent\"` for `typedOptional` called without a function). A non-function where the manifest declares a function parameter must be refused before the host runs: the count stays at zero and the error names the binding and the parameter.",
+    "`probe.typed`, `probe.typedOptional`, `probe.typedOptionalFlag`, and `probe.typedSignature` count their invocations and return `\"called\"` (or `\"absent\"` for `typedOptional` or `typedOptionalFlag` called without a function). `typedOptional` wraps its function type in `optional`; `typedOptionalFlag` marks a bare `function` parameter `\"optional\": true`, the inverse alias of `\"required\": false`. A non-function where the manifest declares a function parameter must be refused before the host runs: the count stays at zero and the error names the binding and the parameter.",
     "`expect.result` is compared as JSON. `expect.error` lists substrings the surfaced error message must contain. `expect.limit` means `execute` must fail with the runtime's execution-limit error. `expect.expiredAfter` means the test must call the stashed callback after `execute` and see an expired error naming `probe.stash`. `expect.typedCalls` is the probe's typed-binding call count after the case.",
-    "A callback marker is produced only by the runtime, for a function the script actually passed. A value the script spells into plain data that merely looks like a marker (a string token, or a bare numeric marker) is not a callback: it reports as its own JSON type and cannot be called. Runtimes that pass functions directly never see a marker; runtimes that bridge through JSON make the token unforgeable with a per-scope nonce."
+    "A callback marker is produced only by the runtime, for a function the script actually passed. A value the script spells into plain data that merely looks like a marker (a string token, or a bare numeric marker) is not a callback: it reports as its own JSON type and cannot be called. Runtimes that pass functions directly never see a marker; runtimes that bridge through JSON make the token unforgeable with a per-scope nonce.",
+    "Retained callbacks. The probe keeps a list `kept` of retained callbacks; an index into it identifies one. Retaining a function that is already retained (and not released) for the same mod yields the same retained callback, so the probe reuses its index instead of appending: `kept` never holds the same retained callback twice. Every retaining binding below reports its index, or, where it catches, `{ \"kind\": r }` for a refused retain, where `r` is `undeclared` (the callback is not at a position the manifest marks `retain`), `limit` (the runtime already holds `max_retained_callbacks`), or a callback failure reason.",
+    "`probe.keep(fn)` retains `fn` (a `retain` parameter) and returns its index, catching a refusal. `probe.retainField(options, field)` retains `options[field]` (`options` is a `KeepOptions`, whose `onDone` field is `retain` and whose `onError` field is not) and returns its index, catching. `probe.keepAll(list)` retains every `list[i].onDone` (`list` is a `KeepOptions[]`) and returns their indices. `probe.keepEach(...fns)` retains each argument (a variadic `retain` parameter) and returns their indices. `probe.tryRetain(path, ...payload)` retains the callback at `path` (no declared parameters, so nothing is a `retain` position) and returns its index, catching. `probe.node(fn)` retains `fn` (a `retain` parameter) and returns `{ \"kind\": \"action\", \"fn\": <the retained callback> }`. `probe.retainTreeAt(tree, path)` retains the callback at `path` inside `tree` (each element an object key or array index; `tree` is a `TreeNode`, whose `act` field is `retain`, whose `note` field is not, and whose `children` are `TreeNode`s) and returns its index, catching. A retain position is found by walking the declared types along the callback's actual path, so a recursive type is retainable at any depth.",
+    "`probe.runKept(i, callArgs)` calls `kept[i]` with `callArgs` from inside the binding call and returns what it returned, without catching. `probe.catchKept(i, callArgs)` does the same but catches, returning what `probe.catchCall` returns (with `released` joining the failure kinds); like `catchCall` it must never swallow an execution-limit stop. `probe.release(i)` releases `kept[i]` and returns null. `probe.giveBack(i)` returns `kept[i]` itself as its result, which must arrive in the script as the original script function.",
+    "`after` steps run on the host after the script returns, between script calls. `{ \"call\": i, \"args\": a }` calls `kept[i]` with `a` and expects `result` (compared as JSON), or `fails` (the callback failure reason, plus `message` for `threw`). `{ \"callOffThread\": i }` makes the same call from another thread and expects `fails`; runtimes without host threads skip it. `{ \"release\": i }` releases `kept[i]`. `{ \"releaseMod\": m }` releases every callback mod `m` supplied and expects `released`, the number it released. `{ \"dispose\": true }` disposes the runtime. `{ \"execute\": code }` runs another script and expects `result` or `error`. `{ \"fireHook\": h, \"data\": d }` fires hook `h` with `d`; `{ \"emit\": e, \"payload\": p }` emits event `e` with `p`; either may carry `fails`, the callback failure reason the fire must surface to the host (a handler that throws is still swallowed, but a value that cannot cross into the sandbox fails the fire before any handler runs); `{ \"invoke\": x, \"owner\": m, \"args\": a }` invokes export `x` (owned by mod `m` when given) and expects `result` or `error`. `{ \"retainStashed\": true }` retains the callback `probe.stash` kept and expects `fails`. Inside `data`, `payload`, and invoke `args`, `{ \"$kept\": i }` stands for `kept[i]` as the host passes it back into the sandbox.",
+    "A case's `mods` load in order before its `script`, each as a mod named `name` (version `1.0.0`) whose single classic entry script is `script`. A case's `limits` merges into the manifest's `limits`; `timeoutMs` is shorthand for `limits.timeout_ms`. A case without `expect` must load its mods and run its script without error. A case that disposes the runtime in `after` is not disposed again."
   ],
   "manifest": {
     "xript": "0.8",
@@ -49,6 +54,16 @@
               }
             ]
           },
+          "typedOptionalFlag": {
+            "description": "Declares a function parameter optional with the optional flag.",
+            "params": [
+              {
+                "name": "fn",
+                "type": "function",
+                "optional": true
+              }
+            ]
+          },
           "typedSignature": {
             "description": "Declares a function parameter with a signature.",
             "params": [
@@ -67,10 +82,142 @@
                 }
               }
             ]
+          },
+          "keep": {
+            "description": "Retains a callback.",
+            "params": [
+              {
+                "name": "fn",
+                "type": "function",
+                "retain": true
+              }
+            ]
+          },
+          "retainField": {
+            "description": "Retains one field of a declared options object.",
+            "params": [
+              {
+                "name": "options",
+                "type": "KeepOptions"
+              },
+              {
+                "name": "field",
+                "type": "string"
+              }
+            ]
+          },
+          "keepAll": {
+            "description": "Retains the onDone of every element.",
+            "params": [
+              {
+                "name": "list",
+                "type": {
+                  "array": "KeepOptions"
+                }
+              }
+            ]
+          },
+          "keepEach": {
+            "description": "Retains every argument.",
+            "params": [
+              {
+                "name": "fns",
+                "type": "function",
+                "variadic": true,
+                "retain": true
+              }
+            ]
+          },
+          "tryRetain": {
+            "description": "Tries to retain the callback at path."
+          },
+          "node": {
+            "description": "Retains a callback and returns a node holding it.",
+            "params": [
+              {
+                "name": "fn",
+                "type": "function",
+                "retain": true
+              }
+            ]
+          },
+          "runKept": {
+            "description": "Calls a retained callback without catching."
+          },
+          "catchKept": {
+            "description": "Calls a retained callback and reports how the call ended."
+          },
+          "release": {
+            "description": "Releases a retained callback."
+          },
+          "giveBack": {
+            "description": "Returns a retained callback into the sandbox."
+          },
+          "retainTreeAt": {
+            "description": "Retains the callback at path inside a recursive tree.",
+            "params": [
+              {
+                "name": "tree",
+                "type": "TreeNode"
+              },
+              {
+                "name": "path",
+                "type": "array"
+              }
+            ]
           }
         }
       }
-    }
+    },
+    "types": {
+      "KeepOptions": {
+        "description": "An options object with one retained and one call-scoped callback field.",
+        "fields": {
+          "label": {
+            "type": "string",
+            "optional": true
+          },
+          "onDone": {
+            "type": "function",
+            "optional": true,
+            "retain": true
+          },
+          "onError": {
+            "type": "function",
+            "optional": true
+          }
+        }
+      },
+      "TreeNode": {
+        "description": "A recursive tree whose nodes each carry a retained action.",
+        "fields": {
+          "act": {
+            "type": "function",
+            "optional": true,
+            "retain": true
+          },
+          "note": {
+            "type": "function",
+            "optional": true
+          },
+          "children": {
+            "type": "TreeNode[]",
+            "optional": true
+          }
+        }
+      }
+    },
+    "hooks": {
+      "check": {
+        "description": "A hook whose handlers receive host data."
+      }
+    },
+    "events": [
+      {
+        "id": "ping",
+        "description": "An event whose handlers receive a host payload."
+      }
+    ]
   },
   "cases": [
     {
@@ -272,6 +419,26 @@
       }
     },
     {
+      "name": "a function parameter flagged optional may be omitted",
+      "script": "probe.typedOptionalFlag()",
+      "expect": {
+        "result": "absent",
+        "typedCalls": 1
+      }
+    },
+    {
+      "name": "a function parameter flagged optional still refuses a non-function value",
+      "script": "probe.typedOptionalFlag('nope')",
+      "expect": {
+        "error": [
+          "probe.typedOptionalFlag",
+          "fn",
+          "function"
+        ],
+        "typedCalls": 0
+      }
+    },
+    {
       "name": "a function parameter declared with a signature refuses a non-function",
       "script": "probe.typedSignature({})",
       "expect": {
@@ -304,6 +471,365 @@
       "expect": {
         "result": "object"
       }
+    },
+    {
+      "name": "a callback at a retain parameter can be retained and called between script calls",
+      "script": "probe.keep(function (x) { return x * 3; })",
+      "expect": {
+        "result": 0
+      },
+      "after": [
+        { "call": 0, "args": [2], "result": 6 },
+        { "execute": "'later'", "result": "later" },
+        { "call": 0, "args": [5], "result": 15 },
+        { "callOffThread": 0, "args": [1], "fails": "expired" }
+      ]
+    },
+    {
+      "name": "a retained callback's arguments and return value marshal like a call-scoped callback's",
+      "script": "probe.keep(function (list, obj) { return { sum: list[0] + list[1], k: obj.k, list: [1, 'two', true, null] }; })",
+      "expect": {
+        "result": 0
+      },
+      "after": [
+        { "call": 0, "args": [[1, 2], { "k": "v" }], "result": { "sum": 3, "k": "v", "list": [1, "two", true, null] } }
+      ]
+    },
+    {
+      "name": "a callback at an undeclared position refuses to be retained",
+      "script": "probe.tryRetain([0], function () {})",
+      "expect": {
+        "result": { "kind": "undeclared" }
+      }
+    },
+    {
+      "name": "a retain field of a declared type is retainable",
+      "script": "probe.retainField({ label: 'x', onDone: function (v) { return 'done:' + v; } }, 'onDone')",
+      "expect": {
+        "result": 0
+      },
+      "after": [
+        { "call": 0, "args": ["a"], "result": "done:a" }
+      ]
+    },
+    {
+      "name": "an unmarked function field of the same declared type refuses",
+      "script": "probe.retainField({ onDone: function () {}, onError: function () {} }, 'onError')",
+      "expect": {
+        "result": { "kind": "undeclared" }
+      }
+    },
+    {
+      "name": "a retain field inside an array of a declared type is retainable",
+      "script": "probe.keepAll([{ onDone: function () { return 'first'; } }, { onDone: function () { return 'second'; } }])",
+      "expect": {
+        "result": [0, 1]
+      },
+      "after": [
+        { "call": 1, "args": [], "result": "second" }
+      ]
+    },
+    {
+      "name": "a retain field reached through a recursive declared type is retainable at any depth",
+      "script": "probe.retainTreeAt({ act: function () { return 'root'; }, children: [{ children: [{ act: function () { return 'deep'; } }] }] }, ['children', 0, 'children', 0, 'act'])",
+      "expect": {
+        "result": 0
+      },
+      "after": [
+        { "call": 0, "args": [], "result": "deep" }
+      ]
+    },
+    {
+      "name": "an unmarked field deep in a recursive declared type refuses",
+      "script": "probe.retainTreeAt({ children: [{ children: [{ note: function () {} }] }] }, ['children', 0, 'children', 0, 'note'])",
+      "expect": {
+        "result": { "kind": "undeclared" }
+      }
+    },
+    {
+      "name": "every argument of a variadic retain parameter is retainable",
+      "script": "probe.keepEach(function () { return 'f'; }, function () { return 'g'; })",
+      "expect": {
+        "result": [0, 1]
+      },
+      "after": [
+        { "call": 0, "args": [], "result": "f" },
+        { "call": 1, "args": [], "result": "g" }
+      ]
+    },
+    {
+      "name": "retaining the same function twice yields the same retained callback",
+      "script": "var f = function () {}; [probe.keep(f), probe.keep(f)]",
+      "expect": {
+        "result": [0, 0]
+      }
+    },
+    {
+      "name": "a retained function arriving at an undeclared position is the same retained callback",
+      "script": "var f = function () {}; probe.keep(f); probe.tryRetain([0], f)",
+      "expect": {
+        "result": 0
+      }
+    },
+    {
+      "name": "a retained callback returned by a binding arrives as the original function",
+      "script": "var f = function () {}; probe.giveBack(probe.keep(f)) === f",
+      "expect": {
+        "result": true
+      }
+    },
+    {
+      "name": "a node holding a retained callback round-trips to the same function and the same retained callback",
+      "script": "var f = function () { return 'acted'; }; var n = probe.node(f); [n.kind, n.fn === f, probe.tryRetain([0, 'fn'], n), probe.runKept(0, [])]",
+      "expect": {
+        "result": ["action", true, 0, "acted"]
+      }
+    },
+    {
+      "name": "a retained callback is callable re-entrantly from inside a later binding call",
+      "script": "probe.keep(function (x) { return x + 1; }); probe.runKept(0, [41])",
+      "expect": {
+        "result": 42
+      },
+      "after": [
+        { "execute": "probe.runKept(0, [1])", "result": 2 }
+      ]
+    },
+    {
+      "name": "a re-entrant throw reaches the host as a catchable error",
+      "script": "probe.keep(function () { throw new Error('boom'); }); probe.catchKept(0, [])",
+      "expect": {
+        "result": { "kind": "threw", "message": "boom" }
+      }
+    },
+    {
+      "name": "an uncaught re-entrant throw propagates out of the binding as the script's own error",
+      "script": "probe.keep(function () { throw new RangeError('boom'); }); (function () { try { probe.runKept(0, []); return 'no throw'; } catch (e) { return e.name + ':' + e.message; } })()",
+      "expect": {
+        "result": "RangeError:boom"
+      }
+    },
+    {
+      "name": "a re-entrant retained callback that returns a promise is refused",
+      "script": "probe.keep(function () { return Promise.resolve(1); }); probe.catchKept(0, [])",
+      "expect": {
+        "result": { "kind": "promise" }
+      }
+    },
+    {
+      "name": "a runaway re-entrant retained callback spends the calling script's budget and the host cannot swallow the stop",
+      "timeoutMs": 200,
+      "script": "probe.keep(function () { while (true) {} }); probe.catchKept(0, []); 'survived'",
+      "expect": {
+        "limit": true
+      }
+    },
+    {
+      "name": "a retained callback called between script calls runs on a fresh budget and a runaway stops as a limit",
+      "timeoutMs": 200,
+      "script": "probe.keep(function () { while (true) {} })",
+      "expect": {
+        "result": 0
+      },
+      "after": [
+        { "call": 0, "args": [], "fails": "limit" },
+        { "execute": "'alive'", "result": "alive" }
+      ]
+    },
+    {
+      "name": "a throw between script calls reaches the host with the script error's message",
+      "script": "probe.keep(function () { throw new Error('boom'); })",
+      "expect": {
+        "result": 0
+      },
+      "after": [
+        { "call": 0, "args": [], "fails": "threw", "message": "boom" }
+      ]
+    },
+    {
+      "name": "a promise returned between script calls is refused",
+      "script": "probe.keep(function () { return Promise.resolve(1); })",
+      "expect": {
+        "result": 0
+      },
+      "after": [
+        { "call": 0, "args": [], "fails": "promise" }
+      ]
+    },
+    {
+      "name": "a released callback fails as released",
+      "script": "probe.keep(function () { return 1; })",
+      "expect": {
+        "result": 0
+      },
+      "after": [
+        { "call": 0, "args": [], "result": 1 },
+        { "release": 0 },
+        { "call": 0, "args": [], "fails": "released" },
+        { "release": 0 }
+      ]
+    },
+    {
+      "name": "a released callback fails as released re-entrantly",
+      "script": "var i = probe.keep(function () { return 1; }); probe.release(i); probe.catchKept(i, [])",
+      "expect": {
+        "result": { "kind": "released" }
+      }
+    },
+    {
+      "name": "a released callback is refused when the host passes it back in",
+      "script": "var i = probe.keep(function () {}); probe.release(i); (function () { try { probe.giveBack(i); return 'no throw'; } catch (e) { return e.message.indexOf('released') !== -1; } })()",
+      "expect": {
+        "result": true
+      }
+    },
+    {
+      "name": "a released function can be retained again as a new retained callback",
+      "script": "var f = function () { return 'again'; }; var i = probe.keep(f); probe.release(i); [i, probe.keep(f)]",
+      "expect": {
+        "result": [0, 1]
+      },
+      "after": [
+        { "call": 0, "args": [], "fails": "released" },
+        { "call": 1, "args": [], "result": "again" }
+      ]
+    },
+    {
+      "name": "a retain past max_retained_callbacks is refused",
+      "limits": { "max_retained_callbacks": 2 },
+      "script": "[probe.keep(function () {}), probe.keep(function () {}), probe.keep(function () {})]",
+      "expect": {
+        "result": [0, 1, { "kind": "limit" }]
+      }
+    },
+    {
+      "name": "a release frees capacity under max_retained_callbacks",
+      "limits": { "max_retained_callbacks": 1 },
+      "script": "var a = probe.keep(function () {}); probe.release(a); probe.keep(function () {})",
+      "expect": {
+        "result": 1
+      }
+    },
+    {
+      "name": "retaining the same function twice counts once against max_retained_callbacks",
+      "limits": { "max_retained_callbacks": 1 },
+      "script": "var f = function () {}; [probe.keep(f), probe.keep(f)]",
+      "expect": {
+        "result": [0, 0]
+      }
+    },
+    {
+      "name": "releasing a mod releases every callback it supplied and no other",
+      "mods": [
+        { "name": "alpha", "script": "probe.keep(function () { return 'a'; });" },
+        { "name": "beta", "script": "probe.keep(function () { return 'b'; });" }
+      ],
+      "after": [
+        { "releaseMod": "alpha", "released": 1 },
+        { "call": 0, "args": [], "fails": "released" },
+        { "call": 1, "args": [], "result": "b" },
+        { "releaseMod": "alpha", "released": 0 }
+      ]
+    },
+    {
+      "name": "a callback retained during a retained call belongs to the same mod",
+      "mods": [
+        { "name": "alpha", "script": "probe.keep(function () { return probe.keep(function () { return 'inner'; }); });" }
+      ],
+      "after": [
+        { "call": 0, "args": [], "result": 1 },
+        { "call": 1, "args": [], "result": "inner" },
+        { "releaseMod": "alpha", "released": 2 },
+        { "call": 1, "args": [], "fails": "released" }
+      ]
+    },
+    {
+      "name": "disposing the runtime releases every retained callback",
+      "script": "probe.keep(function () { return 1; })",
+      "expect": {
+        "result": 0
+      },
+      "after": [
+        { "dispose": true },
+        { "call": 0, "args": [], "fails": "released" }
+      ]
+    },
+    {
+      "name": "a retained callback in hook data arrives as the original function",
+      "script": "var f = function () {}; probe.keep(f); hooks.check(function (g) { globalThis.seen = g === f; });",
+      "after": [
+        { "fireHook": "check", "data": { "g": { "$kept": 0 } } },
+        { "execute": "seen", "result": true }
+      ]
+    },
+    {
+      "name": "a retained callback in an event payload arrives as the original function",
+      "script": "var f = function () {}; probe.keep(f); events.on('ping', function (g) { globalThis.seen = g === f; });",
+      "after": [
+        { "emit": "ping", "payload": { "g": { "$kept": 0 } } },
+        { "execute": "seen", "result": true }
+      ]
+    },
+    {
+      "name": "a released retained callback in hook data or an event payload fails the fire as released",
+      "script": "var f = function () {}; probe.keep(f); events.on('ping', function () { globalThis.pinged = true; }); hooks.check(function () { globalThis.checked = true; });",
+      "after": [
+        { "release": 0 },
+        { "emit": "ping", "payload": { "g": { "$kept": 0 } }, "fails": "released" },
+        { "fireHook": "check", "data": { "g": { "$kept": 0 } }, "fails": "released" },
+        { "execute": "[typeof pinged, typeof checked]", "result": ["undefined", "undefined"] }
+      ]
+    },
+    {
+      "name": "releasing a mod's retained callbacks leaves its event subscriptions, even one on the same function",
+      "mods": [
+        { "name": "m", "script": "var h = function () { globalThis.heard = (globalThis.heard || 0) + 1; }; events.on('ping', h); probe.keep(h);" }
+      ],
+      "after": [
+        { "releaseMod": "m", "released": 1 },
+        { "emit": "ping", "payload": {} },
+        { "execute": "events.listenerCount('ping')", "result": 1 },
+        { "execute": "heard", "result": 1 }
+      ]
+    },
+    {
+      "name": "cancelling a mod's event subscriptions leaves its retained callbacks, which run as that mod",
+      "mods": [
+        { "name": "m", "script": "events.on('ping', function () {}); probe.keep(function () { return events.cancelOwned(); });" }
+      ],
+      "after": [
+        { "call": 0, "args": [], "result": 1 },
+        { "call": 0, "args": [], "result": 0 },
+        { "execute": "events.listenerCount('ping')", "result": 0 }
+      ]
+    },
+    {
+      "name": "a retained callback in export arguments arrives as the original function",
+      "script": "var f = function () {}; probe.keep(f); xript.exports.register('same', function (g) { return g === f; });",
+      "after": [
+        { "invoke": "same", "args": [{ "$kept": 0 }], "result": true }
+      ]
+    },
+    {
+      "name": "a retained callback crosses back only into the mod that supplied it",
+      "mods": [
+        { "name": "alpha", "script": "(function () { var f = function () {}; probe.keep(f); xript.exports.register('mine', function () { return probe.giveBack(0) === f; }); })();" },
+        { "name": "beta", "script": "xript.exports.register('theirs', function () { return probe.giveBack(0); });" }
+      ],
+      "after": [
+        { "invoke": "mine", "owner": "alpha", "args": [], "result": true },
+        { "invoke": "theirs", "owner": "beta", "args": [], "error": ["probe.keep", "expired"] }
+      ]
+    },
+    {
+      "name": "a call-scoped callback cannot be retained after its binding returned",
+      "script": "probe.stash([0], function () { return 1; }); 'stashed'",
+      "expect": {
+        "result": "stashed"
+      },
+      "after": [
+        { "retainStashed": true, "fails": "expired" }
+      ]
     }
   ]
 }

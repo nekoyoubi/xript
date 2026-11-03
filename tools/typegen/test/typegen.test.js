@@ -674,3 +674,66 @@ describe("generateAmbientTypes for a mod", () => {
 		assert.equal(generateAmbientTypes(host), generateAmbientTypes(host, {}));
 	});
 });
+
+describe("retained callbacks", () => {
+	const manifest = {
+		xript: "0.10",
+		name: "retain-app",
+		bindings: {
+			after: {
+				description: "Runs a function later.",
+				params: [
+					{ name: "ms", type: "number" },
+					{ name: "fn", type: "function", description: "The function to run.", retain: true },
+				],
+			},
+			every: {
+				description: "Runs a function repeatedly.",
+				params: [{ name: "fn", type: "function", retain: true }],
+			},
+			find: {
+				description: "Filters with a predicate.",
+				params: [{ name: "pred", type: "function", description: "The predicate." }],
+			},
+			watch: {
+				description: "Watches with options.",
+				params: [{ name: "options", type: "WatchOptions" }],
+			},
+		},
+		types: {
+			WatchOptions: {
+				description: "Watch options.",
+				fields: {
+					onChange: { type: "function", description: "Called on change.", retain: true },
+					onTick: { type: "function", description: "Called per tick." },
+				},
+			},
+		},
+	};
+	const result = generateTypes(manifest);
+
+	it("notes a retained parameter in its @param doc", () => {
+		assert.ok(
+			result.includes(" * @param fn - The function to run. Retained: the host may keep this callback and call it after this call returns."),
+			result,
+		);
+	});
+
+	it("documents a retained parameter that has no description of its own", () => {
+		assert.ok(result.includes(" * @param fn - Retained: the host may keep this callback and call it after this call returns."), result);
+	});
+
+	it("leaves a call-scoped parameter's doc alone", () => {
+		assert.ok(result.includes(" * @param pred - The predicate.\n"), result);
+	});
+
+	it("notes a retained field in its doc and leaves the types unchanged", () => {
+		assert.ok(
+			result.includes("Called on change. Retained: the host may keep this callback and call it after the call that received it returns."),
+			result,
+		);
+		assert.ok(!result.includes("Called per tick. Retained"), result);
+		assert.ok(result.includes("onChange: (...args: any[]) => any;"), result);
+		assert.ok(result.includes("function after(ms: number, fn: (...args: any[]) => any): void;"), result);
+	});
+});

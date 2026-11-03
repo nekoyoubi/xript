@@ -47,6 +47,6 @@ async function printHelp(): Promise<void> {
 	console.log("xript guide [topic] [--spec <version>]: print xript authoring doctrine");
 	console.log("");
 	console.log("Run without a topic to list available topics. With --spec, a topic whose doctrine changed");
-	console.log("across manifest versions leads with the note for that version (0.6, 0.7, 0.8, 0.9).");
+	console.log("across manifest versions leads with the note for that version (0.6, 0.7, 0.8, 0.9, 0.10).");
 	console.log(`Topics: ${topics.map((entry) => entry.id).join(", ")}`);
 }

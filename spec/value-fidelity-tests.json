@@ -1,0 +1,183 @@
+{
+  "description": "Conformance corpus for script values JSON has no spelling for: undefined, NaN, Infinity, -Infinity, and -0, which JSON writes as 0. The JavaScript runtimes pass them as themselves. The Rust and C# runtimes, whose host boundary is JSON, carry them as one-key marker objects when built with value fidelity on (`value_fidelity` / `ValueFidelity`); every runner here turns it on. Values in this file use the marker spelling throughout; a runner in a JavaScript runtime decodes them to real values before handing them over, and encodes what its host receives the same way before comparing.",
+  "notes": [
+    "A marker is a one-key object whose only key is `$xript` and whose value is one of `undefined`, `NaN`, `Infinity`, `-Infinity`, `-0`. Anything else, including an object with a `$xript` key and any other key, or an unknown tag, is plain data.",
+    "`inbound`: the binding `value` returns `hostValue`; the runtime executes `(function () { var v = value(); return (<probe>); })()` and the result must equal `expected`.",
+    "`echo`: the binding `echo` returns, as an array, exactly the arguments it received. The runtime executes `script`; the arguments `echo` received must equal `received` at every depth, and the script's result must equal `expected`.",
+    "`results`: the runtime executes `script` and the value the host receives must equal `expected` at every depth. A special value inside an object or array crosses as itself, and an `undefined` property stays an own key.",
+    "`hook`: the setup script registers `hooks.probe(function () { return Array.prototype.map.call(arguments, String).join('|') + '#' + arguments.length; })`, then the host fires `probe` with `data` as its single payload value. The one result must equal `expected`. A Rust host fires it as `fire_hook(\"probe\", &[data])`.",
+    "`event`: the setup script subscribes the same function with `events.on('probed', ...)`, then the host emits `probed` with `data` as its single payload value. The one result must equal `expected`. A Rust host emits it as `emit(\"probed\", &[data])`.",
+    "`-0` and `0` compare equal under `===` and stringify alike, so probes and scripts tell them apart with `Object.is`, and a JavaScript runner compares what its host receives with `Object.is` semantics as well.",
+    "`eventResult`: the setup script subscribes `events.on('probed', function () { return <returns>; })`, the host emits `probed` with no payload, and the one result the host receives must equal `expected` at every depth, as for `results`."
+  ],
+  "manifest": {
+    "xript": "0.10",
+    "name": "value-fidelity-probe",
+    "bindings": {
+      "value": { "description": "Returns the case's host value." },
+      "echo": { "description": "Returns the arguments it received, as an array." }
+    },
+    "hooks": {
+      "probe": { "description": "Reports the arguments its handlers receive." }
+    },
+    "events": [
+      { "id": "probed", "description": "Reports the arguments its subscribers receive." }
+    ]
+  },
+  "inbound": [
+    {
+      "name": "the undefined marker arrives as undefined",
+      "hostValue": { "$xript": "undefined" },
+      "probe": "typeof v",
+      "expected": "undefined"
+    },
+    {
+      "name": "the NaN marker arrives as NaN",
+      "hostValue": { "$xript": "NaN" },
+      "probe": "String(Number.isNaN(v))",
+      "expected": "true"
+    },
+    {
+      "name": "the infinity markers arrive as the infinities",
+      "hostValue": [{ "$xript": "Infinity" }, { "$xript": "-Infinity" }],
+      "probe": "[v[0] === Infinity, v[1] === -Infinity].join('|')",
+      "expected": "true|true"
+    },
+    {
+      "name": "markers decode at any depth",
+      "hostValue": { "a": { "$xript": "NaN" }, "b": [{ "$xript": "Infinity" }, { "$xript": "undefined" }] },
+      "probe": "[Number.isNaN(v.a), v.b[0], typeof v.b[1], v.b.length].join('|')",
+      "expected": "true|Infinity|undefined|2"
+    },
+    {
+      "name": "an undefined property stays an own key",
+      "hostValue": { "k": { "$xript": "undefined" }, "n": 1 },
+      "probe": "[Object.keys(v).join(','), 'k' in v, typeof v.k].join('|')",
+      "expected": "k,n|true|undefined"
+    },
+    {
+      "name": "an object with a $xript key and another key is plain data",
+      "hostValue": { "$xript": "NaN", "x": 1 },
+      "probe": "[typeof v, v['$xript'], v.x].join('|')",
+      "expected": "object|NaN|1"
+    },
+    {
+      "name": "the negative zero marker arrives as -0",
+      "hostValue": { "$xript": "-0" },
+      "probe": "[Object.is(v, -0), 1 / v].join('|')",
+      "expected": "true|-Infinity"
+    },
+    {
+      "name": "negative zero decodes at any depth, and zero stays zero",
+      "hostValue": { "a": [{ "$xript": "-0" }, 0], "b": { "c": { "$xript": "-0" } } },
+      "probe": "[Object.is(v.a[0], -0), Object.is(v.a[1], 0), Object.is(v.b.c, -0)].join('|')",
+      "expected": "true|true|true"
+    },
+    {
+      "name": "an unknown tag is plain data",
+      "hostValue": { "$xript": "nan" },
+      "probe": "[typeof v, v['$xript']].join('|')",
+      "expected": "object|nan"
+    }
+  ],
+  "echo": [
+    {
+      "name": "special arguments cross out and back",
+      "script": "(function () { var r = echo(Infinity, undefined, 1, NaN, -Infinity); return r.map(String).join('|') + '#' + r.length; })()",
+      "received": [{ "$xript": "Infinity" }, { "$xript": "undefined" }, 1, { "$xript": "NaN" }, { "$xript": "-Infinity" }],
+      "expected": "Infinity|undefined|1|NaN|-Infinity#5"
+    },
+    {
+      "name": "negative zero crosses out and back",
+      "script": "(function () { var r = echo(-0, 0); return [Object.is(r[0], -0), Object.is(r[1], 0)].join('|') + '#' + r.length; })()",
+      "received": [{ "$xript": "-0" }, 0],
+      "expected": "true|true#2"
+    },
+    {
+      "name": "a trailing undefined argument is still an argument",
+      "script": "(function () { var r = echo('a', undefined); return typeof r[1] + '#' + r.length; })()",
+      "received": ["a", { "$xript": "undefined" }],
+      "expected": "undefined#2"
+    },
+    {
+      "name": "special values inside an object argument cross out and back",
+      "script": "(function () { var r = echo({ a: NaN, b: -Infinity, c: -0, d: undefined, e: 1 }); var o = r[0]; return [Object.keys(o).join(','), Number.isNaN(o.a), o.b, Object.is(o.c, -0), 'd' in o, typeof o.d, o.e].join('|') + '#' + r.length; })()",
+      "received": [{ "a": { "$xript": "NaN" }, "b": { "$xript": "-Infinity" }, "c": { "$xript": "-0" }, "d": { "$xript": "undefined" }, "e": 1 }],
+      "expected": "a,b,c,d,e|true|-Infinity|true|true|undefined|1#1"
+    },
+    {
+      "name": "special values inside an array argument cross out and back",
+      "script": "(function () { var r = echo([NaN, -0, undefined, Infinity, 2]); var a = r[0]; return [a.length, Number.isNaN(a[0]), Object.is(a[1], -0), typeof a[2], a[3], a[4]].join('|') + '#' + r.length; })()",
+      "received": [[{ "$xript": "NaN" }, { "$xript": "-0" }, { "$xript": "undefined" }, { "$xript": "Infinity" }, 2]],
+      "expected": "5|true|true|undefined|Infinity|2#1"
+    },
+    {
+      "name": "special values at depth cross out and back",
+      "script": "(function () { var r = echo({ list: [{ x: NaN }, [undefined, -Infinity]], deep: { z: -0 } }); var v = r[0]; return [Number.isNaN(v.list[0].x), typeof v.list[1][0], v.list[1].length, v.list[1][1], Object.is(v.deep.z, -0)].join('|') + '#' + r.length; })()",
+      "received": [{ "list": [{ "x": { "$xript": "NaN" } }, [{ "$xript": "undefined" }, { "$xript": "-Infinity" }]], "deep": { "z": { "$xript": "-0" } } }],
+      "expected": "true|undefined|2|-Infinity|true#1"
+    }
+  ],
+  "results": [
+    { "name": "undefined", "script": "undefined", "expected": { "$xript": "undefined" } },
+    { "name": "a function with no return", "script": "(function () {})()", "expected": { "$xript": "undefined" } },
+    { "name": "NaN", "script": "0 / 0", "expected": { "$xript": "NaN" } },
+    { "name": "Infinity", "script": "1 / 0", "expected": { "$xript": "Infinity" } },
+    { "name": "-Infinity", "script": "-1 / 0", "expected": { "$xript": "-Infinity" } },
+    { "name": "-0", "script": "-0", "expected": { "$xript": "-0" } },
+    { "name": "a computed -0", "script": "0 * -1", "expected": { "$xript": "-0" } },
+    { "name": "0 stays 0", "script": "-0 + 0", "expected": 0 },
+    { "name": "null stays null", "script": "null", "expected": null },
+    {
+      "name": "special values inside an object",
+      "script": "({ n: NaN, i: Infinity, m: -Infinity, z: -0, u: undefined, k: 0 })",
+      "expected": { "n": { "$xript": "NaN" }, "i": { "$xript": "Infinity" }, "m": { "$xript": "-Infinity" }, "z": { "$xript": "-0" }, "u": { "$xript": "undefined" }, "k": 0 }
+    },
+    {
+      "name": "special values inside an array",
+      "script": "[NaN, -0, undefined, Infinity, null]",
+      "expected": [{ "$xript": "NaN" }, { "$xript": "-0" }, { "$xript": "undefined" }, { "$xript": "Infinity" }, null]
+    },
+    {
+      "name": "special values at depth",
+      "script": "({ list: [{ x: NaN }, [undefined, -Infinity]], deep: { z: -0 } })",
+      "expected": { "list": [{ "x": { "$xript": "NaN" } }, [{ "$xript": "undefined" }, { "$xript": "-Infinity" }]], "deep": { "z": { "$xript": "-0" } } }
+    }
+  ],
+  "hook": [
+    {
+      "name": "an object payload spreads its special values",
+      "data": { "a": { "$xript": "NaN" }, "b": { "$xript": "undefined" }, "c": { "$xript": "Infinity" } },
+      "expected": "NaN|undefined|Infinity#3"
+    },
+    {
+      "name": "a special payload is the one argument",
+      "data": { "$xript": "-Infinity" },
+      "expected": "-Infinity#1"
+    }
+  ],
+  "event": [
+    {
+      "name": "an object event payload spreads its special values",
+      "data": { "a": { "$xript": "NaN" }, "b": { "$xript": "undefined" }, "c": { "$xript": "Infinity" } },
+      "expected": "NaN|undefined|Infinity#3"
+    },
+    {
+      "name": "a special event payload is the one argument",
+      "data": { "$xript": "Infinity" },
+      "expected": "Infinity#1"
+    }
+  ],
+  "eventResult": [
+    { "name": "a subscriber returning undefined", "returns": "undefined", "expected": { "$xript": "undefined" } },
+    { "name": "a subscriber returning NaN", "returns": "NaN", "expected": { "$xript": "NaN" } },
+    { "name": "a subscriber returning Infinity", "returns": "Infinity", "expected": { "$xript": "Infinity" } },
+    { "name": "a subscriber returning -Infinity", "returns": "-Infinity", "expected": { "$xript": "-Infinity" } },
+    { "name": "a subscriber returning -0", "returns": "-0", "expected": { "$xript": "-0" } },
+    {
+      "name": "a subscriber returning special values at depth",
+      "returns": "{ n: NaN, u: undefined, list: [-0, Infinity, undefined] }",
+      "expected": { "n": { "$xript": "NaN" }, "u": { "$xript": "undefined" }, "list": [{ "$xript": "-0" }, { "$xript": "Infinity" }, { "$xript": "undefined" }] }
+    }
+  ]
+}

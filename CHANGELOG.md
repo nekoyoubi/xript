@@ -1,5 +1,89 @@
 # Changelog
 
+## v0.10.0
+
+Most of this release is about what a real host needs from the runtime once it stops being a demo. Embedding xript in an application that ships on desktop and the web at once ran straight into a wall of gaps: the host couldn't keep a mod's function past a call, its own `events` binding was silently replaced, `Infinity` turned into `null`, hook phases were ignored, and a binding it couldn't make `Send` had to be smuggled through a thread-local. All of that is closed here, in all four runtimes, and almost none of it changes what an existing host or mod sees. New behavior is opt-in; the few defaults that move are bug fixes, or Rust and C# catching up to what JavaScript already did.
+
+- **A host can keep a mod's function.** A binding parameter or type field marked `"retain": true` lets the host hold the callback it receives past the call: run it later from a timer, keep it as an event handler, or store it in a behavior tree. Call-scoped stays the default, so the manifest shows exactly which bindings hold script functions
+  - JS and Node: `callback.retain()` gives `{ call, release }`; Rust: `Callback::retain()` gives a `RetainedCallback` with `call` and `release`; C#: `Retain()` with `Invoke` and `Release`
+  - called from inside a running binding it spends that script call's budget; called between script calls it gets a fresh one
+  - a retained callback the host hands back into the sandbox arrives as the original function, so a node built by `action(fn)` and passed to `run(node)` still carries its `fn`
+  - `releaseRetained(mod)` (`release_retained`, `ReleaseRetained`) releases everything a mod supplied, which is what a mod unload does; calling a released one fails with the new reason `released`, and `limits.max_retained_callbacks` caps the total
+  - `retain` reaches through optional, array, map, union, and recursive types, so a whole tree of nodes works
+- **`events` is a full event bus.** Mods used to get `on` and nothing else. All four runtimes now install one shared bus with `on`, `once`, `off`, `emit`, `cancel`, `cancelOwned`, `claim`, `declare`, `describe`, `catalogue`, `names`, `namespaces`, `listenerCount`, `ownerOf`, and `subscribers`
+  - `on` and `once` return `{ id, event, cancel }`, where `id` is a storable token for `cancel`; they used to return nothing
+  - mods emit events declared `"emit": "mods"`, and `opts.match` filters a subscription by top-level payload keys
+  - events can be declared at runtime by the host (`declareEvent`, `declare_event`, `DeclareEvent`) or by a mod holding `events.declare`, and a declaration can describe a family of ids with `pattern`, `addressed`, and `keys`; event ids keep their existing grammar
+  - ownership comes from the calling mod: `off` without `events.off` only drops your own listeners, and a loader can `cancelOwned(modId)` before re-running one mod's scripts
+  - `events.emitAsync` takes the same arguments as `emit` and resolves to the same results, rejecting where `emit` would throw; on a Rust pool worker in `RuntimeMode::Async`, it waits for handlers on other workers without holding the worker's thread
+- **A host binding can know which mod called it.** `withCaller(fn)` in JS and Node, `add_function_with_caller` in Rust, and a `CallerHostFunction` overload in C# receive `{ modId, binding }` alongside the arguments
+- **Each async call keeps its own caller and budget.** When async calls interleave (Rust's yielding `RuntimeMode::Async`, and async calls in JS and Node), a call resumed after another had started used to be credited to the wrong mod, and in Rust's async mode one call's work could be charged to another call's budget. Each call now carries its own mod and its own budget across `await`
+- **A binding can be optional.** `"optional": true` on a function, namespace, member, or accessor means a host may leave it out. An omitted optional binding is `undefined` in the sandbox rather than a stub that throws, `xript.has("path")` says whether this host provides it, and `typegen` types it as possibly undefined, so one manifest can describe two hosts that differ by a few bindings
+- **Bindings can be live values.** A namespace member declared `"accessor": "get"` or `"get-set"` runs a host getter on every read and a setter on every write, through the same capability checks, budget, and error handling as a call. Writing to a getter-only accessor throws a `TypeError`
+- **Rust hosts get a lot more room.**
+  - `LocalHostBindings` and `create_local_runtime` accept bindings that aren't `Send`, for engines whose objects live on one thread; the types keep them off handles and pools
+  - `fire_hook_phase` and its tagged and async twins dispatch one phase of a hook the way JavaScript always did; an unphased `fire_hook` behaves as before
+  - `Parameter` models `optional` and `variadic`, so a host reading `rt.manifest()` sees them
+  - the binding bridge is compiled once per runtime and values are built natively: a runtime with 3,000 bindings builds in about 20 ms instead of about 180 ms, and the native build closes a template-literal injection where a `${...}` in host data could run inside the sandbox
+  - a `threads` feature (on by default) gates `XriptHandle` and `XriptPool`, so a no-threads build compiles and still enforces `timeout_ms`; a `bindgen` feature and README section cover building for `wasm32-unknown-emscripten`, verified end to end
+  - new constructors and `with_*` setters on `Parameter`, `FieldDefinition`, `Limits`, `FunctionBinding`, `NamespaceBinding`, and `EventDefinition`; this release adds public fields to those structs, which breaks struct literals, and the constructors are the path that keeps compiling from here on
+- **Values can cross the Rust and C# boundary exactly.** With the new opt-in `value_fidelity` (`ValueFidelity` in C#), `undefined`, `NaN`, `Infinity`, and `-Infinity` cross as `{ "$xript": "..." }` markers instead of turning into `null`, and an integral JavaScript number comes back as an integer. A `preserve_order` cargo feature keeps object keys in the order JavaScript has them. Both are off by default, so nothing changes until a host asks
+  - `-0` crosses too, as `{ "$xript": "-0" }`, in arguments and results; `special::neg_zero()` and `XriptValue.NegativeZero` are the helpers
+- **`@xriptjs/runtime` stops corrupting nested values.** Values nested inside an object or array crossed the host boundary as JSON, so a nested `NaN` or infinity became `null`, `-0` became `0`, and `undefined` vanished, in both directions, while the Node runtime kept them. Every crossing (binding arguments and returns, callbacks, exports, hook and event results, `execute`) now keeps them, in the sync and asyncify sandboxes. Values JSON can carry exactly still take the JSON path, so the common case runs at 0.9's speed (within about 1.2x, and faster for large arrays); only values holding special values take the slower exact path. Pinned in `spec/value-fidelity-tests.json`
+  - closed a leak path where a script could put a setter on `Object.prototype` or `Array.prototype` and receive host values on their way into the sandbox; inbound objects are now built from own data properties only
+  - strings containing NUL were cut off at the NUL, and a lone surrogate could swallow the character after it; both now cross whole
+  - a host function no longer runs when reading its arguments already exhausted the script's time budget
+- **A Rust pool behaves like one runtime.** Each worker in an `XriptPool` used to have its own events bus, so a mod's emit, claim, runtime declaration, or subscription only reached mods on the same worker. Now every worker sees one bus: an emit reaches handlers on every worker in subscription order, and `XriptPool` gains `cancel_owned` and `declare_event`
+  - values crossing between workers always keep `undefined`, `NaN`, the infinities, and `-0`, whatever `value_fidelity` says
+  - a host emit on a `RuntimeMode::Async` worker awaits the other workers instead of blocking the thread; a mod that wants to emit without blocking an async worker uses `events.emitAsync`
+  - pool hooks reach handlers registered after load, and results come back in the order a single runtime produces them (handlers by registration, then fills); a pool used to merge an earlier mod's fill ahead of a later mod's handler
+- **Hook budgets and phases agree in all four runtimes.**
+  - Rust and C# now honor a hook's or event slot's own `limits.timeout_ms` per fire, as JS and Node do, and C# no longer uses the widest slot budget
+  - `phase: ""` means no phase everywhere: it runs exactly what an unphased fire runs, fills included; JS used to skip fills, and Rust and C# refused it
+- **Deprecations have a channel.** `onDeprecation` (`on_deprecation`, `OnDeprecation`) receives `{ code, message, replacement }` for patterns that still work but aren't the supported way; without a handler each code warns once. Deprecated APIs carry `@deprecated`, `#[deprecated]`, and `[Obsolete]`, and `spec/deprecations.md` lists all of it
+  - `binding-shadows-builtin` fires when the runtime's own `events`, `hooks`, or `xript` replaces a host binding of the same name, which used to happen silently; `xript lint` warns about it too
+  - `unbudgeted-handler` fires in JS and Node when a hook or event handler runs past the script timeout; a new `budgetHandlers` option gives handlers a budget per fire
+- **XEG has a reference, and the evaluators agree.** `spec/expression-reference.json` describes every builtin, operator, rule, and fragment attribute, with examples that every evaluator runs. It ships in `@xriptjs/sanitize`, `xript-expr`, and `Xript.Runtime` and as an MCP resource, and the builtin reference and operator table on xript.dev are generated from it
+  - a differential fuzzer (`npm run fuzz:xeg`) runs the TypeScript, Rust, and C# evaluators side by side; the fuzzer and the reference turned up dozens of places where Rust and C# disagreed with TypeScript, and they now match it: number rendering (`str(1e20)` printed negative in C#), `fixed`, `round`, case mapping, `trim`, `num` (now including hex, binary, and octal), UTF-16 string indexing, index keys, and literal parsing
+  - nesting is capped at 64 levels, so a deeply nested expression is a parse error instead of a TypeScript `RangeError` or a Rust stack overflow
+  - `1e999` evaluates to `null` everywhere, as the spec says, and a `data-each` binder named `__proto__` is bound instead of lost
+  - `xript lint` warns when a builtin gets an argument of the wrong type, and `docgen` adds an Expressions section to a host's docs when it accepts fragments
+- **Smaller fixes found on the way**
+  - C#'s `FireHook` and `Emit` returned `[]` for every failure, including timeouts and released callbacks; they now report them, and C# builds host objects with Jint's JSON parser instead of evaluating them as script text
+  - JS bus results turned `NaN` and `Infinity` into `null`
+  - `typegen` typed event handlers as taking the payload object, which no runtime ever passed; they're now positional, the way every runtime spreads it
+  - `optional: true` on a function parameter was ignored by the function check
+  - a Node callback stopped by the time limit left every later async binding refused
+  - Rust fragment hooks failed with a syntax error when a binding value held a quote, backslash, or newline
+  - a Rust handle could report a finished call as still in flight
+  - `xript.has` and the missing-bindings list disagreed about a plain value supplied for a function
+  - in the JS asyncify sandbox, an export awaiting an async binding returned `0` early and left the WASM module half-suspended
+  - a second call that suspends in an async binding while another is suspended now throws a clear `BindingError` naming the JS asyncify build's one-suspended-call limit, instead of a raw asyncify error
+  - a hook or event handler that returned a promise (any `async` handler) leaked a handle in `@xriptjs/runtime`, and the next `dispose()` aborted the whole process on a QuickJS assertion
+  - a hook handler returning a function handed the host its source text; it now gets `null`
+  - `Xript.Runtime` enforced a call's time budget with a `CancelAfter` timer, which needs a free thread-pool thread to fire, so on a busy pool a runaway script could outlive its budget by seconds; the deadline is now checked inline on the engine's own constraint checks
+- **The manifest schemas move to `$id` v0.10**, with v0.9 frozen under `spec/history`
+
+### Test counts
+
+| package | before | after |
+| --- | --- | --- |
+| `@xriptjs/sanitize` | 737 | 960 |
+| `@xriptjs/runtime` | 1193 | 1782 |
+| `@xriptjs/runtime-node` | 1136 | 1523 |
+| `@xriptjs/validate` | 532 | 575 |
+| `@xriptjs/typegen` | 198 | 215 |
+| `@xriptjs/docgen` | 175 | 193 |
+| `@xriptjs/init` | 55 | 55 |
+| `@xriptjs/cli` | 135 | 136 |
+| `xript-runtime` | 461 | 548 |
+| `xript-tree` | 22 | 22 |
+| `xript-expr` | 16 | 19 |
+| `xript-ratatui` | 60 | 60 |
+| `xript-wiz` | 38 | 38 |
+| `Xript.Runtime` | 1572 | 1976 |
+| **total** | **6330** | **8102** |
+
 ## v0.9.0
 
 Most of this release is about the sandbox boundary telling the truth. Values crossing it were quietly changed, callbacks were flattened to strings, mods that failed to load reported themselves healthy, and the tools disagreed about what a valid manifest even was. Chasing all that turned up and closed a full host escape in `@xriptjs/runtime-node` and an eval hole in the other three runtimes, which is reason enough to upgrade on its own.

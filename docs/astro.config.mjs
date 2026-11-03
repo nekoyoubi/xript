@@ -80,6 +80,8 @@ export default defineConfig({
 						{ label: "Fragment Formats", slug: "spec/fragment-formats" },
 						{ label: "Renderers", slug: "spec/renderers" },
 						{ label: "Expressions (XEG)", slug: "spec/expressions" },
+						{ label: "XEG Builtins", slug: "spec/expression-builtins" },
+						{ label: "XEG Operators", slug: "spec/expression-operators" },
 						{ label: "Capabilities", slug: "spec/capabilities" },
 						{ label: "Bindings", slug: "spec/bindings" },
 						{ label: "Hooks", slug: "spec/hooks" },

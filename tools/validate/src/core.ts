@@ -12,6 +12,7 @@ import { detectCommonJs, commonJsMessage } from "./cjs.js";
 import { commandDefects, declaredExportNames, isCommandSlot } from "./commands.js";
 import { readEntryBlock } from "./entry.js";
 import { bundledSchema } from "./schemas.js";
+import { parseTypeRef, resolveTypeWords } from "./type-ref.js";
 import {
 	UnsupportedVersionError,
 	loadSpecSchema,
@@ -171,13 +172,15 @@ function schemaId(schema: object): string | undefined {
 }
 
 const LEGACY_SCHEMA_IDS: Record<string, string[]> = {
-	"https://xript.dev/schema/manifest/v0.9.json": [
+	"https://xript.dev/schema/manifest/v0.10.json": [
+		"https://xript.dev/schema/manifest/v0.9.json",
 		"https://xript.dev/schema/manifest/v0.8.json",
 		"https://xript.dev/schema/manifest/v0.7.json",
 		"https://xript.dev/schema/manifest/v0.6.json",
 		"https://xript.dev/schema/manifest/v0.3.json",
 	],
-	"https://xript.dev/schema/mod-manifest/v0.9.json": [
+	"https://xript.dev/schema/mod-manifest/v0.10.json": [
+		"https://xript.dev/schema/mod-manifest/v0.9.json",
 		"https://xript.dev/schema/mod-manifest/v0.8.json",
 		"https://xript.dev/schema/mod-manifest/v0.7.json",
 		"https://xript.dev/schema/mod-manifest/v0.6.json",
@@ -339,7 +342,51 @@ function parameterListErrors(params: unknown, path: string): ValidationError[] {
 				keyword: "optional-required-conflict",
 			});
 		}
+		if (p.retain === true && !isFunctionTyped(p.type)) {
+			errors.push(retainNotFunction(`${path}/${index}/retain`, `parameter "${String(p.name)}"`));
+		}
 	});
+	return errors;
+}
+
+/**
+ * Whether a type is a function, bare or with a signature, optionally made optional. Only such a
+ * position carries a callback, so only it can be marked `retain`.
+ */
+export function isFunctionTyped(type: unknown): boolean {
+	let node = resolveTypeWords(parseTypeRef(type));
+	if (node.kind === "optional") node = node.inner;
+	return node.kind === "function" || node.kind === "signature";
+}
+
+function retainNotFunction(path: string, subject: string): ValidationError {
+	return {
+		path,
+		message: `${subject} is marked "retain" but is not function-typed; only a callback can be retained, so "retain" belongs on a parameter or field typed "function", { "function": ... }, or either made optional`,
+		keyword: "retain-not-function",
+	};
+}
+
+function typeFieldErrors(types: unknown): ValidationError[] {
+	if (typeof types !== "object" || types === null || Array.isArray(types)) return [];
+	const errors: ValidationError[] = [];
+	for (const [typeName, def] of Object.entries(types as Record<string, unknown>)) {
+		if (typeof def !== "object" || def === null) continue;
+		const fields = (def as Record<string, unknown>).fields;
+		if (typeof fields !== "object" || fields === null || Array.isArray(fields)) continue;
+		for (const [fieldName, field] of Object.entries(fields as Record<string, unknown>)) {
+			if (typeof field !== "object" || field === null) continue;
+			const f = field as Record<string, unknown>;
+			if (f.retain === true && !isFunctionTyped(f.type)) {
+				errors.push(
+					retainNotFunction(
+						`/types/${pointerSegment(typeName)}/fields/${pointerSegment(fieldName)}/retain`,
+						`field "${typeName}.${fieldName}"`,
+					),
+				);
+			}
+		}
+	}
 	return errors;
 }
 
@@ -358,6 +405,7 @@ function validateParameterLists(manifest: unknown): ValidationError[] {
 		}
 	};
 	walkBindings(root.bindings, "/bindings");
+	errors.push(...typeFieldErrors(root.types));
 	if (typeof root.hooks === "object" && root.hooks !== null) {
 		for (const [name, def] of Object.entries(root.hooks as Record<string, unknown>)) {
 			if (typeof def !== "object" || def === null) continue;
@@ -1063,6 +1111,11 @@ export {
 	resolveFormatProfile,
 	FormatProfileError,
 	PROTOCOL_PROPS,
+	BUILTIN_FORMAT_IDS,
+	NON_FRAGMENT_FORMAT_IDS,
+	EXPRESSION_REFERENCE,
+	type ExpressionReference,
+	type BuiltinReference,
 	type FormatProfile,
 	type ResolvedVocabulary,
 	type NodeDefinition,
@@ -1110,6 +1163,7 @@ export {
 export {
 	analyzeExpressions,
 	fragmentReadNames,
+	declaredExpressionType,
 	type FragmentReadOptions,
 	type ExpressionAnalysisOptions,
 	type ExpressionSite,

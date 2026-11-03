@@ -122,6 +122,8 @@ describe("mcp server surface", () => {
 		const uris = resources.map((resource) => resource.uri);
 		assert.ok(uris.includes("xript://spec/manifest"));
 		assert.ok(uris.includes("xript://spec/fragment-formats"));
+		assert.ok(uris.includes("xript://spec/expression-reference"));
+		assert.ok(uris.includes("xript://spec/expression-reference-schema"));
 		assert.ok(uris.includes("xript://guidance/surfaces"));
 		assert.ok(uris.includes("xript://guidance/host-formats"));
 	});
@@ -307,6 +309,15 @@ describe("tools", () => {
 		const { client } = await connectedClient();
 		const result = await client.readResource({ uri: "xript://guidance/surfaces" });
 		assert.match(result.contents[0].text, /binding/i);
+	});
+
+	it("serves the expression reference as JSON", async () => {
+		const { client } = await connectedClient();
+		const result = await client.readResource({ uri: "xript://spec/expression-reference" });
+		assert.equal(result.contents[0].mimeType, "application/json");
+		const reference = JSON.parse(result.contents[0].text);
+		assert.equal(reference.grammar, "XEG");
+		assert.ok(reference.builtins.some((builtin) => builtin.name === "round"));
 	});
 
 	it("scan rejects a relative directory path when no roots are offered", async () => {

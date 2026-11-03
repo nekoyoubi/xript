@@ -24,6 +24,7 @@ use crate::sandbox::{CancellationToken, InterruptFrame, XriptRuntime};
 /// How often a watcher thread re-checks a parked call's deadline and tokens.
 /// Cancellation of a call that is awaiting a host future is observed within
 /// this interval.
+#[cfg(feature = "threads")]
 const WATCH_TICK: Duration = Duration::from_millis(5);
 
 /// Marks a value `Send` that never actually leaves the thread it was created
@@ -54,6 +55,7 @@ pub(crate) struct Watch {
     cancelled: Arc<AtomicBool>,
     waker: Mutex<Option<Waker>>,
     done: AtomicBool,
+    #[cfg(feature = "threads")]
     watching: AtomicBool,
 }
 
@@ -68,6 +70,7 @@ impl Watch {
             cancelled: frame.cancelled.clone(),
             waker: Mutex::new(None),
             done: AtomicBool::new(false),
+            #[cfg(feature = "threads")]
             watching: AtomicBool::new(false),
         })
     }
@@ -114,11 +117,23 @@ impl Watch {
     /// Remembers who to wake and makes sure a watcher is running, so a call
     /// parked on a host future that never settles still times out or observes
     /// cancellation.
+    ///
+    /// Without the `threads` feature there is no watcher thread to do that, so
+    /// the call wakes itself instead and is re-polled straight away, re-checking
+    /// its deadline and tokens each time: still bounded, at the cost of spinning
+    /// while it waits.
     fn arm(self: &Arc<Self>, waker: &Waker) {
         *self.waker.lock().unwrap_or_else(|p| p.into_inner()) = Some(waker.clone());
-        if self.watching.swap(true, Ordering::SeqCst) {
-            return;
+        #[cfg(not(feature = "threads"))]
+        waker.wake_by_ref();
+        #[cfg(feature = "threads")]
+        if !self.watching.swap(true, Ordering::SeqCst) {
+            self.spawn_watcher();
         }
+    }
+
+    #[cfg(feature = "threads")]
+    fn spawn_watcher(self: &Arc<Self>) {
         let watch = self.clone();
         std::thread::spawn(move || {
             loop {
@@ -181,10 +196,17 @@ impl<F: Future + Unpin> Future for Abortable<F> {
 /// its cancellation point on the dropping thread instead of being torn down
 /// mid-flight, because the suspended body owns JS values that may only be
 /// released while the runtime lock is held.
+///
+/// Each poll also runs in the call's own caller lane, so the mod it is credited
+/// to does not depend on what other calls pushed while it was parked, and its
+/// frame is registered for that lane, so work resumed in the lane later (a
+/// continuation an async binding hands back during another call's poll) runs
+/// under this call's budget and no other.
 pub(crate) struct Governed<'a, F: Future> {
     runtime: &'a XriptRuntime,
     frame: InterruptFrame,
     watch: Arc<Watch>,
+    lane: crate::caller_context::CallerLane,
     inner: Option<Pin<Box<F>>>,
     started: bool,
 }
@@ -195,6 +217,7 @@ impl<'a, F: Future> Governed<'a, F> {
             runtime,
             frame,
             watch,
+            lane: runtime.caller_context().fork(),
             inner: Some(Box::pin(inner)),
             started: false,
         }
@@ -206,13 +229,18 @@ impl<'a, F: Future> Governed<'a, F> {
         };
         self.started = true;
         self.watch.adopt_call_token(crate::sandbox::current_call_token());
+        let lane = self.lane.id();
         let mut frame = self.frame.clone();
         frame.call_token = self.watch.call_token();
+        frame.lane = Some(lane);
+        self.runtime.probe().budget_lane(lane, frame.clone());
         let _frame = self.runtime.push_interrupt_frame(frame);
+        let _lane = self.runtime.caller_context().activate(lane);
         let polled = inner.as_mut().poll(cx);
         if polled.is_ready() {
             self.watch.finish();
             self.inner = None;
+            self.runtime.probe().release_lane(lane);
         }
         polled
     }
@@ -233,5 +261,6 @@ impl<F: Future> Drop for Governed<'_, F> {
             pollster::block_on(std::future::poll_fn(|cx| self.poll_governed(cx)));
         }
         self.watch.finish();
+        self.runtime.probe().release_lane(self.lane.id());
     }
 }

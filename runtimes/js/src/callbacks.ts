@@ -1,6 +1,9 @@
 import type { QuickJSContext, QuickJSAsyncContext, QuickJSHandle } from "quickjs-emscripten-core";
-import { CallbackError } from "./errors.js";
+import { CallbackError, RetainError } from "./errors.js";
+import { installCrossing, readFromQuickJS, releaseCrossing } from "./crossing.js";
 import { marshalToQuickJS, safeDispose } from "./marshal.js";
+import type { PathStep, RetainPositions } from "./retain-positions.js";
+import { RetainedRegistry, type RetainedCallback, type RetainedOptions } from "./retained.js";
 
 type Context = QuickJSContext | QuickJSAsyncContext;
 
@@ -16,6 +19,7 @@ interface DeclaredParam {
 	type: unknown;
 	default?: unknown;
 	required?: boolean;
+	optional?: boolean;
 }
 
 function isFunctionTypeRef(type: unknown): boolean {
@@ -37,7 +41,7 @@ export function functionParamChecks(params: DeclaredParam[] | undefined): Functi
 				? (type as { optional: unknown }).optional
 				: undefined;
 		if (isFunctionTypeRef(type)) {
-			checks.push({ index, name: param.name, optional: param.required === false || param.default !== undefined });
+			checks.push({ index, name: param.name, optional: param.required === false || param.optional === true || param.default !== undefined });
 		} else if (wrapped !== undefined && isFunctionTypeRef(wrapped)) {
 			checks.push({ index, name: param.name, optional: true });
 		}
@@ -60,23 +64,6 @@ export function functionParamViolation(
 	return null;
 }
 
-const COLLECTOR_SOURCE = `(function () {
-	var stringify = JSON.stringify;
-	return function (value, marker) {
-		var fns = [];
-		var json = stringify([value], function (key, v) {
-			if (typeof v === "function") {
-				var m = {};
-				m[marker] = fns.length;
-				fns[fns.length] = v;
-				return m;
-			}
-			return v;
-		});
-		return [json, fns];
-	};
-})()`;
-
 const TRAMPOLINE_SOURCE = `(function () {
 	return function (f, args) {
 		var r = f.apply(undefined, args);
@@ -85,13 +72,18 @@ const TRAMPOLINE_SOURCE = `(function () {
 	};
 })()`;
 
+
 /** Sandbox-side helpers held by the host, out of reach of script code. */
 export interface CallbackSupport {
-	collector: QuickJSHandle;
 	trampoline: QuickJSHandle;
-	marker: string;
 	/** How many callbacks are running right now; an async binding refuses to start inside one. */
 	depth: number;
+	/** The binding calls running right now, innermost last; a retained callback called while one runs spends its budget. */
+	scopes: CallbackScope[];
+	/** The manifest's declared types, through which a retain field is reached. */
+	types: Record<string, { fields?: Record<string, { type: unknown; retain?: boolean }> }> | undefined;
+	/** The context's retained callbacks, once `configureCallbacks` has run. */
+	retained: RetainedRegistry | null;
 	dispose(): void;
 }
 
@@ -107,35 +99,119 @@ export function callbackSupportFor(context: Context): CallbackSupport {
 	return support;
 }
 
+/**
+ * Installs the context's callback support with the manifest's declared types and its retained
+ * callback registry. Must run before any binding is injected.
+ */
+export function configureCallbacks(
+	context: Context,
+	types: CallbackSupport["types"],
+	retained: RetainedOptions,
+): CallbackSupport {
+	const support = callbackSupportFor(context);
+	support.types = types;
+	support.retained = new RetainedRegistry(context, support, retained);
+	return support;
+}
+
 /** Releases the context's callback helpers; must run before the context is disposed. */
 export function releaseCallbackSupport(context: Context): void {
 	supportByContext.get(context)?.dispose();
 	supportByContext.delete(context);
+	releaseCrossing(context);
 }
 
 function installCallbackSupport(context: Context): CallbackSupport {
-	const collector = context.unwrapResult(context.evalCode(COLLECTOR_SOURCE, "xript-callbacks.js"));
+	installCrossing(context);
 	const trampoline = context.unwrapResult(context.evalCode(TRAMPOLINE_SOURCE, "xript-callbacks.js"));
-	const marker = `__xript_cb_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
-	return {
-		collector,
+	const support: CallbackSupport = {
 		trampoline,
-		marker,
 		depth: 0,
+		scopes: [],
+		types: undefined,
+		retained: null,
 		dispose() {
-			if (collector.alive) collector.dispose();
+			support.retained?.dispose();
 			if (trampoline.alive) trampoline.dispose();
 		},
 	};
+	return support;
 }
 
 /**
+ * Reads a script value the host receives as data: a result, a hook or event handler's return,
+ * a callback's return. Functions carry nothing across; a top-level object gains the `name`,
+ * `message`, and `stack` a dump gives it. The caller keeps ownership of `handle`.
+ */
+export function readResult(context: Context, handle: QuickJSHandle, copyNamed = true): unknown {
+	return readFromQuickJS(context, handle, { copyNamed });
+}
+
+/** How one call into a script function ended. Error handles belong to the receiver. */
+export type ScriptCallOutcome =
+	| { kind: "returned"; value: unknown }
+	| { kind: "promise" }
+	| { kind: "limit"; error: QuickJSHandle }
+	| { kind: "threw"; error: QuickJSHandle; info: { name?: string; message?: string } };
+
+/** Calls a script function synchronously with host arguments, counting it as a running callback. */
+export function callScriptFunction(
+	context: Context,
+	support: CallbackSupport,
+	fn: QuickJSHandle,
+	args: unknown[],
+	binding: string,
+): ScriptCallOutcome {
+	const argsHandle = marshalToQuickJS(context, args, binding);
+	support.depth++;
+	let result;
+	try {
+		result = context.callFunction(support.trampoline, context.undefined, fn, argsHandle);
+	} finally {
+		support.depth--;
+		safeDispose(context, argsHandle);
+	}
+
+	if (result.error) {
+		const dumped = context.dump(result.error) as { name?: string; message?: string } | string | undefined;
+		const info = typeof dumped === "object" && dumped !== null ? dumped : { message: String(dumped) };
+		if (typeof info.message === "string" && info.message.includes("interrupted")) {
+			return { kind: "limit", error: result.error };
+		}
+		return { kind: "threw", error: result.error, info };
+	}
+
+	const outcome = result.value;
+	try {
+		const tag = context.getProp(outcome, 0);
+		const settled = context.getNumber(tag);
+		tag.dispose();
+		if (settled === 1) return { kind: "promise" };
+		const returned = context.getProp(outcome, 1);
+		try {
+			let stopped: QuickJSHandle | null = null;
+			const value = readFromQuickJS(context, returned, { onStopped: (error) => (stopped = error) });
+			if (stopped) return { kind: "limit", error: stopped };
+			return { kind: "returned", value };
+		} finally {
+			returned.dispose();
+		}
+	} finally {
+		outcome.dispose();
+	}
+}
+
+/** A callback proxy as the host receives it: callable, and retainable during its call. */
+export type XriptCallback = ((...args: unknown[]) => unknown) & { retain(): RetainedCallback };
+
+/**
  * One binding call's callbacks. Every proxy it hands out is valid only while the scope is
- * open; `close` expires them and releases the sandbox functions they point at.
+ * open; `close` expires them and releases the sandbox functions they point at. A proxy records
+ * whether it was found at a retain position, which is the only place `retain()` may keep it.
  */
 export class CallbackScope {
 	private active = true;
-	private readonly retained: QuickJSHandle[] = [];
+	private readonly held: QuickJSHandle[] = [];
 	private readonly thrown = new Map<CallbackError, QuickJSHandle>();
 	private fatal: QuickJSHandle | null = null;
 
@@ -143,111 +219,84 @@ export class CallbackScope {
 		private readonly context: Context,
 		private readonly support: CallbackSupport,
 		readonly binding: string,
+		private readonly retainsAt: RetainPositions = () => false,
 	) {}
 
-	/** Converts one argument handle, replacing every script function inside it with a proxy. */
-	unmarshal(handle: QuickJSHandle): unknown {
-		const kind = this.context.typeof(handle);
-		if (kind === "function") {
-			const fn = handle.dup();
-			this.retained.push(fn);
-			return this.proxy(fn);
-		}
-		if (kind !== "object") return this.context.dump(handle);
-
-		const markerHandle = this.context.newString(this.support.marker);
-		const collected = this.context.callFunction(this.support.collector, this.context.undefined, handle, markerHandle);
-		markerHandle.dispose();
-		if (collected.error) {
-			collected.error.dispose();
-			return this.context.dump(handle);
-		}
-
-		const pair = collected.value;
-		try {
-			const jsonHandle = this.context.getProp(pair, 0);
-			const json = this.context.dump(jsonHandle);
-			jsonHandle.dispose();
-			if (typeof json !== "string") return this.context.dump(handle);
-
-			const fnsHandle = this.context.getProp(pair, 1);
-			const lengthHandle = this.context.getProp(fnsHandle, "length");
-			const count = this.context.getNumber(lengthHandle);
-			lengthHandle.dispose();
-			if (count === 0) {
-				fnsHandle.dispose();
-				return (JSON.parse(json) as unknown[])[0];
-			}
-
-			const proxies: Array<(...args: unknown[]) => unknown> = [];
-			for (let i = 0; i < count; i++) {
-				const fn = this.context.getProp(fnsHandle, i);
-				this.retained.push(fn);
-				proxies.push(this.proxy(fn));
-			}
-			fnsHandle.dispose();
-
-			const marker = this.support.marker;
-			return (
-				JSON.parse(json, (_key, value) => {
-					if (value !== null && typeof value === "object" && !Array.isArray(value)) {
-						const keys = Object.keys(value);
-						if (keys.length === 1 && keys[0] === marker && typeof value[marker] === "number") {
-							return proxies[value[marker]];
-						}
-					}
-					return value;
-				}) as unknown[]
-			)[0];
-		} finally {
-			pair.dispose();
-		}
+	/** Marks this binding call as running, so a retained callback called now spends its budget. */
+	enter(): void {
+		this.support.scopes.push(this);
 	}
 
-	private proxy(fn: QuickJSHandle): (...args: unknown[]) => unknown {
+	/** Marks this binding call as no longer running synchronously; its callbacks stay valid. */
+	leave(): void {
+		const index = this.support.scopes.lastIndexOf(this);
+		if (index !== -1) this.support.scopes.splice(index, 1);
+	}
+
+	/** Converts the argument at `index`, replacing every script function inside it with a proxy. */
+	unmarshal(handle: QuickJSHandle, index: number): unknown {
+		return readFromQuickJS(this.context, handle, {
+			path: [index],
+			onFunction: (fn: QuickJSHandle, path: PathStep[]) => {
+				this.held.push(fn);
+				return this.proxy(fn, this.retainsAt(path));
+			},
+			onStopped: (error: QuickJSHandle) => {
+				if (this.fatal) error.dispose();
+				else this.fatal = error;
+			},
+		});
+	}
+
+	private proxy(fn: QuickJSHandle, retainable: boolean): XriptCallback {
 		const scope = this;
-		return function xriptCallback(...args: unknown[]): unknown {
+		const callback = function xriptCallback(...args: unknown[]): unknown {
 			return scope.invoke(fn, args);
 		};
+		Object.defineProperty(callback, "retain", {
+			value: (): RetainedCallback => scope.retain(fn, retainable),
+		});
+		return callback as XriptCallback;
+	}
+
+	private retain(fn: QuickJSHandle, retainable: boolean): RetainedCallback {
+		if (!this.active || !fn.alive) throw new CallbackError(this.binding, "expired");
+		const registry = this.support.retained;
+		if (!registry) throw new RetainError(this.binding, "undeclared");
+		return registry.retain(fn, this.binding, retainable);
 	}
 
 	private invoke(fn: QuickJSHandle, args: unknown[]): unknown {
 		if (!this.active || !fn.alive) {
 			throw new CallbackError(this.binding, "expired");
 		}
+		return this.call(fn, args, this.binding);
+	}
+
+	/**
+	 * Calls a script function inside this running binding call, on the calling script's budget:
+	 * a budget stop ends the binding call, and a throw the host lets escape becomes the script's
+	 * own error again. `binding` names the binding the function was passed to.
+	 */
+	call(fn: QuickJSHandle, args: unknown[], binding: string): unknown {
 		if (this.fatal) {
-			throw new CallbackError(this.binding, "limit");
+			throw new CallbackError(binding, "limit");
 		}
-
-		const context = this.context;
-		const argsHandle = marshalToQuickJS(context, args, this.binding);
-		this.support.depth++;
-		let result;
-		try {
-			result = context.callFunction(this.support.trampoline, context.undefined, fn, argsHandle);
-		} finally {
-			this.support.depth--;
-			safeDispose(context, argsHandle);
-		}
-
-		if (result.error) {
-			const dumped = context.dump(result.error) as { name?: string; message?: string } | string | undefined;
-			const info = typeof dumped === "object" && dumped !== null ? dumped : { message: String(dumped) };
-			if (typeof info.message === "string" && info.message.includes("interrupted")) {
-				this.fatal = result.error;
-				throw new CallbackError(this.binding, "limit");
+		const outcome = callScriptFunction(this.context, this.support, fn, args, binding);
+		switch (outcome.kind) {
+			case "returned":
+				return outcome.value;
+			case "promise":
+				throw new CallbackError(binding, "promise");
+			case "limit":
+				this.fatal = outcome.error;
+				throw new CallbackError(binding, "limit");
+			case "threw": {
+				const error = new CallbackError(binding, "threw", outcome.info);
+				this.thrown.set(error, outcome.error);
+				throw error;
 			}
-			const error = new CallbackError(this.binding, "threw", info);
-			this.thrown.set(error, result.error);
-			throw error;
 		}
-
-		const outcome = context.dump(result.value) as [number, unknown?];
-		result.value.dispose();
-		if (outcome[0] === 1) {
-			throw new CallbackError(this.binding, "promise");
-		}
-		return outcome[1];
 	}
 
 	/**
@@ -272,9 +321,10 @@ export class CallbackScope {
 	}
 
 	close(): void {
+		this.leave();
 		this.active = false;
-		for (const handle of this.retained) if (handle.alive) handle.dispose();
-		this.retained.length = 0;
+		for (const handle of this.held) if (handle.alive) handle.dispose();
+		this.held.length = 0;
 		for (const handle of this.thrown.values()) if (handle.alive) handle.dispose();
 		this.thrown.clear();
 		if (this.fatal?.alive) this.fatal.dispose();

@@ -90,7 +90,7 @@ function printHelp(): void {
 	console.log("  --intent                Emit the execution routing table a host routes on (implied by --ambient)");
 	console.log("  --host <manifest.json>  For a mod manifest: the host it fills, so slot kinds (commands) are exact");
 	console.log("  --include-grant-shapes  Emit CapabilityPrompt, InstallDescriptor, DiscoveryResult interfaces");
-	console.log("  --spec <version>        Check the manifest against this manifest version (0.6-0.9) before generating;");
+	console.log("  --spec <version>        Check the manifest against this manifest version (0.6-0.10) before generating;");
 	console.log("                          defaults to the manifest's $schema, then its xript field");
 	console.log("  --help, -h              Show this help message");
 }

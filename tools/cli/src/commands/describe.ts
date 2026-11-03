@@ -51,6 +51,6 @@ function printHelp(): void {
 	console.log("");
 	console.log("Options:");
 	console.log("  --summary   Print only the surface summary, not the docs");
-	console.log("  --spec <v>  Check the manifest against this manifest version (0.6-0.9); defaults to its");
+	console.log("  --spec <v>  Check the manifest against this manifest version (0.6-0.10); defaults to its");
 	console.log("              $schema, then its xript field");
 }

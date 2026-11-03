@@ -1,0 +1,160 @@
+{
+  "description": "Conformance corpus for optional bindings and the `xript.has` probe. Every runtime builds the host below from `manifest` and `provided`, runs each case's script in a fresh runtime, and asserts the outcome.",
+  "notes": [
+    "`provided` lists every binding path the host supplies; nothing else is supplied. A provided function returns the string in `returns` (for `echo`, its first argument). A provided namespace is supplied as an object holding exactly its provided members.",
+    "`capabilities` is the grant every case runs under. `vault` is declared, provided, and gated by a capability that is not granted, so it pins that `xript.has` answers presence, not permission.",
+    "`missingBindings` is the runtime's reported drift for this host: every declared binding that is neither supplied nor optional, nor beneath an optional namespace the host omitted. A host that omits only optional bindings constructs under strict binding checks; `legacy` is the one non-optional binding left out, so strict construction must fail naming exactly it.",
+    "An omitted optional binding is bound to `undefined`: the name exists (so a bare reference never throws a `ReferenceError`) and its value is `undefined`. It is never a stub that throws.",
+    "`xript.has(path)` is true only when `path` is a declared binding (top-level, namespace, member, or accessor) that this host provides. It is false for an undeclared path, a declared path the host omitted, a path beneath an omitted namespace, and any non-string argument. A namespace counts as provided when the host supplies it, whatever it supplies inside.",
+    "`expect.result` is compared as JSON. `expect.error` lists substrings the surfaced error message must contain.",
+    "`eagerValue` is a second, separate host. Its `meta.version` is declared as a function but supplied as the plain value in `providedValues` (Rust: a namespace `Property`; C#: `HostNamespaceMember.Value`; JS and Node: a non-function value on the namespace object). The missing-bindings check has never counted that as supplying a function, so it lists `meta.version`; `xript.has` follows that same check, so it answers false for `meta.version` while the namespace itself is present. What the eager value installs as is unchanged and not pinned here."
+  ],
+  "eagerValue": {
+    "manifest": {
+      "xript": "0.10",
+      "name": "eager-probe",
+      "bindings": {
+        "meta": {
+          "description": "Host metadata.",
+          "members": {
+            "version": { "description": "Returns the host version." },
+            "build": { "description": "Returns the build id." }
+          }
+        }
+      }
+    },
+    "provided": { "meta.build": { "returns": "b1" } },
+    "providedValues": { "meta.version": "1.2.0" },
+    "missingBindings": ["meta.version"],
+    "script": "[xript.has('meta'), xript.has('meta.build'), xript.has('meta.version')]",
+    "expect": { "result": [true, true, false] }
+  },
+  "manifest": {
+    "xript": "0.10",
+    "name": "optional-probe",
+    "bindings": {
+      "core": {
+        "description": "Always present.",
+        "members": {
+          "ping": { "description": "Answers pong." }
+        }
+      },
+      "web": {
+        "description": "Present only where a browser is.",
+        "optional": true,
+        "members": {
+          "fetch": { "description": "Fetches a URL." }
+        }
+      },
+      "net": {
+        "description": "Network helpers, some host-dependent.",
+        "members": {
+          "fetch": { "description": "Fetches a URL.", "optional": true },
+          "status": { "description": "Reports link status.", "optional": true },
+          "send": { "description": "Sends a packet." }
+        }
+      },
+      "tools": {
+        "description": "An optional namespace this host does provide.",
+        "optional": true,
+        "members": {
+          "run": { "description": "Runs a tool." }
+        }
+      },
+      "share": { "description": "Opens a share sheet.", "optional": true },
+      "echo": { "description": "Returns its argument.", "optional": true },
+      "legacy": { "description": "A non-optional binding this host forgot." },
+      "vault": { "description": "Reads a secret.", "capability": "secret" }
+    },
+    "capabilities": {
+      "secret": { "description": "Read secrets." }
+    }
+  },
+  "capabilities": [],
+  "provided": {
+    "core.ping": { "returns": "pong" },
+    "net.status": { "returns": "ok" },
+    "net.send": { "returns": "sent" },
+    "tools.run": { "returns": "ran" },
+    "echo": { "returns": "first-argument" },
+    "vault": { "returns": "hunter2" }
+  },
+  "missingBindings": ["legacy"],
+  "cases": [
+    {
+      "name": "an omitted optional function is undefined",
+      "script": "[typeof share, share === undefined]",
+      "expect": { "result": ["undefined", true] }
+    },
+    {
+      "name": "an omitted optional function is bound, so a bare reference does not throw",
+      "script": "var seen = share; ['share' in globalThis, seen === undefined]",
+      "expect": { "result": [true, true] }
+    },
+    {
+      "name": "an omitted optional namespace is undefined",
+      "script": "[typeof web, web === undefined]",
+      "expect": { "result": ["undefined", true] }
+    },
+    {
+      "name": "an omitted optional member is undefined",
+      "script": "[typeof net.fetch, net.fetch === undefined]",
+      "expect": { "result": ["undefined", true] }
+    },
+    {
+      "name": "a guard falls back when the optional member is absent",
+      "script": "net.fetch ? net.fetch('x') : 'fallback'",
+      "expect": { "result": "fallback" }
+    },
+    {
+      "name": "a provided optional function works normally",
+      "script": "echo(41)",
+      "expect": { "result": 41 }
+    },
+    {
+      "name": "a provided optional member works normally",
+      "script": "[net.status(), net.send()]",
+      "expect": { "result": ["ok", "sent"] }
+    },
+    {
+      "name": "a provided optional namespace works normally",
+      "script": "tools.run()",
+      "expect": { "result": "ran" }
+    },
+    {
+      "name": "an omitted non-optional binding still throws when called",
+      "script": "legacy()",
+      "expect": { "error": ["legacy"] }
+    },
+    {
+      "name": "an omitted non-optional binding is still installed",
+      "script": "typeof legacy",
+      "expect": { "result": "function" }
+    },
+    {
+      "name": "xript.has is a function",
+      "script": "typeof xript.has",
+      "expect": { "result": "function" }
+    },
+    {
+      "name": "xript.has is true for provided declared bindings",
+      "script": "[xript.has('core'), xript.has('core.ping'), xript.has('net'), xript.has('net.status'), xript.has('net.send'), xript.has('tools'), xript.has('tools.run'), xript.has('echo')]",
+      "expect": { "result": [true, true, true, true, true, true, true, true] }
+    },
+    {
+      "name": "xript.has is false for omitted declared bindings",
+      "script": "[xript.has('web'), xript.has('web.fetch'), xript.has('net.fetch'), xript.has('share'), xript.has('legacy')]",
+      "expect": { "result": [false, false, false, false, false] }
+    },
+    {
+      "name": "xript.has is false for undeclared paths and non-strings",
+      "script": "[xript.has('nope'), xript.has('core.nope'), xript.has('core.ping.deeper'), xript.has(''), xript.has(42), xript.has(), xript.has('xript'), xript.has('console')]",
+      "expect": { "result": [false, false, false, false, false, false, false, false] }
+    },
+    {
+      "name": "xript.has answers presence, not permission",
+      "script": "var present = xript.has('vault'); var denied; try { vault(); denied = false; } catch (e) { denied = true; } [present, denied]",
+      "expect": { "result": [true, true] }
+    }
+  ]
+}

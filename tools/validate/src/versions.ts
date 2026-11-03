@@ -1,14 +1,14 @@
 import { bundledSchema } from "./schemas.js";
 
 /** The manifest version this toolchain answers for when nothing names one. */
-export const CURRENT_SPEC_VERSION = "0.9";
+export const CURRENT_SPEC_VERSION = "0.10";
 
 /**
  * The manifest versions this toolchain can validate against, oldest first. Each has a schema:
  * the current one is the live `spec/*.schema.json`, every earlier one is the frozen document its
  * `$id` published, kept under `spec/history`.
  */
-export const SUPPORTED_SPEC_VERSIONS: readonly string[] = ["0.6", "0.7", "0.8", "0.9"];
+export const SUPPORTED_SPEC_VERSIONS: readonly string[] = ["0.6", "0.7", "0.8", "0.9", "0.10"];
 
 /** Where the target version came from, in the order they are consulted. */
 export type VersionSource = "option" | "$schema" | "xript" | "default";

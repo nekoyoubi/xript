@@ -10,40 +10,20 @@ namespace Xript.Runtime.Expressions;
 /// </summary>
 public static class Builtins
 {
-    public static readonly string[] Names =
-    [
-        "abs", "round", "floor", "ceil", "min", "max", "clamp", "fixed",
-        "upper", "lower", "trim", "pad", "slice",
-        "len", "has", "join", "at",
-        "str", "num", "bool",
-    ];
+    public static readonly string[] Names = ExpressionReference.Root.GetProperty("builtins")
+        .EnumerateArray()
+        .Select(builtin => builtin.GetProperty("name").GetString()!)
+        .ToArray();
 
-    public static (int Min, int Max)? Arity(string name) => name switch
-    {
-        "abs" or "round" or "floor" or "ceil" => (1, 1),
-        "min" or "max" => (1, int.MaxValue),
-        "clamp" => (3, 3),
-        "fixed" => (2, 2),
-        "upper" or "lower" or "trim" => (1, 1),
-        "pad" => (2, 3),
-        "slice" => (2, 3),
-        "len" => (1, 1),
-        "has" => (2, 2),
-        "join" => (1, 2),
-        "at" => (2, 2),
-        "str" or "num" or "bool" => (1, 1),
-        _ => null,
-    };
+    public static (int Min, int Max)? Arity(string name) =>
+        ExpressionReference.BuiltinArity.TryGetValue(name, out var arity) ? arity : null;
 
     public static object? Call(string name, IReadOnlyList<object?> args)
     {
         switch (name)
         {
             case "abs": return Number(args[0], Math.Abs);
-            // JS `Math.round` rounds half *up*, not half away from zero and not half to
-            // even (which is what `Math.Round` would do here). Spelling it out keeps
-            // `round(-2.5)` at -2 across every runtime.
-            case "round": return Number(args[0], x => Math.Floor(x + 0.5));
+            case "round": return Number(args[0], XegText.RoundHalfUp);
             case "floor": return Number(args[0], Math.Floor);
             case "ceil": return Number(args[0], Math.Ceiling);
 
@@ -75,12 +55,12 @@ public static class Builtins
                 var digits = ExprValue.AsNumber(args[1]);
                 if (x is null || digits is null) return null;
                 if (digits != Math.Floor(digits.Value) || digits < 0 || digits > 20) return null;
-                return FormatFixed(x.Value, (int)digits.Value);
+                return XegText.FormatFixed(x.Value, (int)digits.Value);
             }
 
-            case "upper": return args[0] is string upper ? upper.ToUpperInvariant() : null;
-            case "lower": return args[0] is string lower ? lower.ToLowerInvariant() : null;
-            case "trim": return args[0] is string trim ? trim.Trim() : null;
+            case "upper": return args[0] is string upper ? XegText.ToUpper(upper) : null;
+            case "lower": return args[0] is string lower ? XegText.ToLower(lower) : null;
+            case "trim": return args[0] is string trim ? XegText.Trim(trim) : null;
 
             case "pad":
             {
@@ -93,8 +73,7 @@ public static class Builtins
 
                 var needed = (int)width.Value - text.Length;
                 var builder = new StringBuilder(needed + text.Length);
-                while (builder.Length < needed) builder.Append(fill);
-                builder.Length = needed;
+                for (var i = 0; i < needed; i++) builder.Append(fill[i % fill.Length]);
                 builder.Append(text);
                 return builder.ToString();
             }
@@ -104,13 +83,15 @@ public static class Builtins
                 if (args[0] is not string text) return null;
                 var from = ExprValue.AsNumber(args[1]);
                 if (from is null) return null;
+                var start = RelativeIndex(from.Value, text.Length);
+                var end = text.Length;
                 if (args.Count > 2)
                 {
                     var to = ExprValue.AsNumber(args[2]);
                     if (to is null) return null;
-                    return Slice(text, (long)from.Value, (long)to.Value);
+                    end = RelativeIndex(to.Value, text.Length);
                 }
-                return Slice(text, (long)from.Value, text.Length);
+                return start < end ? text[start..end] : "";
             }
 
             case "len": return args[0] switch
@@ -143,7 +124,7 @@ public static class Builtins
                 if (index is null || index != Math.Floor(index.Value)) return null;
                 return args[0] switch
                 {
-                    string or List<object?> => ExprValue.ReadIndex(args[0], (long)index.Value),
+                    string or List<object?> => ExprValue.ReadIndex(args[0], index.Value),
                     _ => null,
                 };
             }
@@ -164,36 +145,33 @@ public static class Builtins
         }
     }
 
+    /// <summary>
+    /// JavaScript's relative index for <c>String.prototype.slice</c>: truncated toward zero,
+    /// counted from the end when negative, and clamped to the length. Computed in
+    /// floating point, so an index of any magnitude clamps rather than wrapping on a cast.
+    /// </summary>
+    private static int RelativeIndex(double index, int length)
+    {
+        var truncated = Math.Truncate(index);
+        return (int)(truncated < 0 ? Math.Max(length + truncated, 0) : Math.Min(truncated, length));
+    }
+
     private static object? Number(object? value, Func<double, double> op)
     {
         var number = ExprValue.AsNumber(value);
         return number is null ? null : ExprValue.Finite(op(number.Value));
     }
 
+    /// <summary>
+    /// JavaScript's <c>Number(string)</c>, held to XEG's domain: the trimmed text is a decimal
+    /// literal or an unsigned <c>0x</c>, <c>0o</c>, or <c>0b</c> integer; an empty or
+    /// non-finite result, and anything JavaScript would read as <c>NaN</c>, is <c>null</c>.
+    /// </summary>
     private static object? ParseNumber(string text)
     {
-        var trimmed = text.Trim();
-        if (trimmed.Length == 0) return null;
-        return double.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
-            && double.IsFinite(value)
-                ? value
-                : null;
+        if (XegText.Trim(text).Length == 0) return null;
+        var value = XegText.JsNumber(text);
+        return double.IsFinite(value) ? value : null;
     }
 
-    private static string Slice(string text, long from, long to)
-    {
-        long Clamp(long i) => Math.Clamp(i < 0 ? text.Length + i : i, 0, text.Length);
-        var start = Clamp(from);
-        var end = Clamp(to);
-        return start >= end ? "" : text[(int)start..(int)end];
-    }
-
-    /// <summary><c>Number.prototype.toFixed</c> semantics: round half away from zero, then pad.</summary>
-    private static string FormatFixed(double value, int digits)
-    {
-        var factor = Math.Pow(10, digits);
-        var scaled = value * factor;
-        var rounded = scaled < 0 ? -Math.Floor(-scaled + 0.5) : Math.Floor(scaled + 0.5);
-        return (rounded / factor).ToString("F" + digits.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
-    }
 }

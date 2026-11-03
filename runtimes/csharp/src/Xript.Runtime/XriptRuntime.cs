@@ -99,6 +99,8 @@ public sealed class XriptRuntime : IDisposable
 
     public JsonElement[] FireHook(string hookName, FireHookOptions? options = null)
     {
+        if (options?.Phase == "")
+            options = options with { Phase = null };
         var results = _sandbox.FireHook(hookName, options).ToList();
         if (options?.Phase is null)
         {
@@ -107,16 +109,16 @@ public sealed class XriptRuntime : IDisposable
                 if (DeniedCapability(fill.Mod, fill.Handler) is { } denied)
                 {
                     AuditHookFillDenial(fill.Mod, fill.Handler, hookName, denied);
-                    results.Add(JsonDocument.Parse("null").RootElement);
+                    results.Add(_sandbox.UndefinedElement());
                     continue;
                 }
                 try
                 {
-                    results.Add(InvokeModExport(fill.Mod, fill.Handler, HookFillArgs(options?.Data)));
+                    results.Add(InvokeModExportWithin(fill.Mod, fill.Handler, HookFillArgs(options?.Data), SlotTimeoutMs(hookName)));
                 }
                 catch
                 {
-                    results.Add(JsonDocument.Parse("null").RootElement);
+                    results.Add(_sandbox.UndefinedElement());
                 }
             }
         }
@@ -133,6 +135,23 @@ public sealed class XriptRuntime : IDisposable
 
     public JsonElement[] Emit(string eventId, FireHookOptions? options = null) =>
         _sandbox.Emit(eventId, options);
+
+    /// <summary>
+    /// Cancels every event subscription <paramref name="modId"/> holds and returns how many
+    /// there were. For re-running one mod's scripts without unloading it; <c>null</c> clears
+    /// listeners no mod owns.
+    /// </summary>
+    public int CancelOwned(string? modId) =>
+        _sandbox.CancelOwned(modId);
+
+    /// <summary>
+    /// Adds an event to the catalogue while the runtime is live. The entry takes the manifest's
+    /// <c>events</c> shape; once declared it can be subscribed to, emitted, and described.
+    /// Returns the entry as stored.
+    /// </summary>
+    /// <exception cref="BindingException">a malformed entry, or an id declared by someone else</exception>
+    public JsonElement DeclareEvent(JsonElement entry) =>
+        _sandbox.DeclareEvent(entry);
 
     public FragmentOp[] FireFragmentHook(string fragmentId, string lifecycle, Dictionary<string, object?>? bindings = null)
     {
@@ -490,6 +509,14 @@ public sealed class XriptRuntime : IDisposable
         return contributions.Length > 0 ? contributions[0] : null;
     }
 
+    /// <summary>
+    /// Releases every retained callback the named mod supplied, which is what unloading the mod
+    /// does to them, and returns how many it released. Calling one afterwards fails as released.
+    /// </summary>
+    public int ReleaseRetained(string modName) =>
+        _sandbox.Retained.ReleaseOwner(modName);
+
+    /// <summary>Disposes the runtime, releasing every retained callback it holds.</summary>
     public void Dispose() =>
         _sandbox.Dispose();
 
@@ -572,6 +599,7 @@ public sealed class XriptRuntime : IDisposable
             return missing;
 
         var isModule = ModEntry.Format(mod.Entry) == "module";
+        using var caller = _sandbox.Caller.Enter(mod.Name);
         _sandbox.SetExportOwner(mod.Name);
         try
         {

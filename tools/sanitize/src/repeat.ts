@@ -155,10 +155,18 @@ export function repeatScope(
 	index: number,
 ): Record<string, unknown> {
 	const scope: Record<string, unknown> = { ...bindings };
-	scope[REPEAT_INDEX_NAME] = index;
-	scope[header.item] = item;
-	if (header.index !== null) scope[header.index] = index;
+	bind(scope, REPEAT_INDEX_NAME, index);
+	bind(scope, header.item, item);
+	if (header.index !== null) bind(scope, header.index, index);
 	return scope;
+}
+
+/**
+ * Defines a scope name as an own data property. Plain assignment would run the `__proto__`
+ * setter for a binder spelled `__proto__`, reparenting the scope instead of binding the name.
+ */
+function bind(scope: Record<string, unknown>, name: string, value: unknown): void {
+	Object.defineProperty(scope, name, { value, enumerable: true, writable: true, configurable: true });
 }
 
 /** A repeat's identity in a key: a string or a finite number. */

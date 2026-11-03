@@ -3,6 +3,11 @@ use crate::builtins::builtin_arity;
 
 pub const DEFAULT_MAX_EXPRESSION_NODES: usize = 256;
 
+/// How deeply parentheses, index brackets, and call argument lists may nest. A grouping
+/// parenthesis adds no AST node, so the node cap alone would let `((((…))))` recurse the
+/// parser until the host's stack gave out; this bound keeps every parse inside a fixed stack.
+pub const MAX_EXPRESSION_DEPTH: usize = 64;
+
 /// Words the grammar refuses as identifiers. Each names a JavaScript capability XEG does
 /// not have; rejecting them by name makes the error say so instead of surfacing as an
 /// anonymous syntax error two tokens later.
@@ -16,7 +21,7 @@ const RESERVED_WORDS: &[&str] = &[
 #[derive(Debug, Clone, PartialEq)]
 enum Tok {
     Num(f64),
-    Str(String),
+    Str(Vec<u16>),
     Name(String),
     Punct(&'static str),
     Eof,
@@ -44,7 +49,7 @@ fn tokenize(source: &str) -> Result<Vec<Token>, ExpressionError> {
     while i < chars.len() {
         let ch = chars[i];
 
-        if ch.is_whitespace() {
+        if matches!(ch, ' ' | '\t' | '\n' | '\r' | '\x0B' | '\x0C') {
             i += 1;
             continue;
         }
@@ -55,13 +60,14 @@ fn tokenize(source: &str) -> Result<Vec<Token>, ExpressionError> {
             while i < chars.len() && chars[i].is_ascii_digit() {
                 i += 1;
             }
-            if chars.get(i) == Some(&'.') {
+            if chars.get(i) == Some(&'.') && matches!(chars.get(i + 1), Some(d) if d.is_ascii_digit()) {
                 i += 1;
                 while i < chars.len() && chars[i].is_ascii_digit() {
                     i += 1;
                 }
             }
-            if matches!(chars.get(i), Some('e') | Some('E')) {
+            // A literal that opens with its point takes no exponent, matching the TypeScript tokenizer.
+            if chars[start] != '.' && matches!(chars.get(i), Some('e') | Some('E')) {
                 let mut j = i + 1;
                 if matches!(chars.get(j), Some('+') | Some('-')) {
                     j += 1;
@@ -85,7 +91,8 @@ fn tokenize(source: &str) -> Result<Vec<Token>, ExpressionError> {
             let start = i;
             let quote = ch;
             i += 1;
-            let mut out = String::new();
+            let mut out: Vec<u16> = Vec::new();
+            let push = |out: &mut Vec<u16>, c: char| out.extend(c.encode_utf16(&mut [0u16; 2]).iter());
             loop {
                 match chars.get(i) {
                     None => return fail(start, "unterminated string literal"),
@@ -98,27 +105,26 @@ fn tokenize(source: &str) -> Result<Vec<Token>, ExpressionError> {
                         i += 1;
                         match chars.get(i) {
                             None => return fail(start, "unterminated string literal"),
-                            Some('n') => out.push('\n'),
-                            Some('t') => out.push('\t'),
-                            Some('r') => out.push('\r'),
-                            Some('b') => out.push('\u{8}'),
-                            Some('f') => out.push('\u{c}'),
-                            Some('0') => out.push('\0'),
+                            Some('n') => push(&mut out, '\n'),
+                            Some('t') => push(&mut out, '\t'),
+                            Some('r') => push(&mut out, '\r'),
+                            Some('b') => push(&mut out, '\u{8}'),
+                            Some('f') => push(&mut out, '\u{c}'),
+                            Some('0') => push(&mut out, '\0'),
                             Some('u') => {
                                 let hex: String = chars.get(i + 1..i + 5).unwrap_or(&[]).iter().collect();
                                 if hex.len() != 4 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
                                     return fail(i, "invalid unicode escape");
                                 }
-                                let code = u32::from_str_radix(&hex, 16).unwrap_or(0);
-                                out.push(char::from_u32(code).unwrap_or('\u{fffd}'));
+                                out.push(u16::from_str_radix(&hex, 16).unwrap_or(0));
                                 i += 4;
                             }
-                            Some(&other) => out.push(other),
+                            Some(&other) => push(&mut out, other),
                         }
                         i += 1;
                     }
                     Some(&other) => {
-                        out.push(other);
+                        push(&mut out, other);
                         i += 1;
                     }
                 }
@@ -201,6 +207,7 @@ struct Parser {
     tokens: Vec<Token>,
     index: usize,
     count: usize,
+    depth: usize,
     max_nodes: usize,
     names: Vec<String>,
 }
@@ -240,11 +247,26 @@ impl Parser {
     }
 
     fn node(&mut self, node: Ast) -> Result<Ast, ExpressionError> {
+        self.reserve()?;
+        Ok(node)
+    }
+
+    /// Counts a node against the cap. Called before recursing where a node wraps its operand.
+    fn reserve(&mut self) -> Result<(), ExpressionError> {
         self.count += 1;
         if self.count > self.max_nodes {
             return fail(0, format!("expression exceeds the {}-node limit", self.max_nodes));
         }
-        Ok(node)
+        Ok(())
+    }
+
+    /// Enters one bracketed level: a group, an index, or a call's arguments.
+    fn enter(&mut self, pos: usize) -> Result<(), ExpressionError> {
+        self.depth += 1;
+        if self.depth > MAX_EXPRESSION_DEPTH {
+            return fail(pos, format!("expression nests deeper than {MAX_EXPRESSION_DEPTH} levels"));
+        }
+        Ok(())
     }
 
     fn parse_expr(&mut self) -> Result<Ast, ExpressionError> {
@@ -381,8 +403,9 @@ impl Parser {
             return self.parse_postfix();
         };
         self.next();
+        self.reserve()?;
         let arg = self.parse_unary()?;
-        self.node(Ast::Unary { op, arg: Box::new(arg) })
+        Ok(Ast::Unary { op, arg: Box::new(arg) })
     }
 
     fn parse_postfix(&mut self) -> Result<Ast, ExpressionError> {
@@ -399,8 +422,11 @@ impl Parser {
                 }
                 continue;
             }
-            if self.eat("[") {
+            if self.at("[") {
+                let pos = self.next().pos;
+                self.enter(pos)?;
                 let index = self.parse_expr()?;
+                self.depth -= 1;
                 self.expect("]")?;
                 target =
                     self.node(Ast::Index { obj: Box::new(target), index: Box::new(index) })?;
@@ -453,7 +479,8 @@ impl Parser {
                             )
                         }
                     };
-                    self.next();
+                    let pos = self.next().pos;
+                    self.enter(pos)?;
                     let mut args = Vec::new();
                     if !self.at(")") {
                         args.push(self.parse_expr()?);
@@ -461,6 +488,7 @@ impl Parser {
                             args.push(self.parse_expr()?);
                         }
                     }
+                    self.depth -= 1;
                     self.expect(")")?;
                     if args.len() < arity.0 || args.len() > arity.1 {
                         return fail(
@@ -483,7 +511,9 @@ impl Parser {
             }
             Tok::Punct("(") => {
                 self.next();
+                self.enter(token.pos)?;
                 let inner = self.parse_expr()?;
+                self.depth -= 1;
                 self.expect(")")?;
                 Ok(inner)
             }
@@ -504,7 +534,7 @@ pub fn parse_with_limit(source: &str, max_nodes: usize) -> Result<Expression, Ex
     }
 
     let mut parser =
-        Parser { tokens: tokenize(source)?, index: 0, count: 0, max_nodes, names: Vec::new() };
+        Parser { tokens: tokenize(source)?, index: 0, count: 0, depth: 0, max_nodes, names: Vec::new() };
     let ast = parser.parse_expr()?;
     if !matches!(parser.peek().tok, Tok::Eof) {
         let token = parser.peek().clone();
@@ -512,7 +542,7 @@ pub fn parse_with_limit(source: &str, max_nodes: usize) -> Result<Expression, Ex
             Tok::Punct(p) => p.to_string(),
             Tok::Name(name) => name,
             Tok::Num(value) => value.to_string(),
-            Tok::Str(value) => value,
+            Tok::Str(value) => String::from_utf16_lossy(&value),
             Tok::Eof => String::new(),
         };
         return fail(token.pos, format!("unexpected token '{text}'"));

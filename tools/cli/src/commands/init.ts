@@ -134,6 +134,6 @@ function printHelp(): void {
 	console.log("  --tier <2|3|4>    Adoption tier (default: 2)");
 	console.log("  --typescript      Generate TypeScript files (default)");
 	console.log("  --javascript      Generate JavaScript files");
-	console.log("  --spec <version>  Manifest version the scaffold declares (0.6, 0.7, 0.8, 0.9; default: this toolchain's)");
+	console.log("  --spec <version>  Manifest version the scaffold declares (0.6, 0.7, 0.8, 0.9, 0.10; default: this toolchain's)");
 	console.log("  --help, -h        Show this help message");
 }

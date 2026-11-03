@@ -1,3 +1,4 @@
+#pragma warning disable CS0618 // these tests pin the deprecated aliases the runtime still populates
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Xript.Runtime;

@@ -26,6 +26,31 @@
 //! block an interactive-lane one, which is the exact inversion the pool exists
 //! to prevent. A documented contract, not a mechanism.
 //!
+//! **The pool has one events bus.** Workers do not share an interpreter, but
+//! they share the bus: the catalogue, namespace claims, and every
+//! subscription's record live on a hub all of them read and commit to, so
+//! `events.declare`, `events.claim`, `cancel_owned`, `events.subscribers` and
+//! the rest answer the same on every worker. A handler still runs on the
+//! worker that subscribed it; an emit, from the host or from a mod, walks the
+//! subscriptions in subscription order and asks each handler's worker to run
+//! it, waiting for the answer, exactly as one runtime would. A worker waiting
+//! on another serves whatever is asked of itself meanwhile, so two workers
+//! emitting into each other do not deadlock. Values crossing between workers
+//! travel as JSON with the `$xript` special-value markers always on, so
+//! `undefined`, `NaN`, the infinities and `-0` arrive as they left; a function
+//! cannot leave its interpreter and arrives as the plain callback marker
+//! `{ "$xriptCallback": "cross-worker" }`. A one-shot dedicated runtime keeps a
+//! bus of its own.
+//!
+//! A host emit on a [`RuntimeMode::Async`](crate::RuntimeMode::Async) worker
+//! awaits each answer from another worker, so that worker's thread keeps
+//! running its other calls. A mod's `events.emit` is a synchronous script call
+//! that returns the results, and QuickJS cannot suspend a script mid-call, so
+//! there the worker's thread waits, serving requests addressed to it meanwhile.
+//! A mod that must not hold the thread uses `events.emitAsync`, which returns
+//! a promise for the same results; on an async-mode worker it awaits each
+//! answer from another worker the way a host emit does.
+//!
 //! **A wedged worker is detected, quarantined, and reported. It is not
 //! reclaimed.** QuickJS's interrupt handler fires only while bytecode runs, so
 //! a thread blocked inside a host binding observes no timeout, no cancellation
@@ -42,10 +67,11 @@ use std::time::{Duration, Instant};
 
 use crate::error::{Result, XriptError};
 use crate::fragment::ModInstance;
+use crate::bus_hub::{BusHub, BusPeer};
 use crate::handle::{CallInfo, ShutdownReport, WorkerState, XriptHandle};
 use crate::manifest::{IntentAffinity, IntentDuration, Manifest, ModManifest, ResolvedIntent};
 use crate::pending::{CallToken, Completer, Pending};
-use crate::sandbox::{AuditEvent, AuditSink, ExecutionResult, RuntimeOptions, TaggedResult};
+use crate::sandbox::{AuditEvent, AuditSink, ExecutionResult, HookFire, OrderedResult, RuntimeOptions};
 
 /// Which worker. `Dedicated` is a one-shot runtime built for a single
 /// `execute` and torn down after it.
@@ -115,9 +141,13 @@ pub enum HookDispatch {
     /// order and still observe each other's effects.
     #[default]
     Concurrent,
-    /// Dispatch worker-group by worker-group in load order, restoring full
-    /// single-runtime happens-before at the cost of the parallelism. The right
-    /// setting for handlers that coordinate through shared host state.
+    /// Dispatch worker-group by worker-group, one worker at a time, at the
+    /// cost of the parallelism: each group runs to completion before the
+    /// next starts, so handlers on different workers never overlap. Happens-
+    /// before is single-runtime exact while each worker's handlers registered
+    /// as one contiguous run; handlers registered interleaved across workers
+    /// still run grouped by worker. The right setting for handlers that
+    /// coordinate through shared host state.
     Sequential,
 }
 
@@ -132,7 +162,7 @@ pub enum WedgePolicy {
 }
 
 /// Per-worker segments of a fan-out, indexed by dispatch slot.
-type Segments = Arc<Mutex<Vec<Option<Result<Vec<TaggedResult>>>>>>;
+type Segments = Arc<Mutex<Vec<Option<Result<Vec<OrderedResult>>>>>>;
 
 /// Called once when a worker is first marked wedged, so a host can log,
 /// alert, or degrade its UI rather than discover it at the next call.
@@ -688,7 +718,6 @@ struct ModRecord {
     home: WorkerId,
     load_seq: u64,
     hooks: HashSet<String>,
-    events: HashSet<String>,
     intent: ResolvedIntent,
     manifest: Option<ModManifest>,
     /// Which host slot each of the mod's exports fills, when it fills one.
@@ -709,6 +738,7 @@ struct PoolInner {
     replacements: AtomicUsize,
     next_worker_index: AtomicUsize,
     supervisor_stop: Arc<AtomicBool>,
+    bus: Arc<BusHub>,
 }
 
 /// A router over N handles.
@@ -760,10 +790,18 @@ fn build_worker(
     factory: &Arc<dyn Fn(WorkerId) -> RuntimeOptions + Send + Sync>,
     id: WorkerId,
     lane: Lane,
+    bus: &Arc<BusHub>,
 ) -> (Arc<Worker>, Pending<()>) {
     let mut options = factory(id);
     stamp_audit(&mut options, id, Arc::new(AtomicU64::new(0)));
-    let (handle, ready) = XriptHandle::spawn(inner_manifest_json.to_string(), options);
+    let seat = match id {
+        WorkerId::Worker(index) => Some(BusPeer { hub: bus.clone(), worker: index }),
+        WorkerId::Dedicated(_) => None,
+    };
+    let (handle, ready) = XriptHandle::spawn_seated(inner_manifest_json.to_string(), options, seat);
+    if let WorkerId::Worker(index) = id {
+        bus.register(index, handle.bus_waker());
+    }
     (
         Arc::new(Worker {
             id,
@@ -811,6 +849,7 @@ impl XriptPool {
         let total = config.workers.max(1);
         let interactive = config.interactive.clamp(1, total);
 
+        let bus = Arc::new(BusHub::default());
         let mut workers = Vec::with_capacity(total);
         let mut readies = Vec::with_capacity(total);
         for index in 0..total {
@@ -820,7 +859,7 @@ impl XriptPool {
                 Lane::Long
             };
             let (worker, ready) =
-                build_worker(&manifest_json, &factory, WorkerId::Worker(index), lane);
+                build_worker(&manifest_json, &factory, WorkerId::Worker(index), lane, &bus);
             workers.push(worker);
             readies.push(ready);
         }
@@ -839,6 +878,7 @@ impl XriptPool {
             replacements: AtomicUsize::new(0),
             next_worker_index: AtomicUsize::new(total),
             supervisor_stop: Arc::new(AtomicBool::new(false)),
+            bus,
         });
 
         let supervisor = spawn_supervisor(&inner);
@@ -915,28 +955,56 @@ impl XriptPool {
     /// Fires a hook on every worker that hosts a handler for it, and merges
     /// the segments back into single-runtime order.
     ///
-    /// Pool-wide handler order is `(mod.load_seq, intra-mod registration
-    /// index)`. That reproduces single-runtime order exactly: on one runtime
-    /// the same two keys sort the same way, and a mod's handlers are
-    /// contiguous under both because a mod's handlers all live on one worker.
-    /// **The merge is deterministic regardless of which worker replies
-    /// first.**
+    /// Every registration takes a sequence number from the pool's shared bus,
+    /// so the fire reaches handlers registered at any time, from a mod's entry,
+    /// an export, a handler, or host code, and the merge orders them as one
+    /// runtime would: every handler in registration order, then every hook
+    /// fill by its mod's load order. **The merge is deterministic regardless of
+    /// which worker replies first.**
     pub fn fire_hook(
         &self,
         hook: &str,
         payload: &[serde_json::Value],
     ) -> Pending<Vec<serde_json::Value>> {
-        self.inner.fan_out(FanKind::Hook, hook, payload)
+        self.inner.fan_out(FanKind::Hook, hook, HookFire::payload(payload))
     }
 
-    /// The event mirror of [`fire_hook`](Self::fire_hook), same ordering
-    /// contract.
+    /// Fires one phase of a phased hook across the pool, with the same
+    /// ordering contract as [`fire_hook`](Self::fire_hook). See
+    /// [`XriptRuntime::fire_hook_phase`](crate::sandbox::XriptRuntime::fire_hook_phase).
+    pub fn fire_hook_phase(
+        &self,
+        hook: &str,
+        phase: &str,
+        data: Option<&serde_json::Value>,
+    ) -> Pending<Vec<serde_json::Value>> {
+        self.inner.fan_out(FanKind::Hook, hook, HookFire::phase(phase, data))
+    }
+
+    /// Emits a host event on the pool's one bus: every subscriber runs, in
+    /// subscription order, on the worker that subscribed it, with the results
+    /// contract of a single runtime. The emit is driven from the worker holding
+    /// the earliest subscription; an event nobody listens to answers `[]` at
+    /// once.
     pub fn emit(
         &self,
         event: &str,
         payload: &[serde_json::Value],
     ) -> Pending<Vec<serde_json::Value>> {
-        self.inner.fan_out(FanKind::Event, event, payload)
+        self.inner.emit(event, payload)
+    }
+
+    /// Cancels every event subscription `mod_id` holds, on every worker, and
+    /// returns how many there were. `None` clears the listeners no mod owns.
+    pub fn cancel_owned(&self, mod_id: Option<&str>) -> Pending<usize> {
+        let mod_id = mod_id.map(str::to_string);
+        self.inner.on_bus(move |handle| handle.cancel_owned(mod_id.as_deref()))
+    }
+
+    /// Adds an event to the pool's catalogue while it is live; every worker
+    /// sees it. See [`XriptRuntime::declare_event`](crate::sandbox::XriptRuntime::declare_event).
+    pub fn declare_event(&self, entry: serde_json::Value) -> Pending<serde_json::Value> {
+        self.inner.on_bus(move |handle| handle.declare_event(entry))
     }
 
     // -- mod residency ------------------------------------------------------
@@ -1049,7 +1117,6 @@ impl Drop for XriptPool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FanKind {
     Hook,
-    Event,
 }
 
 impl PoolInner {
@@ -1362,7 +1429,7 @@ impl PoolInner {
             .map(|m| m.aggregate_execution())
             .unwrap_or_default();
         let slot_of_export = slot_of_export(mod_manifest_json);
-        // Assigned before placement, so pool-wide handler order is load order
+        // Assigned before placement, so pool-wide hook fill order is load order
         // exactly as it is on a single runtime.
         let load_seq = self.load_seq.fetch_add(1, Ordering::SeqCst);
 
@@ -1412,7 +1479,6 @@ impl PoolInner {
                         home,
                         load_seq,
                         hooks: index.hooks.into_iter().collect(),
-                        events: index.events.into_iter().collect(),
                         intent,
                         manifest: parsed,
                         slot_of_export,
@@ -1429,35 +1495,80 @@ impl PoolInner {
         pending
     }
 
+    // -- the bus ------------------------------------------------------------
+
+    /// A host emit on the shared bus, driven from the worker that holds the
+    /// earliest subscription so the first handler runs without a hop.
+    fn emit(self: &Arc<Self>, event: &str, payload: &[serde_json::Value]) -> Pending<Vec<serde_json::Value>> {
+        let Some((home, owners)) = self.bus.subscribers_of(event) else {
+            return Pending::ready(Ok(Vec::new()));
+        };
+        let mut intent = self.manifest.execution.unwrap_or_default().resolved();
+        {
+            let mods = self.mods.lock().unwrap_or_else(|p| p.into_inner());
+            for owner in &owners {
+                if let Some(record) = mods.get(owner) {
+                    intent = ResolvedIntent::widen(intent, record.intent);
+                }
+            }
+        }
+        let Some(worker) = self.worker(WorkerId::Worker(home)) else {
+            return Pending::ready(Ok(Vec::new()));
+        };
+        let event = event.to_string();
+        let payload = payload.to_vec();
+        self.dispatch(&worker, intent, move |handle| handle.emit(&event, &payload))
+    }
+
+    /// Runs one bus operation on an interactive worker; the bus is shared, so
+    /// any worker's answer is the pool's.
+    fn on_bus<T: Send + 'static>(
+        self: &Arc<Self>,
+        build: impl FnOnce(&XriptHandle) -> Pending<T>,
+    ) -> Pending<T> {
+        let id = self
+            .view(|view| view.least_loaded(Lane::Interactive).or_else(|| view.least_loaded(Lane::Long)))
+            .unwrap_or(WorkerId::Worker(0));
+        let Some(worker) = self.worker(id) else {
+            return Pending::ready(Err(XriptError::Engine("the pool has no live worker".into())));
+        };
+        let intent = self.manifest.execution.unwrap_or_default().resolved();
+        self.dispatch(&worker, intent, build)
+    }
+
     // -- fan-out ------------------------------------------------------------
 
     fn fan_out(
         self: &Arc<Self>,
         kind: FanKind,
         id: &str,
-        payload: &[serde_json::Value],
+        fire: HookFire,
     ) -> Pending<Vec<serde_json::Value>> {
         let mut seq_of: HashMap<String, u64> = HashMap::new();
         let mut earliest: HashMap<WorkerId, u64> = HashMap::new();
         let mut intent = match kind {
             FanKind::Hook => self.manifest.execution_of(&format!("hooks/{id}")),
-            FanKind::Event => self.manifest.execution.unwrap_or_default().resolved(),
         };
         {
             let mods = self.mods.lock().unwrap_or_else(|p| p.into_inner());
             for (mod_id, record) in mods.iter() {
+                seq_of.insert(mod_id.clone(), record.load_seq);
                 let hosts = match kind {
                     FanKind::Hook => record.hooks.contains(id),
-                    FanKind::Event => record.events.contains(id),
                 };
                 if !hosts {
                     continue;
                 }
-                seq_of.insert(mod_id.clone(), record.load_seq);
                 intent = ResolvedIntent::widen(intent, record.intent);
                 let entry = earliest.entry(record.home).or_insert(record.load_seq);
                 *entry = (*entry).min(record.load_seq);
             }
+        }
+        // Handlers registered after a mod loaded (from an export, a handler,
+        // or host code) are found through the live registration record, not
+        // the index taken at load.
+        for worker in self.bus.hook_workers(id) {
+            earliest.entry(WorkerId::Worker(worker)).or_insert(u64::MAX);
         }
         let mut targets: Vec<(WorkerId, u64)> = earliest.into_iter().collect();
         // Dispatch order is load order, which only matters under
@@ -1470,10 +1581,9 @@ impl PoolInner {
         }
 
         let id = id.to_string();
-        let payload = payload.to_vec();
         match self.config.hook_dispatch {
             HookDispatch::Concurrent => {
-                self.fan_out_concurrent(kind, id, payload, targets, seq_of, intent)
+                self.fan_out_concurrent(kind, id, fire, targets, seq_of, intent)
             }
             HookDispatch::Sequential => {
                 let (completer, pending) =
@@ -1482,7 +1592,7 @@ impl PoolInner {
                     kind,
                     Arc::new(FanState {
                         id,
-                        payload,
+                        fire,
                         targets,
                         seq_of,
                         intent,
@@ -1500,7 +1610,7 @@ impl PoolInner {
         self: &Arc<Self>,
         kind: FanKind,
         id: String,
-        payload: Vec<serde_json::Value>,
+        fire: HookFire,
         targets: Vec<(WorkerId, u64)>,
         seq_of: HashMap<String, u64>,
         intent: ResolvedIntent,
@@ -1517,10 +1627,9 @@ impl PoolInner {
                 continue;
             };
             let call_id = id.clone();
-            let call_payload = payload.clone();
+            let call_fire = fire.clone();
             let inner = self.dispatch(&worker, intent, move |handle| match kind {
-                FanKind::Hook => handle.fire_hook_tagged(&call_id, &call_payload),
-                FanKind::Event => handle.emit_tagged(&call_id, &call_payload),
+                FanKind::Hook => handle.fire_ordered(&call_id, call_fire.clone()),
             });
             let segments = segments.clone();
             let remaining = remaining.clone();
@@ -1564,10 +1673,9 @@ impl PoolInner {
             return self.fan_out_step(kind, state, at + 1, completer);
         };
         let call_id = state.id.clone();
-        let call_payload = state.payload.clone();
+        let call_fire = state.fire.clone();
         let inner = self.dispatch(&worker, state.intent, move |handle| match kind {
-            FanKind::Hook => handle.fire_hook_tagged(&call_id, &call_payload),
-            FanKind::Event => handle.emit_tagged(&call_id, &call_payload),
+            FanKind::Hook => handle.fire_ordered(&call_id, call_fire.clone()),
         });
         let pool = self.clone();
         let completer = Mutex::new(Some(completer));
@@ -1626,6 +1734,9 @@ impl PoolInner {
         };
         worker.set_state(WorkerState::Retired);
         worker.handle.mark_retired();
+        if let WorkerId::Worker(index) = id {
+            self.bus.retire(index);
+        }
         worker.answer_queued(usize::MAX, |w| w.wedged_error());
 
         if self.config.replace_wedged
@@ -1638,6 +1749,7 @@ impl PoolInner {
                 &self.factory,
                 WorkerId::Worker(index),
                 worker.lane,
+                &self.bus,
             );
             ready.detach();
             self.workers
@@ -1742,11 +1854,11 @@ impl PoolInner {
 
 struct FanState {
     id: String,
-    payload: Vec<serde_json::Value>,
+    fire: HookFire,
     targets: Vec<(WorkerId, u64)>,
     seq_of: HashMap<String, u64>,
     intent: ResolvedIntent,
-    collected: Mutex<Vec<Option<Result<Vec<TaggedResult>>>>>,
+    collected: Mutex<Vec<Option<Result<Vec<OrderedResult>>>>>,
 }
 
 /// Samples every worker and marks the ones that are wedged.
@@ -1870,27 +1982,36 @@ fn join_pendings(pendings: Vec<Pending<()>>) -> Pending<()> {
     pending
 }
 
-/// Merges per-worker segments into one result list ordered by
-/// `(mod.load_seq, intra-mod index)`.
+/// Merges per-worker segments into one result list in the order a single
+/// runtime runs them: every handler in registration order (the pool-wide
+/// sequence each registration took), then every hook fill by its mod's load
+/// order and its place among that mod's fills.
 fn merge_segments(
-    segments: Vec<Option<Result<Vec<TaggedResult>>>>,
+    segments: Vec<Option<Result<Vec<OrderedResult>>>>,
     seq_of: &HashMap<String, u64>,
 ) -> Result<Vec<serde_json::Value>> {
-    let mut all: Vec<(u64, u32, serde_json::Value)> = Vec::new();
+    let mut all: Vec<((bool, u64, u32), serde_json::Value)> = Vec::new();
     for segment in segments {
         match segment {
-            Some(Ok(tagged)) => {
-                for entry in tagged {
-                    let seq = seq_of.get(&entry.mod_id).copied().unwrap_or(u64::MAX);
-                    all.push((seq, entry.index, entry.value));
+            Some(Ok(ordered)) => {
+                for entry in ordered {
+                    let key = match entry.seq {
+                        Some(seq) => (false, seq, 0),
+                        None => (
+                            true,
+                            seq_of.get(&entry.tagged.mod_id).copied().unwrap_or(u64::MAX),
+                            entry.tagged.index,
+                        ),
+                    };
+                    all.push((key, entry.tagged.value));
                 }
             }
             Some(Err(e)) => return Err(e),
             None => {}
         }
     }
-    all.sort_by_key(|(seq, index, _)| (*seq, *index));
-    Ok(all.into_iter().map(|(_, _, value)| value).collect())
+    all.sort_by_key(|(key, _)| *key);
+    Ok(all.into_iter().map(|(_, value)| value).collect())
 }
 
 /// Which host slot each of a mod's exports fills, read straight off the mod

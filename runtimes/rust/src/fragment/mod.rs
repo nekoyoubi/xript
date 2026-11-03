@@ -68,6 +68,7 @@ pub struct FragmentResult {
     pub tree: FragmentTree,
     /// Keyed by `data-if` expression text; two nodes carrying the same condition
     /// collapse into one entry. Deprecated in favour of `conditions`.
+    #[deprecated(note = "keyed by expression text, so two nodes with the same condition collide; use `conditions`")]
     pub visibility: HashMap<String, bool>,
     /// Every `data-if` in the bound tree, keyed by tree position rather than by text.
     pub conditions: Vec<FragmentCondition>,
@@ -99,6 +100,7 @@ impl FragmentResult {
     }
 }
 
+#[allow(deprecated)]
 pub fn process_fragment(
     fragment_id: &str,
     sanitized_source: &str,
@@ -332,6 +334,7 @@ impl RepeatStateCell {
 }
 
 impl FragmentInstance {
+    #[allow(deprecated)]
     pub fn get_content(&self, data: &serde_json::Value) -> FragmentResult {
         let bindings = if let Some(ref decls) = self.declaration.bindings {
             resolve_bindings(decls, data)
@@ -480,6 +483,7 @@ pub struct BoundTree {
     /// Keyed by `data-if` expression text, so two nodes carrying the same condition
     /// collapse into one entry. Deprecated in favour of `conditions`; still populated,
     /// last-write-wins, as before.
+    #[deprecated(note = "keyed by expression text, so two nodes with the same condition collide; use `conditions`")]
     pub visibility: HashMap<String, bool>,
     /// Every `data-if` in the bound tree, keyed by tree position rather than by text.
     pub conditions: Vec<FragmentCondition>,
@@ -519,6 +523,7 @@ struct BindContext<'a> {
 /// host decides what a hidden node means in its own rendering model. A `data-each`
 /// template is replaced by its copies before any of their own attributes are read,
 /// so a `data-if` on the template is evaluated per copy with the item in scope.
+#[allow(deprecated)]
 pub fn process_tree_with_state(
     tree: &[FragmentNode],
     bindings: &HashMap<String, serde_json::Value>,

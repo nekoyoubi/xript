@@ -88,7 +88,7 @@ public static class Xeg
                 var target = Eval(node.Obj, bindings);
                 return Eval(node.Key, bindings) switch
                 {
-                    double index => ExprValue.ReadIndex(target, (long)index),
+                    double index => ExprValue.ReadIndex(target, index),
                     string key => ExprValue.ReadMember(target, key),
                     _ => null,
                 };

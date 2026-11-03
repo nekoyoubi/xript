@@ -70,8 +70,8 @@ export const EXAMPLES: Record<string, WorkbenchExample> = {
 };
 
 export const CUSTOM_MANIFEST = {
-	$schema: "https://xript.dev/schema/manifest/v0.9.json",
-	xript: "0.9",
+	$schema: "https://xript.dev/schema/manifest/v0.10.json",
+	xript: "0.10",
 	name: "my-app",
 	version: "1.0.0",
 	slots: [{ id: "main", description: "The main content area.", accepts: ["text/html", "application/j5ml+json"] }],

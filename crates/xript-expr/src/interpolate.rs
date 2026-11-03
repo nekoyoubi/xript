@@ -82,7 +82,7 @@ pub fn segment_text(text: &str) -> SegmentResult {
                 position: i,
                 message: "nested '{{' inside an interpolation site".to_string(),
             });
-        } else if let Err(err) = parse(body.trim()) {
+        } else if let Err(err) = parse(crate::value::js_trim(body)) {
             issues.push(SegmentIssue {
                 position: i + OPEN.len() + err.position,
                 message: err.message,
@@ -92,7 +92,7 @@ pub fn segment_text(text: &str) -> SegmentResult {
         if !literal.is_empty() {
             segments.push(TextSegment::Literal(std::mem::take(&mut literal)));
         }
-        segments.push(TextSegment::Expr(body.trim().to_string()));
+        segments.push(TextSegment::Expr(crate::value::js_trim(body).to_string()));
         i += OPEN.len() + close + CLOSE.len();
     }
 
@@ -118,16 +118,18 @@ pub fn contains_interpolation(text: &str) -> bool {
 /// Every piece joins as plain text. The tokenizer is never re-entered, so a value that
 /// itself contains `{{` or a tag is inert.
 pub fn resolve_segments(segments: &[TextSegment], bindings: &crate::eval::Bindings) -> String {
-    let mut out = String::new();
+    let mut out: Vec<u16> = Vec::new();
     for segment in segments {
         match segment {
-            TextSegment::Literal(text) => out.push_str(text),
+            TextSegment::Literal(text) => out.extend(text.encode_utf16()),
             TextSegment::Expr(source) => {
-                out.push_str(&crate::value::render(&crate::evaluate(source, bindings)))
+                if let Ok(expression) = crate::parse_cached(source) {
+                    crate::xvalue::render_into(&crate::eval::eval(&expression.ast, bindings), &mut out);
+                }
             }
         }
     }
-    out
+    String::from_utf16_lossy(&out)
 }
 
 /// Re-serializes segments back to their authored source. Used to assert round-trip

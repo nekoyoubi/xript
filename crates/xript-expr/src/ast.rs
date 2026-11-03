@@ -6,7 +6,8 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ast {
     Num(f64),
-    Str(String),
+    /// UTF-16 code units, as JavaScript holds a string; a `\u` escape may leave a lone surrogate.
+    Str(Vec<u16>),
     Bool(bool),
     Null,
     Name(String),

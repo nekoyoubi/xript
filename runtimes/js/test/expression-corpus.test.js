@@ -16,6 +16,10 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const corpusPath = resolve(__dirname, "../../../spec/expression-tests.json");
 const corpus = JSON.parse(await readFile(corpusPath, "utf-8"));
+const reference = JSON.parse(await readFile(resolve(__dirname, "../../../spec/expression-reference.json"), "utf-8"));
+const referenceExamples = [...reference.builtins, ...reference.operators].flatMap((entry) =>
+	entry.examples.map((example, i) => ({ id: `${entry.name} #${i + 1}`, ...example })),
+);
 
 function fragment(source, { bindings = {}, declared, interpolate = false, format = "text/html" } = {}) {
 	const names = declared ?? Object.keys(bindings);
@@ -41,6 +45,15 @@ describe("XEG corpus: data-if truth", () => {
 			const truth = evaluateCondition(testCase.expression, bindings);
 			const expected = expectedTruth(testCase.expect);
 			assert.equal(truth, expected, testCase.expression);
+		});
+	}
+});
+
+describe("XEG reference examples: data-if truth", () => {
+	for (const example of referenceExamples) {
+		it(`${example.id}: ${example.expression}`, () => {
+			const bindings = example.bindings ?? corpus.defaultBindings;
+			assert.equal(evaluateCondition(example.expression, bindings), expectedTruth(example.expect));
 		});
 	}
 });

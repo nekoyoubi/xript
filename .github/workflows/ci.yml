@@ -24,6 +24,8 @@ jobs:
         run: npm run build --workspace=tools/sanitize
       - name: test sanitize
         run: npm test --workspace=tools/sanitize
+      - name: fuzz XEG (TypeScript invariants)
+        run: npm run fuzz:xeg -- --ts-only --seed 1 --count 20000 --no-build
 
       - name: build validate
         run: npm run build --workspace=tools/validate

@@ -1,0 +1,125 @@
+{
+  "description": "Conformance corpus for accessor members: namespace members whose value the host computes on every read, and optionally stores on every write. Every runtime builds the `clock` probe host below, runs each case's script in a fresh runtime with a fresh probe, and asserts the outcome.",
+  "notes": [
+    "`clock.now` is a getter that counts its own calls and returns the new count, so the first read in a runtime is 1. Constructing the runtime and freezing the namespace must not call it.",
+    "`clock.speed` is a getter/setter pair over one stored value that starts at 1. The setter records every value it receives, in order.",
+    "`clock.broken`'s getter throws an error whose message is `clock offline`. `clock.jammed`'s getter returns 0 and its setter throws an error whose message is `rejected value`.",
+    "`phase` is a top-level accessor whose getter returns `day`. A top-level accessor is a global accessor property that cannot be deleted or redefined.",
+    "`clock.locked` is provided but gated by `clock.admin`, which is not granted. `clock.absent` is optional and not provided. `clock.gone` is not optional and not provided.",
+    "Assigning to an accessor declared `get` throws a `TypeError` whose message contains `read-only`, in strict and sloppy code alike, and does not call the getter.",
+    "A getter or setter call is a binding call: it is capability-gated on every access, it runs on the calling script's execution budget, and an error the host throws reaches the script as that runtime's ordinary binding error, catchable, with the host's message in it.",
+    "`expect.result` is compared as JSON. `expect.error` lists substrings the surfaced error message must contain. `expect.limit` means `execute` must fail with the runtime's execution-limit error. `expect.reads` is how many times the `clock.now` getter ran. `expect.writes` is the list of values the `clock.speed` setter received."
+  ],
+  "manifest": {
+    "xript": "0.10",
+    "name": "accessor-probe",
+    "bindings": {
+      "clock": {
+        "description": "Live clock state.",
+        "members": {
+          "now": { "description": "The tick count, read live.", "accessor": "get", "type": "number" },
+          "speed": { "description": "The tick speed, read and written live.", "accessor": "get-set", "type": "number" },
+          "broken": { "description": "A getter that fails.", "accessor": "get" },
+          "jammed": { "description": "A setter that fails.", "accessor": "get-set" },
+          "locked": { "description": "A gated value.", "accessor": "get", "capability": "clock.admin" },
+          "absent": { "description": "A value some hosts lack.", "accessor": "get", "optional": true },
+          "gone": { "description": "A value this host forgot.", "accessor": "get" }
+        }
+      },
+      "phase": { "description": "A top-level value, read live.", "accessor": "get", "type": "string" }
+    },
+    "capabilities": {
+      "clock.admin": { "description": "Administer the clock." }
+    },
+    "limits": { "timeout_ms": 300 }
+  },
+  "capabilities": [],
+  "missingBindings": ["clock.gone"],
+  "cases": [
+    {
+      "name": "the getter runs on every read",
+      "script": "[clock.now, clock.now, clock.now]",
+      "expect": { "result": [1, 2, 3], "reads": 3 }
+    },
+    {
+      "name": "construction does not read",
+      "script": "clock.now",
+      "expect": { "result": 1, "reads": 1 }
+    },
+    {
+      "name": "a read is never cached",
+      "script": "var a = clock.now; var b = clock.now; b - a",
+      "expect": { "result": 1, "reads": 2 }
+    },
+    {
+      "name": "the setter receives the assigned value",
+      "script": "clock.speed = 5; clock.speed",
+      "expect": { "result": 5, "writes": [5] }
+    },
+    {
+      "name": "the setter receives structured values",
+      "script": "clock.speed = [1, 'two', { three: 3 }]; clock.speed = 7; clock.speed",
+      "expect": { "result": 7, "writes": [[1, "two", { "three": 3 }], 7] }
+    },
+    {
+      "name": "assignment without a setter throws in sloppy code",
+      "script": "var out; try { clock.now = 9; out = 'assigned'; } catch (e) { out = [e instanceof TypeError, e.message.indexOf('read-only') >= 0]; } out",
+      "expect": { "result": [true, true], "reads": 0 }
+    },
+    {
+      "name": "assignment without a setter throws in strict code",
+      "script": "(function () { 'use strict'; try { clock.now = 9; return 'assigned'; } catch (e) { return [e instanceof TypeError, e.message.indexOf('read-only') >= 0]; } })()",
+      "expect": { "result": [true, true], "reads": 0 }
+    },
+    {
+      "name": "a refused assignment leaves the value live",
+      "script": "try { clock.now = 100; } catch (e) {} clock.now",
+      "expect": { "result": 1, "reads": 1 }
+    },
+    {
+      "name": "a getter error reaches the script as a binding error",
+      "script": "var out; try { clock.broken; out = 'read'; } catch (e) { out = e.message.indexOf('clock offline') >= 0; } out",
+      "expect": { "result": true }
+    },
+    {
+      "name": "an uncaught getter error fails the script",
+      "script": "clock.broken",
+      "expect": { "error": ["clock offline"] }
+    },
+    {
+      "name": "a setter error reaches the script as a binding error",
+      "script": "var out; try { clock.jammed = 3; out = 'written'; } catch (e) { out = e.message.indexOf('rejected value') >= 0; } out",
+      "expect": { "result": true }
+    },
+    {
+      "name": "a gated accessor refuses the read",
+      "script": "var out; try { clock.locked; out = 'read'; } catch (e) { out = e.message.indexOf('clock.admin') >= 0; } out",
+      "expect": { "result": true }
+    },
+    {
+      "name": "an omitted optional accessor is undefined",
+      "script": "[typeof clock.absent, xript.has('clock.absent'), xript.has('clock.now')]",
+      "expect": { "result": ["undefined", false, true], "reads": 0 }
+    },
+    {
+      "name": "an omitted non-optional accessor throws on read",
+      "script": "clock.gone",
+      "expect": { "error": ["clock.gone"] }
+    },
+    {
+      "name": "an accessor is a real accessor property on a frozen namespace",
+      "script": "var d = Object.getOwnPropertyDescriptor(clock, 'now'); [Object.isFrozen(clock), typeof d.get, 'value' in d, d.enumerable, Object.keys(clock).indexOf('now') >= 0]",
+      "expect": { "result": [true, "function", false, true, true], "reads": 0 }
+    },
+    {
+      "name": "a top-level accessor reads live and refuses assignment",
+      "script": "var refused; try { phase = 'night'; refused = false; } catch (e) { refused = e instanceof TypeError; } var d = Object.getOwnPropertyDescriptor(globalThis, 'phase'); [phase, refused, typeof d.get, d.configurable]",
+      "expect": { "result": ["day", true, "function", false] }
+    },
+    {
+      "name": "a getter loop is stopped by the execution budget",
+      "script": "while (true) { clock.now; }",
+      "expect": { "limit": true }
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 import {
+	EXPRESSION_REFERENCE,
 	FormatProfileError,
 	REPEAT_INDEX_NAME,
 	parseRepeatHeader,
@@ -38,8 +39,9 @@ export interface ExpressionAnalysisOptions {
 	 */
 	fragmentSources?: Record<string, string>;
 	/**
-	 * Resolved value types per binding name, when the host can supply them. Absent types
-	 * disable the type-aware checks rather than inventing a shape for them.
+	 * Resolved value types per binding name, keyed by fill id, when the host can supply them.
+	 * They take precedence over the `type` a fill's binding declares. Absent types disable
+	 * the type-aware checks rather than inventing a shape for them.
 	 */
 	bindingTypes?: Record<string, Record<string, ExpressionType>>;
 	formats?: Record<string, unknown> | null;
@@ -55,8 +57,40 @@ interface FragmentFill {
 	source: string;
 	inline: boolean;
 	interpolate: boolean;
-	bindings: Array<{ name: string; path: string }>;
+	bindings: Array<{ name: string; path: string; type?: string }>;
 	handlers: Array<{ selector: string; on: string; handler: string }>;
+}
+
+/**
+ * The expression type a binding's declared `type` names. A host-declared type name has no
+ * fixed shape here, so it is `unknown` and the checks that would need it stay silent.
+ */
+export function declaredExpressionType(type: string | undefined): ExpressionType {
+	if (type === undefined) return "unknown";
+	const name = type.trim();
+	if (name.endsWith("[]")) return "array";
+	switch (name) {
+		case "string": return "string";
+		case "int": case "integer": case "float": case "number": case "double": return "number";
+		case "bool": case "boolean": return "boolean";
+		case "array": return "array";
+		case "object": return "object";
+		default: return "unknown";
+	}
+}
+
+/** The binding types a fill's expressions are checked against: declared `type`s, overridden by the host's. */
+function fillTypes(
+	fill: FragmentFill,
+	supplied: Record<string, ExpressionType> | undefined,
+): Record<string, ExpressionType> | null {
+	const types: Record<string, ExpressionType> = {};
+	for (const binding of fill.bindings) {
+		const type = declaredExpressionType(binding.type);
+		if (type !== "unknown") types[binding.name] = type;
+	}
+	Object.assign(types, supplied ?? {});
+	return Object.keys(types).length > 0 ? types : null;
 }
 
 /** Events that push a value back through a binding rather than merely observing one. */
@@ -123,8 +157,9 @@ export function analyzeExpressions(
 				});
 			}
 
-			const types = options.bindingTypes?.[fill.fillId];
+			const types = fillTypes(fill, options.bindingTypes?.[fill.fillId]);
 			if (types) findings.push(...typeFindings(fill, site, types));
+			findings.push(...signatureFindings(fill, site, types ?? {}));
 		}
 
 		for (const binding of fill.bindings) {
@@ -326,6 +361,86 @@ function typeFindings(
 	return findings;
 }
 
+type StaticType = ExpressionType | "null";
+
+const BUILTIN_SIGNATURES = new Map(EXPRESSION_REFERENCE.builtins.map((builtin) => [builtin.name, builtin]));
+
+/** The types a reference type expression admits, or `null` for `any`. */
+function admitted(type: string): Set<string> | null {
+	const members = type.split("|").map((member) => member.trim());
+	return members.includes("any") ? null : new Set(members);
+}
+
+/**
+ * What static reading knows of a node's type: a literal's, a typed binding's, or a builtin's
+ * when its signature returns exactly one non-null type. Everything else is `unknown`.
+ */
+function staticType(node: unknown, scope: ReadonlySet<string>, types: Record<string, ExpressionType>): StaticType {
+	const ast = node as { t: string; name?: string; op?: string };
+	switch (ast.t) {
+		case "num": return "number";
+		case "str": return "string";
+		case "bool": return "boolean";
+		case "null": return "null";
+		case "name": return ast.name && !scope.has(ast.name) ? types[ast.name] ?? "unknown" : "unknown";
+		case "unary": return ast.op === "!" ? "boolean" : "unknown";
+		case "binary": return ["==", "!=", "<", "<=", ">", ">="].includes(ast.op ?? "") ? "boolean" : "unknown";
+		case "call": {
+			const returns = ast.name ? BUILTIN_SIGNATURES.get(ast.name)?.returns : undefined;
+			const members = returns ? admitted(returns) : null;
+			if (!members || members.size !== 1) return "unknown";
+			const [only] = members;
+			return (["number", "string", "boolean", "array", "object"] as const).find((type) => type === only) ?? "unknown";
+		}
+		default: return "unknown";
+	}
+}
+
+function conversionHint(actual: StaticType, expected: Set<string>): string {
+	if (actual === "string" && expected.has("number")) return ", or convert it with `num(…)`";
+	if (actual !== "string" && expected.has("string")) return ", or convert it with `str(…)`";
+	return "";
+}
+
+/**
+ * A builtin called with an argument whose type is known and cannot match its parameter. The
+ * call is total, so it evaluates to `null` (or ignores the argument) rather than failing,
+ * which is exactly why it is worth a warning: nothing at runtime will say so.
+ */
+function signatureFindings(
+	fill: FragmentFill,
+	site: ExpressionSite,
+	types: Record<string, ExpressionType>,
+): Finding[] {
+	const findings: Finding[] = [];
+	if (!site.parsed) return findings;
+
+	visitAst(site.parsed.ast, (node) => {
+		const call = node as { t: string; name?: string; args?: unknown[] };
+		if (call.t !== "call" || !call.name || !call.args) return;
+		const builtin = BUILTIN_SIGNATURES.get(call.name);
+		if (!builtin) return;
+
+		call.args.forEach((arg, index) => {
+			const param = builtin.params[Math.min(index, builtin.params.length - 1)];
+			if (!param || (index >= builtin.params.length && !param.variadic)) return;
+			const expected = admitted(param.type);
+			if (!expected) return;
+			const actual = staticType(arg, site.scope, types);
+			if (actual === "unknown" || expected.has(actual)) return;
+			const position = param.variadic ? `"${param.name}" (argument ${index + 1})` : `"${param.name}"`;
+			findings.push({
+				severity: "warn",
+				code: "expression-builtin-argument",
+				message: `${fill.label} fill "${fill.fillId}" calls ${call.name}() with a ${actual} for parameter ${position} at ${site.path} in \`${site.source}\`; it expects ${param.type}`,
+				suggestion: `\`${call.name}\` takes ${param.type} for "${param.name}", and given a ${actual} it evaluates to null. Pass a ${param.type}${conversionHint(actual, expected)}.`,
+			});
+		});
+	});
+
+	return findings;
+}
+
 const NO_SCOPE: ReadonlySet<string> = new Set();
 
 /**
@@ -464,10 +579,13 @@ function fragmentFills(mods: unknown[]): FragmentFill[] {
 				interpolate: fill.interpolate === true,
 				bindings: Array.isArray(fill.bindings)
 					? fill.bindings.flatMap((binding) => {
-						const entry = (binding ?? {}) as { name?: unknown; path?: unknown };
-						return typeof entry.name === "string" && typeof entry.path === "string"
-							? [{ name: entry.name, path: entry.path }]
-							: [];
+						const entry = (binding ?? {}) as { name?: unknown; path?: unknown; type?: unknown };
+						if (typeof entry.name !== "string" || typeof entry.path !== "string") return [];
+						return [{
+							name: entry.name,
+							path: entry.path,
+							...(typeof entry.type === "string" ? { type: entry.type } : {}),
+						}];
 					})
 					: [],
 				handlers: normalizeHandlers(fill.handlers ?? fill.events),

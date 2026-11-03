@@ -12,6 +12,7 @@ fn corpus() -> Value {
         .expect("corpus is valid JSON")
 }
 
+#[allow(deprecated)]
 fn instance(source: &str, names: &[String], interpolate: bool) -> FragmentInstance {
     let declaration = FragmentDeclaration {
         id: "corpus".to_string(),

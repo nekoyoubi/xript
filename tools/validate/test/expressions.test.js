@@ -160,6 +160,14 @@ describe("expressions analyzer", () => {
 		assert.equal(typeFinding.severity, "warn");
 	});
 
+	it("type-checks against the type a fill's binding declares", () => {
+		const findings = analyzeExpressions([mod({
+			source: '<p data-bind="name * 2">0</p>',
+			bindings: [{ name: "name", path: "p.name", type: "string" }],
+		})]);
+		assert.ok(codes(findings).includes("expression-type"));
+	});
+
 	it("stays silent on type checks when no types are supplied", () => {
 		const findings = analyzeExpressions([mod({
 			source: '<p data-bind="name * 2">0</p>',
@@ -285,5 +293,83 @@ describe("fragmentReadNames", () => {
 	it("returns nothing for an unknown format or an unparseable expression", () => {
 		assert.deepEqual(fragmentReadNames('<p data-bind="x"></p>', "text/x-unknown"), []);
 		assert.deepEqual(fragmentReadNames('<p data-if="a +"></p><p data-bind="b"></p>', "text/html"), ["b"]);
+	});
+});
+
+describe("expressions analyzer: builtin signatures", () => {
+	const argumentFindings = (source, bindings = [], options = {}) => analyzeExpressions(
+		[mod({ source, bindings })],
+		options,
+	).filter((finding) => finding.code === "expression-builtin-argument");
+
+	it("warns on a literal of the wrong type, naming the parameter and the expected type", () => {
+		const [finding, ...rest] = argumentFindings('<p data-bind="upper(3)">x</p>');
+		assert.equal(rest.length, 0);
+		assert.equal(finding.severity, "warn");
+		assert.match(finding.message, /upper\(\) with a number for parameter "s"/);
+		assert.match(finding.message, /expects string/);
+		assert.match(finding.suggestion, /str\(/);
+	});
+
+	it("suggests num() for a string where a number belongs", () => {
+		const [finding] = argumentFindings(`<p data-bind="round('x')">x</p>`);
+		assert.match(finding.message, /round\(\) with a string for parameter "x"/);
+		assert.match(finding.suggestion, /num\(/);
+	});
+
+	it("checks a binding against the type its fill declares", () => {
+		const [finding] = argumentFindings('<p data-bind="upper(hp)">x</p>', [{ name: "hp", path: "p.hp", type: "int" }]);
+		assert.match(finding.message, /upper\(\) with a number for parameter "s"/);
+	});
+
+	it("stays silent on a binding with no declared type", () => {
+		assert.deepEqual(argumentFindings('<p data-bind="upper(hp)">x</p>', [{ name: "hp", path: "p.hp" }]), []);
+	});
+
+	it("stays silent on a host-declared type name it cannot shape", () => {
+		assert.deepEqual(argumentFindings('<p data-bind="upper(hp)">x</p>', [{ name: "hp", path: "p.hp", type: "Health" }]), []);
+	});
+
+	it("lets the host's binding types override the declared ones", () => {
+		const findings = argumentFindings(
+			'<p data-bind="upper(hp)">x</p>',
+			[{ name: "hp", path: "p.hp", type: "string" }],
+			{ bindingTypes: { "status-line": { hp: "number" } } },
+		);
+		assert.equal(findings.length, 1);
+	});
+
+	it("checks every argument of a variadic builtin and says which one is wrong", () => {
+		const [finding] = argumentFindings(`<p data-bind="min(1, 2, 'x')">x</p>`);
+		assert.match(finding.message, /parameter "values" \(argument 3\)/);
+	});
+
+	it("checks an optional parameter when it is passed", () => {
+		const [finding] = argumentFindings('<p data-bind="join(effects, 5)">x</p>', [{ name: "effects", path: "p.e", type: "string[]" }]);
+		assert.match(finding.message, /join\(\) with a number for parameter "separator"/);
+	});
+
+	it("knows the return type of a builtin that always returns one type", () => {
+		const [finding] = argumentFindings('<p data-bind="abs(str(hp))">x</p>', [{ name: "hp", path: "p.hp" }]);
+		assert.match(finding.message, /abs\(\) with a string for parameter "x"/);
+	});
+
+	it("accepts any type where the signature takes any, and a union member where it takes a union", () => {
+		assert.deepEqual(argumentFindings(`<p data-bind="str(3) + num('4') + has(items, 3) + len('abc')">x</p>`, [{ name: "items", path: "p.i" }]), []);
+	});
+
+	it("does not type a repeat item by the binding it shadows", () => {
+		const findings = argumentFindings(
+			'<ul><li data-each="hp in list"><span data-bind="upper(hp)">x</span></li></ul>',
+			[{ name: "hp", path: "p.hp", type: "number" }, { name: "list", path: "p.l" }],
+		);
+		assert.deepEqual(findings, []);
+	});
+
+	it("surfaces through lintManifests as a warning", () => {
+		const host = { name: "host", slots: [{ id: "header.status", accepts: ["text/html"] }] };
+		const result = lintManifests(host, [mod({ source: '<p data-bind="upper(3)">x</p>', bindings: [] })]);
+		const finding = result.findings.find((entry) => entry.code === "expression-builtin-argument");
+		assert.equal(finding?.severity, "warn");
 	});
 });

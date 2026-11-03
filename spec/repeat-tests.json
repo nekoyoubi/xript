@@ -128,6 +128,15 @@
 			"id": "reject-empty",
 			"source": "",
 			"expected": null
+		},
+		{
+			"id": "binder-may-be-named-proto",
+			"source": "(item, __proto__) in items",
+			"expected": {
+				"item": "item",
+				"index": "__proto__",
+				"expression": "items"
+			}
 		}
 	],
 	"render": [
@@ -1409,6 +1418,89 @@
 						"prop": "data-each"
 					}
 				]
+			}
+		},
+		{
+			"id": "binder-named-proto-is-bound",
+			"source": "<ul><li data-each=\"__proto__ in items\" data-bind=\"__proto__\"></li><li data-each=\"(item, __proto__) in items\" data-bind=\"item + __proto__\"></li></ul>",
+			"bindings": {
+				"items": [
+					"a",
+					"b"
+				]
+			},
+			"expected": {
+				"html": "<ul><li data-bind=\"__proto__\">a</li><li data-bind=\"__proto__\">b</li><li data-bind=\"item + __proto__\">a0</li><li data-bind=\"item + __proto__\">b1</li></ul>",
+				"conditions": [],
+				"repeats": [
+					{
+						"site": {
+							"template": [
+								0,
+								0
+							],
+							"within": []
+						},
+						"path": [
+							0
+						],
+						"start": 0,
+						"count": 2,
+						"expression": "__proto__ in items",
+						"key": null,
+						"mode": "replace",
+						"keys": [
+							0,
+							1
+						],
+						"patch": [
+							{
+								"op": "insert",
+								"key": 0,
+								"to": 0
+							},
+							{
+								"op": "insert",
+								"key": 1,
+								"to": 1
+							}
+						]
+					},
+					{
+						"site": {
+							"template": [
+								0,
+								1
+							],
+							"within": []
+						},
+						"path": [
+							0
+						],
+						"start": 2,
+						"count": 2,
+						"expression": "(item, __proto__) in items",
+						"key": null,
+						"mode": "replace",
+						"keys": [
+							0,
+							1
+						],
+						"patch": [
+							{
+								"op": "insert",
+								"key": 0,
+								"to": 0
+							},
+							{
+								"op": "insert",
+								"key": 1,
+								"to": 1
+							}
+						]
+					}
+				],
+				"diagnostics": []
 			}
 		}
 	],

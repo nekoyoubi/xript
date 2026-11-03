@@ -2,6 +2,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkSchemaAliases, syncSchemaAliases } from "./schema-aliases.mjs";
+import { renderBuiltinsPage, renderOperatorsPage } from "./expression-reference-pages.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const docsRoot = join(here, "..");
@@ -62,6 +63,7 @@ const SCHEMA_URLS = Object.fromEntries(
 			"install-descriptor.schema.json",
 			"discovery-result.schema.json",
 			"debug-messages.schema.json",
+			"expression-reference.schema.json",
 		].map(async (file) => {
 			const { $id } = JSON.parse(await readFile(join(specSource, file), "utf-8"));
 			return [file, new URL($id).pathname];
@@ -90,6 +92,7 @@ const SPEC_PAGES = [
 
 function siteSpecLinks(body) {
 	return body
+		.replace(/\]\(https:\/\/xript\.dev(\/[^)]*)\)/g, "]($1)")
 		.replace(/\]\((?:\.\/)?([a-z-]+)\.md(#[a-z0-9-]+)?\)/g, (match, file, anchor) => {
 			const slug = SPEC_SLUGS[`${file}.md`];
 			return slug ? `](/spec/${slug}/${anchor ?? ""})` : match;
@@ -98,7 +101,7 @@ function siteSpecLinks(body) {
 			const url = SCHEMA_URLS[file];
 			return url ? `](${url})` : match;
 		})
-		.replace(/\]\((?:\.\/)?([a-z-]+-tests\.json)\)/g, (match, file) => `](${SPEC_REPO}${file})`);
+		.replace(/\]\((?:\.\/)?([a-z-]+-tests\.json|expression-reference\.json)\)/g, (match, file) => `](${SPEC_REPO}${file})`);
 }
 
 const specPagesTarget = join(docsRoot, "src", "content", "docs", "spec");
@@ -110,4 +113,9 @@ for (const page of SPEC_PAGES) {
 	await writeFile(join(specPagesTarget, `${SPEC_SLUGS[page.file]}.md`), `${frontmatter}${body}\n`, "utf-8");
 }
 
-console.log(`sync-guidance: ${index.topics.length} doctrine pages, the changelog, ${emittedSchemas} schema documents, and ${SPEC_PAGES.length} generated spec pages`);
+const expressionReference = JSON.parse(await readFile(join(specSource, "expression-reference.json"), "utf-8"));
+const { defaultBindings } = JSON.parse(await readFile(join(specSource, "expression-tests.json"), "utf-8"));
+await writeFile(join(specPagesTarget, "expression-builtins.md"), renderBuiltinsPage(expressionReference, defaultBindings), "utf-8");
+await writeFile(join(specPagesTarget, "expression-operators.md"), renderOperatorsPage(expressionReference), "utf-8");
+
+console.log(`sync-guidance: ${index.topics.length} doctrine pages, the changelog, ${emittedSchemas} schema documents, ${SPEC_PAGES.length} generated spec pages, and 2 XEG reference pages`);

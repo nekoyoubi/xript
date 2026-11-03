@@ -106,6 +106,10 @@ Loads a mod manifest, cross-validates it against the host manifest, and returns 
 
 Releases sandbox resources. `XriptRuntime` implements `IDisposable`, so `using` works.
 
+### `ExpressionReference.Json` / `ExpressionReference.Root`
+
+The machine-readable reference for XEG, the expression grammar behind `data-if`, `data-bind`, `data-each`, `data-key`, and `{{ }}`, embedded in the assembly: builtin signatures, descriptions, and examples, operators by precedence, evaluation rules, and the attributes that carry expressions. Read it to drive completion and hover help in an editor.
+
 ## When to use this vs other runtimes
 
 | | `Xript.Runtime` | `xript-runtime` (Rust) | `@xriptjs/runtime` | `@xriptjs/runtime-node` |

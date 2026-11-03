@@ -49,6 +49,8 @@ const SECTIONS = [
 			"spec/fragment-formats",
 			"spec/renderers",
 			"spec/expressions",
+			"spec/expression-builtins",
+			"spec/expression-operators",
 			"spec/capabilities",
 			"spec/bindings",
 			"spec/hooks",

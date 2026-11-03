@@ -1,6 +1,6 @@
 {
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
-	"$id": "https://xript.dev/schema/manifest/v0.9.json",
+	"$id": "https://xript.dev/schema/manifest/v0.10.json",
 	"title": "xript Manifest",
 	"description": "Declarative manifest for xript-enabled applications. Defines the API surface, capabilities, and documentation for modders.",
 	"type": "object",
@@ -414,7 +414,7 @@
 			"description": "A capability name: an optional 'read:'/'write:' mode prefix followed by a dot-delimited scope. Each scope segment is lowercase-hyphen (e.g. 'modify-player'). Absent prefix means write (full access). Examples: 'fs.addon', 'read:fs.addon', 'write:run.command'."
 		},
 		"typeRef": {
-			"description": "A reference to a type. Can be a primitive, a custom type name, an array type, a union, or a function. A parameter typed as a function receives a script callback that is callable only while the binding call runs.",
+			"description": "A reference to a type. Can be a primitive, a custom type name, an array type, a union, or a function. A parameter typed as a function receives a script callback that is callable only while the binding call runs, unless the parameter or field is marked `retain`.",
 			"oneOf": [
 				{
 					"type": "string",
@@ -545,6 +545,11 @@
 					"type": "boolean",
 					"description": "Marks a rest parameter: it absorbs every remaining argument, and 'type' names the type of each one. Only the last parameter may be variadic.",
 					"default": false
+				},
+				"retain": {
+					"type": "boolean",
+					"description": "Marks a function-typed parameter whose callback the host may retain past the binding call and call later. Only valid on a parameter typed as a function (bare, with a signature, or wrapped in 'optional'). Without it a callback is call-scoped.",
+					"default": false
 				}
 			},
 			"additionalProperties": false
@@ -575,13 +580,16 @@
 			]
 		},
 		"binding": {
-			"description": "A function or namespace exposed to scripts.",
+			"description": "A function, namespace, or accessor exposed to scripts.",
 			"oneOf": [
 				{
 					"$ref": "#/$defs/functionBinding"
 				},
 				{
 					"$ref": "#/$defs/namespaceBinding"
+				},
+				{
+					"$ref": "#/$defs/accessorBinding"
 				}
 			]
 		},
@@ -630,6 +638,52 @@
 				"deprecated": {
 					"type": "string",
 					"description": "If present, this function is deprecated. The value describes the migration path."
+				},
+				"optional": {
+					"$ref": "#/$defs/bindingOptional"
+				}
+			},
+			"additionalProperties": false
+		},
+		"bindingOptional": {
+			"type": "boolean",
+			"default": false,
+			"description": "Whether a conforming host may omit this binding. A host that omits an optional binding still constructs, and the binding reads as `undefined` in the sandbox, so a mod probes for it with `xript.has(path)` or a plain `typeof` check. Omitting a binding that is not optional is drift: the runtime reports it and installs a stub that throws when called."
+		},
+		"accessorBinding": {
+			"description": "A binding that reads as a value computed live by the host: every read calls the host's getter, and with a setter every assignment calls it with the assigned value. For live state such as a clock or a current selection, where a function call would be the wrong shape and an eager value would go stale. Usually a namespace member; at the top level it is a global accessor.",
+			"type": "object",
+			"required": [
+				"description",
+				"accessor"
+			],
+			"properties": {
+				"description": {
+					"type": "string",
+					"description": "What this value represents. Shown in generated docs and editor tooltips."
+				},
+				"accessor": {
+					"type": "string",
+					"enum": [
+						"get",
+						"get-set"
+					],
+					"description": "`get`: read-only, every read calls the host getter and assignment throws a `TypeError`. `get-set`: also writable, every assignment calls the host setter with the assigned value."
+				},
+				"type": {
+					"$ref": "#/$defs/typeRef",
+					"description": "The type of the value. Omit for an untyped value."
+				},
+				"capability": {
+					"$ref": "#/$defs/capabilityRef",
+					"description": "The capability required to read (and write) this value. Checked on every access, exactly as a function call is."
+				},
+				"deprecated": {
+					"type": "string",
+					"description": "If present, this value is deprecated. The value describes the migration path."
+				},
+				"optional": {
+					"$ref": "#/$defs/bindingOptional"
 				}
 			},
 			"additionalProperties": false
@@ -646,6 +700,9 @@
 					"type": "string",
 					"description": "What this namespace represents."
 				},
+				"optional": {
+					"$ref": "#/$defs/bindingOptional"
+				},
 				"members": {
 					"type": "object",
 					"propertyNames": {
@@ -655,7 +712,7 @@
 					"additionalProperties": {
 						"$ref": "#/$defs/binding"
 					},
-					"description": "The functions and sub-namespaces in this namespace."
+					"description": "The functions, sub-namespaces, and accessors in this namespace."
 				}
 			},
 			"additionalProperties": false
@@ -781,6 +838,11 @@
 					"type": "boolean",
 					"default": false,
 					"description": "When true, the `enum` values are the known set but any other string is also valid — an open enum. Codegen emits `... | (string & {})` so unlisted values still type-check; xript does not enforce the closed set at runtime regardless."
+				},
+				"retain": {
+					"type": "boolean",
+					"description": "Marks a function-typed field whose callback the host may retain past the binding call that received it and call later. Only valid on a field typed as a function (bare, with a signature, or wrapped in 'optional'). Without it a callback is call-scoped.",
+					"default": false
 				}
 			},
 			"additionalProperties": false
@@ -963,12 +1025,12 @@
 			"properties": {
 				"id": {
 					"type": "string",
-					"pattern": "^[a-z][a-z0-9.-]*$",
-					"description": "Unique event identifier (e.g. 'document.saved', 'selection.changed')."
+					"pattern": "^([a-z][a-z0-9-]*|<[A-Za-z_][A-Za-z0-9_]*>)(\\.([a-z0-9-]*|<[A-Za-z_][A-Za-z0-9_]*>))*$",
+					"description": "Unique event identifier (e.g. 'document.saved', 'selection.changed'): lowercase letters, digits, '.' and '-', starting with a letter. Segments are the '.'-separated parts. Only a 'pattern' entry may write a whole segment as <name>, marking a segment that varies."
 				},
 				"description": {
 					"type": "string",
-					"description": "What this event represents and when the host emits it. Shown in generated docs."
+					"description": "What this event represents and when the host emits it, as a sentence a stranger can act on. Shown in generated docs."
 				},
 				"payload": {
 					"$ref": "#/$defs/typeRef",
@@ -976,9 +1038,69 @@
 				},
 				"capability": {
 					"$ref": "#/$defs/capabilityRef",
-					"description": "The capability required to subscribe to this event via 'events.on'. If omitted, any script can subscribe. Gating happens at registration time, reusing the hook gate model: a grant satisfies it by mode-lattice and prefix-subsumption."
+					"description": "The capability required to subscribe to this event via 'events.on' or 'events.once'. If omitted, any script can subscribe. Gating happens at registration time, reusing the hook gate model: a grant satisfies it by mode-lattice and prefix-subsumption."
+				},
+				"emit": {
+					"type": "string",
+					"enum": [
+						"host",
+						"mods"
+					],
+					"default": "host",
+					"description": "Who may emit this event. 'host' (the default): only the host, through the runtime. 'mods': mods may also emit it with 'events.emit'."
+				},
+				"pattern": {
+					"type": "boolean",
+					"default": false,
+					"description": "The id is itself a family shape with no generic form, its varying segments written <name> (e.g. 'cell.<x>.<y>.lit'). A concrete id matching the shape segment by segment resolves to this entry. A <name> matches exactly one segment."
+				},
+				"addressed": {
+					"type": "array",
+					"items": {
+						"type": "string",
+						"pattern": "^([a-z][a-z0-9-]*|<[A-Za-z_][A-Za-z0-9_]*>)(\\.([a-z0-9-]*|<[A-Za-z_][A-Za-z0-9_]*>))*$"
+					},
+					"description": "Companion shapes the host emits alongside this generic event, carrying the subject's id: the generic 'stat.changed' declares ['stat.<instanceId>.changed']. A concrete id matching one resolves to this entry. A <name> matches exactly one segment, so a subject id containing a '.' does not fit one."
+				},
+				"keys": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"uniqueItems": true,
+					"description": "The payload's top-level keys. A subscription's 'match' option may name only these; a match on any other key is refused at subscribe time."
 				}
 			},
+			"allOf": [
+				{
+					"if": {
+						"required": [
+							"pattern"
+						],
+						"properties": {
+							"pattern": {
+								"const": true
+							}
+						}
+					},
+					"then": {
+						"properties": {
+							"id": {
+								"type": "string",
+								"pattern": "<"
+							}
+						}
+					},
+					"else": {
+						"properties": {
+							"id": {
+								"type": "string",
+								"pattern": "^[a-z][a-z0-9.-]*$"
+							}
+						}
+					}
+				}
+			],
 			"additionalProperties": false
 		},
 		"executionIntent": {
@@ -1030,6 +1152,12 @@
 					"minimum": 1,
 					"description": "Maximum call stack depth.",
 					"default": 256
+				},
+				"max_retained_callbacks": {
+					"type": "integer",
+					"minimum": 0,
+					"description": "Maximum number of retained callbacks the runtime holds at once. A retain that would exceed it is refused.",
+					"default": 10000
 				}
 			},
 			"additionalProperties": false

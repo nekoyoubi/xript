@@ -1,0 +1,47 @@
+{
+  "description": "Conformance corpus for object key order across the host boundary. A host object keeps the order its keys were written in, in both directions and when a hook payload spreads to arguments. Every key set here is deliberately out of code-point order. The JavaScript and C# runtimes keep authored order natively; the Rust runtime keeps it when built with its `preserve_order` cargo feature, and runs this corpus only then.",
+  "notes": [
+    "`inbound`: the binding `value` returns `hostValue`; the runtime executes `(function () { var v = value(); return (<probe>); })()` and the result must equal `expected`.",
+    "`echo`: the binding `echo` returns, as an array, the arguments it received. The runtime executes `script` and the result must equal `expected`.",
+    "`hook`: the setup script registers `hooks.probe(function () { return Array.prototype.join.call(arguments, ','); })`, then the host fires `probe` with `data` as its single payload value; the one result must equal `expected`. A Rust host fires it as `fire_hook(\"probe\", &[data])`."
+  ],
+  "manifest": {
+    "xript": "0.10",
+    "name": "key-order-probe",
+    "bindings": {
+      "value": { "description": "Returns the case's host value." },
+      "echo": { "description": "Returns the arguments it received, as an array." }
+    },
+    "hooks": {
+      "probe": { "description": "Reports the arguments its handlers receive." }
+    }
+  },
+  "inbound": [
+    {
+      "name": "a host object keeps its key order",
+      "hostValue": { "x": 1, "a": 2, "m": 3 },
+      "probe": "Object.keys(v).join(',') + '|' + JSON.stringify(v)",
+      "expected": "x,a,m|{\"x\":1,\"a\":2,\"m\":3}"
+    },
+    {
+      "name": "a nested object keeps its key order",
+      "hostValue": { "outer": { "z": true, "b": false } },
+      "probe": "(function () { var keys = []; for (var k in v.outer) keys.push(k); return keys.join(','); })()",
+      "expected": "z,b"
+    }
+  ],
+  "echo": [
+    {
+      "name": "a script object round-trips in authored order",
+      "script": "(function () { var r = echo({ x: 1, a: 2 }); return Object.keys(r[0]).join(','); })()",
+      "expected": "x,a"
+    }
+  ],
+  "hook": [
+    {
+      "name": "a payload object spreads in authored order",
+      "data": { "x": "X", "a": "A" },
+      "expected": "X,A"
+    }
+  ]
+}

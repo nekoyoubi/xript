@@ -34,6 +34,7 @@ use crate::debug::DebugSession;
 use crate::error::{Result, XriptError};
 use crate::fragment::ModInstance;
 use crate::manifest::Manifest;
+use crate::sandbox::HookFire;
 use crate::pending::{CallToken, Completer, Pending};
 use crate::sandbox::{
     CallTokenScope, ExecutionResult, HandlerIndex, RoleResolution, RuntimeOptions, RuntimeProbe,
@@ -114,7 +115,7 @@ enum CommandKind {
     },
     FireHook {
         hook: String,
-        payload: Vec<serde_json::Value>,
+        fire: HookFire,
         reply: Completer<Vec<serde_json::Value>>,
     },
     FireFragmentHook {
@@ -130,8 +131,13 @@ enum CommandKind {
     },
     FireHookTagged {
         hook: String,
-        payload: Vec<serde_json::Value>,
+        fire: HookFire,
         reply: Completer<Vec<TaggedResult>>,
+    },
+    FireHookOrdered {
+        hook: String,
+        fire: HookFire,
+        reply: Completer<Vec<crate::sandbox::OrderedResult>>,
     },
     EmitTagged {
         event: String,
@@ -141,6 +147,14 @@ enum CommandKind {
     HandlerIndexFor {
         mod_id: String,
         reply: Completer<HandlerIndex>,
+    },
+    CancelOwned {
+        mod_id: Option<String>,
+        reply: Completer<usize>,
+    },
+    DeclareEvent {
+        entry: serde_json::Value,
+        reply: Completer<serde_json::Value>,
     },
     ResolveCommands {
         slot_id: String,
@@ -158,6 +172,9 @@ enum CommandKind {
     },
     DebugSession {
         reply: Completer<Option<DebugSession>>,
+    },
+    ServeBus {
+        reply: Completer<usize>,
     },
     Stop {
         drop_queue: bool,
@@ -178,10 +195,16 @@ impl CommandKind {
             }
             CommandKind::Emit { event, .. } => ("emit", Some(event.clone())),
             CommandKind::FireHookTagged { hook, .. } => ("fire_hook", Some(hook.clone())),
+            CommandKind::FireHookOrdered { hook, .. } => ("fire_hook", Some(hook.clone())),
             CommandKind::EmitTagged { event, .. } => ("emit", Some(event.clone())),
             CommandKind::HandlerIndexFor { mod_id, .. } => {
                 ("handler_index", Some(mod_id.clone()))
             }
+            CommandKind::CancelOwned { mod_id, .. } => ("cancel_owned", mod_id.clone()),
+            CommandKind::DeclareEvent { entry, .. } => (
+                "declare_event",
+                entry.get("id").and_then(|id| id.as_str()).map(str::to_string),
+            ),
             CommandKind::ResolveCommands { slot_id, .. } => {
                 ("resolve_commands", Some(slot_id.clone()))
             }
@@ -192,6 +215,7 @@ impl CommandKind {
                 ("invoke_command", Some(command.id.clone()))
             }
             CommandKind::DebugSession { .. } => ("debug_session", None),
+            CommandKind::ServeBus { .. } => ("serve_bus", None),
             CommandKind::Stop { .. } => ("shutdown", None),
         };
         CallInfo {
@@ -211,12 +235,16 @@ impl CommandKind {
             CommandKind::FireFragmentHook { reply, .. } => reply.complete(Err(error())),
             CommandKind::Emit { reply, .. } => reply.complete(Err(error())),
             CommandKind::FireHookTagged { reply, .. } => reply.complete(Err(error())),
+            CommandKind::FireHookOrdered { reply, .. } => reply.complete(Err(error())),
             CommandKind::EmitTagged { reply, .. } => reply.complete(Err(error())),
             CommandKind::HandlerIndexFor { reply, .. } => reply.complete(Err(error())),
+            CommandKind::CancelOwned { reply, .. } => reply.complete(Err(error())),
+            CommandKind::DeclareEvent { reply, .. } => reply.complete(Err(error())),
             CommandKind::ResolveCommands { reply, .. } => reply.complete(Err(error())),
             CommandKind::ResolveCommandRef { reply, .. } => reply.complete(Err(error())),
             CommandKind::InvokeResolved { reply, .. } => reply.complete(Err(error())),
             CommandKind::DebugSession { reply, .. } => reply.complete(Err(error())),
+            CommandKind::ServeBus { reply } => reply.complete(Err(error())),
             CommandKind::Stop { reply, .. } => reply.complete(Err(error())),
         }
     }
@@ -282,6 +310,15 @@ impl XriptHandle {
     /// error and every queued and subsequent command fails with
     /// [`XriptError::InitFailed`].
     pub fn spawn(manifest_json: String, options: RuntimeOptions) -> (Self, Pending<()>) {
+        Self::spawn_seated(manifest_json, options, None)
+    }
+
+    /// [`spawn`](Self::spawn) with a seat on a shared events bus.
+    pub(crate) fn spawn_seated(
+        manifest_json: String,
+        options: RuntimeOptions,
+        bus_peer: Option<crate::bus_hub::BusPeer>,
+    ) -> (Self, Pending<()>) {
         let (cmd_tx, cmd_rx) = mpsc::channel::<Command>();
         let (init_reply, init_pending) = Pending::<()>::new(CallToken::new());
 
@@ -309,8 +346,8 @@ impl XriptHandle {
 
         let worker_shared = shared.clone();
         let thread = thread::spawn(move || {
-            let rt = match crate::sandbox::XriptRuntime::with_shared_probe(
-                manifest, mods, probe, options,
+            let rt = match crate::sandbox::XriptRuntime::with_peer(
+                manifest, mods, probe, options, bus_peer,
             ) {
                 Ok(rt) => {
                     init_reply.complete(Ok(()));
@@ -367,7 +404,10 @@ impl XriptHandle {
         build: impl FnOnce(Completer<T>) -> CommandKind,
     ) -> Pending<T> {
         let token = CallToken::new();
-        let (completer, pending) = Pending::<T>::new(token.clone());
+        let (mut completer, pending) = Pending::<T>::new(token.clone());
+        let shared = self.shared.clone();
+        let held = token.clone();
+        completer.before_delivery(move || forget_in_flight(&shared, &held));
         let kind = build(completer);
         if let Err(returned) = self.cmd_tx.send(Command { token, kind }) {
             let init_error = self
@@ -386,6 +426,29 @@ impl XriptHandle {
             self.wake_worker();
         }
         pending
+    }
+
+    /// Asks the runtime thread to serve what other runtimes on its shared bus
+    /// queued for it. Callable from any thread, and kept by the bus to wake an
+    /// idle worker.
+    pub(crate) fn bus_waker(&self) -> std::sync::Arc<dyn Fn() + Send + Sync> {
+        let cmd_tx = Mutex::new(self.cmd_tx.clone());
+        let shared = self.shared.clone();
+        std::sync::Arc::new(move || {
+            let token = CallToken::new();
+            let (completer, pending) = Pending::<usize>::new(token.clone());
+            pending.detach();
+            let command = Command {
+                token,
+                kind: CommandKind::ServeBus { reply: completer },
+            };
+            let sent = cmd_tx.lock().unwrap_or_else(|p| p.into_inner()).send(command);
+            if sent.is_ok()
+                && let Some(worker) = shared.worker.get()
+            {
+                worker.unpark();
+            }
+        })
     }
 
     fn wake_worker(&self) {
@@ -459,12 +522,44 @@ impl XriptHandle {
         payload: &[serde_json::Value],
     ) -> Pending<Vec<serde_json::Value>> {
         let hook = hook.to_string();
-        let payload = payload.to_vec();
-        self.send(|reply| CommandKind::FireHook {
-            hook,
-            payload,
-            reply,
-        })
+        let fire = HookFire::payload(payload);
+        self.send(|reply| CommandKind::FireHook { hook, fire, reply })
+    }
+
+    /// Fires one phase of a phased hook. See
+    /// [`XriptRuntime::fire_hook_phase`](crate::sandbox::XriptRuntime::fire_hook_phase).
+    pub fn fire_hook_phase(
+        &self,
+        hook: &str,
+        phase: &str,
+        data: Option<&serde_json::Value>,
+    ) -> Pending<Vec<serde_json::Value>> {
+        let hook = hook.to_string();
+        let fire = HookFire::phase(phase, data);
+        self.send(|reply| CommandKind::FireHook { hook, fire, reply })
+    }
+
+    /// [`fire_hook_phase`](Self::fire_hook_phase) with each result tagged by
+    /// the mod that registered the handler.
+    pub fn fire_hook_phase_tagged(
+        &self,
+        hook: &str,
+        phase: &str,
+        data: Option<&serde_json::Value>,
+    ) -> Pending<Vec<TaggedResult>> {
+        self.fire_tagged(hook, HookFire::phase(phase, data))
+    }
+
+    /// A fire whose results keep each handler's registration sequence, for a
+    /// pool to merge segments from several workers by.
+    pub(crate) fn fire_ordered(&self, hook: &str, fire: HookFire) -> Pending<Vec<crate::sandbox::OrderedResult>> {
+        let hook = hook.to_string();
+        self.send(|reply| CommandKind::FireHookOrdered { hook, fire, reply })
+    }
+
+    pub(crate) fn fire_tagged(&self, hook: &str, fire: HookFire) -> Pending<Vec<TaggedResult>> {
+        let hook = hook.to_string();
+        self.send(|reply| CommandKind::FireHookTagged { hook, fire, reply })
     }
 
     /// Fires a fragment lifecycle hook and returns the ops the handler queued.
@@ -510,13 +605,7 @@ impl XriptHandle {
         hook: &str,
         payload: &[serde_json::Value],
     ) -> Pending<Vec<TaggedResult>> {
-        let hook = hook.to_string();
-        let payload = payload.to_vec();
-        self.send(|reply| CommandKind::FireHookTagged {
-            hook,
-            payload,
-            reply,
-        })
+        self.fire_tagged(hook, HookFire::payload(payload))
     }
 
     /// [`emit`](Self::emit) with each result tagged by the subscribing mod.
@@ -538,6 +627,19 @@ impl XriptHandle {
     pub fn handler_index_for(&self, mod_id: &str) -> Pending<HandlerIndex> {
         let mod_id = mod_id.to_string();
         self.send(|reply| CommandKind::HandlerIndexFor { mod_id, reply })
+    }
+
+    /// Cancels every event subscription `mod_id` holds; see
+    /// [`XriptRuntime::cancel_owned`](crate::XriptRuntime::cancel_owned).
+    pub fn cancel_owned(&self, mod_id: Option<&str>) -> Pending<usize> {
+        let mod_id = mod_id.map(str::to_string);
+        self.send(|reply| CommandKind::CancelOwned { mod_id, reply })
+    }
+
+    /// Adds an event to the live catalogue; see
+    /// [`XriptRuntime::declare_event`](crate::XriptRuntime::declare_event).
+    pub fn declare_event(&self, entry: serde_json::Value) -> Pending<serde_json::Value> {
+        self.send(|reply| CommandKind::DeclareEvent { entry, reply })
     }
 
     // -- the off-thread fast lane -------------------------------------------
@@ -872,6 +974,15 @@ impl BlockingHandle<'_> {
         self.0.fire_hook(hook, payload).wait()
     }
 
+    pub fn fire_hook_phase(
+        &self,
+        hook: &str,
+        phase: &str,
+        data: Option<&serde_json::Value>,
+    ) -> Result<Vec<serde_json::Value>> {
+        self.0.fire_hook_phase(hook, phase, data).wait()
+    }
+
     pub fn fire_fragment_hook(
         &self,
         fragment_id: &str,
@@ -998,6 +1109,7 @@ fn run_blocking(rt: &crate::sandbox::XriptRuntime, cmd_rx: &mpsc::Receiver<Comma
         let Some(cmd) = shed_if_cancelled(shared, cmd) else {
             continue;
         };
+        let _ = rt.serve_bus();
         lock_in_flight(shared).push((cmd.kind.describe(), cmd.token.clone()));
         let _call = CallTokenScope::enter(cmd.token.clone());
         dispatch(rt, cmd.kind);
@@ -1080,6 +1192,7 @@ fn run_yielding(rt: &crate::sandbox::XriptRuntime, cmd_rx: &mpsc::Receiver<Comma
             let Some(cmd) = shed_if_cancelled(shared, cmd) else {
                 continue;
             };
+            let _ = rt.serve_bus();
             lock_in_flight(shared).push((cmd.kind.describe(), cmd.token.clone()));
             if !cmd.kind.yields() {
                 let _call = CallTokenScope::enter(cmd.token.clone());
@@ -1131,6 +1244,7 @@ impl CommandKind {
                 | CommandKind::InvokeExport { .. }
                 | CommandKind::FireHook { .. }
                 | CommandKind::FireHookTagged { .. }
+                | CommandKind::FireHookOrdered { .. }
                 | CommandKind::FireFragmentHook { .. }
                 | CommandKind::Emit { .. }
                 | CommandKind::EmitTagged { .. }
@@ -1151,16 +1265,15 @@ async fn dispatch_yielding(rt: &crate::sandbox::XriptRuntime, kind: CommandKind)
             Some(owner) => rt.invoke_mod_export_async(&owner, &name, &args).await,
             None => rt.invoke_export_async(&name, &args).await,
         }),
-        CommandKind::FireHook {
-            hook,
-            payload,
-            reply,
-        } => reply.complete(rt.fire_hook_async(&hook, &payload).await),
-        CommandKind::FireHookTagged {
-            hook,
-            payload,
-            reply,
-        } => reply.complete(rt.fire_hook_tagged_async(&hook, &payload).await),
+        CommandKind::FireHook { hook, fire, reply } => {
+            reply.complete(rt.fire_hook_with(&hook, &fire).await.map(crate::sandbox::untag))
+        }
+        CommandKind::FireHookTagged { hook, fire, reply } => {
+            reply.complete(rt.fire_hook_with(&hook, &fire).await)
+        }
+        CommandKind::FireHookOrdered { hook, fire, reply } => {
+            reply.complete(rt.fire_hook_ordered(&hook, &fire).await)
+        }
         CommandKind::FireFragmentHook {
             fragment_id,
             lifecycle,
@@ -1213,11 +1326,9 @@ fn dispatch(rt: &crate::sandbox::XriptRuntime, kind: CommandKind) {
             Some(owner) => rt.invoke_mod_export(&owner, &name, &args),
             None => rt.invoke_export(&name, &args),
         }),
-        CommandKind::FireHook {
-            hook,
-            payload,
-            reply,
-        } => reply.complete(rt.fire_hook(&hook, &payload)),
+        CommandKind::FireHook { hook, fire, reply } => {
+            reply.complete(pollster::block_on(rt.fire_hook_with(&hook, &fire)).map(crate::sandbox::untag))
+        }
         CommandKind::FireFragmentHook {
             fragment_id,
             lifecycle,
@@ -1229,11 +1340,12 @@ fn dispatch(rt: &crate::sandbox::XriptRuntime, kind: CommandKind) {
             payload,
             reply,
         } => reply.complete(rt.emit(&event, &payload)),
-        CommandKind::FireHookTagged {
-            hook,
-            payload,
-            reply,
-        } => reply.complete(rt.fire_hook_tagged(&hook, &payload)),
+        CommandKind::FireHookTagged { hook, fire, reply } => {
+            reply.complete(pollster::block_on(rt.fire_hook_with(&hook, &fire)))
+        }
+        CommandKind::FireHookOrdered { hook, fire, reply } => {
+            reply.complete(pollster::block_on(rt.fire_hook_ordered(&hook, &fire)))
+        }
         CommandKind::EmitTagged {
             event,
             payload,
@@ -1242,6 +1354,8 @@ fn dispatch(rt: &crate::sandbox::XriptRuntime, kind: CommandKind) {
         CommandKind::HandlerIndexFor { mod_id, reply } => {
             reply.complete(Ok(rt.handler_index_for(&mod_id)))
         }
+        CommandKind::CancelOwned { mod_id, reply } => reply.complete(rt.cancel_owned(mod_id.as_deref())),
+        CommandKind::DeclareEvent { entry, reply } => reply.complete(rt.declare_event(entry)),
         CommandKind::ResolveCommands {
             slot_id,
             all,
@@ -1260,6 +1374,7 @@ fn dispatch(rt: &crate::sandbox::XriptRuntime, kind: CommandKind) {
             reply,
         } => reply.complete(rt.invoke_command(&command, call_args.as_ref())),
         CommandKind::DebugSession { reply } => reply.complete(Ok(rt.debug_session().cloned())),
+        CommandKind::ServeBus { reply } => reply.complete(rt.serve_bus()),
         CommandKind::Stop { .. } => unreachable!("Stop is handled by the dispatch loop"),
     }
 }

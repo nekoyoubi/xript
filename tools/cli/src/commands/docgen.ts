@@ -99,7 +99,7 @@ function printHelp(): void {
 	console.log("  --frontmatter <s>  YAML frontmatter to inject into generated files");
 	console.log("  --grant-shapes     Emit a capability grant shapes reference page");
 	console.log("  --host <manifest>  For a mod manifest: the host it fills, so command fills and their gates are exact");
-	console.log("  --spec <version>   Check the manifest against this manifest version (0.6-0.9) before generating;");
+	console.log("  --spec <version>   Check the manifest against this manifest version (0.6-0.10) before generating;");
 	console.log("                     defaults to the manifest's $schema, then its xript field");
 	console.log("  --help, -h         Show this help message");
 }

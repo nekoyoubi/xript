@@ -20,6 +20,7 @@ fn render(source: &str, format: &str, bindings: &Value, interpolate: bool) -> (S
     render_declared(source, format, bindings, &names, interpolate)
 }
 
+#[allow(deprecated)]
 fn render_declared(
     source: &str,
     format: &str,

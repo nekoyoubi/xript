@@ -12,7 +12,7 @@ public sealed record FragmentCondition(IReadOnlyList<int> Path, string Expressio
 /// </summary>
 public sealed record BoundTree(
     List<FragmentNode> Tree,
-    Dictionary<string, bool> Visibility,
+    [property: Obsolete("Keyed by data-if expression text, so two nodes with the same condition collide. Use Conditions.")] Dictionary<string, bool> Visibility,
     List<FragmentCondition> Conditions)
 {
     /// <summary>Every <c>data-each</c> expansion, in document order.</summary>

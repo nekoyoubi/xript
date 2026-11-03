@@ -113,18 +113,8 @@ public static class ExprValue
         _ => "",
     };
 
-    /// <summary>
-    /// JavaScript's <c>String(number)</c> for the range fragments actually carry: integers
-    /// print without a decimal point, everything else prints its shortest round-tripping form.
-    /// </summary>
-    public static string FormatNumber(double value)
-    {
-        if (!double.IsFinite(value)) return "";
-        if (value == 0) return "0";
-        if (value == Math.Floor(value) && Math.Abs(value) < 1e21)
-            return ((long)value).ToString(CultureInfo.InvariantCulture);
-        return value.ToString("R", CultureInfo.InvariantCulture);
-    }
+    /// <summary>JavaScript's <c>String(number)</c>. See <see cref="XegText.FormatNumber"/>.</summary>
+    public static string FormatNumber(double value) => XegText.FormatNumber(value);
 
     public static double? AsNumber(object? value) =>
         value is double d && double.IsFinite(d) ? d : null;
@@ -200,9 +190,7 @@ public static class ExprValue
             case List<object?> items when name == "length":
                 return (double)items.Count;
             case List<object?> items:
-                return int.TryParse(name, NumberStyles.Integer, CultureInfo.InvariantCulture, out var index)
-                    ? ReadIndex(items, index)
-                    : null;
+                return Element(items, XegText.JsNumber(name));
             case string text when name == "length":
                 return (double)text.Length;
             default:
@@ -210,18 +198,20 @@ public static class ExprValue
         }
     }
 
-    public static object? ReadIndex(object? target, long index)
+    /// <summary>
+    /// Reads a numeric index: an array element or a string's code unit (a whole number,
+    /// counting from the end when negative), or the object key that <c>str</c> of the number spells.
+    /// </summary>
+    public static object? ReadIndex(object? target, double index)
     {
         switch (target)
         {
             case List<object?> items:
-                return ReadIndex(items, index);
-            case string text:
+                return Element(items, index < 0 ? items.Count + index : index);
+            case string text when index == Math.Floor(index):
             {
                 var resolved = index < 0 ? text.Length + index : index;
-                return resolved >= 0 && resolved < text.Length
-                    ? text[(int)resolved].ToString()
-                    : null;
+                return resolved >= 0 && resolved < text.Length ? text[(int)resolved].ToString() : null;
             }
             case Dictionary<string, object?> map:
                 return map.TryGetValue(FormatNumber(index), out var value) ? value : null;
@@ -230,9 +220,7 @@ public static class ExprValue
         }
     }
 
-    private static object? ReadIndex(List<object?> items, long index)
-    {
-        var resolved = index < 0 ? items.Count + index : index;
-        return resolved >= 0 && resolved < items.Count ? items[(int)resolved] : null;
-    }
+    /// <summary>The element at an already-resolved position, or <c>null</c> when it is not a whole number inside the list.</summary>
+    private static object? Element(List<object?> items, double position) =>
+        position == Math.Floor(position) && position >= 0 && position < items.Count ? items[(int)position] : null;
 }

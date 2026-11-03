@@ -35,6 +35,12 @@ primary        := Number | String | "true" | "false" | "null"
                 | "(" expr ")"
 ```
 
+Whitespace between tokens is space, tab, LF, CR, VT, or FF, and nothing else. A no-break
+space, U+2028, U+3000, or U+FEFF between tokens is an unexpected character, which is what a
+character pasted from rich text should be: a validate-time error, not a separator one
+runtime honours and another refuses. (A `{{ }}` site body is trimmed of JavaScript's
+whitespace set before it is parsed, so padding inside the delimiters may be any of it.)
+
 `Identifier` resolves **only** against the fill's declared `bindings` map, plus, inside a
 [`data-each`](./fragments.md#repeat-data-each) template, the names that template binds (its
 item, its optional index, and `$index`), which shadow the bindings they collide with. `Builtin`
@@ -52,7 +58,10 @@ array literals, no optional chaining, no bitwise operators, and no method calls 
 Every XEG expression is a **total pure function of the bindings map**. It cannot mutate, it
 cannot observe anything but its arguments, and it terminates: the grammar has no loop and
 no recursion, so evaluation cost is bounded by AST size, which is bounded at parse time
-(`maxExpressionNodes`, default 256).
+(`maxExpressionNodes`, default 256). Parsing is bounded the same way: parentheses, index
+brackets, and call argument lists nest at most 64 deep (`MAX_EXPRESSION_DEPTH`). A grouping
+parenthesis adds no node, so without that bound `((((…))))` would recurse the parser until the
+host's stack gave out, which no expression is allowed to do.
 
 A source outside the grammar is a parse error with a message that names the missing
 capability — `hp = 1` says assignment is not in the grammar, `{{#if x}}` says block helpers
@@ -73,16 +82,34 @@ Extensible only by spec revision. A host cannot register a builtin: that would b
 capability channel wearing a formatter's clothes, and formatting is not where a capability
 boundary belongs.
 
+Each builtin's full signature, description, and examples live in
+[`spec/expression-reference.json`](expression-reference.json), alongside the operators, the
+evaluation rules, and the attributes that carry expressions. Every runtime ships that file
+and takes its builtin table from it, and every example in it is a conformance case. An editor
+offering completion or hover help reads the reference rather than restating it. See
+[Tooling](#tooling). On xript.dev the reference renders as the
+[builtin reference](https://xript.dev/spec/expression-builtins/) (every signature, edge case,
+and example, by category) and the
+[operator table](https://xript.dev/spec/expression-operators/) (precedence, associativity,
+the evaluation rules, and the attributes), both generated from the file at build time.
+
 Notes on the less obvious ones:
 
 - `round` rounds half **up**, matching JavaScript's `Math.round`, not half-away-from-zero and
   not half-to-even. `round(-2.5)` is `-2`.
-- `fixed(x, n)` returns a **string** with exactly `n` decimal places, rounding half away
-  from zero, matching `Number.prototype.toFixed`.
+- `fixed(x, n)` returns a **string** with exactly `n` decimal places, matching
+  `Number.prototype.toFixed`: the **exact binary value** of `x` is rounded, a half going away
+  from zero. `fixed(1.45, 1)` is `"1.4"`, because `1.45` is stored just below the half, and
+  from `1e21` up the result is `str(x)`.
 - `pad(s, n, ch)` pads at the **start**, so numbers align right. `ch` defaults to a space.
 - `has` reads as membership: substring for a string, element for an array, own key for an
   object. An inherited key is never found.
 - `at` and `[…]` accept a negative index, counting from the end.
+- `upper` and `lower` use Unicode's default **full** case mapping, independent of locale.
+  `upper('ß')` is `"SS"`, and a capital sigma at the end of a word lowercases to `ς`.
+- `trim` strips JavaScript's whitespace set, which includes U+FEFF and excludes U+0085.
+- `num` converts a string as JavaScript's `Number` does, so `num('0x10')` is `16` and
+  `num('0b11')` is `3`, except that an empty string, `Infinity`, and `NaN` are all `null`.
 
 ## Semantics
 
@@ -95,7 +122,16 @@ five implementations drifted, so the corpus pins each rule:
 - Division or modulo by zero is `null`, not `Infinity` or `NaN`. Any non-finite result is
   `null`: a computation that leaves the reals leaves the value domain.
 - Ordering comparisons are defined on two numbers or two strings. Mixed types yield `false`,
-  not a coercion cascade.
+  not a coercion cascade. Strings order by UTF-16 code unit, as JavaScript's `<` does.
+- A string is a sequence of **UTF-16 code units**, exactly as JavaScript holds it. `len`,
+  `.length`, `slice`, `at`, `pad`, and `[…]` all count code units, so `len('😀')` is `2` in
+  every runtime, as it is in a browser. A slice can separate a surrogate pair, and the two
+  halves concatenate back into the character. A half that reaches a host which cannot hold
+  one (a Rust `String`) arrives there as U+FFFD; inside an expression it is exact.
+- A number renders as JavaScript's `String(number)`: the shortest digits that round-trip,
+  nearest the exact value when two qualify, in plain notation from `1e-6` up to `1e21` and in
+  exponent form (`1e-7`, `1e+21`) outside it. This is the rendering `str()`, `+`, `join`,
+  `data-bind`, and interpolation all share.
 - `==` is `===`. The loose form is accepted as a spelling of the strict one, so existing
   `data-if` bodies keep working; the corpus asserts identical results.
 - Two arrays or two objects are never equal, even to themselves. XEG has no identity to
@@ -103,11 +139,31 @@ five implementations drifted, so the corpus pins each rule:
   depend on the data rather than on the AST.
 - Reading a member of `null`, a key an object does not own, or an index past the end yields
   `null`. Nothing throws.
+- An object reaching an expression through a binding never carries the keys `__proto__`,
+  `constructor`, or `prototype`, at any depth: every runtime drops them when it takes the
+  value in, so `len`, `has`, member reads, and the value itself agree on what is there.
 - An undeclared identifier is a **validate-time error** and a runtime `null`.
 - Truthiness follows JavaScript: `null`, `false`, `0`, `NaN`, and `""` are falsy; an empty
   array or object is truthy.
 - Any evaluation failure yields `null`, which is falsy for `data-if` and renders as the
   empty string for `data-bind` and interpolation. No exception escapes an expression.
+
+### Known deviations from JavaScript
+
+Where the implementations disagreed, the TypeScript evaluator (what the web runtimes run) was
+taken as the behavior, and every runtime now matches it. In a few places that behavior is not
+JavaScript's. They are pinned in the corpus, so they are deliberate until a spec revision says
+otherwise:
+
+- `.5e1` is a parse error. A number literal that opens with its decimal point takes no
+  exponent, so it reads as `.5` followed by the name `e1`. JavaScript reads `5`; write `0.5e1`.
+- `effects['']` reads element 0. A string index on an array is converted with JavaScript's
+  `Number`, which reads a blank string as `0`. JavaScript reads `undefined`.
+- An object reaching an expression through a binding loses the keys `__proto__`,
+  `constructor`, and `prototype` (see above). In JavaScript an own key with one of those names
+  is ordinary data.
+- `a?.5:1` is a parse error that names optional chaining. JavaScript reads `?.` followed by a
+  digit as `?` and `.5`, so the same text is a conditional there; write `a ? .5 : 1`.
 
 ## `data-bind` is classified, not just accepted
 
@@ -284,6 +340,10 @@ surface makes that collision more likely, not less. `visibility` stays populated
   reads, a well-formed site in a fill that never set `interpolate`, a malformed `data-each`
   header, and a `data-key` with no `data-each`. Repeat names are scoped to their template's
   subtree, so a read of one is neither an unknown binding nor a read of the binding it shadows.
+  It also checks every builtin call against its signature in the expression reference: an
+  argument whose type is statically known (a literal, a binding whose fill declares a `type`,
+  or a builtin that always returns one type) and cannot match its parameter is a warning
+  naming the parameter and the type it expects, since the call would quietly yield `null`.
 - **`xript typegen --ambient`** emits a `XriptFragments` namespace with a per-fill bindings
   interface and a `keyof` alias, which is what an editor completes against inside `{{ … }}`,
   `data-if`, and `data-bind`. Binding value types come from the fill's optional `type` field;
@@ -293,6 +353,19 @@ surface makes that collision more likely, not less. `visibility` stays populated
 TypeScript cannot type-check a string embedded in markup, and faking it with
 template-literal type gymnastics would produce error messages no author could read. So the
 work splits: typegen emits the types, the analyzer does the checking.
+
+- **The expression reference** (`spec/expression-reference.json`, schema at
+  [`expression-reference.schema.json`](expression-reference.schema.json)) is what an editor
+  describes XEG with. It carries each builtin's parameters (name, type, whether optional, the
+  default, whether the tail is variadic), its return type, a description that names the edge
+  cases, and examples; each operator's precedence, associativity, and semantics; the
+  evaluation rules (truthiness, totality, identifiers, literals); and the `data-if`,
+  `data-bind`, `data-each`, `data-key`, and `{{ }}` sites with the `$index` name a repeat
+  binds. It ships as `EXPRESSION_REFERENCE` from `@xriptjs/sanitize`, as
+  `xript_expr::EXPRESSION_REFERENCE` (with `expression_reference()` for the parsed value), as
+  `ExpressionReference` in `Xript.Runtime`, and as the `xript://spec/expression-reference`
+  MCP resource. A host that writes its own builtin descriptions duplicates the spec and
+  drifts from it on the next revision.
 
 ## Conformance
 
@@ -308,9 +381,21 @@ work splits: typegen emits the types, the analyzer does the checking.
 | `conditions` | that `data-if` results are addressed by tree position |
 | `bind` | which `data-bind` bodies are writable |
 
+`spec/expression-reference.json` is held the same way. Every runtime evaluates each builtin
+and operator example in it against the corpus's `defaultBindings`, derives its builtin table
+from the reference's signatures (Rust holds its table to them by test), and checks that the
+copy it ships is identical to the spec's.
+
 `spec/repeat-tests.json` holds the `data-each` corpus: header parsing, expansion, scope and
 shadowing, totality, `data-if` per copy, key resolution, the copy ceiling, and the keyed
 patches an update produces. Every runtime asserts it.
+
+The corpus pins the cases someone thought of. `npm run fuzz:xeg` looks for the rest: a
+differential fuzzer (`scripts/xeg-fuzz/`) that generates expressions, interpolation texts, and
+`data-each` headers across the whole grammar, runs each through the TypeScript, Rust, and C#
+implementations, and reports every disagreement in parse acceptance, value, rendering, or
+truthiness as a minimal, seed-reproducible case. A divergence it finds is settled here and
+pinned in the corpus. See `scripts/xeg-fuzz/README.md`.
 
 The `safety` and `attributes` sections are written to fail against an implementation that
 substitutes values into the source string and re-parses. That is the failure mode the design

@@ -12,12 +12,37 @@ import { AmbiguousExportError, BindingError, CapabilityDeniedError, Cancellation
 import { grantedSatisfies } from "./capabilities.js";
 import { findImportSpecifier, findImportSpecifiers, detectCommonJS } from "./module-support.js";
 import { marshalToQuickJS, safeDispose } from "./marshal.js";
-import { CallbackScope, callbackSupportFor, functionParamChecks, functionParamViolation, releaseCallbackSupport } from "./callbacks.js";
+import { CallbackScope, callbackSupportFor, configureCallbacks, functionParamChecks, functionParamViolation, readResult, releaseCallbackSupport, type CallbackSupport } from "./callbacks.js";
+import { CallerContext, type CallerLane } from "./caller-context.js";
+import { DEFAULT_MAX_RETAINED_CALLBACKS } from "./retained.js";
+import { retainPositions } from "./retain-positions.js";
 import type { DebugOptions, DebugSession } from "./debug-types.js";
 import { DebugUnsupportedError } from "./debug-types.js";
 import { createDebugController, type DebugController } from "./debug-session.js";
 import { instrumentSource } from "./debug-instrument.js";
 import type { NodeRef } from "./fragment.js";
+import { resolveCallerAware } from "./with-caller.js";
+import { installEventBus, type EmitResult, type EventBus } from "./event-bus.js";
+import {
+	DeprecationChannel,
+	SHADOWING_BUILTINS,
+	UNTIMED,
+	reportShadowedBindings,
+	unbudgetedHandlerClock,
+	type DeprecationHandler,
+	type HandlerClock,
+} from "./deprecations.js";
+import {
+	DEFINE_ACCESSOR_SOURCE,
+	hostAccessorFor,
+	isAccessorBinding,
+	omitsBinding,
+	presenceProbeSource,
+	providedBindingPaths,
+	type HostAccessor,
+} from "./presence.js";
+
+export { missingBindingNames } from "./presence.js";
 
 function createCapabilityError(
 	context: QuickJSContext | QuickJSAsyncContext,
@@ -65,6 +90,7 @@ interface Manifest {
 	events?: EventDef[];
 	libraries?: Record<string, LibraryDef>;
 	limits?: ExecutionLimits;
+	types?: CallbackSupport["types"];
 }
 
 interface LibraryDef {
@@ -80,6 +106,7 @@ interface Slot {
 	description?: string;
 	capability?: string;
 	payload?: unknown;
+	limits?: { timeout_ms?: number };
 }
 
 const HOOK_SLOT_ACCEPT = "application/x-xript-hook";
@@ -96,6 +123,7 @@ function effectiveHooks(manifest: Manifest): Record<string, HookDef> {
 		hooks[slot.id] = {
 			description: slot.description ?? "",
 			capability: slot.capability,
+			...(slot.limits?.timeout_ms !== undefined ? { limits: { timeout_ms: slot.limits.timeout_ms } } : {}),
 		};
 	}
 	return hooks;
@@ -118,7 +146,7 @@ interface HookDef {
 	deprecated?: string;
 }
 
-type Binding = FunctionBinding | NamespaceBinding;
+type Binding = FunctionBinding | NamespaceBinding | AccessorBinding;
 
 interface FunctionBinding {
 	description: string;
@@ -127,11 +155,22 @@ interface FunctionBinding {
 	async?: boolean;
 	capability?: string;
 	deprecated?: string;
+	optional?: boolean;
 }
 
 interface NamespaceBinding {
 	description: string;
 	members: Record<string, Binding>;
+	optional?: boolean;
+}
+
+interface AccessorBinding {
+	description: string;
+	accessor: "get" | "get-set";
+	type?: unknown;
+	capability?: string;
+	deprecated?: string;
+	optional?: boolean;
 }
 
 interface Parameter {
@@ -139,6 +178,8 @@ interface Parameter {
 	type: unknown;
 	default?: unknown;
 	required?: boolean;
+	optional?: boolean;
+	variadic?: boolean;
 }
 
 interface CapabilityDef {
@@ -150,6 +191,7 @@ interface ExecutionLimits {
 	timeout_ms?: number;
 	memory_mb?: number;
 	max_stack_depth?: number;
+	max_retained_callbacks?: number;
 }
 
 /**
@@ -165,9 +207,10 @@ interface ExecutionLimits {
  */
 export type HostFunction = (...args: any[]) => unknown;
 export interface HostNamespace {
-	[key: string]: HostFunction | HostNamespace;
+	[key: string]: HostFunction | HostNamespace | HostAccessor;
 }
-export type HostBindings = Record<string, HostFunction | HostNamespace>;
+export type HostBindings = Record<string, HostFunction | HostNamespace | HostAccessor>;
+export type { HostAccessor };
 
 export type LogSeverity = "trace" | "debug" | "info" | "warn" | "error";
 
@@ -223,6 +266,10 @@ export interface SandboxOptions {
 	hardLimits?: HardLimits;
 	cancellation?: CancellationToken;
 	debug?: DebugOptions;
+	/** Receives deprecation notices; without it each code warns once on `console.warn`. */
+	onDeprecation?: DeprecationHandler;
+	/** Runs each hook and event fire under the script timeout, a fresh budget per fire. */
+	budgetHandlers?: boolean;
 }
 
 export interface ExecutionResult {
@@ -265,37 +312,12 @@ export function makeLibraryResolver(
 	};
 }
 
-/**
- * Every binding the manifest declares that the host did not supply, fully qualified and sorted.
- *
- * A declared-but-unsupplied binding still installs — as a stub that throws when a mod calls it —
- * so the manifest and the host's actual wiring could disagree indefinitely with nothing to catch
- * it. A mod author reads the manifest, ships against a binding that is documented and absent, and
- * the failure lands on a user. This is the drift, computed once at construction so a host can see
- * it before a mod does.
- */
-export function missingBindingNames(
-	bindings: Record<string, Binding> | undefined,
-	hostBindings: Record<string, unknown> | undefined,
-	prefix = "",
-): string[] {
-	if (!bindings) return [];
-	const missing: string[] = [];
-	for (const [name, binding] of Object.entries(bindings)) {
-		const qualified = prefix ? `${prefix}.${name}` : name;
-		const supplied = hostBindings?.[name];
-		if (isNamespace(binding)) {
-			const nested = typeof supplied === "object" && supplied !== null ? (supplied as Record<string, unknown>) : undefined;
-			missing.push(...missingBindingNames(binding.members, nested, qualified));
-		} else if (typeof supplied !== "function") {
-			missing.push(qualified);
-		}
-	}
-	return missing.sort();
-}
-
 function isNamespace(binding: Binding): binding is NamespaceBinding {
 	return "members" in binding;
+}
+
+function isAccessor(binding: Binding): binding is AccessorBinding {
+	return isAccessorBinding(binding);
 }
 
 function collectAsyncBindingNames(bindings: Record<string, Binding> | undefined, prefix = ""): string[] {
@@ -305,7 +327,7 @@ function collectAsyncBindingNames(bindings: Record<string, Binding> | undefined,
 		const qualifiedName = prefix ? `${prefix}.${name}` : name;
 		if (isNamespace(binding)) {
 			names.push(...collectAsyncBindingNames(binding.members, qualifiedName));
-		} else if (binding.async) {
+		} else if (!isAccessor(binding) && binding.async) {
 			names.push(qualifiedName);
 		}
 	}
@@ -349,7 +371,7 @@ function injectConsole(
 	for (const method of Object.keys(CONSOLE_METHOD_SEVERITY)) {
 		const severity = CONSOLE_METHOD_SEVERITY[method];
 		const fn = context.newFunction(method, (...handles: QuickJSHandle[]) => {
-			const args = handles.map((h) => context.dump(h));
+			const args = handles.map((h) => (context.typeof(h) === "function" ? context.dump(h) : readResult(context, h)));
 			dispatchConsole(sandboxConsole, method, severity, args);
 		});
 		context.setProp(consoleObj, method, fn);
@@ -449,6 +471,16 @@ const ASYNC_ON_SYNC_TIER_MESSAGE =
 const ASYNC_IN_CALLBACK_MESSAGE =
 	"cannot be called from inside a callback passed to a binding: it is async, and a callback runs synchronously";
 
+/**
+ * The asyncify build can hold one suspended call per runtime. A second async binding called
+ * while one is suspended is refused with this, rather than failing inside the engine.
+ */
+const ONE_SUSPENDED_CALL_MESSAGE =
+	"cannot suspend while another call on this runtime is suspended in an async binding: the asyncify build suspends one call at a time, so await async bindings from one call at a time, or give concurrent work its own runtime";
+
+/** Async contexts with a call suspended in an async binding right now. */
+const suspendedContexts = new WeakSet<QuickJSAsyncContext>();
+
 function createAsyncUnsupportedStub(
 	context: QuickJSContext | QuickJSAsyncContext,
 	qualifiedName: string,
@@ -467,6 +499,8 @@ function createHostFunctionWrapper(
 	audit?: (binding: string, capability: string | null) => void,
 ): QuickJSHandle {
 	const functionChecks = functionParamChecks(binding.params);
+	const support = callbackSupportFor(context);
+	const retainsAt = retainPositions(binding.params, support.types);
 	return context.newFunction(qualifiedName, (...handles: QuickJSHandle[]) => {
 		if (binding.capability && !grantedSatisfies(grantedCapabilities, binding.capability)) {
 			return createCapabilityError(context, qualifiedName, binding.capability);
@@ -481,9 +515,12 @@ function createHostFunctionWrapper(
 
 		if (audit) audit(qualifiedName, binding.capability ?? null);
 
-		const scope = new CallbackScope(context, callbackSupportFor(context), qualifiedName);
+		const scope = new CallbackScope(context, support, qualifiedName, retainsAt);
+		scope.enter();
 		try {
-			const nativeArgs = handles.map((h) => scope.unmarshal(h));
+			const nativeArgs = handles.map((h, i) => scope.unmarshal(h, i));
+			const halted = scope.takeOutcome(undefined);
+			if (halted) return { error: halted };
 			const result = hostFn(...nativeArgs);
 			const stopped = scope.takeOutcome(undefined);
 			if (stopped) return { error: stopped };
@@ -518,6 +555,7 @@ function registerAsyncBinding(
 	binding: FunctionBinding,
 	hostFn: HostFunction | undefined,
 	grantedCapabilities: Set<string>,
+	callerContext: CallerContext,
 	audit?: (binding: string, capability: string | null) => void,
 ): void {
 	const asyncKey = `__xript_async_${qualifiedName.replace(/\./g, "_")}`;
@@ -526,6 +564,8 @@ function registerAsyncBinding(
 
 	if (!capabilityDenied && !missingImpl) {
 		const functionChecks = functionParamChecks(binding.params);
+		const support = callbackSupportFor(context);
+		const retainsAt = retainPositions(binding.params, support.types);
 		const settle = async (scope: CallbackScope, nativeArgs: unknown[]) => {
 			try {
 				const result = await hostFn!(...nativeArgs);
@@ -550,18 +590,31 @@ function registerAsyncBinding(
 		const asyncImpl = context.newAsyncifiedFunction(asyncKey, ((...handles: QuickJSHandle[]) => {
 			const refusal = functionParamViolation(qualifiedName, functionChecks, (i) => argTypeOf(context, handles[i]));
 			if (refusal) return { error: context.newError({ name: "TypeError", message: refusal }) };
-			const support = callbackSupportFor(context);
 			if (support.depth > 0) return createBindingError(context, qualifiedName, ASYNC_IN_CALLBACK_MESSAGE);
+			if (suspendedContexts.has(context)) return createBindingError(context, qualifiedName, ONE_SUSPENDED_CALL_MESSAGE);
 			if (audit) audit(qualifiedName, binding.capability ?? null);
-			const scope = new CallbackScope(context, support, qualifiedName);
+			const scope = new CallbackScope(context, support, qualifiedName, retainsAt);
 			let nativeArgs: unknown[];
 			try {
-				nativeArgs = handles.map((h) => scope.unmarshal(h));
+				nativeArgs = handles.map((h, i) => scope.unmarshal(h, i));
 			} catch (e) {
 				scope.close();
 				throw e;
 			}
-			return settle(scope, nativeArgs);
+			const halted = scope.takeOutcome(undefined);
+			if (halted) {
+				scope.close();
+				return { error: halted };
+			}
+			const lane = callerContext.lane();
+			scope.enter();
+			try {
+				const pending = settle(scope, nativeArgs);
+				suspendedContexts.add(context);
+				return resumeWithin(callerContext, lane, pending, () => suspendedContexts.delete(context));
+			} finally {
+				scope.leave();
+			}
 		}) as AsyncFunctionImplementation);
 		context.setProp(context.global, asyncKey, asyncImpl);
 		asyncImpl.dispose();
@@ -589,6 +642,35 @@ function registerAsyncBinding(
 	wrapperResult.value.dispose();
 }
 
+/**
+ * Re-enters `lane` around the resumption of the call that awaited `pending`. The asyncify build
+ * resumes a suspended call synchronously inside the callback it passes to `then`, so running
+ * that callback in the lane brackets exactly the code the resumed call runs.
+ */
+function resumeWithin<T>(
+	callerContext: CallerContext,
+	lane: CallerLane,
+	pending: Promise<T>,
+	resumed: () => void,
+): Promise<T> {
+	const then = pending.then.bind(pending);
+	Object.defineProperty(pending, "then", {
+		value: (onFulfilled?: (value: T) => unknown, onRejected?: (reason: unknown) => unknown) =>
+			then(
+				(value: T) => {
+					resumed();
+					return onFulfilled ? callerContext.within(lane, () => onFulfilled(value)) : value;
+				},
+				(reason: unknown) => {
+					resumed();
+					if (onRejected) return callerContext.within(lane, () => onRejected(reason));
+					throw reason;
+				},
+			),
+	});
+	return pending;
+}
+
 function registerBinding(
 	context: QuickJSContext | QuickJSAsyncContext,
 	target: QuickJSHandle,
@@ -597,16 +679,16 @@ function registerBinding(
 	binding: FunctionBinding,
 	hostFn: HostFunction | undefined,
 	grantedCapabilities: Set<string>,
-	isAsync: boolean,
+	asyncCaller: CallerContext | null,
 	audit?: (binding: string, capability: string | null) => void,
 ): void {
-	if (isAsync && binding.async) {
-		registerAsyncBinding(context as QuickJSAsyncContext, qualifiedName, binding, hostFn, grantedCapabilities, audit);
+	if (asyncCaller && binding.async) {
+		registerAsyncBinding(context as QuickJSAsyncContext, qualifiedName, binding, hostFn, grantedCapabilities, asyncCaller, audit);
 		const gateKey = `__xript_gate_${qualifiedName.replace(/\./g, "_")}`;
 		const gateFn = context.getProp(context.global, gateKey);
 		context.setProp(target, propName, gateFn);
 		gateFn.dispose();
-	} else if (!isAsync && binding.async) {
+	} else if (!asyncCaller && binding.async) {
 		const stub = createAsyncUnsupportedStub(context, qualifiedName);
 		context.setProp(target, propName, stub);
 		stub.dispose();
@@ -624,12 +706,16 @@ function registerNamespaceMembers(
 	hostNs: HostNamespace | undefined,
 	qualifiedPrefix: string,
 	grantedCapabilities: Set<string>,
-	isAsync: boolean,
+	asyncCaller: CallerContext | null,
 	audit?: (binding: string, capability: string | null) => void,
 ): void {
 	for (const [memberName, memberBinding] of Object.entries(binding.members)) {
 		const qualifiedName = `${qualifiedPrefix}.${memberName}`;
-		if (isNamespace(memberBinding)) {
+		if (omitsBinding(memberBinding, hostNs, memberName)) {
+			context.setProp(nsObj, memberName, context.undefined);
+		} else if (isAccessor(memberBinding)) {
+			registerAccessor(context, nsObj, memberName, qualifiedName, memberBinding, hostNs, grantedCapabilities, audit);
+		} else if (isNamespace(memberBinding)) {
 			const nestedNsObj = context.newObject();
 			const nestedHostNs = hostNs ? (hostNs[memberName] as HostNamespace | undefined) : undefined;
 			registerNamespaceMembers(
@@ -639,15 +725,49 @@ function registerNamespaceMembers(
 				nestedHostNs,
 				qualifiedName,
 				grantedCapabilities,
-				isAsync,
+				asyncCaller,
 				audit,
 			);
 			context.setProp(nsObj, memberName, nestedNsObj);
 			nestedNsObj.dispose();
 		} else {
 			const hostFn = hostNs ? (hostNs[memberName] as HostFunction | undefined) : undefined;
-			registerBinding(context, nsObj, memberName, qualifiedName, memberBinding, hostFn, grantedCapabilities, isAsync, audit);
+			registerBinding(context, nsObj, memberName, qualifiedName, memberBinding, hostFn, grantedCapabilities, asyncCaller, audit);
 		}
+	}
+}
+
+function registerAccessor(
+	context: QuickJSContext | QuickJSAsyncContext,
+	target: QuickJSHandle,
+	propName: string,
+	qualifiedName: string,
+	binding: AccessorBinding,
+	hostContainer: unknown,
+	grantedCapabilities: Set<string>,
+	audit?: (binding: string, capability: string | null) => void,
+): void {
+	const supplied = hostAccessorFor(hostContainer, propName, binding.accessor);
+	const gate: FunctionBinding = { description: binding.description, capability: binding.capability };
+	const handles: QuickJSHandle[] = [];
+	try {
+		const define = context.unwrapResult(context.evalCode(DEFINE_ACCESSOR_SOURCE, "xript-accessor.js"));
+		handles.push(define);
+		const getter = createHostFunctionWrapper(context, qualifiedName, gate, supplied?.get, grantedCapabilities, audit);
+		handles.push(getter);
+		let setter: QuickJSHandle = context.undefined;
+		if (binding.accessor === "get-set") {
+			setter = createHostFunctionWrapper(context, qualifiedName, gate, supplied?.set, grantedCapabilities, audit);
+			handles.push(setter);
+		}
+		const key = context.newString(propName);
+		handles.push(key);
+		const name = context.newString(qualifiedName);
+		handles.push(name);
+		const result = context.callFunction(define, context.undefined, target, key, getter, setter, name);
+		handles.push(context.unwrapResult(result));
+	} finally {
+		for (const handle of handles) safeDispose(context, handle);
 	}
 }
 
@@ -656,21 +776,26 @@ function injectBindings(
 	manifest: Manifest,
 	hostBindings: HostBindings,
 	grantedCapabilities: Set<string>,
-	isAsync: boolean,
+	asyncCaller: CallerContext | null,
 	audit?: (binding: string, capability: string | null) => void,
 ): void {
+	evalAndDispose(context, presenceProbeSource(providedBindingPaths(manifest.bindings, hostBindings)));
 	if (!manifest.bindings) return;
 
 	for (const [name, binding] of Object.entries(manifest.bindings)) {
-		if (isNamespace(binding)) {
+		if (omitsBinding(binding, hostBindings, name)) {
+			context.setProp(context.global, name, context.undefined);
+		} else if (isAccessor(binding)) {
+			registerAccessor(context, context.global, name, name, binding, hostBindings, grantedCapabilities, audit);
+		} else if (isNamespace(binding)) {
 			const nsObj = context.newObject();
 			const hostNs = hostBindings[name] as HostNamespace | undefined;
-			registerNamespaceMembers(context, nsObj, binding, hostNs, name, grantedCapabilities, isAsync, audit);
+			registerNamespaceMembers(context, nsObj, binding, hostNs, name, grantedCapabilities, asyncCaller, audit);
 			context.setProp(context.global, name, nsObj);
 			nsObj.dispose();
 		} else {
 			const hostFn = hostBindings[name] as HostFunction | undefined;
-			registerBinding(context, context.global, name, name, binding, hostFn, grantedCapabilities, isAsync, audit);
+			registerBinding(context, context.global, name, name, binding, hostFn, grantedCapabilities, asyncCaller, audit);
 		}
 	}
 
@@ -682,7 +807,8 @@ const DEEP_FREEZE_HELPER = `
 		if (obj === null || typeof obj !== "object") return obj;
 		var keys = Object.getOwnPropertyNames(obj);
 		for (var i = 0; i < keys.length; i++) {
-			var value = obj[keys[i]];
+			var descriptor = Object.getOwnPropertyDescriptor(obj, keys[i]);
+			var value = descriptor && descriptor.value;
 			if (value !== null && typeof value === "object") {
 				globalThis.__xript_deep_freeze(value);
 			}
@@ -710,14 +836,45 @@ export interface FireHookOptions {
 	data?: unknown;
 }
 
-function injectHookHelpers(context: QuickJSContext | QuickJSAsyncContext): void {
-	evalAndDispose(context, `
+/**
+ * Evaluates `factorySource`, a `(function (enterCaller, leaveCaller) { ... })` expression, and
+ * calls it with host functions that enter and leave a mod on the caller context. The two are
+ * reachable only inside the factory's closure, never as globals.
+ */
+function evalWithCallerContext(
+	context: QuickJSContext | QuickJSAsyncContext,
+	callerContext: CallerContext,
+	factorySource: string,
+	clock: HandlerClock = UNTIMED,
+): void {
+	const factory = context.unwrapResult(context.evalCode(factorySource, "xript-dispatch.js"));
+	const enter = context.newFunction("enterCaller", (owner: QuickJSHandle) => {
+		const modId = context.dump(owner);
+		callerContext.enter(typeof modId === "string" ? modId : null);
+		clock.start(callerContext.depth);
+	});
+	const leave = context.newFunction("leaveCaller", () => {
+		clock.stop(callerContext.depth);
+		callerContext.leave();
+	});
+	const result = context.callFunction(factory, context.undefined, enter, leave);
+	enter.dispose();
+	leave.dispose();
+	factory.dispose();
+	context.unwrapResult(result).dispose();
+}
+
+function injectHookHelpers(context: QuickJSContext | QuickJSAsyncContext, callerContext: CallerContext, clock: HandlerClock): void {
+	evalWithCallerContext(context, callerContext, `(function (enterCaller, leaveCaller) {
+		var owners = {};
 		globalThis.__xript_hook_handlers = {};
-		globalThis.__xript_register_handler = function(key, handler) {
+		globalThis.__xript_register_handler = function(key, handler, owner) {
 			if (!globalThis.__xript_hook_handlers[key]) {
 				globalThis.__xript_hook_handlers[key] = [];
+				owners[key] = [];
 			}
 			globalThis.__xript_hook_handlers[key].push(handler);
+			owners[key].push(typeof owner === "string" ? owner : null);
 		};
 		globalThis.__xript_fire_handlers = function(key, data) {
 			var handlers = globalThis.__xript_hook_handlers[key];
@@ -732,26 +889,32 @@ function injectHookHelpers(context: QuickJSContext | QuickJSAsyncContext): void 
 			}
 			var results = [];
 			for (var i = 0; i < handlers.length; i++) {
+				enterCaller(owners[key] ? owners[key][i] : null);
 				try {
 					results.push(handlers[i].apply(null, args));
 				} catch(e) {
 					results.push(undefined);
+				} finally {
+					leaveCaller();
 				}
 			}
 			return results;
 		};
-	`);
+	})`, clock);
 }
 
 function registerHandlerInContext(
 	context: QuickJSContext | QuickJSAsyncContext,
 	registryKey: string,
 	handlerHandle: QuickJSHandle,
+	owner: string | null,
 ): void {
 	const registerFn = context.getProp(context.global, "__xript_register_handler");
 	const keyStr = context.newString(registryKey);
-	const callResult = context.callFunction(registerFn, context.undefined, keyStr, handlerHandle);
+	const ownerHandle = owner === null ? context.null : context.newString(owner);
+	const callResult = context.callFunction(registerFn, context.undefined, keyStr, handlerHandle, ownerHandle);
 	keyStr.dispose();
+	safeDispose(context, ownerHandle);
 	registerFn.dispose();
 	if (callResult.error) callResult.error.dispose();
 	else callResult.value.dispose();
@@ -761,8 +924,10 @@ function injectHooks(
 	context: QuickJSContext | QuickJSAsyncContext,
 	manifest: Manifest,
 	grantedCapabilities: Set<string>,
+	callerContext: CallerContext,
+	clock: HandlerClock,
 ): void {
-	injectHookHelpers(context);
+	injectHookHelpers(context, callerContext, clock);
 
 	const hooks = effectiveHooks(manifest);
 	if (Object.keys(hooks).length === 0) {
@@ -785,7 +950,7 @@ function injectHooks(
 					if (handles.length === 0) {
 						return createBindingError(context, `hooks.${hookName}.${phase}`, "expected a handler function");
 					}
-					registerHandlerInContext(context, registryKey, handles[0]);
+					registerHandlerInContext(context, registryKey, handles[0], callerContext.current());
 				});
 				context.setProp(hookNs, phase, regFn);
 				regFn.dispose();
@@ -802,7 +967,7 @@ function injectHooks(
 				if (handles.length === 0) {
 					return createBindingError(context, `hooks.${hookName}`, "expected a handler function");
 				}
-				registerHandlerInContext(context, registryKey, handles[0]);
+				registerHandlerInContext(context, registryKey, handles[0], callerContext.current());
 			});
 			context.setProp(hooksObj, hookName, regFn);
 			regFn.dispose();
@@ -812,133 +977,6 @@ function injectHooks(
 	context.setProp(context.global, "hooks", hooksObj);
 	hooksObj.dispose();
 
-}
-
-function injectEventHelpers(context: QuickJSContext | QuickJSAsyncContext): void {
-	evalAndDispose(context, `
-		globalThis.__xript_event_handlers = {};
-		globalThis.__xript_register_event_handler = function(id, handler) {
-			if (!globalThis.__xript_event_handlers[id]) {
-				globalThis.__xript_event_handlers[id] = [];
-			}
-			globalThis.__xript_event_handlers[id].push(handler);
-		};
-		globalThis.__xript_emit = function(id, payload) {
-			var handlers = globalThis.__xript_event_handlers[id];
-			if (!handlers || handlers.length === 0) return [];
-			var args;
-			if (payload === undefined) {
-				args = [];
-			} else if (typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
-				args = Object.values(payload);
-			} else {
-				args = [payload];
-			}
-			var results = [];
-			for (var i = 0; i < handlers.length; i++) {
-				try {
-					results.push(handlers[i].apply(null, args));
-				} catch(e) {
-					results.push(undefined);
-				}
-			}
-			return results;
-		};
-	`);
-}
-
-function injectEvents(
-	context: QuickJSContext | QuickJSAsyncContext,
-	manifest: Manifest,
-	grantedCapabilities: Set<string>,
-): void {
-	injectEventHelpers(context);
-
-	const eventDefs = manifest.events ?? [];
-	const gateByEventId = new Map<string, string | undefined>();
-	for (const def of eventDefs) {
-		gateByEventId.set(def.id, def.capability);
-	}
-
-	const subscribe = context.newFunction("events.on", (...handles: QuickJSHandle[]) => {
-		if (handles.length < 2) {
-			return createBindingError(context, "events.on", "expected (eventId, handler)");
-		}
-		const eventId = context.dump(handles[0]);
-		if (typeof eventId !== "string" || eventId.length === 0) {
-			return createBindingError(context, "events.on", "eventId must be a non-empty string");
-		}
-		if (!gateByEventId.has(eventId)) {
-			return createBindingError(context, "events.on", `event '${eventId}' is not declared in the host manifest`);
-		}
-		const required = gateByEventId.get(eventId);
-		if (required && !grantedSatisfies(grantedCapabilities, required)) {
-			return createCapabilityError(context, "events.on", required);
-		}
-
-		const registerFn = context.getProp(context.global, "__xript_register_event_handler");
-		const idStr = context.newString(eventId);
-		const callResult = context.callFunction(registerFn, context.undefined, idStr, handles[1]);
-		idStr.dispose();
-		registerFn.dispose();
-		if (callResult.error) {
-			callResult.error.dispose();
-		} else {
-			callResult.value.dispose();
-		}
-	});
-
-	const eventsObj = context.newObject();
-	context.setProp(eventsObj, "on", subscribe);
-	context.setProp(eventsObj, "subscribe", subscribe);
-	subscribe.dispose();
-
-	context.setProp(context.global, "events", eventsObj);
-	eventsObj.dispose();
-
-	evalAndDispose(context, "Object.freeze(globalThis.events);");
-}
-
-function emitInContext(
-	context: QuickJSContext | QuickJSAsyncContext,
-	manifest: Manifest,
-	eventId: string,
-	payload?: unknown,
-): unknown[] {
-	const declared = manifest.events?.some((e) => e.id === eventId) ?? false;
-	if (!declared) return [];
-
-	const emitFn = context.getProp(context.global, "__xript_emit");
-	const idStr = context.newString(eventId);
-
-	const payloadHandle = payload !== undefined
-		? marshalToQuickJS(context, payload)
-		: context.undefined;
-
-	const callResult = context.callFunction(emitFn, context.undefined, idStr, payloadHandle);
-	idStr.dispose();
-	if (payload !== undefined) safeDispose(context, payloadHandle);
-	emitFn.dispose();
-
-	if (callResult.error) {
-		callResult.error.dispose();
-		return [];
-	}
-
-	const arrHandle = callResult.value;
-	const lengthHandle = context.getProp(arrHandle, "length");
-	const length = context.dump(lengthHandle) as number;
-	lengthHandle.dispose();
-
-	const results: unknown[] = [];
-	for (let i = 0; i < length; i++) {
-		const elemHandle = context.getProp(arrHandle, String(i));
-		results.push(context.dump(elemHandle));
-		elemHandle.dispose();
-	}
-
-	arrHandle.dispose();
-	return results;
 }
 
 function freezeHooksAndFragments(
@@ -1111,9 +1149,9 @@ function callInvokeExport(
 	args: unknown[],
 	owner: string | undefined,
 ) {
+	const argsHandle = marshalToQuickJS(context, args);
 	const invokeFn = context.getProp(context.global, "__xript_invoke_export");
 	const nameStr = context.newString(exportName);
-	const argsHandle = marshalToQuickJS(context, args);
 	const ownerHandle = owner === undefined ? context.undefined : context.newString(owner);
 
 	const callResult = context.callFunction(invokeFn, context.undefined, nameStr, argsHandle, ownerHandle);
@@ -1122,6 +1160,31 @@ function callInvokeExport(
 	if (owner !== undefined) ownerHandle.dispose();
 	invokeFn.dispose();
 	return callResult;
+}
+
+/**
+ * The mod an export invocation runs on behalf of: the owner the host named, else the single
+ * mod whose namespace provides the export. The host's own namespace is no mod.
+ */
+function exportCaller(
+	context: QuickJSContext | QuickJSAsyncContext,
+	exportName: string,
+	owner: string | undefined,
+): string | null {
+	if (owner !== undefined) return owner === "" ? null : owner;
+	const ownersOf = context.getProp(context.global, "__xript_export_owners_of");
+	const nameStr = context.newString(exportName);
+	const result = context.callFunction(ownersOf, context.undefined, nameStr);
+	nameStr.dispose();
+	ownersOf.dispose();
+	if (result.error) {
+		result.error.dispose();
+		return null;
+	}
+	const owners = context.dump(result.value) as unknown;
+	result.value.dispose();
+	if (!Array.isArray(owners) || owners.length !== 1 || typeof owners[0] !== "string" || owners[0] === "") return null;
+	return owners[0];
 }
 
 function setExportOwnerInContext(
@@ -1135,17 +1198,6 @@ function setExportOwnerInContext(
 	setter.dispose();
 	if (result.error) result.error.dispose();
 	else result.value.dispose();
-}
-
-/**
- * Dumps a result handle for the host, marshalling a bare script function to null. A function
- * carries no data across the boundary and must not reach the host as something callable;
- * `context.dump` already drops or nulls functions nested in objects and arrays, so only the
- * top-level handle needs this guard.
- */
-function dumpForHost(context: QuickJSContext | QuickJSAsyncContext, handle: QuickJSHandle): unknown {
-	if (context.typeof(handle) === "function") return null;
-	return context.dump(handle);
 }
 
 function invokeExportInContext(
@@ -1162,7 +1214,7 @@ function invokeExportInContext(
 		throwInvokeFailure(errorObj, exportName);
 	}
 
-	const value = dumpForHost(context, callResult.value);
+	const value = readResult(context, callResult.value);
 	callResult.value.dispose();
 	return value;
 }
@@ -1194,7 +1246,7 @@ async function invokeExportAsyncInContext(
 		throwInvokeFailure(errorObj, exportName);
 	}
 
-	const value = dumpForHost(context, awaited.value);
+	const value = readResult(context, awaited.value);
 	if (awaited.value.alive) awaited.value.dispose();
 	return value;
 }
@@ -1206,12 +1258,12 @@ function fireFragmentHookInContext(
 	bindings?: Record<string, unknown>,
 ): RawFragmentOp[] {
 	const registryKey = `fragment:${lifecycle}:${fragmentId}`;
-	const fireFn = context.getProp(context.global, "__xript_fire_fragment_handlers");
-	const keyStr = context.newString(registryKey);
-
 	const bindingsHandle = bindings !== undefined
 		? marshalToQuickJS(context, bindings)
 		: context.undefined;
+
+	const fireFn = context.getProp(context.global, "__xript_fire_fragment_handlers");
+	const keyStr = context.newString(registryKey);
 
 	const callResult = context.callFunction(fireFn, context.undefined, keyStr, bindingsHandle);
 	keyStr.dispose();
@@ -1233,6 +1285,7 @@ function fireHookInContext(
 	manifest: Manifest,
 	hookName: string,
 	options?: FireHookOptions,
+	budgeted = false,
 ): unknown[] {
 	const hookDef = effectiveHooks(manifest)[hookName];
 	if (!hookDef) return [];
@@ -1247,13 +1300,13 @@ function fireHookInContext(
 		registryKey = hookName;
 	}
 
-	const fireFn = context.getProp(context.global, "__xript_fire_handlers");
-	const keyStr = context.newString(registryKey);
-
 	const data = options?.data;
 	const dataHandle = data !== undefined
 		? marshalToQuickJS(context, data)
 		: context.undefined;
+
+	const fireFn = context.getProp(context.global, "__xript_fire_handlers");
+	const keyStr = context.newString(registryKey);
 
 	const callResult = context.callFunction(fireFn, context.undefined, keyStr, dataHandle);
 	keyStr.dispose();
@@ -1261,24 +1314,31 @@ function fireHookInContext(
 	fireFn.dispose();
 
 	if (callResult.error) {
+		const dumped = budgeted ? (context.dump(callResult.error) as { message?: string } | undefined) : undefined;
 		callResult.error.dispose();
+		if (budgeted) throw new Error(dumped?.message ?? String(dumped));
 		return [];
 	}
 
 	const arrHandle = callResult.value;
-	const lengthHandle = context.getProp(arrHandle, "length");
-	const length = context.dump(lengthHandle) as number;
-	lengthHandle.dispose();
+	try {
+		const lengthHandle = context.getProp(arrHandle, "length");
+		const length = context.getNumber(lengthHandle);
+		lengthHandle.dispose();
 
-	const results: unknown[] = [];
-	for (let i = 0; i < length; i++) {
-		const elemHandle = context.getProp(arrHandle, String(i));
-		results.push(context.dump(elemHandle));
-		elemHandle.dispose();
+		const results: unknown[] = [];
+		for (let i = 0; i < length; i++) {
+			const elemHandle = context.getProp(arrHandle, i);
+			try {
+				results.push(readResult(context, elemHandle));
+			} finally {
+				elemHandle.dispose();
+			}
+		}
+		return results;
+	} finally {
+		arrHandle.dispose();
 	}
-
-	arrHandle.dispose();
-	return results;
 }
 
 export type FragmentOpName =
@@ -1317,6 +1377,19 @@ export interface RawFragmentOp {
 	attr?: string;
 	value?: unknown;
 }
+
+/**
+ * Evaluates to the host's half of a one-value slot: the host puts an invocation's arguments in
+ * and the evaluated call takes them out, so they reach the sandbox without passing through a
+ * global a mod could have replaced.
+ */
+const INVOKE_ARGS_SLOT = `(function () {
+	var held;
+	Object.defineProperty(globalThis, "__xript_take_invoke_args", {
+		value: function () { var value = held; held = undefined; return value; },
+	});
+	return function (value) { held = value; };
+})()`;
 
 function harvestModuleExports(
 	context: QuickJSAsyncContext,
@@ -1367,8 +1440,95 @@ export interface SandboxResult {
 	fireHook: (hookName: string, options?: FireHookOptions) => unknown[];
 	fireFragmentHook: (fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>) => RawFragmentOp[];
 	emit: (eventId: string, payload?: unknown) => unknown[];
+	/** {@link emit} with each result tagged by the mod that subscribed the handler. */
+	emitTagged: (eventId: string, payload?: unknown) => EmitResult[];
+	/** Cancels every subscription `owner` holds and returns how many there were. */
+	cancelOwned: (owner: string | null) => number;
+	/** Adds an event to the catalogue at runtime; returns the entry as stored. */
+	declareEvent: (entry: unknown) => unknown;
+	/** Which mod is running right now; the runtime pushes it around every entry into a mod. */
+	callerContext: CallerContext;
 	debugSession: () => DebugSession | null;
+	/** Releases every retained callback the named mod supplied; returns how many. */
+	releaseRetained: (modName: string) => number;
 	dispose: () => void;
+}
+
+function busArgs(payload: unknown): unknown[] {
+	return payload === undefined ? [] : [payload];
+}
+
+/**
+ * The deadline a hook or event fire runs under when the host opted into handler budgets: `arm`
+ * pushes it and returns its pop, and `stopped` turns the interruption that ends an over-budget
+ * fire into the execution-limit error `execute` would have raised.
+ */
+interface FireBudget {
+	arm(limitMs: number): () => void;
+	stopped(error: unknown, limitMs: number): unknown;
+}
+
+function fireBudget(
+	pushInterruptFrame: (deadline: number, cancellation?: CancellationToken) => () => void,
+	cancellation: CancellationToken | undefined,
+): FireBudget {
+	return {
+		arm: (limitMs) => pushInterruptFrame(Date.now() + limitMs, cancellation),
+		stopped: (error, limitMs) => interruptAsLimit(error, limitMs, cancellation),
+	};
+}
+
+/**
+ * The host side of the bus. An emit restores the caller stack on the way out: a handler stopped
+ * by its deadline never runs the kernel's per-handler pop.
+ */
+function busSurface(bus: EventBus, callerContext: CallerContext, budget?: FireBudget, limitMs = DEFAULT_TIMEOUT_MS) {
+	const emitTagged = (eventId: string, payload?: unknown): EmitResult[] => {
+		const depth = callerContext.depth;
+		const disarm = budget?.arm(limitMs);
+		try {
+			return bus.emit(eventId, busArgs(payload));
+		} catch (error) {
+			throw budget ? budget.stopped(error, limitMs) : error;
+		} finally {
+			disarm?.();
+			callerContext.unwindTo(depth);
+		}
+	};
+	return {
+		emit: (eventId: string, payload?: unknown) => emitTagged(eventId, payload).map((result) => result.value),
+		emitTagged,
+		cancelOwned: (owner: string | null) => bus.cancelOwned(owner),
+		declareEvent: (entry: unknown) => bus.declare(entry),
+		callerContext,
+	};
+}
+
+/**
+ * The current value of each top-level binding the runtime may install a built-in over, taken
+ * once bindings are in place so the end of construction can tell which ones a built-in replaced.
+ */
+function captureShadowable(
+	context: QuickJSContext | QuickJSAsyncContext,
+	bindings: Record<string, unknown> | undefined,
+): Array<[string, QuickJSHandle]> {
+	if (!bindings) return [];
+	return SHADOWING_BUILTINS.filter((name) => Object.prototype.hasOwnProperty.call(bindings, name)).map((name) => [
+		name,
+		context.getProp(context.global, name),
+	]);
+}
+
+/** The captured bindings whose global no longer holds the host's value; disposes the captures. */
+function replacedBindings(context: QuickJSContext | QuickJSAsyncContext, captured: Array<[string, QuickJSHandle]>): string[] {
+	const replaced: string[] = [];
+	for (const [name, before] of captured) {
+		const after = context.getProp(context.global, name);
+		if (!context.sameValue(before, after)) replaced.push(name);
+		safeDispose(context, after);
+		safeDispose(context, before);
+	}
+	return replaced;
 }
 
 /**
@@ -1397,7 +1557,7 @@ interface InterruptFrame {
  * cannot, because the handler stays installed until the stack empties and the
  * tightest live deadline always governs.
  */
-function createInterruptStack(runtime: QuickJSRuntime | QuickJSAsyncRuntime) {
+function createInterruptStack(runtime: QuickJSRuntime | QuickJSAsyncRuntime, callerContext: CallerContext) {
 	const frames: InterruptFrame[] = [];
 
 	function handler(): boolean {
@@ -1412,11 +1572,13 @@ function createInterruptStack(runtime: QuickJSRuntime | QuickJSAsyncRuntime) {
 		const frame: InterruptFrame = { deadline, cancellation };
 		frames.push(frame);
 		if (frames.length === 1) runtime.setInterruptHandler(handler);
+		const callerDepth = callerContext.depth;
 
 		let popped = false;
 		return () => {
 			if (popped) return;
 			popped = true;
+			callerContext.unwindTo(callerDepth);
 			const index = frames.lastIndexOf(frame);
 			if (index !== -1) frames.splice(index, 1);
 			if (frames.length === 0) runtime.removeInterruptHandler();
@@ -1485,7 +1647,7 @@ function injectDebugProbe(context: QuickJSAsyncContext, controller: DebugControl
 	const pauseFn = context.newAsyncifiedFunction(controller.probeNames.pause, async (...handles: QuickJSHandle[]) => {
 		const line = context.dump(handles[0]) as number;
 		const column = context.dump(handles[1]) as number;
-		const locals = handles.length > 2 ? (context.dump(handles[2]) as Record<string, unknown>) : {};
+		const locals = handles.length > 2 ? (readResult(context, handles[2], false) as Record<string, unknown>) : {};
 		await pause(line, column, locals);
 		return context.undefined;
 	});
@@ -1502,7 +1664,9 @@ export function createSandboxSync(
 			"Debugging requires the async sandbox. Use createSandboxAsync (the QuickJS-WASM sync sandbox cannot pause synchronously).",
 		);
 	}
-	const { manifest, hostBindings, capabilities = [], cancellation } = options;
+	const { manifest, capabilities = [], cancellation } = options;
+	const callerContext = new CallerContext();
+	const hostBindings = resolveCallerAware(options.hostBindings, callerContext);
 	const grantedCapabilities = new Set(capabilities);
 	validateLibraryRegistration(manifest, options.libraries);
 	const limits = manifest.limits || {};
@@ -1520,7 +1684,7 @@ export function createSandboxSync(
 	const auditEmit = makeAuditEmitter(options.audit);
 
 	const runtime = quickjs.newRuntime();
-	const pushInterruptFrame = createInterruptStack(runtime);
+	const pushInterruptFrame = createInterruptStack(runtime, callerContext);
 
 	if (memoryMb) {
 		runtime.setMemoryLimit(memoryMb * 1024 * 1024);
@@ -1530,6 +1694,13 @@ export function createSandboxSync(
 	}
 
 	const context = runtime.newContext();
+	const retained = configureCallbacks(context, manifest.types, {
+		callerContext,
+		limit: limits.max_retained_callbacks ?? DEFAULT_MAX_RETAINED_CALLBACKS,
+		timeoutMs,
+		pushInterruptFrame,
+		cancellation,
+	}).retained!;
 
 	const sandboxConsole = options.console ?? {};
 
@@ -1543,12 +1714,17 @@ export function createSandboxSync(
 	injectConsole(context, sandboxConsole);
 	blockCodeGeneration(context);
 	injectErrorClasses(context);
-	injectBindings(context, manifest, hostBindings, grantedCapabilities, false, auditEmit);
-	injectHooks(context, manifest, grantedCapabilities);
-	injectEvents(context, manifest, grantedCapabilities);
+	injectBindings(context, manifest, hostBindings, grantedCapabilities, null, auditEmit);
+	const shadowable = captureShadowable(context, manifest.bindings);
+	const deprecations = new DeprecationChannel(options.onDeprecation);
+	const handlerBudget = options.budgetHandlers ? fireBudget(pushInterruptFrame, cancellation) : undefined;
+	const clock: HandlerClock = handlerBudget ? UNTIMED : unbudgetedHandlerClock(timeoutMs, deprecations);
+	injectHooks(context, manifest, grantedCapabilities, callerContext, clock);
+	const bus = installEventBus(context, manifest.events, grantedCapabilities, callerContext, clock);
 	injectFragmentAPI(context);
 	injectExportsAPI(context);
 	freezeHooksAndFragments(context, manifest);
+	reportShadowedBindings(deprecations, replacedBindings(context, shadowable));
 
 	function execute(code: string): ExecutionResult {
 		if (cancellation?.cancelled) throw new CancellationError();
@@ -1568,7 +1744,7 @@ export function createSandboxSync(
 			throwFromError(errorObj, timeoutMs, cancellation);
 		}
 
-		const value = dumpForHost(context, result.value);
+		const value = readResult(context, result.value);
 		result.value.dispose();
 		return { value, duration_ms };
 	}
@@ -1605,7 +1781,7 @@ export function createSandboxSync(
 			throwFromError(errorObj, timeoutMs, cancellation);
 		}
 
-		const value = dumpForHost(context, awaited.value);
+		const value = readResult(context, awaited.value);
 		if (awaited.value.alive) awaited.value.dispose();
 		return { value, duration_ms };
 	}
@@ -1615,7 +1791,9 @@ export function createSandboxSync(
 		const budgetMs = callTimeoutMs(timeoutOverrideMs);
 		const popInterrupt = pushInterruptFrame(Date.now() + budgetMs, cancellation);
 		try {
-			return invokeExportInContext(context, name, args, owner);
+			return callerContext.run(exportCaller(context, name, owner), () =>
+				invokeExportInContext(context, name, args, owner),
+			);
 		} catch (error) {
 			throw interruptAsLimit(error, budgetMs, cancellation);
 		} finally {
@@ -1633,7 +1811,9 @@ export function createSandboxSync(
 		const budgetMs = callTimeoutMs(timeoutOverrideMs);
 		const popInterrupt = pushInterruptFrame(Date.now() + budgetMs, cancellation);
 		try {
-			return await invokeExportAsyncInContext(context, runtime, name, args, owner);
+			return await callerContext.runAsync(exportCaller(context, name, owner), () =>
+				invokeExportAsyncInContext(context, runtime, name, args, owner),
+			);
 		} catch (error) {
 			throw interruptAsLimit(error, budgetMs, cancellation);
 		} finally {
@@ -1646,15 +1826,34 @@ export function createSandboxSync(
 	}
 
 	function fireHook(hookName: string, opts?: FireHookOptions): unknown[] {
-		return fireHookInContext(context, manifest, hookName, opts);
+		const depth = callerContext.depth;
+		if (!handlerBudget) {
+			try {
+				return fireHookInContext(context, manifest, hookName, opts);
+			} finally {
+				callerContext.unwindTo(depth);
+			}
+		}
+		const limitMs = callTimeoutMs(effectiveHooks(manifest)[hookName]?.limits?.timeout_ms);
+		const disarm = handlerBudget.arm(limitMs);
+		try {
+			return fireHookInContext(context, manifest, hookName, opts, true);
+		} catch (error) {
+			const stopped = handlerBudget.stopped(error, limitMs);
+			if (stopped !== error) throw stopped;
+			return [];
+		} finally {
+			disarm();
+			callerContext.unwindTo(depth);
+		}
 	}
 
 	function fireFragmentHook(fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>): RawFragmentOp[] {
 		return fireFragmentHookInContext(context, fragmentId, lifecycle, bindings);
 	}
 
-	function emit(eventId: string, payload?: unknown): unknown[] {
-		return emitInContext(context, manifest, eventId, payload);
+	function releaseRetained(modName: string): number {
+		return retained.releaseOwner(modName);
 	}
 
 	function debugExecute(): Promise<ExecutionResult> {
@@ -1672,12 +1871,13 @@ export function createSandboxSync(
 	}
 
 	function dispose(): void {
+		bus.dispose();
 		releaseCallbackSupport(context);
 		context.dispose();
 		runtime.dispose();
 	}
 
-	return { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, setExportOwner, fireHook, fireFragmentHook, emit, debugSession, dispose };
+	return { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, setExportOwner, fireHook, fireFragmentHook, ...busSurface(bus, callerContext, handlerBudget, callTimeoutMs()), debugSession, releaseRetained, dispose };
 }
 
 export async function createSandboxAsync(
@@ -1686,7 +1886,9 @@ export async function createSandboxAsync(
 ): Promise<SandboxResult> {
 	const { newAsyncContext } = await import("#quickjs-async");
 
-	const { manifest, hostBindings, capabilities = [], cancellation } = options;
+	const { manifest, capabilities = [], cancellation } = options;
+	const callerContext = new CallerContext();
+	const hostBindings = resolveCallerAware(options.hostBindings, callerContext);
 	const grantedCapabilities = new Set(capabilities);
 	const limits = manifest.limits || {};
 	const hard = options.hardLimits || {};
@@ -1704,7 +1906,14 @@ export async function createSandboxAsync(
 
 	const context = await newAsyncContext(variant);
 	const runtime = context.runtime;
-	const pushInterruptFrame = createInterruptStack(runtime);
+	const pushInterruptFrame = createInterruptStack(runtime, callerContext);
+	const retained = configureCallbacks(context, manifest.types, {
+		callerContext,
+		limit: limits.max_retained_callbacks ?? DEFAULT_MAX_RETAINED_CALLBACKS,
+		timeoutMs,
+		pushInterruptFrame,
+		cancellation,
+	}).retained!;
 
 	validateLibraryRegistration(manifest, options.libraries);
 	const resolveLibrary = makeLibraryResolver(manifest, options.libraries, grantedCapabilities);
@@ -1731,15 +1940,66 @@ export async function createSandboxAsync(
 	injectConsole(context, sandboxConsole);
 	blockCodeGeneration(context);
 	injectErrorClasses(context);
-	injectBindings(context, manifest, hostBindings, grantedCapabilities, true, auditEmit);
-	injectHooks(context, manifest, grantedCapabilities);
-	injectEvents(context, manifest, grantedCapabilities);
+	injectBindings(context, manifest, hostBindings, grantedCapabilities, callerContext, auditEmit);
+	const shadowable = captureShadowable(context, manifest.bindings);
+	const deprecations = new DeprecationChannel(options.onDeprecation);
+	const handlerBudget = options.budgetHandlers ? fireBudget(pushInterruptFrame, cancellation) : undefined;
+	const clock: HandlerClock = handlerBudget ? UNTIMED : unbudgetedHandlerClock(timeoutMs, deprecations);
+	injectHooks(context, manifest, grantedCapabilities, callerContext, clock);
+	const bus = installEventBus(context, manifest.events, grantedCapabilities, callerContext, clock);
 	injectFragmentAPI(context);
 	injectExportsAPI(context);
 	freezeHooksAndFragments(context, manifest);
+	reportShadowedBindings(deprecations, replacedBindings(context, shadowable));
 
 	if (debugController) {
 		injectDebugProbe(context, debugController);
+	}
+
+	const putInvokeArgs = context.unwrapResult(context.evalCode(INVOKE_ARGS_SLOT, "xript-invoke-args.js"));
+
+	/**
+	 * Drains the job queue in `lane`: the continuations it runs belong to the call that queued
+	 * them, so they are credited to that call's mod rather than to whichever call drains them.
+	 */
+	function drainWithin(lane: CallerLane): void {
+		callerContext.within(lane, () => runtime.executePendingJobs());
+	}
+
+	/**
+	 * Invokes an export through `evalCodeAsync`, the one entry point the asyncify build can
+	 * suspend, so an export that awaits an async binding parks until the binding settles
+	 * instead of returning before it has run.
+	 */
+	async function invokeSuspendable(name: string, args: unknown[], owner: string | undefined): Promise<unknown> {
+		const lane = callerContext.lane();
+		const argsHandle = marshalToQuickJS(context, args);
+		const put = context.callFunction(putInvokeArgs, context.undefined, argsHandle);
+		safeDispose(context, argsHandle);
+		if (put.error) put.error.dispose();
+		else put.value.dispose();
+		const ownerExpr = owner === undefined ? "undefined" : JSON.stringify(owner);
+		const result = await context.evalCodeAsync(
+			`__xript_invoke_export(${JSON.stringify(name)}, __xript_take_invoke_args(), ${ownerExpr})`,
+			"xript-invoke.js",
+		);
+		if (result.error) {
+			const errorObj = context.dump(result.error) as InvokeErrorDump;
+			if (result.error.alive) result.error.dispose();
+			throwInvokeFailure(errorObj, name);
+		}
+		const resolved = context.resolvePromise(result.value);
+		if (result.value.alive) result.value.dispose();
+		drainWithin(lane);
+		const awaited = await resolved;
+		if (awaited.error) {
+			const errorObj = context.dump(awaited.error) as InvokeErrorDump;
+			if (awaited.error.alive) awaited.error.dispose();
+			throwInvokeFailure(errorObj, name);
+		}
+		const value = readResult(context, awaited.value);
+		if (awaited.value.alive) awaited.value.dispose();
+		return value;
 	}
 
 	function execute(code: string): ExecutionResult {
@@ -1760,7 +2020,7 @@ export async function createSandboxAsync(
 			throwFromError(errorObj, timeoutMs, cancellation);
 		}
 
-		const value = dumpForHost(context, result.value);
+		const value = readResult(context, result.value);
 		result.value.dispose();
 		return { value, duration_ms };
 	}
@@ -1774,6 +2034,7 @@ export async function createSandboxAsync(
 		debugController.setBreakableLines("xript-script.js", breakableLines);
 		const wrappedCode = `(async () => { ${instrumented} })()`;
 		const start = performance.now();
+		const lane = callerContext.lane();
 		const result = await context.evalCodeAsync(wrappedCode, "xript-script.js");
 
 		if (result.error) {
@@ -1785,7 +2046,7 @@ export async function createSandboxAsync(
 		const promiseHandle = result.value;
 		const resolved = context.resolvePromise(promiseHandle);
 		if (promiseHandle.alive) promiseHandle.dispose();
-		runtime.executePendingJobs();
+		drainWithin(lane);
 
 		const awaited = await resolved;
 		const duration_ms = performance.now() - start;
@@ -1796,7 +2057,7 @@ export async function createSandboxAsync(
 			throwFromError(errorObj, timeoutMs, cancellation);
 		}
 
-		const value = context.dump(awaited.value);
+		const value = readResult(context, awaited.value);
 		if (awaited.value.alive) awaited.value.dispose();
 		debugController.session.resume();
 		return { value, duration_ms };
@@ -1815,6 +2076,7 @@ export async function createSandboxAsync(
 		}
 
 		const popInterrupt = pushInterruptFrame(Date.now() + timeoutMs, cancellation);
+		const lane = callerContext.lane();
 		let namespace: QuickJSHandle;
 		try {
 			const result = await context.evalCodeAsync(code, `xript-mod-${modName}.js`, { type: "module" });
@@ -1826,7 +2088,7 @@ export async function createSandboxAsync(
 
 			const resolved = context.resolvePromise(result.value);
 			if (result.value.alive) result.value.dispose();
-			runtime.executePendingJobs();
+			drainWithin(lane);
 			const awaited = await resolved;
 			if (awaited.error) {
 				const errorObj = context.dump(awaited.error) as { message?: string } | undefined;
@@ -1846,6 +2108,7 @@ export async function createSandboxAsync(
 		const wrappedCode = `(async () => { ${code} })()`;
 		const popInterrupt = pushInterruptFrame(Date.now() + timeoutMs, cancellation);
 		const start = performance.now();
+		const lane = callerContext.lane();
 		let result;
 		try {
 			result = await context.evalCodeAsync(wrappedCode, "xript-script.js");
@@ -1862,7 +2125,7 @@ export async function createSandboxAsync(
 		const promiseHandle = result.value;
 		const resolved = context.resolvePromise(promiseHandle);
 		if (promiseHandle.alive) promiseHandle.dispose();
-		runtime.executePendingJobs();
+		drainWithin(lane);
 
 		const awaited = await resolved;
 		const duration_ms = performance.now() - start;
@@ -1873,7 +2136,7 @@ export async function createSandboxAsync(
 			throwFromError(errorObj, timeoutMs, cancellation);
 		}
 
-		const value = dumpForHost(context, awaited.value);
+		const value = readResult(context, awaited.value);
 		if (awaited.value.alive) awaited.value.dispose();
 		return { value, duration_ms };
 	}
@@ -1883,7 +2146,9 @@ export async function createSandboxAsync(
 		const budgetMs = callTimeoutMs(timeoutOverrideMs);
 		const popInterrupt = pushInterruptFrame(Date.now() + budgetMs, cancellation);
 		try {
-			return invokeExportInContext(context, name, args, owner);
+			return callerContext.run(exportCaller(context, name, owner), () =>
+				invokeExportInContext(context, name, args, owner),
+			);
 		} catch (error) {
 			throw interruptAsLimit(error, budgetMs, cancellation);
 		} finally {
@@ -1901,7 +2166,9 @@ export async function createSandboxAsync(
 		const budgetMs = callTimeoutMs(timeoutOverrideMs);
 		const popInterrupt = pushInterruptFrame(Date.now() + budgetMs, cancellation);
 		try {
-			return await invokeExportAsyncInContext(context, runtime, name, args, owner);
+			return await callerContext.runAsync(exportCaller(context, name, owner), () =>
+				invokeSuspendable(name, args, owner),
+			);
 		} catch (error) {
 			throw interruptAsLimit(error, budgetMs, cancellation);
 		} finally {
@@ -1914,22 +2181,43 @@ export async function createSandboxAsync(
 	}
 
 	function fireHook(hookName: string, opts?: FireHookOptions): unknown[] {
-		return fireHookInContext(context, manifest, hookName, opts);
+		const depth = callerContext.depth;
+		if (!handlerBudget) {
+			try {
+				return fireHookInContext(context, manifest, hookName, opts);
+			} finally {
+				callerContext.unwindTo(depth);
+			}
+		}
+		const limitMs = callTimeoutMs(effectiveHooks(manifest)[hookName]?.limits?.timeout_ms);
+		const disarm = handlerBudget.arm(limitMs);
+		try {
+			return fireHookInContext(context, manifest, hookName, opts, true);
+		} catch (error) {
+			const stopped = handlerBudget.stopped(error, limitMs);
+			if (stopped !== error) throw stopped;
+			return [];
+		} finally {
+			disarm();
+			callerContext.unwindTo(depth);
+		}
 	}
 
 	function fireFragmentHook(fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>): RawFragmentOp[] {
 		return fireFragmentHookInContext(context, fragmentId, lifecycle, bindings);
 	}
 
-	function emit(eventId: string, payload?: unknown): unknown[] {
-		return emitInContext(context, manifest, eventId, payload);
+	function releaseRetained(modName: string): number {
+		return retained.releaseOwner(modName);
 	}
 
 	function dispose(): void {
+		bus.dispose();
+		putInvokeArgs.dispose();
 		releaseCallbackSupport(context);
 		context.dispose();
 		runtime.dispose();
 	}
 
-	return { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, setExportOwner, fireHook, fireFragmentHook, emit, debugSession, dispose };
+	return { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, setExportOwner, fireHook, fireFragmentHook, ...busSurface(bus, callerContext, handlerBudget, callTimeoutMs()), debugSession, releaseRetained, dispose };
 }

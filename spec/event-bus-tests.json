@@ -1,0 +1,572 @@
+{
+	"description": "Conformance corpus for the events bus and caller identity. Every runtime runs each case the same way: build the host manifest from `base` overlaid with the case's `host`, create a runtime granting `grants`, run `prelude` and then the case's `script` as host code (no owning mod), load each entry of `mods` in order, then run `steps` in order. Results are compared after a JSON round trip, so `undefined` reads as `null`.",
+	"notes": [
+		"A mod is loaded from the manifest { xript, name, version: '1.0.0', entry: 'main.js' } whose entry source is `trampoline` followed by the mod's own `source`. The trampoline registers one export, `call`, which applies the named global function to the given arguments, so a step can run any function from `script` with that mod as the caller.",
+		"Step kinds. `{ as, call, args, expect }`: `as` a mod name invokes that mod's `call` export through the runtime's owned-export invoke; `as: null` runs the function as host code through `execute`. `{ emit, payload?, expect }`: host emit; omit `payload` to emit without one; `expect` is the handler results in order. `{ cancelOwned, expect }`: the runtime's host-side cancel for one owner. `{ declare, expect }` or `{ declare, throws: true }`: the runtime's host-side event declaration.",
+		"`callerBindings` names the bindings the harness supplies in caller-aware form (JS/Node `withCaller`, Rust `add_function_with_caller`, C# the `CallerHostFunction` overload). Each one returns `{ modId, binding, args }` built from the call info and the arguments that followed it.",
+		"The bus is one JavaScript source every runtime installs verbatim, so error names (`BindingError`, `CapabilityDeniedError`) are part of the contract and the `attempt` helper reports them.",
+		"Promise jobs a step queues have run before the next step starts. Rust and Jint run them before a call returns. QuickJS behind `@xriptjs/runtime` runs them only when its host asks, and a Node `vm` context shares the host's microtask queue, so those runners await an `executeAsync` between steps. The `emitAsync` cases record how each promise settled with `track` and read it back in a later step.",
+		"Event ids keep the manifest grammar (lowercase letters, digits, '.', '-'); segments are the '.'-separated parts. The only new form is a whole segment written <name>, legal in a `pattern: true` id or an `addressed` form. A <name> matches exactly one segment, so a subject id that itself contains a dot (`stat.hero.hp.changed` against `stat.<instanceId>.changed`) does not match; the `stat.a.b.changed` case pins that."
+	],
+	"base": { "xript": "0.10", "name": "bus-host" },
+	"prelude": "function attempt(fn) { try { return fn(); } catch (e) { return { threw: e.name }; } }",
+	"trampoline": "xript.exports.register('call', function (name, args) { return globalThis[name].apply(null, args || []); });\n",
+	"cases": [
+		{
+			"name": "a subscription returns a storable id, its event, and a cancel function",
+			"host": { "events": [{ "id": "tick", "description": "Fired once per frame." }] },
+			"script": "function sub() { var a = events.on('tick', function () { return 1; }); var b = events.subscribe('tick', function () { return 2; }); return { idIsString: typeof a.id === 'string', distinct: a.id !== b.id, event: a.event, cancelIsFunction: typeof a.cancel === 'function', frozen: Object.isFrozen(a) }; }",
+			"mods": [{ "name": "alpha" }],
+			"steps": [
+				{ "as": "alpha", "call": "sub", "args": [], "expect": { "idIsString": true, "distinct": true, "event": "tick", "cancelIsFunction": true, "frozen": true } },
+				{ "emit": "tick", "expect": [1, 2] }
+			]
+		},
+		{
+			"name": "handlers run in subscription order across mods and a throwing handler does not stop the rest",
+			"host": { "events": [{ "id": "tick", "description": "Fired once per frame." }] },
+			"script": "function sub(tag) { events.on('tick', function () { return tag; }); return null; } function subThrow() { events.on('tick', function () { throw new Error('boom'); }); return null; }",
+			"mods": [{ "name": "alpha" }, { "name": "beta" }],
+			"steps": [
+				{ "as": "alpha", "call": "sub", "args": ["a"], "expect": null },
+				{ "as": "beta", "call": "subThrow", "args": [], "expect": null },
+				{ "as": "alpha", "call": "sub", "args": ["c"], "expect": null },
+				{ "emit": "tick", "expect": ["a", null, "c"] },
+				{ "emit": "not.declared", "payload": {}, "expect": [] }
+			]
+		},
+		{
+			"name": "an object payload spreads its values, a scalar is one argument, no payload is none",
+			"host": { "events": [{ "id": "document.saved", "description": "Fired after a document is written to disk." }] },
+			"script": "function sub() { events.on('document.saved', function () { return Array.prototype.slice.call(arguments); }); return null; }",
+			"mods": [{ "name": "alpha" }],
+			"steps": [
+				{ "as": "alpha", "call": "sub", "args": [], "expect": null },
+				{ "emit": "document.saved", "payload": { "name": "draft.md", "size": 3 }, "expect": [["draft.md", 3]] },
+				{ "emit": "document.saved", "payload": 5, "expect": [[5]] },
+				{ "emit": "document.saved", "expect": [[]] }
+			]
+		},
+		{
+			"name": "once spends the subscription before its handler runs, so a throwing handler does not resubscribe",
+			"host": { "events": [{ "id": "tick", "description": "Fired once per frame." }] },
+			"script": "var saved = {}; var log = []; function subOnce() { saved.h = events.once('tick', function () { log.push('once'); throw new Error('boom'); }); return null; } function state() { return { log: log, count: events.listenerCount('tick'), again: saved.h.cancel() }; }",
+			"mods": [{ "name": "alpha" }],
+			"steps": [
+				{ "as": "alpha", "call": "subOnce", "args": [], "expect": null },
+				{ "emit": "tick", "expect": [null] },
+				{ "emit": "tick", "expect": [] },
+				{ "as": "alpha", "call": "state", "args": [], "expect": { "log": ["once"], "count": 0, "again": { "cancelled": false, "spent": true } } }
+			]
+		},
+		{
+			"name": "cancel reports cancelled once, then nothing; it takes the id or the subscription object",
+			"host": { "events": [{ "id": "tick", "description": "Fired once per frame." }] },
+			"script": "var saved = {}; function sub() { saved.a = events.on('tick', function () { return 'a'; }); saved.b = events.on('tick', function () { return 'b'; }); return null; } function cancelA() { return [events.cancel(saved.a.id), events.cancel(saved.a.id)]; } function cancelB() { return saved.b.cancel(); } function cancelUnknown() { return events.cancel('no-such-subscription'); } function subC() { saved.c = events.on('tick', function () { return 'c'; }); return null; } function cancelByObject() { return events.cancel(saved.c); }",
+			"mods": [{ "name": "alpha" }],
+			"steps": [
+				{ "as": "alpha", "call": "sub", "args": [], "expect": null },
+				{ "emit": "tick", "expect": ["a", "b"] },
+				{ "as": "alpha", "call": "cancelA", "args": [], "expect": [{ "cancelled": true, "spent": false }, { "cancelled": false, "spent": false }] },
+				{ "emit": "tick", "expect": ["b"] },
+				{ "as": "alpha", "call": "cancelB", "args": [], "expect": { "cancelled": true, "spent": false } },
+				{ "emit": "tick", "expect": [] },
+				{ "as": "alpha", "call": "cancelUnknown", "args": [], "expect": { "cancelled": false, "spent": false } },
+				{ "as": "alpha", "call": "subC", "args": [], "expect": null },
+				{ "as": "alpha", "call": "cancelByObject", "args": [], "expect": { "cancelled": true, "spent": false } },
+				{ "emit": "tick", "expect": [] }
+			]
+		},
+		{
+			"name": "cancelling another owner's subscription needs events.off, and unattributed code is not exempt",
+			"host": { "events": [{ "id": "tick", "description": "Fired once per frame." }] },
+			"script": "var saved = {}; function sub() { saved.a = events.on('tick', function () { return 'a'; }); return null; } function cancelIt() { return attempt(function () { return events.cancel(saved.a.id); }); }",
+			"mods": [{ "name": "alpha" }, { "name": "beta" }],
+			"steps": [
+				{ "as": "alpha", "call": "sub", "args": [], "expect": null },
+				{ "as": "beta", "call": "cancelIt", "args": [], "expect": { "threw": "CapabilityDeniedError" } },
+				{ "as": null, "call": "cancelIt", "args": [], "expect": { "threw": "CapabilityDeniedError" } },
+				{ "emit": "tick", "expect": ["a"] },
+				{ "as": "alpha", "call": "cancelIt", "args": [], "expect": { "cancelled": true, "spent": false } }
+			]
+		},
+		{
+			"name": "with events.off a mod may cancel another owner's subscription",
+			"host": { "events": [{ "id": "tick", "description": "Fired once per frame." }] },
+			"grants": ["events.off"],
+			"script": "var saved = {}; function sub() { saved.a = events.on('tick', function () { return 'a'; }); return null; } function cancelIt() { return attempt(function () { return events.cancel(saved.a.id); }); }",
+			"mods": [{ "name": "alpha" }, { "name": "beta" }],
+			"steps": [
+				{ "as": "alpha", "call": "sub", "args": [], "expect": null },
+				{ "as": "beta", "call": "cancelIt", "args": [], "expect": { "cancelled": true, "spent": false } },
+				{ "emit": "tick", "expect": [] }
+			]
+		},
+		{
+			"name": "match runs a handler only when every listed payload key is strictly equal",
+			"host": {
+				"events": [
+					{ "id": "stat.changed", "description": "Fired after a stat's value changes.", "keys": ["stat", "value"] },
+					{ "id": "free", "description": "Fired with any payload." }
+				]
+			},
+			"script": "function sub(match) { events.on('stat.changed', function (stat, value) { return stat + '=' + value; }, { match: match }); return null; } function subBad(options) { return attempt(function () { events.on('stat.changed', function () {}, options); return 'subscribed'; }); } function subFree(match) { events.on('free', function () { return 'free'; }, { match: match }); return null; }",
+			"mods": [{ "name": "alpha" }],
+			"steps": [
+				{ "as": "alpha", "call": "sub", "args": [{ "stat": "hp" }], "expect": null },
+				{ "as": "alpha", "call": "sub", "args": [{}], "expect": null },
+				{ "emit": "stat.changed", "payload": { "stat": "hp", "value": 3 }, "expect": ["hp=3", "hp=3"] },
+				{ "emit": "stat.changed", "payload": { "stat": "mp", "value": 1 }, "expect": ["mp=1"] },
+				{ "as": "alpha", "call": "subBad", "args": [{ "match": { "owner": "x" } }], "expect": { "threw": "BindingError" } },
+				{ "as": "alpha", "call": "subBad", "args": [{ "match": "hp" }], "expect": { "threw": "BindingError" } },
+				{ "as": "alpha", "call": "subBad", "args": ["hp"], "expect": { "threw": "BindingError" } },
+				{ "as": "alpha", "call": "subFree", "args": [{ "anything": 1 }], "expect": null },
+				{ "emit": "free", "payload": 5, "expect": [] },
+				{ "emit": "free", "payload": { "anything": 1 }, "expect": ["free"] },
+				{ "emit": "free", "payload": { "anything": "1" }, "expect": [] }
+			]
+		},
+		{
+			"name": "off drops only the caller's own listeners without events.off",
+			"host": { "events": [{ "id": "tick", "description": "Fired once per frame." }] },
+			"script": "function sub(tag) { events.on('tick', function () { return tag; }); return null; } function off() { return events.off('tick'); }",
+			"mods": [{ "name": "alpha" }, { "name": "beta" }],
+			"steps": [
+				{ "as": "alpha", "call": "sub", "args": ["a1"], "expect": null },
+				{ "as": "beta", "call": "sub", "args": ["b"], "expect": null },
+				{ "as": "alpha", "call": "sub", "args": ["a2"], "expect": null },
+				{ "as": "alpha", "call": "off", "args": [], "expect": 2 },
+				{ "emit": "tick", "expect": ["b"] },
+				{ "as": "alpha", "call": "off", "args": [], "expect": 0 }
+			]
+		},
+		{
+			"name": "with events.off a mod's off drops every listener on the event",
+			"host": { "events": [{ "id": "tick", "description": "Fired once per frame." }] },
+			"grants": ["events.off"],
+			"script": "function sub(tag) { events.on('tick', function () { return tag; }); return null; } function off() { return events.off('tick'); }",
+			"mods": [{ "name": "alpha" }, { "name": "beta" }],
+			"steps": [
+				{ "as": "alpha", "call": "sub", "args": ["a"], "expect": null },
+				{ "as": "beta", "call": "sub", "args": ["b"], "expect": null },
+				{ "as": "alpha", "call": "off", "args": [], "expect": 2 },
+				{ "emit": "tick", "expect": [] }
+			]
+		},
+		{
+			"name": "a mod emits only events declared with emit mods",
+			"host": {
+				"events": [
+					{ "id": "note.posted", "description": "Fired when a mod posts a note for the others.", "emit": "mods" },
+					{ "id": "tick", "description": "Fired once per frame." }
+				]
+			},
+			"script": "function sub(tag) { events.on('note.posted', function (text) { return tag + ':' + text; }); return null; } function subThrow() { events.on('note.posted', function () { throw new Error('boom'); }); return null; } function post(text) { return attempt(function () { return events.emit('note.posted', { text: text }); }); } function postTick() { return attempt(function () { return events.emit('tick'); }); } function postUnknown() { return attempt(function () { return events.emit('nope'); }); }",
+			"mods": [{ "name": "alpha" }, { "name": "beta" }],
+			"steps": [
+				{ "as": "alpha", "call": "sub", "args": ["a"], "expect": null },
+				{ "as": "beta", "call": "subThrow", "args": [], "expect": null },
+				{ "as": "beta", "call": "sub", "args": ["b"], "expect": null },
+				{ "as": "alpha", "call": "post", "args": ["hi"], "expect": ["a:hi", null, "b:hi"] },
+				{ "as": "alpha", "call": "postTick", "args": [], "expect": { "threw": "BindingError" } },
+				{ "as": "alpha", "call": "postUnknown", "args": [], "expect": { "threw": "BindingError" } },
+				{ "emit": "note.posted", "payload": { "text": "x" }, "expect": ["a:x", null, "b:x"] }
+			]
+		},
+		{
+			"name": "subscribing to an undeclared event or without the event's capability is refused",
+			"host": {
+				"events": [{ "id": "world.changed", "description": "Fired after terrain is modified.", "capability": "world.terrain" }]
+			},
+			"script": "function subscribe(id) { return attempt(function () { events.on(id, function () { return 'seen'; }); return 'subscribed'; }); } function subBadHandler() { return attempt(function () { events.on('world.changed', 'not a function'); return 'subscribed'; }); }",
+			"mods": [{ "name": "alpha" }],
+			"steps": [
+				{ "as": "alpha", "call": "subscribe", "args": ["world.changed"], "expect": { "threw": "CapabilityDeniedError" } },
+				{ "as": "alpha", "call": "subscribe", "args": ["nope"], "expect": { "threw": "BindingError" } },
+				{ "as": "alpha", "call": "subscribe", "args": [""], "expect": { "threw": "BindingError" } },
+				{ "emit": "world.changed", "expect": [] }
+			]
+		},
+		{
+			"name": "a subsuming grant admits a gated subscription",
+			"host": {
+				"events": [{ "id": "world.changed", "description": "Fired after terrain is modified.", "capability": "world.terrain" }]
+			},
+			"grants": ["world"],
+			"script": "function subscribe(id) { return attempt(function () { events.on(id, function () { return 'seen'; }); return 'subscribed'; }); } function subBadHandler() { return attempt(function () { events.on('world.changed', 'not a function'); return 'subscribed'; }); }",
+			"mods": [{ "name": "alpha" }],
+			"steps": [
+				{ "as": "alpha", "call": "subscribe", "args": ["world.changed"], "expect": "subscribed" },
+				{ "as": "alpha", "call": "subBadHandler", "args": [], "expect": { "threw": "BindingError" } },
+				{ "emit": "world.changed", "expect": ["seen"] }
+			]
+		},
+		{
+			"name": "cancelOwned clears the caller's own subscriptions and needs events.off to name another owner",
+			"host": { "events": [{ "id": "tick", "description": "Fired once per frame." }] },
+			"script": "function sub(tag) { events.on('tick', function () { return tag; }); return null; } function cancelMine() { return events.cancelOwned(); } function cancelOf(owner) { return attempt(function () { return events.cancelOwned(owner); }); }",
+			"mods": [{ "name": "alpha" }, { "name": "beta" }],
+			"steps": [
+				{ "as": "alpha", "call": "sub", "args": ["a1"], "expect": null },
+				{ "as": "alpha", "call": "sub", "args": ["a2"], "expect": null },
+				{ "as": "beta", "call": "sub", "args": ["b"], "expect": null },
+				{ "as": "alpha", "call": "cancelMine", "args": [], "expect": 2 },
+				{ "emit": "tick", "expect": ["b"] },
+				{ "as": "alpha", "call": "cancelOf", "args": ["beta"], "expect": { "threw": "CapabilityDeniedError" } },
+				{ "as": "alpha", "call": "cancelOf", "args": ["alpha"], "expect": 0 },
+				{ "cancelOwned": "beta", "expect": 1 },
+				{ "emit": "tick", "expect": [] },
+				{ "as": "alpha", "call": "sub", "args": ["a3"], "expect": null },
+				{ "as": null, "call": "sub", "args": ["host"], "expect": null },
+				{ "as": "alpha", "call": "cancelOf", "args": [null], "expect": { "threw": "CapabilityDeniedError" } },
+				{ "as": null, "call": "cancelMine", "args": [], "expect": 1 },
+				{ "emit": "tick", "expect": ["a3"] }
+			]
+		},
+		{
+			"name": "with events.off cancelOwned may clear another owner",
+			"host": { "events": [{ "id": "tick", "description": "Fired once per frame." }] },
+			"grants": ["events.off"],
+			"script": "function sub(tag) { events.on('tick', function () { return tag; }); return null; } function cancelOf(owner) { return attempt(function () { return events.cancelOwned(owner); }); }",
+			"mods": [{ "name": "alpha" }, { "name": "beta" }],
+			"steps": [
+				{ "as": "alpha", "call": "sub", "args": ["a"], "expect": null },
+				{ "as": "beta", "call": "sub", "args": ["b"], "expect": null },
+				{ "as": "alpha", "call": "cancelOf", "args": ["beta"], "expect": 1 },
+				{ "emit": "tick", "expect": ["a"] }
+			]
+		},
+		{
+			"name": "claims name namespace owners, longest prefix first, and are never checked at emit",
+			"host": {
+				"events": [{ "id": "stat.<instanceId>.changed", "description": "Fired after one stat instance's value changes.", "pattern": true }]
+			},
+			"grants": ["events.claim"],
+			"script": "function claim(prefix) { return attempt(function () { return events.claim(prefix); }); } function ns() { return events.namespaces(); } function owner(id) { return events.ownerOf(id); } function sub() { events.on('stat.hero.changed', function () { return 'seen'; }); return null; }",
+			"mods": [{ "name": "alpha" }, { "name": "beta" }],
+			"steps": [
+				{ "as": "alpha", "call": "claim", "args": ["stat"], "expect": true },
+				{ "as": "beta", "call": "claim", "args": ["stat"], "expect": false },
+				{ "as": "alpha", "call": "claim", "args": ["stat"], "expect": true },
+				{ "as": "beta", "call": "claim", "args": ["stat.hero"], "expect": true },
+				{ "as": "beta", "call": "claim", "args": ["inventory."], "expect": true },
+				{ "as": null, "call": "claim", "args": ["orphan"], "expect": { "threw": "BindingError" } },
+				{ "as": "alpha", "call": "claim", "args": [""], "expect": { "threw": "BindingError" } },
+				{
+					"as": "alpha",
+					"call": "ns",
+					"args": [],
+					"expect": [
+						{ "prefix": "inventory.", "owner": "beta" },
+						{ "prefix": "stat.hero", "owner": "beta" },
+						{ "prefix": "stat", "owner": "alpha" }
+					]
+				},
+				{ "as": "alpha", "call": "owner", "args": ["stat.hero.changed"], "expect": "beta" },
+				{ "as": "alpha", "call": "owner", "args": ["stat.villain.changed"], "expect": "alpha" },
+				{ "as": "alpha", "call": "owner", "args": ["stat"], "expect": "alpha" },
+				{ "as": "alpha", "call": "owner", "args": ["stat.hp"], "expect": "alpha" },
+				{ "as": "alpha", "call": "owner", "args": ["stat.heroic.changed"], "expect": "alpha" },
+				{ "as": "alpha", "call": "owner", "args": ["status.changed"], "expect": null },
+				{ "as": "alpha", "call": "owner", "args": ["inventory.added"], "expect": "beta" },
+				{ "as": "alpha", "call": "owner", "args": ["inventoryx"], "expect": null },
+				{ "as": "alpha", "call": "sub", "args": [], "expect": null },
+				{ "emit": "stat.hero.changed", "expect": ["seen"] }
+			]
+		},
+		{
+			"name": "claiming needs events.claim",
+			"host": { "events": [] },
+			"script": "function claim(prefix) { return attempt(function () { return events.claim(prefix); }); }",
+			"mods": [{ "name": "alpha" }],
+			"steps": [
+				{ "as": "alpha", "call": "claim", "args": ["stat"], "expect": { "threw": "CapabilityDeniedError" } }
+			]
+		},
+		{
+			"name": "a runtime-declared event joins the catalogue and can be subscribed to and emitted",
+			"host": { "events": [{ "id": "tick", "description": "Fired once per frame." }] },
+			"grants": ["events.declare"],
+			"script": "function declare(entry) { return attempt(function () { return events.declare(entry); }); } function sub(id, tag) { return attempt(function () { events.on(id, function (x) { return tag + ':' + x; }); return 'subscribed'; }); } function post(id, data) { return attempt(function () { return events.emit(id, data); }); } function describe(id) { return events.describe(id); } function catalogue() { return events.catalogue().map(function (e) { return e.id; }); }",
+			"mods": [{ "name": "alpha" }, { "name": "beta" }],
+			"steps": [
+				{ "as": "alpha", "call": "sub", "args": ["quest.done", "a"], "expect": { "threw": "BindingError" } },
+				{
+					"as": "alpha",
+					"call": "declare",
+					"args": [{ "id": "quest.done", "description": "Fired when a quest is completed.", "emit": "mods" }],
+					"expect": { "id": "quest.done", "description": "Fired when a quest is completed.", "emit": "mods" }
+				},
+				{ "as": "alpha", "call": "sub", "args": ["quest.done", "a"], "expect": "subscribed" },
+				{ "as": "beta", "call": "post", "args": ["quest.done", 7], "expect": ["a:7"] },
+				{ "emit": "quest.done", "payload": 8, "expect": ["a:8"] },
+				{ "as": "beta", "call": "declare", "args": [{ "id": "quest.done", "description": "A different meaning." }], "expect": { "threw": "BindingError" } },
+				{
+					"as": "alpha",
+					"call": "declare",
+					"args": [{ "id": "quest.done", "description": "Fired when a quest is completed or abandoned.", "emit": "mods", "keys": ["quest"] }],
+					"expect": { "id": "quest.done", "description": "Fired when a quest is completed or abandoned.", "emit": "mods", "keys": ["quest"] }
+				},
+				{ "as": "beta", "call": "describe", "args": ["quest.done"], "expect": { "id": "quest.done", "description": "Fired when a quest is completed or abandoned.", "emit": "mods", "keys": ["quest"] } },
+				{ "as": "alpha", "call": "declare", "args": [{ "id": "tick", "description": "Shadowing the host." }], "expect": { "threw": "BindingError" } },
+				{ "as": "alpha", "call": "declare", "args": [{ "id": "bad", "description": "Bad emit.", "emit": "everyone" }], "expect": { "threw": "BindingError" } },
+				{ "as": "alpha", "call": "declare", "args": [{ "id": "bad", "description": "Unknown field.", "extra": true }], "expect": { "threw": "BindingError" } },
+				{ "as": "alpha", "call": "declare", "args": [{ "id": "fam.<n>", "description": "Segment without pattern." }], "expect": { "threw": "BindingError" } },
+				{ "as": "alpha", "call": "declare", "args": [{ "id": "fam", "description": "Pattern without segment.", "pattern": true }], "expect": { "threw": "BindingError" } },
+				{ "as": "alpha", "call": "declare", "args": [{ "id": "Bad", "description": "Uppercase first segment." }], "expect": { "threw": "BindingError" } },
+				{ "as": "alpha", "call": "declare", "args": [{ "id": "quest:done", "description": "A colon is not part of the event id grammar." }], "expect": { "threw": "BindingError" } },
+				{ "as": "alpha", "call": "declare", "args": [{ "id": "quest.<n>", "description": "A segment outside a pattern.", "addressed": ["quest.<n>.<m>"] }], "expect": { "threw": "BindingError" } },
+				{ "as": "alpha", "call": "declare", "args": [{ "id": "nodesc" }], "expect": { "threw": "BindingError" } },
+				{ "declare": { "id": "host.ready", "description": "Fired once the host has finished booting." }, "expect": { "id": "host.ready", "description": "Fired once the host has finished booting." } },
+				{ "declare": { "id": "tick", "description": "Duplicate." }, "throws": true },
+				{ "as": "alpha", "call": "catalogue", "args": [], "expect": ["tick", "quest.done", "host.ready"] },
+				{ "as": "alpha", "call": "post", "args": ["host.ready"], "expect": { "threw": "BindingError" } }
+			]
+		},
+		{
+			"name": "declaring from a mod needs events.declare",
+			"host": { "events": [] },
+			"script": "function declare(entry) { return attempt(function () { return events.declare(entry); }); }",
+			"mods": [{ "name": "alpha" }],
+			"steps": [
+				{ "as": "alpha", "call": "declare", "args": [{ "id": "quest.done", "description": "Fired when a quest is completed." }], "expect": { "threw": "CapabilityDeniedError" } },
+				{ "declare": { "id": "quest.done", "description": "Fired when a quest is completed." }, "expect": { "id": "quest.done", "description": "Fired when a quest is completed." } }
+			]
+		},
+		{
+			"name": "describe resolves exact ids first, then pattern ids and addressed forms segment by segment",
+			"host": {
+				"events": [
+					{ "id": "stat.changed", "description": "Fired after any stat changes.", "addressed": ["stat.<instanceId>.changed"], "keys": ["instanceId", "value"] },
+					{ "id": "cell.<x>.<y>.lit", "description": "Fired when one grid cell lights up.", "pattern": true },
+					{ "id": "save.captured", "description": "Fired after a save snapshot is captured." }
+				]
+			},
+			"script": "function describe(id) { var e = events.describe(id); return e === null ? null : e.id; } function describeFull(id) { return events.describe(id); } function sub(id, tag) { return attempt(function () { events.on(id, function () { return tag; }); return 'subscribed'; }); } function post(id) { return attempt(function () { return events.emit(id); }); }",
+			"mods": [{ "name": "alpha" }],
+			"steps": [
+				{ "as": "alpha", "call": "describe", "args": ["save.captured"], "expect": "save.captured" },
+				{ "as": "alpha", "call": "describe", "args": ["stat.hero.changed"], "expect": "stat.changed" },
+				{ "as": "alpha", "call": "describe", "args": ["stat.<instanceId>.changed"], "expect": "stat.changed" },
+				{ "as": "alpha", "call": "describe", "args": ["cell.1.2.lit"], "expect": "cell.<x>.<y>.lit" },
+				{ "as": "alpha", "call": "describe", "args": ["cell.1.lit"], "expect": null },
+				{ "as": "alpha", "call": "describe", "args": ["cell..2.lit"], "expect": null },
+				{ "as": "alpha", "call": "describe", "args": ["stat.a.b.changed"], "expect": null },
+				{ "as": "alpha", "call": "describe", "args": ["nope"], "expect": null },
+				{
+					"as": "alpha",
+					"call": "describeFull",
+					"args": ["stat.villain.changed"],
+					"expect": { "id": "stat.changed", "description": "Fired after any stat changes.", "addressed": ["stat.<instanceId>.changed"], "keys": ["instanceId", "value"] }
+				},
+				{ "as": "alpha", "call": "sub", "args": ["stat.hero.changed", "h"], "expect": "subscribed" },
+				{ "as": "alpha", "call": "sub", "args": ["stat.changed", "g"], "expect": "subscribed" },
+				{ "as": "alpha", "call": "sub", "args": ["stat.<instanceId>.changed", "x"], "expect": { "threw": "BindingError" } },
+				{ "as": "alpha", "call": "sub", "args": ["cell.<x>.<y>.lit", "x"], "expect": { "threw": "BindingError" } },
+				{ "as": "alpha", "call": "sub", "args": ["cell.3.4.lit", "c"], "expect": "subscribed" },
+				{ "as": "alpha", "call": "post", "args": ["cell.3.4.lit"], "expect": { "threw": "BindingError" } },
+				{ "emit": "stat.hero.changed", "payload": { "instanceId": "hero", "value": 1 }, "expect": ["h"] },
+				{ "emit": "stat.changed", "payload": { "instanceId": "hero", "value": 1 }, "expect": ["g"] },
+				{ "emit": "stat.villain.changed", "payload": { "instanceId": "villain", "value": 2 }, "expect": [] },
+				{ "emit": "cell.3.4.lit", "expect": ["c"] },
+				{ "emit": "cell.<x>.<y>.lit", "expect": [] }
+			]
+		},
+		{
+			"name": "names, listenerCount and subscribers report listeners by owner",
+			"host": {
+				"events": [
+					{ "id": "tick", "description": "Fired once per frame." },
+					{ "id": "save", "description": "Fired after a save." }
+				]
+			},
+			"script": "function sub() { events.on('tick', function () {}); return null; } function subSave() { events.on('save', function () {}); return null; } function report() { return { names: events.names(), total: events.listenerCount(), tick: events.listenerCount('tick'), save: events.listenerCount('save'), subscribers: events.subscribers('tick') }; }",
+			"mods": [{ "name": "alpha" }, { "name": "beta" }],
+			"steps": [
+				{ "as": "alpha", "call": "sub", "args": [], "expect": null },
+				{ "as": "alpha", "call": "sub", "args": [], "expect": null },
+				{ "as": "beta", "call": "sub", "args": [], "expect": null },
+				{ "as": null, "call": "sub", "args": [], "expect": null },
+				{
+					"as": "beta",
+					"call": "report",
+					"args": [],
+					"expect": {
+						"names": ["tick"],
+						"total": 4,
+						"tick": 4,
+						"save": 0,
+						"subscribers": {
+							"event": "tick",
+							"total": 4,
+							"owners": [{ "owner": "alpha", "count": 2 }, { "owner": "beta", "count": 1 }],
+							"repeated": ["alpha"],
+							"untracked": 1
+						}
+					}
+				},
+				{ "as": "beta", "call": "subSave", "args": [], "expect": null },
+				{
+					"as": "beta",
+					"call": "report",
+					"args": [],
+					"expect": {
+						"names": ["save", "tick"],
+						"total": 5,
+						"tick": 4,
+						"save": 1,
+						"subscribers": {
+							"event": "tick",
+							"total": 4,
+							"owners": [{ "owner": "alpha", "count": 2 }, { "owner": "beta", "count": 1 }],
+							"repeated": ["alpha"],
+							"untracked": 1
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "a dispatch skips a listener cancelled mid-dispatch and does not run one added mid-dispatch",
+			"host": { "events": [{ "id": "tick", "description": "Fired once per frame." }] },
+			"script": "var saved = {}; var log = []; function setup() { events.on('tick', function () { log.push('first'); saved.second.cancel(); events.on('tick', function () { log.push('late'); }); }); saved.second = events.on('tick', function () { log.push('second'); }); return null; } function readLog() { return log; }",
+			"mods": [{ "name": "alpha" }],
+			"steps": [
+				{ "as": "alpha", "call": "setup", "args": [], "expect": null },
+				{ "emit": "tick", "expect": [null] },
+				{ "as": "alpha", "call": "readLog", "args": [], "expect": ["first"] },
+				{ "emit": "tick", "expect": [null, null] },
+				{ "as": "alpha", "call": "readLog", "args": [], "expect": ["first", "first", "late"] }
+			]
+		},
+		{
+			"name": "the events global is installed and frozen even when the manifest declares no events",
+			"host": {},
+			"script": "function probe() { return { kind: typeof events, frozen: Object.isFrozen(events), verbs: Object.keys(events).sort() }; }",
+			"mods": [{ "name": "alpha" }],
+			"steps": [
+				{
+					"as": "alpha",
+					"call": "probe",
+					"args": [],
+					"expect": {
+						"kind": "object",
+						"frozen": true,
+						"verbs": ["cancel", "cancelOwned", "catalogue", "claim", "declare", "describe", "emit", "emitAsync", "listenerCount", "names", "namespaces", "off", "on", "once", "ownerOf", "subscribe", "subscribers"]
+					}
+				}
+			]
+		},
+		{
+			"name": "a caller-aware binding learns which mod called it",
+			"host": {
+				"bindings": {
+					"whoami": { "description": "Reports who called it." },
+					"probe": { "description": "A namespace of probes.", "members": { "whoami": { "description": "Reports who called it." } } }
+				},
+				"events": [
+					{ "id": "ping", "description": "Fired when the host pings its mods." },
+					{ "id": "relay", "description": "Fired by one mod for the others.", "emit": "mods" }
+				]
+			},
+			"callerBindings": ["whoami", "probe.whoami"],
+			"script": "function who() { return whoami(1, 'two'); } function whoNested() { return probe.whoami(); } function atLoad() { return alphaAtLoad; } function subWho() { events.on('ping', function () { return whoami(); }); events.on('relay', function () { return whoami(); }); return null; } function relay() { var inner = events.emit('relay'); return { inner: inner, after: whoami() }; }",
+			"mods": [{ "name": "alpha", "source": "var alphaAtLoad = whoami();" }, { "name": "beta" }],
+			"steps": [
+				{ "as": "alpha", "call": "atLoad", "args": [], "expect": { "modId": "alpha", "binding": "whoami", "args": [] } },
+				{ "as": "alpha", "call": "who", "args": [], "expect": { "modId": "alpha", "binding": "whoami", "args": [1, "two"] } },
+				{ "as": "beta", "call": "whoNested", "args": [], "expect": { "modId": "beta", "binding": "probe.whoami", "args": [] } },
+				{ "as": null, "call": "who", "args": [], "expect": { "modId": null, "binding": "whoami", "args": [1, "two"] } },
+				{ "as": "beta", "call": "subWho", "args": [], "expect": null },
+				{
+					"emit": "ping",
+					"expect": [{ "modId": "beta", "binding": "whoami", "args": [] }]
+				},
+				{
+					"as": "alpha",
+					"call": "relay",
+					"args": [],
+					"expect": {
+						"inner": [{ "modId": "beta", "binding": "whoami", "args": [] }],
+						"after": { "modId": "alpha", "binding": "whoami", "args": [] }
+					}
+				},
+				{ "as": null, "call": "who", "args": [], "expect": { "modId": null, "binding": "whoami", "args": [1, "two"] } }
+			]
+		},
+		{
+			"name": "emitAsync resolves to exactly the results emit returns, in subscription order",
+			"host": {
+				"events": [
+					{ "id": "note.posted", "description": "Fired when a mod posts a note for the others.", "emit": "mods" }
+				]
+			},
+			"script": "var settled = {}; function track(key, start) { var entry = { threw: null }; settled[key] = entry; var promise; try { promise = start(); } catch (e) { entry.threw = e.name; return null; } entry.thenable = !!promise && typeof promise.then === 'function'; promise.then(function (r) { entry.resolved = r; }, function (e) { entry.rejected = e.name; }); return null; } function read(key) { return settled[key]; } function sub(tag) { events.on('note.posted', function () { return tag + ':' + Array.prototype.slice.call(arguments).join(','); }); return null; } function subThrow() { events.on('note.posted', function () { throw new Error('boom'); }); return null; } function post(data) { return arguments.length ? events.emit('note.posted', data) : events.emit('note.posted'); } function postAsync(key, data) { var given = arguments.length > 1; return track(key, function () { return given ? events.emitAsync('note.posted', data) : events.emitAsync('note.posted'); }); }",
+			"mods": [{ "name": "alpha" }, { "name": "beta" }],
+			"steps": [
+				{ "as": "alpha", "call": "sub", "args": ["a"], "expect": null },
+				{ "as": "beta", "call": "subThrow", "args": [], "expect": null },
+				{ "as": "beta", "call": "sub", "args": ["b"], "expect": null },
+				{ "as": "alpha", "call": "sub", "args": ["c"], "expect": null },
+				{ "as": "alpha", "call": "post", "args": [{ "count": 2, "text": "hi" }], "expect": ["a:2,hi", null, "b:2,hi", "c:2,hi"] },
+				{ "as": "alpha", "call": "postAsync", "args": ["object", { "count": 2, "text": "hi" }], "expect": null },
+				{ "as": "alpha", "call": "read", "args": ["object"], "expect": { "threw": null, "thenable": true, "resolved": ["a:2,hi", null, "b:2,hi", "c:2,hi"] } },
+				{ "as": "beta", "call": "post", "args": [5], "expect": ["a:5", null, "b:5", "c:5"] },
+				{ "as": "beta", "call": "postAsync", "args": ["scalar", 5], "expect": null },
+				{ "as": "beta", "call": "read", "args": ["scalar"], "expect": { "threw": null, "thenable": true, "resolved": ["a:5", null, "b:5", "c:5"] } },
+				{ "as": null, "call": "postAsync", "args": ["none"], "expect": null },
+				{ "as": null, "call": "read", "args": ["none"], "expect": { "threw": null, "thenable": true, "resolved": ["a:", null, "b:", "c:"] } }
+			]
+		},
+		{
+			"name": "a refused emitAsync rejects with the error emit throws instead of throwing",
+			"host": {
+				"events": [
+					{ "id": "note.posted", "description": "Fired when a mod posts a note for the others.", "emit": "mods" },
+					{ "id": "tick", "description": "Fired once per frame." },
+					{ "id": "stat.<instanceId>.changed", "description": "Fired after one stat instance's value changes.", "pattern": true, "emit": "mods" }
+				]
+			},
+			"script": "var settled = {}; function track(key, start) { var entry = { threw: null }; settled[key] = entry; var promise; try { promise = start(); } catch (e) { entry.threw = e.name; return null; } entry.thenable = !!promise && typeof promise.then === 'function'; promise.then(function (r) { entry.resolved = r; }, function (e) { entry.rejected = e.name; }); return null; } function read(key) { return settled[key]; } function post(id) { return attempt(function () { return events.emit(id, 1); }); } function postAsync(key, id) { return track(key, function () { return events.emitAsync(id, 1); }); }",
+			"mods": [{ "name": "alpha" }],
+			"steps": [
+				{ "as": "alpha", "call": "post", "args": ["tick"], "expect": { "threw": "BindingError" } },
+				{ "as": "alpha", "call": "postAsync", "args": ["host-only", "tick"], "expect": null },
+				{ "as": "alpha", "call": "read", "args": ["host-only"], "expect": { "threw": null, "thenable": true, "rejected": "BindingError" } },
+				{ "as": "alpha", "call": "post", "args": ["nope"], "expect": { "threw": "BindingError" } },
+				{ "as": "alpha", "call": "postAsync", "args": ["undeclared", "nope"], "expect": null },
+				{ "as": "alpha", "call": "read", "args": ["undeclared"], "expect": { "threw": null, "thenable": true, "rejected": "BindingError" } },
+				{ "as": "alpha", "call": "post", "args": ["stat.<instanceId>.changed"], "expect": { "threw": "BindingError" } },
+				{ "as": "alpha", "call": "postAsync", "args": ["shape", "stat.<instanceId>.changed"], "expect": null },
+				{ "as": "alpha", "call": "read", "args": ["shape"], "expect": { "threw": null, "thenable": true, "rejected": "BindingError" } },
+				{ "as": "alpha", "call": "postAsync", "args": ["empty", ""], "expect": null },
+				{ "as": "alpha", "call": "read", "args": ["empty"], "expect": { "threw": null, "thenable": true, "rejected": "BindingError" } },
+				{ "as": "alpha", "call": "postAsync", "args": ["addressed", "stat.hero.changed"], "expect": null },
+				{ "as": "alpha", "call": "read", "args": ["addressed"], "expect": { "threw": null, "thenable": true, "resolved": [] } }
+			]
+		},
+		{
+			"name": "emitAsync delivers as emit does: match, once, a snapshot taken at the start, and each handler run as its owner",
+			"host": {
+				"bindings": { "whoami": { "description": "Reports who called it." } },
+				"events": [
+					{ "id": "stat.changed", "description": "Fired after a stat's value changes.", "keys": ["stat", "value"], "emit": "mods" }
+				]
+			},
+			"callerBindings": ["whoami"],
+			"script": "var settled = {}; function track(key, start) { var entry = { threw: null }; settled[key] = entry; var promise; try { promise = start(); } catch (e) { entry.threw = e.name; return null; } entry.thenable = !!promise && typeof promise.then === 'function'; promise.then(function (r) { entry.resolved = r; }, function (e) { entry.rejected = e.name; }); return null; } function read(key) { return settled[key]; } var saved = {}; function subHp() { events.on('stat.changed', function (stat, value) { return whoami().modId + ':' + stat + '=' + value; }, { match: { stat: 'hp' } }); return null; } function subOnce() { events.once('stat.changed', function (stat) { return 'once:' + stat; }); return null; } function subMeddler() { events.on('stat.changed', function () { if (saved.late) saved.late.cancel(); events.on('stat.changed', function () { return 'added'; }); return 'meddler'; }); return null; } function subLate() { saved.late = events.on('stat.changed', function () { return 'late'; }); return null; } function postAsync(key, stat, value) { return track(key, function () { return events.emitAsync('stat.changed', { stat: stat, value: value }); }); } function after() { return whoami().modId; }",
+			"mods": [{ "name": "alpha" }, { "name": "beta" }],
+			"steps": [
+				{ "as": "beta", "call": "subHp", "args": [], "expect": null },
+				{ "as": "alpha", "call": "subOnce", "args": [], "expect": null },
+				{ "as": "alpha", "call": "subMeddler", "args": [], "expect": null },
+				{ "as": "alpha", "call": "subLate", "args": [], "expect": null },
+				{ "as": "alpha", "call": "postAsync", "args": ["first", "hp", 3], "expect": null },
+				{ "as": "alpha", "call": "read", "args": ["first"], "expect": { "threw": null, "thenable": true, "resolved": ["beta:hp=3", "once:hp", "meddler"] } },
+				{ "as": "alpha", "call": "after", "args": [], "expect": "alpha" },
+				{ "as": "alpha", "call": "postAsync", "args": ["second", "mp", 1], "expect": null },
+				{ "as": "alpha", "call": "read", "args": ["second"], "expect": { "threw": null, "thenable": true, "resolved": ["meddler", "added"] } }
+			]
+		}
+	]
+}
