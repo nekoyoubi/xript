@@ -141,6 +141,8 @@ const result = runtime.execute("2 + 2");
 | `value` | `unknown` | The result of the last expression |
 | `duration_ms` | `number` | Wall-clock execution time in milliseconds |
 
+A synchronous run cannot await anything, so `execute` throws when the script ends in a promise, and an async binding called during `execute` throws a `BindingError` naming it. Both point at `executeAsync`.
+
 ### Asynchronous
 
 ```javascript
@@ -148,7 +150,7 @@ const result = await runtime.executeAsync("return await data.get('score');");
 // { value: "42", duration_ms: 1.2 }
 ```
 
-`executeAsync(code)` wraps the code in an async function. Use `return` and `await` as needed. Returns a Promise resolving to an `ExecutionResult`.
+`executeAsync(code)` wraps the code in an async function. Use `return` and `await` as needed. Returns a Promise resolving to an `ExecutionResult`. In a runtime from `initXriptAsync`, an `"async": true` binding hands the script a real pending promise, so `.then`, `Promise.all`, and `Promise.race` behave as they do anywhere else, and several async bindings can be pending at once.
 
 ### Debugging
 

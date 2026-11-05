@@ -263,8 +263,8 @@ fn values_reach_a_handler_on_another_worker_as_they_left() {
         call(&pool, "mod-a", "postRich", &[]),
         json!([
             "local|undefined|7|true|true|true|true|2|undefined|function|",
-            "remote|undefined|7|true|true|true|true|2|undefined|object|cross-worker",
-            "5|undefined|true|true|Infinity|object|cross-worker"
+            "remote|undefined|7|true|true|true|true|2|undefined|undefined|",
+            "5|undefined|true|true|Infinity|undefined|"
         ])
     );
 }
@@ -439,4 +439,113 @@ fn an_event_nobody_hears_answers_empty() {
     load(&pool, "mod-a", 0);
     assert_eq!(pool.emit("tick", &[]).wait().unwrap(), Vec::<Value>::new());
     assert_eq!(pool.emit("not.declared", &[]).wait().unwrap(), Vec::<Value>::new());
+}
+
+const CROSSING_HOST: &str = r#"{
+    "xript": "0.10",
+    "name": "crossing-host",
+    "events": [
+        { "id": "rich", "description": "Carries values JSON cannot spell.", "emit": "mods" },
+        { "id": "first", "description": "Heard first on the emitting worker." }
+    ]
+}"#;
+
+/// A two-worker pool whose worker 0 runs in `mode`. Value fidelity is a host
+/// boundary setting; the bus between workers carries every value either way.
+fn crossing_pool(mode: xript_runtime::RuntimeMode, fidelity: bool) -> XriptPool {
+    let config = PoolConfig { workers: 2, interactive: 1, ..PoolConfig::default() };
+    let (pool, ready) = XriptPool::spawn(
+        CROSSING_HOST.to_string(),
+        move |id| RuntimeOptions {
+            mode: if id == WorkerId::Worker(0) { mode } else { xript_runtime::RuntimeMode::Sync },
+            value_fidelity: fidelity,
+            ..RuntimeOptions::default()
+        },
+        config,
+    );
+    ready.wait().unwrap();
+    pool
+}
+
+const DEPTH: &str = "function depth(x) { var d = 0; while (Array.isArray(x)) { x = x[0]; d++; } return d; }";
+
+const REMOTE_HANDLERS: &str = r#"
+function depth(x) { var d = 0; while (Array.isArray(x)) { x = x[0]; d++; } return d; }
+events.on('rich', function (v) {
+    var o = v[3];
+    return [typeof v[0], v[0] === -12345678901234567890n, Number.isNaN(v[1]), Object.is(v[2], -0), o.self === o, o.name,
+        v[4].length, v[4].charCodeAt(1), typeof v[5], v[5].description, typeof v[6].sym, v[6].sym.description,
+        v[6].gone === undefined, 'gone' in v[6], depth(v[7]), typeof v[8], v[9][0] === undefined, v[9].length].join('|');
+});
+events.on('rich', function () {
+    var back = { big: 7n, lone: '\uDC00', sym: Symbol('back'), nan: NaN };
+    back.me = back;
+    var deep = 'leaf'; for (var i = 0; i < 1000; i++) deep = [deep];
+    back.deep = deep;
+    return back;
+});
+"#;
+
+const EMIT_RICH: &str = r#"[-12345678901234567890n, NaN, -0, (function () { var o = { name: 'o' }; o.self = o; return o; })(),
+    'a\uD800', Symbol('s'), { sym: Symbol('n'), gone: undefined },
+    (function () { var deep = 0; for (var i = 0; i < 1000; i++) deep = [deep]; return deep; })(), Object(3n), [undefined]]"#;
+
+const READ_BACK: &str = r#"
+function readBack(r) {
+    var back = r[1];
+    return [r.length, r[0], back.big === 7n, back.me === back, back.lone.charCodeAt(0), typeof back.sym, back.sym.description,
+        Number.isNaN(back.nan), depth(back.deep)].join('#');
+}
+"#;
+
+const EXPECTED_RICH: &str =
+    "2#bigint|true|true|true|true|o|2|55296|symbol|s|symbol|n|true|true|1000|bigint|true|1#true#true#56320#symbol#back#true#1000";
+
+#[test]
+fn script_values_cross_workers_whole_whatever_the_fidelity() {
+    for mode in [xript_runtime::RuntimeMode::Sync, xript_runtime::RuntimeMode::Async] {
+        for fidelity in [false, true] {
+            let pool = crossing_pool(mode, fidelity);
+            pool.on(WorkerId::Worker(1)).unwrap().execute(REMOTE_HANDLERS).wait().unwrap();
+            let worker0 = pool.on(WorkerId::Worker(0)).unwrap();
+            let emitted = worker0
+                .execute(&format!("{DEPTH} {READ_BACK} readBack(events.emit('rich', {EMIT_RICH}))"))
+                .wait()
+                .unwrap();
+            assert_eq!(emitted.value, json!(EXPECTED_RICH), "emit, {mode:?}, fidelity {fidelity}");
+            let awaited = worker0
+                .execute(&format!("{DEPTH} {READ_BACK} events.emitAsync('rich', {EMIT_RICH}).then(readBack)"))
+                .wait()
+                .unwrap();
+            assert_eq!(awaited.value, json!(EXPECTED_RICH), "emitAsync, {mode:?}, fidelity {fidelity}");
+        }
+    }
+}
+
+#[test]
+fn a_host_emit_stepped_across_workers_carries_what_its_handlers_return() {
+    let pool = crossing_pool(xript_runtime::RuntimeMode::Async, true);
+    pool.on(WorkerId::Worker(0))
+        .unwrap()
+        .execute("events.on('first', function () { return 'local'; })")
+        .wait()
+        .unwrap();
+    pool.on(WorkerId::Worker(1))
+        .unwrap()
+        .execute("events.on('first', function (v) { var o = { big: v.n * 2n, s: v.s }; o.self = o; return o; })")
+        .wait()
+        .unwrap();
+    let payload = json!({ "n": { "$xript": "bigint", "value": "21" }, "s": { "$xript": "string", "units": [55296] } });
+    let results = pool.emit("first", &[payload, Value::Null]).wait().unwrap();
+    assert_eq!(
+        results,
+        vec![
+            json!("local"),
+            json!({
+                "big": { "$xript": "bigint", "value": "42" },
+                "s": { "$xript": "string", "units": [55296] },
+                "self": { "$xript": "cycle", "up": 1 }
+            })
+        ]
+    );
 }

@@ -567,12 +567,12 @@ fn bind_children(
     for (index, node) in nodes.iter().enumerate() {
         let mut source = parent_source.to_vec();
         source.push(index);
-        if let FragmentNode::Element(element) = node {
-            if let Some(Value::String(each)) = element.props.get("data-each") {
-                let each = each.clone();
-                expand_repeat(element, &each, bindings, ctx, parent_path, &source, within, &mut out);
-                continue;
-            }
+        if let FragmentNode::Element(element) = node
+            && let Some(Value::String(each)) = element.props.get("data-each")
+        {
+            let each = each.clone();
+            expand_repeat(element, &each, bindings, ctx, parent_path, &source, within, &mut out);
+            continue;
         }
         let mut path = parent_path.to_vec();
         path.push(out.len());

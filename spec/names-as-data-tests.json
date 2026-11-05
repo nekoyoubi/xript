@@ -1,0 +1,209 @@
+{
+	"description": "Conformance corpus for names reaching the sandbox as data. A host manifest, a mod manifest, and the host API all carry names (hook ids, phases, capabilities, binding and member names, fragment ids, slot ids, mod names, export names) that a runtime installs into the sandbox or looks up there. A runtime that splices one of those names into JavaScript source it then evaluates lets the name break the source or run as script. Every runtime runs every case once with every entry of `names`, and the result must not depend on what the name holds.",
+	"notes": [
+		"Substitution. Wherever a case's `manifest`, `mod.manifest`, or a step field holds the exact string `$NAME`, as a key or a value, the runner puts the name there verbatim. In a script (`setup`, a step's `execute`, `mod.source`) every `$NAME` token becomes the name as a JSON string literal, written by the runner's own JSON encoder. An entry of `includes` that is `$NAME` is the name verbatim.",
+		"Per case and name: create a runtime from `manifest` granting no capabilities, with a host function at each path in `provide` (an array of name segments) that returns the string \"ok\". Load `mod` when present, with `mod.source` as the source of its entry script. Run `setup` as host code when present, then run `steps` in order. Last, `typeof globalThis.ran` must be \"undefined\": several names are crafted to set that global if they ever run as script.",
+		"Step kinds. `{ execute, expected }`: the script's value equals `expected`. `{ execute, includes }`: the script's value is a string containing every entry of `includes`; these scripts catch their own error and return its message, so the comparison never depends on how a host wraps a script error. `{ fire, phase?, data, expected }`: the host fires hook `fire` (at `phase` when present) with `data` as the one payload value, and the results equal `expected`. `{ fragment, lifecycle, ops }`: the host fires the fragment hook for fragment id `fragment` at `lifecycle` and receives `ops` operations. `{ invoke, mod?, expected }`: the host invokes export `invoke`, through the owned-export entry point for mod `mod` when present, and the result equals `expected`.",
+		"Names are deliberately not held to the manifest schema's name grammars here: a runtime never needs a name to parse as JavaScript, and a host that skips schema validation must not be one quote away from running a manifest string. Event ids are absent because the events kernel refuses an id outside its grammar and carries every id as data.",
+		"The `async` binding cases run in every runtime, sync or async. A runtime with a distinct async binding path (the QuickJS runtime under `initXriptAsync`) builds its wrappers there, and a runtime without one treats the binding like any other; either way the call fails with a message that names the binding.",
+		"Names a plain object already answers to (`constructor`, `__proto__`, `toString`, `hasOwnProperty`, `valueOf`) are ordinary names. A runtime keeps every registry keyed by name without a prototype, looks names up as own properties only, and installs a named value by defining it, so `__proto__` lands as a property rather than replacing a prototype, and a host bindings object's inherited members are never mistaken for bindings it supplies."
+	],
+	"names": [
+		{ "label": "a single quote", "value": "it's" },
+		{ "label": "double quotes", "value": "say \"hi\"" },
+		{ "label": "a backslash", "value": "back\\slash" },
+		{ "label": "a trailing backslash", "value": "trailing\\" },
+		{ "label": "a line feed", "value": "line\nbreak" },
+		{ "label": "a carriage return and line feed", "value": "carriage\r\nreturn" },
+		{ "label": "a line separator", "value": "line separator" },
+		{ "label": "a paragraph separator", "value": "paragraph separator" },
+		{ "label": "a template substitution", "value": "${globalThis.ran = true}" },
+		{ "label": "a comment close", "value": "*/ globalThis.ran = true; /*" },
+		{ "label": "a script close tag", "value": "</script><script>globalThis.ran = true</script>" },
+		{ "label": "a double-quoted breakout", "value": "x\"); globalThis.ran = true; (\"" },
+		{ "label": "a single-quoted breakout", "value": "x'); globalThis.ran = true; ('" },
+		{ "label": "a breakout past quote-only escaping", "value": "x\\\"); globalThis.ran = true; //" },
+		{ "label": "a single-quoted breakout past quote-only escaping", "value": "x\\'); globalThis.ran = true; //" },
+		{ "label": "a backtick breakout", "value": "x`; globalThis.ran = true; `" },
+		{ "label": "an identifier breakout", "value": "a); globalThis.ran = true; (b" },
+		{ "label": "a name that is not an identifier", "value": "a-b:c d" },
+		{ "label": "an inherited constructor", "value": "constructor" },
+		{ "label": "the prototype accessor", "value": "__proto__" },
+		{ "label": "an inherited toString", "value": "toString" },
+		{ "label": "an inherited hasOwnProperty", "value": "hasOwnProperty" },
+		{ "label": "an inherited valueOf", "value": "valueOf" }
+	],
+	"cases": [
+		{
+			"name": "an unphased hook",
+			"manifest": { "xript": "0.10", "name": "names-probe", "hooks": { "$NAME": { "description": "A hook the case names." } } },
+			"setup": "hooks[$NAME](function (x) { return x + 1; });",
+			"steps": [
+				{ "fire": "$NAME", "data": 1, "expected": [2] },
+				{ "execute": "Object.isFrozen(hooks)", "expected": true }
+			]
+		},
+		{
+			"name": "a phased hook",
+			"manifest": { "xript": "0.10", "name": "names-probe", "hooks": { "$NAME": { "description": "A phased hook the case names.", "phases": ["pre"] } } },
+			"setup": "hooks[$NAME].pre(function (x) { return x * 2; });",
+			"steps": [
+				{ "fire": "$NAME", "phase": "pre", "data": 4, "expected": [8] },
+				{ "execute": "Object.isFrozen(hooks) && Object.isFrozen(hooks[$NAME])", "expected": true }
+			]
+		},
+		{
+			"name": "a hook phase",
+			"manifest": { "xript": "0.10", "name": "names-probe", "hooks": { "phased": { "description": "A hook whose phase the case names.", "phases": ["$NAME"] } } },
+			"setup": "hooks.phased[$NAME](function (x) { return x * 2; });",
+			"steps": [
+				{ "fire": "phased", "phase": "$NAME", "data": 4, "expected": [8] },
+				{ "execute": "Object.isFrozen(hooks.phased)", "expected": true }
+			]
+		},
+		{
+			"name": "an unphased hook gated by an ungranted capability",
+			"manifest": {
+				"xript": "0.10",
+				"name": "names-probe",
+				"capabilities": { "$NAME": { "description": "A capability the case names." } },
+				"hooks": { "$NAME": { "description": "A gated hook the case names.", "capability": "$NAME" } }
+			},
+			"steps": [
+				{ "execute": "(function () { try { hooks[$NAME](function () {}); return 'registered'; } catch (e) { return String(e && e.message); } })()", "includes": ["$NAME", "capability"] }
+			]
+		},
+		{
+			"name": "a phased hook gated by an ungranted capability",
+			"manifest": {
+				"xript": "0.10",
+				"name": "names-probe",
+				"capabilities": { "$NAME": { "description": "A capability the case names." } },
+				"hooks": { "$NAME": { "description": "A gated phased hook the case names.", "phases": ["pre"], "capability": "$NAME" } }
+			},
+			"steps": [
+				{ "execute": "(function () { try { hooks[$NAME].pre(function () {}); return 'registered'; } catch (e) { return String(e && e.message); } })()", "includes": ["$NAME", "capability"] }
+			]
+		},
+		{
+			"name": "a fragment id",
+			"manifest": { "xript": "0.10", "name": "names-probe", "hooks": { "tick": { "description": "A hook so the hooks object is built." } } },
+			"setup": "hooks.fragment.update($NAME, function (bindings, fragment) { fragment.setText('.t', 'hit'); });",
+			"steps": [
+				{ "fragment": "$NAME", "lifecycle": "update", "ops": 1 }
+			]
+		},
+		{
+			"name": "a function binding",
+			"manifest": { "xript": "0.10", "name": "names-probe", "bindings": { "$NAME": { "description": "A binding the case names." } } },
+			"provide": [["$NAME"]],
+			"steps": [
+				{ "execute": "globalThis[$NAME]()", "expected": "ok" }
+			]
+		},
+		{
+			"name": "a namespace and its member",
+			"manifest": {
+				"xript": "0.10",
+				"name": "names-probe",
+				"bindings": { "$NAME": { "description": "A namespace the case names.", "members": { "$NAME": { "description": "A member the case names." } } } }
+			},
+			"provide": [["$NAME", "$NAME"]],
+			"steps": [
+				{ "execute": "globalThis[$NAME][$NAME]()", "expected": "ok" },
+				{ "execute": "Object.isFrozen(globalThis[$NAME])", "expected": true }
+			]
+		},
+		{
+			"name": "a binding gated by an ungranted capability",
+			"manifest": {
+				"xript": "0.10",
+				"name": "names-probe",
+				"capabilities": { "$NAME": { "description": "A capability the case names." } },
+				"bindings": { "$NAME": { "description": "A gated binding the case names.", "capability": "$NAME" } }
+			},
+			"provide": [["$NAME"]],
+			"steps": [
+				{ "execute": "(function () { try { globalThis[$NAME](); return 'called'; } catch (e) { return String(e && e.message); } })()", "includes": ["$NAME", "capability"] }
+			]
+		},
+		{
+			"name": "a namespace member gated by an ungranted capability",
+			"manifest": {
+				"xript": "0.10",
+				"name": "names-probe",
+				"capabilities": { "$NAME": { "description": "A capability the case names." } },
+				"bindings": { "ns": { "description": "A namespace.", "members": { "$NAME": { "description": "A gated member the case names.", "capability": "$NAME" } } } }
+			},
+			"provide": [["ns", "$NAME"]],
+			"steps": [
+				{ "execute": "(function () { try { ns[$NAME](); return 'called'; } catch (e) { return String(e && e.message); } })()", "includes": ["$NAME", "capability"] }
+			]
+		},
+		{
+			"name": "a binding the host does not provide",
+			"manifest": { "xript": "0.10", "name": "names-probe", "bindings": { "$NAME": { "description": "An unprovided binding the case names." } } },
+			"steps": [
+				{ "execute": "(function () { try { globalThis[$NAME](); return 'called'; } catch (e) { return String(e && e.message); } })()", "includes": ["$NAME"] }
+			]
+		},
+		{
+			"name": "an async binding gated by an ungranted capability",
+			"manifest": {
+				"xript": "0.10",
+				"name": "names-probe",
+				"capabilities": { "$NAME": { "description": "A capability the case names." } },
+				"bindings": { "$NAME": { "description": "A gated async binding the case names.", "async": true, "capability": "$NAME" } }
+			},
+			"provide": [["$NAME"]],
+			"steps": [
+				{ "execute": "(function () { try { globalThis[$NAME](); return 'called'; } catch (e) { return String(e && e.message); } })()", "includes": ["$NAME"] }
+			]
+		},
+		{
+			"name": "an async binding the host does not provide",
+			"manifest": { "xript": "0.10", "name": "names-probe", "bindings": { "$NAME": { "description": "An unprovided async binding the case names.", "async": true } } },
+			"steps": [
+				{ "execute": "(function () { try { globalThis[$NAME](); return 'called'; } catch (e) { return String(e && e.message); } })()", "includes": ["$NAME"] }
+			]
+		},
+		{
+			"name": "a mod name and an export name",
+			"manifest": { "xript": "0.10", "name": "names-probe" },
+			"mod": {
+				"manifest": {
+					"xript": "0.10",
+					"name": "$NAME",
+					"version": "1.0.0",
+					"entry": { "script": "mod.js", "exports": { "$NAME": { "description": "An export the case names." } } }
+				},
+				"source": "xript.exports.register($NAME, function () { return 'ok'; });"
+			},
+			"steps": [
+				{ "invoke": "$NAME", "mod": "$NAME", "expected": "ok" },
+				{ "invoke": "$NAME", "expected": "ok" }
+			]
+		},
+		{
+			"name": "a slot id filled with a hook handler",
+			"manifest": {
+				"xript": "0.10",
+				"name": "names-probe",
+				"slots": [{ "id": "$NAME", "accepts": ["application/x-xript-hook"], "description": "An event slot the case names." }]
+			},
+			"mod": {
+				"manifest": {
+					"xript": "0.10",
+					"name": "slot-filler",
+					"version": "1.0.0",
+					"entry": { "script": "mod.js", "exports": { "onFire": { "description": "Answers the slot." } } },
+					"fills": { "$NAME": [{ "handler": "onFire" }] }
+				},
+				"source": "xript.exports.register('onFire', function (x) { return x + 1; });"
+			},
+			"steps": [
+				{ "fire": "$NAME", "data": 1, "expected": [2] }
+			]
+		}
+	]
+}

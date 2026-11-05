@@ -49,11 +49,12 @@ public class CancellationTests
     public void Cancel_Interrupts_Long_Running_Execution()
     {
         using var cts = new CancellationTokenSource();
-        using var rt = XriptRuntime.Create(TestManifests.Minimal, new RuntimeOptions
-        {
-            Cancellation = cts.Token
-        });
+        using var rt = XriptRuntime.Create(
+            """{ "xript": "0.1", "name": "test", "limits": { "timeout_ms": 600000 } }""",
+            new RuntimeOptions { Cancellation = cts.Token });
 
+        // A real host timer is the point of this test, so the budget sits far past any delay a
+        // starved thread pool could put on it: only the cancellation can end the loop.
         cts.CancelAfter(TimeSpan.FromMilliseconds(100));
 
         Assert.Throws<ExecutionCancelledException>(() => rt.Execute("while (true) {}"));

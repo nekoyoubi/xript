@@ -4,10 +4,17 @@
 //! The kernel (`event_bus_kernel.js`) is the same source every xript runtime
 //! evaluates, so bus semantics cannot drift between engines. This module hands
 //! it the host object (token, manifest events, caller context, capability
-//! check) and parks the host API it returns on a non-writable
-//! `globalThis.__xript_bus`, where the runtime's string-evaluated calls reach
-//! it. Every host method there demands the token, so a mod that finds the
-//! object cannot use it.
+//! check) and keeps the host API it returns, with the few host-side helpers
+//! that call it, on the internals object only the host holds. Every host
+//! method there demands the token as well.
+//!
+//! In a pool, a delivery to a handler on another worker crosses as JSON text.
+//! Payloads and results are encoded with every marker in [`crate::value`]
+//! whatever the runtimes' value fidelity, symbols at any depth and keys in
+//! their own order, so a handler on another worker receives what a handler on
+//! the same worker would, short of identity: a function, which cannot be
+//! called from another worker, arrives as `undefined`, and a symbol as a fresh
+//! one.
 
 use std::collections::HashSet;
 use std::hash::{BuildHasher, Hasher};
@@ -20,11 +27,11 @@ use crate::manifest::Manifest;
 
 const KERNEL: &str = include_str!("event_bus_kernel.js");
 
-const INSTALL: &str = r#"(function (kernel, config, currentRaw, enterRaw, leaveRaw, satisfiesRaw, peerRaw) {
+const INSTALL: &str = r#"
     var installGlobal = config.installGlobal === true;
     var peer = null;
     if (peerRaw) {
-        peer = Object.freeze({
+        peer = objectFreeze({
             self: peerRaw.self,
             read: function () { return peerRaw.read(); },
             write: function (version, state) { return peerRaw.write(version, state) === true; },
@@ -40,14 +47,39 @@ const INSTALL: &str = r#"(function (kernel, config, currentRaw, enterRaw, leaveR
         events: config.events,
         installGlobal: installGlobal,
         peer: peer,
+        encode: config.encode,
         caller: function () { var current = currentRaw(); return typeof current === 'string' ? current : null; },
         enter: function (owner) { enterRaw(typeof owner === 'string' ? owner : null); },
         leave: function () { leaveRaw(); },
-        satisfies: function (capability) { return satisfiesRaw(String(capability)) === true; }
+        satisfies: function (capability) { return satisfiesRaw(toText(capability)) === true; }
     });
-    var bus = Object.freeze({ api: api, events: installGlobal ? globalThis.events : undefined });
-    Object.defineProperty(globalThis, '__xript_bus', { value: bus, writable: false, enumerable: false, configurable: false });
-})"#;
+    var token = config.token;
+    var events = installGlobal ? globalThis.events : undefined;
+    var names = events ? events.names : undefined;
+    var subscribers = events ? events.subscribers : undefined;
+    internals.bus = objectFreeze({ api: api });
+    internals.busServe = function () { return api.serveInbox(token); };
+    internals.busCancelOwned = function (owner) { return api.cancelOwned(token, owner); };
+    internals.busDeclare = function (entry) {
+        try {
+            return { ok: api.declare(token, entry) };
+        } catch (e) {
+            return { err: toText(e && e.message) };
+        }
+    };
+    internals.busSubscribed = function (modId) {
+        var out = [];
+        if (!events) return out;
+        var ids = reflectApply(names, events, []);
+        for (var i = 0; i < ids.length; i++) {
+            var owners = reflectApply(subscribers, events, [ids[i]]).owners;
+            for (var j = 0; j < owners.length; j++) {
+                if (owners[j].owner === modId) { append(out, ids[i]); break; }
+            }
+        }
+        return out;
+    };
+"#;
 
 /// A per-runtime secret, 128 bits of hex. Seeded from the standard library's
 /// per-process random hasher keys and the clock, so it needs no extra crate.
@@ -80,8 +112,8 @@ pub(crate) fn installs_global(manifest: &Manifest) -> bool {
 
 /// Evaluates the kernel in `ctx` and wires it to this runtime. With a `peer`,
 /// the bus is the one every runtime holding a seat on the same hub shares.
-pub(crate) fn install(
-    ctx: &Ctx<'_>,
+pub(crate) fn install<'js>(
+    ctx: &Ctx<'js>,
     manifest: &Manifest,
     granted: &HashSet<String>,
     caller: &CallerContext,
@@ -90,7 +122,6 @@ pub(crate) fn install(
 ) -> Result<()> {
     let engine = |e: rquickjs::Error| XriptError::Engine(e.to_string());
     let kernel: Function = ctx.eval(KERNEL).map_err(engine)?;
-    let install: Function = ctx.eval(INSTALL).map_err(engine)?;
     let events_json = serde_json::to_string(manifest.events.as_deref().unwrap_or(&[]))?;
 
     let current = {
@@ -113,8 +144,14 @@ pub(crate) fn install(
         .map_err(engine)?
     };
 
+    let encode = Function::new(ctx.clone(), |ctx: Ctx<'js>, value: rquickjs::Value<'js>| {
+        crate::marshal::crossing_tape(&ctx, value)
+    })
+    .map_err(engine)?;
+
     let config = Object::new(ctx.clone()).map_err(engine)?;
     config.set("token", token).map_err(engine)?;
+    config.set("encode", encode).map_err(engine)?;
     config.set("events", events_json).map_err(engine)?;
     config.set("installGlobal", installs_global(manifest)).map_err(engine)?;
 
@@ -123,17 +160,13 @@ pub(crate) fn install(
         None => None,
     };
 
-    install
-        .call::<_, ()>((
-            kernel,
-            config,
-            current,
-            enter,
-            leave,
-            satisfies,
-            peer_object,
-        ))
-        .map_err(|e| XriptError::Engine(format!("event bus install: {e}")))
+    crate::internals::run::<_, ()>(
+        ctx,
+        "kernel, config, currentRaw, enterRaw, leaveRaw, satisfiesRaw, peerRaw",
+        INSTALL,
+        (kernel, config, current, enter, leave, satisfies, peer_object),
+    )
+    .map_err(|e| XriptError::Engine(format!("event bus install: {e}")))
 }
 
 /// Captures the budget frames governing the call running now, so a wait that
@@ -244,73 +277,5 @@ fn ask_function<'js>(
             });
             Ok(())
         },
-    )
-}
-
-/// A JS string literal for `value`, safe to splice into evaluated source.
-fn js_string(value: &str) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| "\"\"".into())
-}
-
-/// A JS string literal holding `value` serialized as JSON, safe to splice into
-/// evaluated source whatever the data contains.
-pub(crate) fn json_literal<T: serde::Serialize + ?Sized>(value: &T) -> String {
-    let json = serde_json::to_string(value).unwrap_or_else(|_| "null".into());
-    serde_json::to_string(&json).unwrap_or_else(|_| "\"null\"".into())
-}
-
-/// Source for a host emit: the kernel dispatch, results as a JSON array of
-/// `{ owner, value }`. A payload carrying a retained callback marker is
-/// revived first, so the handler receives the original function.
-pub(crate) fn emit_source(token: &str, event: &str, args: &[serde_json::Value]) -> String {
-    let parsed = format!("JSON.parse({})", json_literal(args));
-    let args = if args.iter().any(crate::retained::contains_marker) {
-        format!("{}({parsed})", crate::retained::REVIVE_GLOBAL)
-    } else {
-        parsed
-    };
-    format!(
-        "(function () {{ var results = globalThis.__xript_bus.api.emit({token}, {event}, {args}); \
-         return JSON.stringify(results.map(function (r) {{ return {{ owner: r.owner, value: r.value === undefined ? null : r.value }}; }})); }})()",
-        token = js_string(token),
-        event = js_string(event),
-    )
-}
-
-/// Source that runs every request a peer queued for this runtime, returning
-/// how many it served.
-#[cfg_attr(not(feature = "threads"), allow(dead_code))]
-pub(crate) fn serve_inbox_source(token: &str) -> String {
-    format!("globalThis.__xript_bus.api.serveInbox({token})", token = js_string(token))
-}
-
-/// Source for a host `cancelOwned`, returning the count.
-pub(crate) fn cancel_owned_source(token: &str, owner: Option<&str>) -> String {
-    format!(
-        "globalThis.__xript_bus.api.cancelOwned({token}, JSON.parse({owner}))",
-        token = js_string(token),
-        owner = json_literal(&owner),
-    )
-}
-
-/// Source for a host `declare`, returning `{ ok }` or `{ err }` as JSON.
-pub(crate) fn declare_source(token: &str, entry: &serde_json::Value) -> String {
-    format!(
-        "(function () {{ try {{ return JSON.stringify({{ ok: globalThis.__xript_bus.api.declare({token}, JSON.parse({entry})) }}); }} \
-         catch (e) {{ return JSON.stringify({{ err: String(e && e.message) }}); }} }})()",
-        token = js_string(token),
-        entry = json_literal(entry),
-    )
-}
-
-/// Source listing the events `mod_id` holds a listener on, as a JSON array.
-pub(crate) fn subscribed_events_source(mod_id: &str) -> String {
-    format!(
-        "(function () {{ var bus = globalThis.__xript_bus; var events = bus && bus.events; var out = []; \
-         if (!events) return JSON.stringify(out); var want = JSON.parse({mod_id}); var names = events.names(); \
-         for (var i = 0; i < names.length; i++) {{ var owners = events.subscribers(names[i]).owners; \
-         for (var j = 0; j < owners.length; j++) {{ if (owners[j].owner === want) {{ out.push(names[i]); break; }} }} }} \
-         return JSON.stringify(out); }})()",
-        mod_id = json_literal(mod_id),
     )
 }

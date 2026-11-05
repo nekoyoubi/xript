@@ -151,7 +151,7 @@ impl Watch {
         });
     }
 
-    fn finish(&self) {
+    pub(crate) fn finish(&self) {
         self.done.store(true, Ordering::SeqCst);
     }
 }
@@ -236,6 +236,7 @@ impl<'a, F: Future> Governed<'a, F> {
         self.runtime.probe().budget_lane(lane, frame.clone());
         let _frame = self.runtime.push_interrupt_frame(frame);
         let _lane = self.runtime.caller_context().activate(lane);
+        let _held = crate::reentry::Holding::of(self.runtime.context_key());
         let polled = inner.as_mut().poll(cx);
         if polled.is_ready() {
             self.watch.finish();

@@ -500,16 +500,16 @@ pub(crate) fn register_debug_probe(ctx: &Ctx<'_>, session: &DebugSession) -> Res
     .map_err(|e| XriptError::Engine(e.to_string()))?;
 
     ctx.globals()
-        .set("__xript_dbg", probe)
+        .prop("__xript_dbg", rquickjs::object::Property::from(probe))
         .map_err(|e| XriptError::Engine(e.to_string()))?;
     ctx.globals()
-        .set("__xript_dbg_enter", enter)
+        .prop("__xript_dbg_enter", rquickjs::object::Property::from(enter))
         .map_err(|e| XriptError::Engine(e.to_string()))?;
     ctx.globals()
-        .set("__xript_dbg_leave", leave)
+        .prop("__xript_dbg_leave", rquickjs::object::Property::from(leave))
         .map_err(|e| XriptError::Engine(e.to_string()))?;
     ctx.globals()
-        .set("__xript_dbg_terminate", terminate)
+        .prop("__xript_dbg_terminate", rquickjs::object::Property::from(terminate))
         .map_err(|e| XriptError::Engine(e.to_string()))?;
     Ok(())
 }

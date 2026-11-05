@@ -65,12 +65,22 @@ public class RuntimeOptions
     /// <summary>
     /// Values cross the host boundary the way the JavaScript runtimes pass them, instead of
     /// the way JSON flattens them: <c>undefined</c>, <c>NaN</c>, <c>Infinity</c>,
-    /// <c>-Infinity</c> and <c>-0</c> travel as marker objects (see <see cref="XriptValue"/>)
-    /// instead of <c>null</c> (or <c>0</c>, for <c>-0</c>). A script value crossing out is encoded at any depth; a marker crossing in
-    /// (a binding's return, a hook or event payload, an export's arguments) is decoded back to
-    /// the real value. Integral numbers already reach a .NET host as integers on every path,
-    /// with or without this option. Off by default: with it off, every value reaches the host
-    /// exactly as it always has.
+    /// <c>-Infinity</c>, <c>-0</c>, BigInts, strings holding a lone surrogate, cycles, and symbols
+    /// that cross as a whole value (not nested) travel as marker objects (see <see cref="XriptValue"/>)
+    /// instead of <c>null</c>, <c>0</c>, U+FFFD, or a refusal. A script value crossing out is
+    /// encoded at any depth; a marker crossing in (a binding's return, a callback's arguments, a
+    /// hook or event payload, an export's arguments) is decoded back to the real value. Integral
+    /// numbers already reach a .NET host as integers on every path, with or without this option.
+    /// Off by default: with it off, a BigInt or a cyclic value is refused with a
+    /// <see cref="ValueCrossingException"/> naming the binding, a lone surrogate becomes U+FFFD,
+    /// and every other value reaches the host as JSON would carry it.
     /// </summary>
     public bool ValueFidelity { get; set; }
+
+    /// <summary>
+    /// Replaces the clock every call budget is measured on, in <see cref="System.Diagnostics.Stopwatch"/>
+    /// ticks, so a test decides when time passes. With it set, that clock alone ends a call: the
+    /// real-time timer and Jint's timeout interval behind the inline deadline are not armed.
+    /// </summary>
+    internal Func<long>? DeadlineClock { get; set; }
 }

@@ -5,6 +5,7 @@ pub mod capability;
 pub mod commands;
 pub mod debug;
 mod deprecation;
+mod dispatch;
 #[cfg_attr(not(feature = "threads"), allow(dead_code))]
 mod bus_hub;
 mod error;
@@ -14,6 +15,7 @@ pub mod fragment;
 pub mod handle;
 pub mod local;
 mod host_call;
+mod internals;
 mod manifest;
 mod manifest_builders;
 mod marshal;
@@ -23,7 +25,9 @@ pub mod pending;
 #[cfg(feature = "threads")]
 pub mod pool;
 pub mod retained;
+mod reentry;
 mod sandbox;
+mod stack_guard;
 pub mod value;
 mod yielding;
 
@@ -99,13 +103,13 @@ pub use pool::{
     WedgePolicy, WedgedWorker, WorkerId, WorkerRef, XriptPool,
 };
 pub use pending::{CallToken, DropPolicy, Pending};
-pub use value::{special, Special, XriptValue, SPECIAL_MARKER};
+pub use value::{special, Marker, Special, XriptValue, MAX_DEPTH, SPECIAL_MARKER};
 pub use local::{create_local_runtime, LocalHostBindings, LocalNamespaceBuilder};
 pub use sandbox::{
     AsyncHostFn, AuditDecision, AuditEvent, AuditSink, CancellationToken, ConsoleHandler, ExecutionResult,
     AccessorGetFn, AccessorSetFn, HardLimits, HostAccessor, HostBindings, HostFn, HostNamespaceMember, LogSeverity, NamespaceBuilder,
     resolve_role_all_from, resolve_role_from, resolve_slot_from, CallTokenScope, RoleResolution,
-    RuntimeMode, RuntimeOptions, RuntimeProbe, SharedMods, SlotContribution, TaggedResult, HandlerIndex, FILL_INDEX,
+    RuntimeMode, RuntimeOptions, RuntimeProbe, SeveritySink, SharedMods, SlotContribution, TaggedResult, HandlerIndex, FILL_INDEX,
     XriptRuntime,
 };
 
@@ -625,7 +629,7 @@ mod tests {
 
         let mut bindings = HostBindings::new();
         bindings.add_function("add", |args: &[serde_json::Value]| {
-            let a = args.get(0).and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let a = args.first().and_then(|v| v.as_f64()).unwrap_or(0.0);
             let b = args.get(1).and_then(|v| v.as_f64()).unwrap_or(0.0);
             Ok(serde_json::json!(a + b))
         });
@@ -695,7 +699,7 @@ mod tests {
 
         let result = rt.execute("try { fail(); 'no error' } catch(e) { e.message }");
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().value, serde_json::json!("intentional error"));
+        assert_eq!(result.unwrap().value, serde_json::json!("fail(): intentional error"));
     }
 
     #[test]
@@ -900,7 +904,7 @@ mod tests {
         let result = rt.execute("try { notProvided(); 'no error' } catch(e) { e.message }");
         assert!(result.is_ok());
         let msg = result.unwrap().value.as_str().unwrap().to_string();
-        assert!(msg.contains("not provided"));
+        assert_eq!(msg, "notProvided(): not implemented by the app");
     }
 
     #[test]
@@ -1805,7 +1809,7 @@ mod tests {
         let result = rt
             .execute("(async () => { try { await failAsync(); return 'no error'; } catch(e) { return e.message; } })()")
             .unwrap();
-        assert_eq!(result.value, serde_json::json!("async error occurred"));
+        assert_eq!(result.value, serde_json::json!("failAsync(): async error occurred"));
     }
 
     #[test]
@@ -3274,7 +3278,13 @@ mod tests {
                     assert_eq!(scopes[1].name, "Global");
                     assert!(probe_session.variables(0).is_empty());
                     assert!(probe_session.variables(scopes[0].variables_reference).is_empty());
-                    probe_session.resume();
+                    // Frames exist before the breakpoint pauses, so a single
+                    // resume can land first and be lost; keep resuming until
+                    // the script finishes.
+                    while !exec.is_finished() {
+                        probe_session.resume();
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
                     return (exec, true);
                 }
             }

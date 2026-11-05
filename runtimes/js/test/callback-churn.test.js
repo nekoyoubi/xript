@@ -122,7 +122,7 @@ for (const [variant, init] of [["sync", initXript], ["async", initXriptAsync]]) 
 			runtime.execute("hooks.tick(async function () { return walk({ v: 1 }, function (n) { return n.v; }); }); events.on('tock', async function () { return 1; });");
 			assert.deepEqual(runtime.fireHook("tick", { data: 1 }), [expectedTotal(1), {}]);
 			assert.deepEqual(runtime.emit("tock", 1), [expectedTotal(1), {}]);
-			assert.deepEqual(runtime.execute("Promise.resolve(1)").value, {});
+			assert.throws(() => runtime.execute("Promise.resolve(1)"), /executeAsync/);
 			runtime.execute("keep(function () { return 'kept'; }); keep(function () { return 'released'; });");
 			retained[1].release();
 			assert.equal(retained[0].call(), "kept");

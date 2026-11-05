@@ -22,11 +22,14 @@ try {
   player.setHealth(-1);
 } catch (e) {
   // e.name === "BindingError"
-  // e.message === "player.setHealth: health value must be non-negative"
+  // e instanceof BindingError
+  // e.message === "player.setHealth(): health value must be non-negative"
   // e.binding === "player.setHealth"
   log(e.message);
 }
 ```
+
+The message names the binding exactly once, as `<binding>(): <reason>`: a host message that already starts with that prefix is not prefixed again. The same holds for every way a binding call can fail: the host function throwing (or, for an async binding, rejecting), a binding the host did not supply (`<binding>(): not implemented by the app`), and a value that cannot cross the boundary. `BindingError` and `CapabilityDeniedError` are globals in every runtime, and each error a binding throws is a real instance of its class (and of `Error`), so `instanceof` works. Both globals are sealed with the runtime's other globals (non-writable, non-configurable, each class and its prototype frozen), and the runtime builds every error from the classes it captured at install, defining `name`, `binding` and `capability` as own properties rather than assigning them, so nothing a script does to the globals or to `Error.prototype` changes what a binding throws. The `events` bus refuses a call with the same two classes. `spec/binding-error-tests.json` pins the name, message, `binding`, `capability`, and `instanceof` of each.
 
 ### Script-Side Error Handling
 
@@ -39,7 +42,7 @@ The runtime provides these error types to scripts:
 | Error | When Thrown |
 |-------|------------|
 | `BindingError` | A binding function failed during execution |
-| `CapabilityDeniedError` | A gated function was called without the required capability |
+| `CapabilityDeniedError` | A gated function was called without the required capability. Message: `<binding>() requires the "<capability>" capability, which hasn't been granted to this script. Ask the app developer to enable it.`; carries `.binding` and `.capability` |
 | `TypeError` | Arguments don't match the binding's declared parameter types (always raised for a non-function where a function parameter is declared) |
 | `ImportDeniedError` | A module-format mod entry attempted to `import` any specifier (rejected at link time; carries `.specifier`) |
 | `CommonJSDetectedError` | A mod entry contained `require()`, `module.exports`, or `exports.x` artifacts (rejected at load time; carries `.artifact`) |
@@ -257,11 +260,11 @@ Bindings with `"async": true` wrap their return type in `Promise`:
 declare function get(key: string): Promise<string | undefined>;
 ```
 
-`async` declares the **shape** of the value a script receives, a promise rather than a settled value. It says nothing about whether the interpreter yields while the host does its work; that is a property of the runtime, and the runtimes differ:
+`async` declares the **shape** of the value a script receives: a real promise rather than a settled value, so `binding() instanceof Promise` is `true` and `.then`, `Promise.all`, and `Promise.race` work on it. It says nothing about whether the interpreter yields while the host does its work; that is a property of the runtime, and the runtimes differ:
 
 | Runtime | What `await binding()` does | Other work on the same runtime meanwhile |
 | --- | --- | --- |
-| JS/WASM, `initXriptAsync` | the asyncify build suspends the QuickJS stack until the host promise settles; the host's event loop is free | other calls run meanwhile, but the asyncify build suspends one call per runtime at a time, an engine limit: an async binding called while another call is suspended throws a `BindingError` in the calling script ("cannot suspend while another call on this runtime is suspended in an async binding") and the host binding is not called. Give concurrent async work its own runtime |
+| JS/WASM, `initXriptAsync` | the script receives a pending promise, settled when the host promise settles; the continuation runs when the runtime drains its job queue, under a fresh `timeout_ms` budget, and the host's event loop is free | yes: other calls run meanwhile, and several async bindings can be pending at once |
 | JS/WASM, `initXript` | async bindings are not available; a host function's return value is marshalled as-is | n/a |
 | Node.js | the host promise is handed to the `vm` context unchanged; the script genuinely awaits it and the event loop is free | yes: other calls on the runtime run while it is pending |
 | Rust, `RuntimeMode::Sync` (default) | the host future is driven to completion on the interpreter thread (`pollster::block_on`) and the script receives an already-settled promise; `await` never suspends | none: the interpreter thread is held for the binding's full duration |
@@ -269,6 +272,8 @@ declare function get(key: string): Promise<string | undefined>;
 | C# | host functions are synchronous (`HostFunction` returns a settled `JsonElement`) and run on the Jint engine thread; `async` is declarative only | none: the engine thread is held for the call |
 
 Execution limits differ too. In Rust's `RuntimeMode::Async`, `timeout_ms` bounds the whole call, time spent awaiting a host future included, and cancellation reaches a call parked on one. Everywhere else, limits and cancellation bound script execution only: Node's `vm` timeout covers the synchronous run, not the wait on a host promise, and a binding that blocks the engine thread is the host's to bound.
+
+A script awaits an async binding from `executeAsync` (`execute_async` in Rust). In the universal runtime, whose synchronous `execute` cannot drive one, an async binding called during `execute` throws a `BindingError` naming it, the host binding is not called, and the runtime stays usable; the other runtimes settle it in line or hand back the promise. How each runtime treats a promise that a synchronous `execute` ends with is in [execution.md](./execution.md#execute-and-executeasync).
 
 ### Optional Parameters
 
@@ -307,7 +312,17 @@ docgen marks an `open` type as extensible in the generated documentation.
 
 ## Values Across the Boundary
 
-A value a binding receives or returns, a hook or event payload, an export's arguments, and an execution result all cross between the sandbox and the host. The JavaScript and Node runtimes hand the host real JavaScript values, at every depth. The universal runtime's sandbox is a separate engine, so it copies what crosses out by `JSON.stringify`'s rules except for those values JSON cannot spell: a `Date` arrives as its ISO string, a `Map` as an empty object, and a cyclic value as its string. The Rust and C# runtimes hand it JSON (`serde_json::Value`, `JsonElement`), which has no spelling for four script values, writes a fifth (`-0`) as `0`, and by default has no stable key order.
+A value a binding receives or returns, a hook or event payload, an export's arguments, and an execution result all cross between the sandbox and the host. The JavaScript and Node runtimes hand the host real JavaScript values, at every depth. The universal runtime's sandbox is a separate engine, so it copies what crosses out by `JSON.stringify`'s rules except for those values JSON cannot spell: a `Date` arrives as its ISO string and a `Map` as an empty object, while a cyclic value arrives as a genuinely cyclic copy. The Rust and C# runtimes hand it JSON (`serde_json::Value`, `JsonElement`), which has no spelling for several script values, writes `-0` as `0`, and by default has no stable key order.
+
+Every runtime follows the same rules for a value on its way across:
+
+- **Wrapper objects** (`new Number(...)`, `new String(...)`, `new Boolean(...)`, `Object(10n)`) cross as their primitive, keeping a special value: `new Number(NaN)` crosses as `NaN`. This holds for arguments, results, and callback returns at every depth.
+- **`toJSON`** applies as it does for `JSON.stringify`, including the key it receives: `""` for a top-level value, an argument included. A `toJSON` that throws is skipped, and the object crosses by its own properties, including a value a getter returned; it is never an error and never the object's string.
+- **Getters** run once per crossing. A getter can run again only when a `toJSON` or getter in the same value throws, or the value is cyclic, because a runtime copying through `JSON.stringify` then copies the value a second time. A getter that throws while a value is copied across fails the call, and the script sees the getter's own error, unwrapped.
+- **Dropped and empty**: symbol-keyed, non-enumerable, and inherited properties are dropped; `arguments`, an `ArrayBuffer`, a `DataView`, a `WeakMap`, a promise inside a value, and a generator cross as `{}`; an `Array` subclass crosses as a plain array; a hole crosses as `undefined`.
+- **Proxies and conversions**: a live proxy crosses as the value it presents through its traps; a revoked proxy, at any depth and in any position (an argument, a result, a callback's return), fails the call with the engine's own `TypeError`, as reading it would. A `Date` crosses as its ISO string (its `toJSON`), a `Map` and a `Set` as `{}`, and an object's `valueOf` and `toString` are never called: it crosses by its own data.
+- **Depth**: every runtime carries a value at least 1000 levels deep in both directions. Past a runtime's limit (2048 levels in the JavaScript runtimes, 1024 in Rust, 10000 in C#) the call fails with a `BindingError` whose message begins `<binding>(): `, never with a stack overflow.
+- **Error prefix**: a binding error carries its `<binding>(): ` prefix exactly once, whatever the host error it wraps already said.
 
 ### Special values
 
@@ -321,7 +336,20 @@ By default the Rust and C# runtimes turn `undefined`, `NaN`, `Infinity` and `-In
 | `-Infinity` | `{ "$xript": "-Infinity" }` |
 | `-0` | `{ "$xript": "-0" }` |
 
-A script value crossing out is encoded at any depth, so `echo(Infinity, undefined, 1)` reaches the binding as `[{"$xript":"Infinity"}, {"$xript":"undefined"}, 1]`. A marker crossing in (a binding's return, a hook or event payload, an export's arguments) is decoded back to the real value, so returning that array gives the script `Infinity`, `undefined`, `1` again, and an object property whose value is the `undefined` marker arrives as an own property holding `undefined`. A one-key object whose only key is `$xript` and whose value is one of the five tags always means the special value; any other shape, an extra key or an unknown tag, is plain data. The callback marker composes with these: a callback in the same arguments is still `{ "$xriptCallback": "<token>" }`.
+Four more values travel as markers that carry a payload:
+
+| Script value | Marker |
+|---|---|
+| a BigInt (or BigInt wrapper) | `{ "$xript": "bigint", "value": "-12345678901234567890" }`, the value in decimal |
+| a symbol | `{ "$xript": "symbol", "description": "tag" }`, with `description` omitted for a symbol that has none |
+| a string that is not well-formed UTF-16 | `{ "$xript": "string", "units": [97, 55296, 98] }`, every UTF-16 code unit of the whole string |
+| a reference back to an ancestor | `{ "$xript": "cycle", "up": 1 }`: `up: 1` is the object or array holding the marker, `up: 2` the container holding that one, and so on |
+
+A script value crossing out is encoded at any depth, so `echo(Infinity, undefined, 1)` reaches the binding as `[{"$xript":"Infinity"}, {"$xript":"undefined"}, 1]`. A marker crossing in (a binding's return, a hook or event payload, an export's arguments) is decoded back to the real value, so returning that array gives the script `Infinity`, `undefined`, `1` again, and an object property whose value is the `undefined` marker arrives as an own property holding `undefined`. A `symbol` marker decodes to a fresh symbol with that description, and a `cycle` marker rebuilds the cycle. A marker is an object whose `$xript` names a known tag and whose other keys are exactly that tag's payload keys; any other shape (an unknown tag, an extra key, a missing payload key, or a `cycle` whose `up` is not a whole number of at least 1 or points above the outermost container) is plain data. The callback marker composes with these: a callback in the same arguments is still `{ "$xriptCallback": "<token>" }`.
+
+The new markers follow what the JavaScript runtimes do. A symbol is carried at the top level of a value: a binding's argument, an execution result, a subscriber's result, and a callback's return all cross out as the `symbol` marker, and a `symbol` marker crossing in decodes to a fresh symbol. A symbol nested inside a value follows JSON's rules, dropped from an object and `null` in an array. A cyclic value is marked only at its back-edges: a container that appears twice without a cycle still crosses as two copies. A lone surrogate in a value crosses intact and is never an error. An object key cannot hold a marker, so a lone surrogate in a key is the one place the JSON boundary shows: the JavaScript runtimes keep the key intact, and Rust and C# turn the surrogate into U+FFFD in both modes.
+
+Without value fidelity, a value that cannot cross fails with an error that names where it was going, never silently: a BigInt or a cyclic value in a binding's arguments is refused with a `BindingError` naming the binding, and one in an execution result, a hook or event result, or a callback's return fails that call with a named error rather than becoming `null`. A lone surrogate becomes U+FFFD, and a symbol becomes `null`.
 
 Value fidelity also makes numbers consistent in Rust: an integral script number held as a double (anything computed from a host binding's return) reaches the host as an integer, as a literal does. The C# runtime already returns integral numbers as integers.
 
@@ -333,7 +361,7 @@ An object keeps the key order its author wrote, in both directions, and a hook o
 
 ### Conformance
 
-`spec/value-fidelity-tests.json` pins special values, `-0` among them, at any depth: inbound, out and back through a binding, as results, and through hook and event payloads and results, written in marker spelling: the JavaScript runtimes decode it to real values before handing it over. `spec/key-order-tests.json` pins authored key order inbound, round-tripped, and spread from a hook payload.
+`spec/value-fidelity-tests.json` pins every rule above at any depth: inbound, out and back through a binding, out to a binding that only receives (`sink`, for getters, wrappers, and symbols), as results, through hook and event payloads and results, as a callback's return (`callbackResult`), at 1000 levels and past the limit (`depth`), and the single error prefix (`prefix`), written in marker spelling: the JavaScript runtimes decode it to real values before handing it over and encode what their host receives, cycles as back-references, before comparing. `spec/key-order-tests.json` pins authored key order inbound, round-tripped, and spread from a hook payload, and JavaScript's own order for integer-like keys. `spec/async-tests.json` pins async bindings as real promises, the async function body `executeAsync` runs, and the synchronous `execute` refusals.
 
 ## Callbacks
 
@@ -408,15 +436,15 @@ Calling a callback runs the script function synchronously on the sandbox, re-ent
 
 - **Arguments** go host to sandbox by the same rules as a binding's return value. **The return value** comes back sandbox to host by the same rules as a binding's arguments. A function inside a callback's arguments or return value is not proxied.
 - **Budget.** The callback spends the calling script's execution budget. The same timeout, memory, and stack limits apply, and a runaway callback is stopped exactly as a runaway script is. The stop is not the host's to swallow: if a callback exhausts the budget, the binding call ends with the execution-limit error whatever the host does next.
-- **Throws.** A script error inside a callback reaches the host as a catchable error whose message is the script error's own message (`CallbackError` with `reason: "threw"`, `CallbackError::Threw`, or `CallbackException` with `Reason == "threw"`). If the host lets it escape, the binding call rethrows the script's original error into the script, so `catch (e)` around the binding call sees the error the callback threw, with its own name and message. In Rust, "lets it escape" means returning the callback error's message unchanged (`Err(e.to_string())`, or `?` into a `String` error).
-- **Synchronous only.** A callback returns a settled value. A callback that returns a promise is refused (`reason: "promise"`). An async binding called from inside a callback throws instead of starting (a `BindingError` in the JavaScript runtimes, an `Error` with the same message in Rust), because the callback cannot await it.
+- **Throws.** A script error inside a callback reaches the host as a catchable error whose message is the script error's own message (a thrown string is its own message; a thrown value with no `message`, such as a number, `null`, or a plain object without one, gets a runtime's own text) (`CallbackError` with `reason: "threw"`, `CallbackError::Threw`, or `CallbackException` with `Reason == "threw"`). If the host lets it escape, the binding call rethrows the script's original error into the script, so `catch (e)` around the binding call sees the error the callback threw, with its own name and message. In Rust, "lets it escape" means returning the callback error's message unchanged (`Err(e.to_string())`, or `?` into a `String` error).
+- **Synchronous only.** A callback returns a settled value. A callback that returns a promise is refused (`reason: "promise"`). An async binding called from inside a callback throws instead of starting with a `BindingError` naming it, because the callback cannot await it. Rust adds `RetainedCallback::call_async` for a host that wants an async callback's result: it accepts a promise return, drives the runtime's jobs until the promise settles, and resolves to its value. It is safe nested, including from inside a binding of the same runtime.
 - **Re-entrancy.** A callback may call other bindings, including one that takes its own callback. Each binding call has its own scope.
 
 The failure reasons are the same in every runtime: `threw`, `expired`, `promise`, `limit`, and, for a retained callback, `released`.
 
 ### Async bindings
 
-An async binding's callbacks stay valid until its result settles, so the host may call them before and after its own awaits. The universal runtime's async (asyncify) sandbox runs such a call while the engine is suspended in the binding; the call is synchronous and must not suspend again, which is why an async binding refuses to start inside a callback in every runtime.
+An async binding's callbacks stay valid until its result settles, so the host may call them before and after its own awaits. Such a call is synchronous and cannot await anything itself, which is why an async binding refuses to start inside a callback in every runtime.
 
 ### What is not a callback
 

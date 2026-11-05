@@ -74,9 +74,9 @@ A runtime whose sandbox shares the host's engine and process (the Node `vm` runt
 |----------|-------------|---------|------------|
 | Time | `limits.timeout_ms` | Script terminated | No |
 | Memory | `limits.memory_mb` | Script terminated | No |
-| Stack | `limits.max_stack_depth` | `RangeError` thrown | Yes |
+| Stack | `limits.max_stack_depth` | the engine's stack-overflow error thrown (`RangeError`, or `InternalError` in QuickJS) | Yes |
 
-Timeout and memory violations are not catchable because a script that has exhausted these resources cannot be trusted to handle errors correctly. Stack overflow is catchable because the stack unwinds naturally and the script may have legitimate recovery logic (e.g., switching from recursive to iterative algorithms).
+Timeout and memory violations are not catchable because a script that has exhausted these resources cannot be trusted to handle errors correctly. Stack overflow is catchable because the stack unwinds naturally and the script may have legitimate recovery logic (e.g., switching from recursive to iterative algorithms). It holds for recursion through built-ins and over deeply nested data too, and it never costs the runtime: see [execution.md](./execution.md#stack-exhaustion) and `spec/stack-tests.json`.
 
 ### 3. No Implicit Trust
 

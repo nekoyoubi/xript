@@ -13,7 +13,7 @@ use std::sync::Arc;
 use rquickjs::{Ctx, Function, Object, Value};
 
 use super::{
-    audited_sync, create_host_function, make_throwing_function, AuditSink, HostBinding, HostBindings, HostFn,
+    audited_sync, create_host_function, make_denied_function, make_missing_function, AuditSink, HostBinding, HostBindings, HostFn,
     HostNamespaceMember, HostNsView, RuntimeProbe,
 };
 use crate::error::{Result, XriptError};
@@ -329,17 +329,13 @@ fn accessor_half<'js>(
     if let Some(cap) = def.capability.as_ref()
         && !crate::cap_match::granted_satisfies(granted, cap)
     {
-        let msg = format!(
-            "{}() requires the \"{}\" capability, which hasn't been granted to this script",
-            full_name, cap
-        );
-        return make_throwing_function(ctx, &msg);
+        return make_denied_function(ctx, full_name, cap);
     }
     match host_fn {
         Some(f) => {
             let wrapped = audited_sync(f, audit, full_name, def.capability.clone(), probe);
             create_host_function(ctx, full_name, wrapped, &[])
         }
-        None => make_throwing_function(ctx, &format!("host binding '{}' is not provided", full_name)),
+        None => make_missing_function(ctx, full_name),
     }
 }

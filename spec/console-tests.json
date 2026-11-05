@@ -1,0 +1,1526 @@
+{
+  "description": "Conformance corpus for the sandbox `console`. Every console method takes any value and never throws, and the host's console handler receives each argument formatted the same way in every runtime: as data in a JavaScript runtime, whose handler receives the arguments themselves, and as text in a runtime whose handler receives one message string. The expected output was recorded from `@xriptjs/runtime`.",
+  "notes": [
+    "Each case's `script` runs in a fresh runtime built from `manifest`, with no bindings and a console handler that records every call: its severity, and its arguments (a JavaScript runtime) or its message (a runtime whose handler receives a string). Every script ends by evaluating `sentinel`, and executing it must return `sentinel`: a console call never throws, whatever it is given, so the script always runs on.",
+    "`logs` lists the console calls in the order they were made. `severity` is the handler's severity: `console.log` and `console.info` are `info`, and `warn`, `error`, `debug`, and `trace` are their own names.",
+    "`args` is what a JavaScript runtime's handler receives, spelled with the markers of `value-fidelity-tests.json`. A runner encodes what its handler received the same way and compares at every depth, key order included. A host object that is not a plain object or an array (a `Map`, a `Date`, an `Error` instance, a function) is a mismatch: the handler receives data.",
+    "How an argument becomes data. A string, number, BigInt, boolean, `null`, or `undefined` is itself, `-0` and `NaN` included. A symbol is a fresh host symbol with the same description. A function is its source text, `String(fn)`. An object follows `JSON.stringify`'s rules (own enumerable string keys in property order, `toJSON` applied and skipped when it throws, `Number`/`String`/`Boolean`/`BigInt` wrappers unwrapped, symbols dropped from objects and `null` in arrays, functions omitted from objects and `null` in arrays), except that it keeps what JSON cannot spell (`undefined`, `NaN`, the infinities, `-0`, BigInt) and keeps a cycle as a reference to the ancestor's copy. So a `Map` or `Set` is `{}` and a `Date` is its ISO string. A top-level object that has a `name`, `message`, or `stack` other than as an own enumerable key (inherited, or own and non-enumerable, as on an `Error`, whatever its prototype) gets each of them copied onto its data form, after its own keys and in that order; when the object has a `toJSON` method, they are copied onto the object `toJSON` returned. A copied property that throws when read, or holds `undefined`, a symbol, or a function, is left out, and the argument stays readable. Every getter runs once: whether an object carries `name`, `message`, `stack`, or `toJSON` is decided without running their getters.",
+    "An argument whose reading throws (a revoked Proxy at any depth, a getter that throws, a function whose `toString` throws, a value nested deeper than the runtime carries) reaches the handler as the string `[unreadable: <description>]`, and the call's other arguments are unaffected. The description of a thrown object with a non-empty string `message` is `name: message` (`Error` standing in for a `name` that is not a string), the bare name when the message is empty, and of anything else `String(thrown)`. An execution-limit stop (a timeout or a cancellation) while reading is not an unreadable argument: it still ends the script.",
+    "`message` is what a runtime whose handler receives one string receives: each argument rendered as text, joined by single spaces. A string is itself. An `Error` (an argument for which `instanceof Error` holds in the sandbox) is rendered from its data form's `name` and `message`: `name: message` when the message is a non-empty string, the bare name otherwise, and `Error` standing in for a name that is not a string or was left out. Its other properties and its stack are not part of the text. Any other object that carries `name` and `message`, copied or its own, renders as data like every other object. Every other argument is the text of its data form above: `undefined`, `null`, `true`, `false`; a number as JavaScript spells it (`String(n)`) except `-0`, which is `-0`, and `NaN`, `Infinity`, `-Infinity`; a BigInt as its digits followed by `n`; a symbol as `Symbol(description)` or `Symbol()`; an array as `[a,b]` and an object as `{\"key\":value}`, with no spaces, keys and nested strings quoted as `JSON.stringify` quotes them, and a reference back to an ancestor as `[Circular]`. A function's data form and an unreadable argument's are strings, so they render as themselves.",
+    "Where text is the engine's own (an error's `stack`, the message of an error the engine threw, the engine's description of a revoked Proxy), the expected value is a matcher: `{ \"$expect\": \"string\" }` matches any string, and with `prefix` or `suffix` the string must also start or end with them. A matcher with `\"optional\": true` stands for a property that may also be absent: an engine that formats an error's `stack` lazily from its `name` and `message` has no stack to give when reading those throws or yields a symbol. A matcher may stand for an argument, for a property of one, or for a whole `message`. It has no `$xript` key, so it is never a value marker."
+  ],
+  "manifest": {
+    "xript": "0.10",
+    "name": "console-probe"
+  },
+  "sentinel": "continued",
+  "cases": [
+    {
+      "name": "a string",
+      "script": "console.log(\"hello\"); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            "hello"
+          ],
+          "message": "hello"
+        }
+      ]
+    },
+    {
+      "name": "a string with spaces and non-ASCII text",
+      "script": "console.log(\"héllo wörld ✓\"); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            "héllo wörld ✓"
+          ],
+          "message": "héllo wörld ✓"
+        }
+      ]
+    },
+    {
+      "name": "an empty string",
+      "script": "console.log(\"\"); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            ""
+          ],
+          "message": ""
+        }
+      ]
+    },
+    {
+      "name": "numbers",
+      "script": "console.log(42, 3.5, -7, 1e21, 0.1); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            42,
+            3.5,
+            -7,
+            1e+21,
+            0.1
+          ],
+          "message": "42 3.5 -7 1e+21 0.1"
+        }
+      ]
+    },
+    {
+      "name": "negative zero",
+      "script": "console.log(-0); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "$xript": "-0"
+            }
+          ],
+          "message": "-0"
+        }
+      ]
+    },
+    {
+      "name": "NaN",
+      "script": "console.log(NaN); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "$xript": "NaN"
+            }
+          ],
+          "message": "NaN"
+        }
+      ]
+    },
+    {
+      "name": "the infinities",
+      "script": "console.log(Infinity, -Infinity); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "$xript": "Infinity"
+            },
+            {
+              "$xript": "-Infinity"
+            }
+          ],
+          "message": "Infinity -Infinity"
+        }
+      ]
+    },
+    {
+      "name": "BigInt values",
+      "script": "console.log(12345678901234567890n, -5n, 0n); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "$xript": "bigint",
+              "value": "12345678901234567890"
+            },
+            {
+              "$xript": "bigint",
+              "value": "-5"
+            },
+            {
+              "$xript": "bigint",
+              "value": "0"
+            }
+          ],
+          "message": "12345678901234567890n -5n 0n"
+        }
+      ]
+    },
+    {
+      "name": "a symbol with a description",
+      "script": "console.log(Symbol(\"tag\")); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "$xript": "symbol",
+              "description": "tag"
+            }
+          ],
+          "message": "Symbol(tag)"
+        }
+      ]
+    },
+    {
+      "name": "a symbol without a description",
+      "script": "console.log(Symbol()); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "$xript": "symbol"
+            }
+          ],
+          "message": "Symbol()"
+        }
+      ]
+    },
+    {
+      "name": "undefined",
+      "script": "console.log(undefined); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "$xript": "undefined"
+            }
+          ],
+          "message": "undefined"
+        }
+      ]
+    },
+    {
+      "name": "null",
+      "script": "console.log(null); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            null
+          ],
+          "message": "null"
+        }
+      ]
+    },
+    {
+      "name": "booleans",
+      "script": "console.log(true, false); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            true,
+            false
+          ],
+          "message": "true false"
+        }
+      ]
+    },
+    {
+      "name": "no arguments",
+      "script": "console.log(); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [],
+          "message": ""
+        }
+      ]
+    },
+    {
+      "name": "an Error with a message",
+      "script": "console.error(new Error(\"boom\")); \"continued\"",
+      "logs": [
+        {
+          "severity": "error",
+          "args": [
+            {
+              "name": "Error",
+              "message": "boom",
+              "stack": {
+                "$expect": "string"
+              }
+            }
+          ],
+          "message": "Error: boom"
+        }
+      ]
+    },
+    {
+      "name": "an Error without a message",
+      "script": "console.error(new Error()); \"continued\"",
+      "logs": [
+        {
+          "severity": "error",
+          "args": [
+            {
+              "name": "Error",
+              "message": "",
+              "stack": {
+                "$expect": "string"
+              }
+            }
+          ],
+          "message": "Error"
+        }
+      ]
+    },
+    {
+      "name": "a TypeError with a message",
+      "script": "console.error(new TypeError(\"bad type\")); \"continued\"",
+      "logs": [
+        {
+          "severity": "error",
+          "args": [
+            {
+              "name": "TypeError",
+              "message": "bad type",
+              "stack": {
+                "$expect": "string"
+              }
+            }
+          ],
+          "message": "TypeError: bad type"
+        }
+      ]
+    },
+    {
+      "name": "a TypeError without a message",
+      "script": "console.error(new TypeError()); \"continued\"",
+      "logs": [
+        {
+          "severity": "error",
+          "args": [
+            {
+              "name": "TypeError",
+              "message": "",
+              "stack": {
+                "$expect": "string"
+              }
+            }
+          ],
+          "message": "TypeError"
+        }
+      ]
+    },
+    {
+      "name": "an Error subclass with its own name and a property",
+      "script": "class ConfigError extends Error { constructor(message) { super(message); this.name = \"ConfigError\"; this.code = 7; } } console.error(new ConfigError(\"missing key\")); \"continued\"",
+      "logs": [
+        {
+          "severity": "error",
+          "args": [
+            {
+              "name": "ConfigError",
+              "code": 7,
+              "message": "missing key",
+              "stack": {
+                "$expect": "string"
+              }
+            }
+          ],
+          "message": "ConfigError: missing key"
+        }
+      ]
+    },
+    {
+      "name": "an Error subclass without a message",
+      "script": "class Quiet extends Error {} console.error(new Quiet()); \"continued\"",
+      "logs": [
+        {
+          "severity": "error",
+          "args": [
+            {
+              "name": "Error",
+              "message": "",
+              "stack": {
+                "$expect": "string"
+              }
+            }
+          ],
+          "message": "Error"
+        }
+      ]
+    },
+    {
+      "name": "an error the engine threw",
+      "script": "try { null.x; } catch (e) { console.error(e); }; \"continued\"",
+      "logs": [
+        {
+          "severity": "error",
+          "args": [
+            {
+              "name": "TypeError",
+              "message": {
+                "$expect": "string"
+              },
+              "stack": {
+                "$expect": "string"
+              }
+            }
+          ],
+          "message": {
+            "$expect": "string",
+            "prefix": "TypeError: "
+          }
+        }
+      ]
+    },
+    {
+      "name": "an Error after other arguments",
+      "script": "console.error(\"failed:\", new RangeError(\"out of range\"), 3); \"continued\"",
+      "logs": [
+        {
+          "severity": "error",
+          "args": [
+            "failed:",
+            {
+              "name": "RangeError",
+              "message": "out of range",
+              "stack": {
+                "$expect": "string"
+              }
+            },
+            3
+          ],
+          "message": "failed: RangeError: out of range 3"
+        }
+      ]
+    },
+    {
+      "name": "an Error nested in an object",
+      "script": "console.log({ e: new Error(\"inner\") }); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "e": {}
+            }
+          ],
+          "message": "{\"e\":{}}"
+        }
+      ]
+    },
+    {
+      "name": "a plain object",
+      "script": "console.log({ a: 1, b: \"two\", c: true, d: null }); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "a": 1,
+              "b": "two",
+              "c": true,
+              "d": null
+            }
+          ],
+          "message": "{\"a\":1,\"b\":\"two\",\"c\":true,\"d\":null}"
+        }
+      ]
+    },
+    {
+      "name": "an array of mixed values",
+      "script": "console.log([1, \"x\", false, null]); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            [
+              1,
+              "x",
+              false,
+              null
+            ]
+          ],
+          "message": "[1,\"x\",false,null]"
+        }
+      ]
+    },
+    {
+      "name": "nested values",
+      "script": "console.log({ list: [1, { deep: [2, 3] }], q: 'say \"hi\"', o: { p: { r: 1 } } }); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "list": [
+                1,
+                {
+                  "deep": [
+                    2,
+                    3
+                  ]
+                }
+              ],
+              "q": "say \"hi\"",
+              "o": {
+                "p": {
+                  "r": 1
+                }
+              }
+            }
+          ],
+          "message": "{\"list\":[1,{\"deep\":[2,3]}],\"q\":\"say \\\"hi\\\"\",\"o\":{\"p\":{\"r\":1}}}"
+        }
+      ]
+    },
+    {
+      "name": "an empty object and an empty array",
+      "script": "console.log({}, []); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {},
+            []
+          ],
+          "message": "{} []"
+        }
+      ]
+    },
+    {
+      "name": "a cyclic object",
+      "script": "var o = { a: 1 }; o.self = o; console.log(o); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "a": 1,
+              "self": {
+                "$xript": "cycle",
+                "up": 1
+              }
+            }
+          ],
+          "message": "{\"a\":1,\"self\":[Circular]}"
+        }
+      ]
+    },
+    {
+      "name": "a cyclic array",
+      "script": "var a = [1]; a.push(a); console.log(a); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            [
+              1,
+              {
+                "$xript": "cycle",
+                "up": 1
+              }
+            ]
+          ],
+          "message": "[1,[Circular]]"
+        }
+      ]
+    },
+    {
+      "name": "a cycle two levels up",
+      "script": "var o = { child: { n: 1 } }; o.child.parent = o; console.log(o); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "child": {
+                "n": 1,
+                "parent": {
+                  "$xript": "cycle",
+                  "up": 2
+                }
+              }
+            }
+          ],
+          "message": "{\"child\":{\"n\":1,\"parent\":[Circular]}}"
+        }
+      ]
+    },
+    {
+      "name": "one object reached twice without a cycle",
+      "script": "var s = { v: 1 }; console.log({ x: s, y: s }); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "x": {
+                "v": 1
+              },
+              "y": {
+                "v": 1
+              }
+            }
+          ],
+          "message": "{\"x\":{\"v\":1},\"y\":{\"v\":1}}"
+        }
+      ]
+    },
+    {
+      "name": "a named function",
+      "script": "function named(a, b) { return a + b; } console.log(named); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            "function named(a, b) { return a + b; }"
+          ],
+          "message": "function named(a, b) { return a + b; }"
+        }
+      ]
+    },
+    {
+      "name": "an arrow function",
+      "script": "console.log((x) => x * 2); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            "(x) => x * 2"
+          ],
+          "message": "(x) => x * 2"
+        }
+      ]
+    },
+    {
+      "name": "a class",
+      "script": "class Widget {} console.log(Widget); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            "class Widget {}"
+          ],
+          "message": "class Widget {}"
+        }
+      ]
+    },
+    {
+      "name": "functions inside an object and an array",
+      "script": "console.log({ f: function () {}, keep: 1 }, [function () {}, 2]); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "keep": 1
+            },
+            [
+              null,
+              2
+            ]
+          ],
+          "message": "{\"keep\":1} [null,2]"
+        }
+      ]
+    },
+    {
+      "name": "a Map, a Set, and a Date",
+      "script": "console.log(new Map([[\"k\", 1]]), new Set([1, 2]), new Date(0)); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {},
+            {},
+            "1970-01-01T00:00:00.000Z"
+          ],
+          "message": "{} {} 1970-01-01T00:00:00.000Z"
+        }
+      ]
+    },
+    {
+      "name": "values JSON cannot spell, nested",
+      "script": "console.log({ big: 1n, nan: NaN, negZero: -0, inf: Infinity, undef: undefined, sym: Symbol(\"dropped\") }, [Symbol(\"nulled\"), undefined, -Infinity]); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "big": {
+                "$xript": "bigint",
+                "value": "1"
+              },
+              "nan": {
+                "$xript": "NaN"
+              },
+              "negZero": {
+                "$xript": "-0"
+              },
+              "inf": {
+                "$xript": "Infinity"
+              },
+              "undef": {
+                "$xript": "undefined"
+              }
+            },
+            [
+              null,
+              {
+                "$xript": "undefined"
+              },
+              {
+                "$xript": "-Infinity"
+              }
+            ]
+          ],
+          "message": "{\"big\":1n,\"nan\":NaN,\"negZero\":-0,\"inf\":Infinity,\"undef\":undefined} [null,undefined,-Infinity]"
+        }
+      ]
+    },
+    {
+      "name": "an array with a hole",
+      "script": "console.log([1, , 3]); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            [
+              1,
+              {
+                "$xript": "undefined"
+              },
+              3
+            ]
+          ],
+          "message": "[1,undefined,3]"
+        }
+      ]
+    },
+    {
+      "name": "wrapper objects",
+      "script": "console.log(new Number(5), new String(\"w\"), new Boolean(false)); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            5,
+            "w",
+            false
+          ],
+          "message": "5 w false"
+        }
+      ]
+    },
+    {
+      "name": "a class instance",
+      "script": "class Point { constructor() { this.x = 1; this.y = 2; } } console.log(new Point()); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "x": 1,
+              "y": 2
+            }
+          ],
+          "message": "{\"x\":1,\"y\":2}"
+        }
+      ]
+    },
+    {
+      "name": "an object with a null prototype",
+      "script": "var o = Object.create(null); o.k = \"v\"; console.log(o); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "k": "v"
+            }
+          ],
+          "message": "{\"k\":\"v\"}"
+        }
+      ]
+    },
+    {
+      "name": "an own __proto__ key",
+      "script": "console.log(JSON.parse('{\"__proto__\": 1, \"a\": 2}')); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "__proto__": 1,
+              "a": 2
+            }
+          ],
+          "message": "{\"__proto__\":1,\"a\":2}"
+        }
+      ]
+    },
+    {
+      "name": "an object with toJSON",
+      "script": "console.log({ toJSON: function () { return \"custom\"; } }, { toJSON: function () { return { replaced: true }; } }); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            "custom",
+            {
+              "replaced": true
+            }
+          ],
+          "message": "custom {\"replaced\":true}"
+        }
+      ]
+    },
+    {
+      "name": "an object whose toJSON throws",
+      "script": "console.log({ toJSON: function () { throw new Error(\"no\"); }, a: 1 }); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "a": 1
+            }
+          ],
+          "message": "{\"a\":1}"
+        }
+      ]
+    },
+    {
+      "name": "a getter that returns a value runs once",
+      "script": "var reads = 0; console.log({ get g() { reads++; return reads; } }); console.log(reads); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "g": 1
+            }
+          ],
+          "message": "{\"g\":1}"
+        },
+        {
+          "severity": "info",
+          "args": [
+            1
+          ],
+          "message": "1"
+        }
+      ]
+    },
+    {
+      "name": "a revoked Proxy",
+      "script": "var r = Proxy.revocable({}, {}); r.revoke(); console.log(r.proxy); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "$expect": "string",
+              "prefix": "[unreadable: TypeError: ",
+              "suffix": "]"
+            }
+          ],
+          "message": {
+            "$expect": "string",
+            "prefix": "[unreadable: TypeError: ",
+            "suffix": "]"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a revoked Proxy nested in an object",
+      "script": "var r = Proxy.revocable({}, {}); r.revoke(); console.log({ p: r.proxy }); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "$expect": "string",
+              "prefix": "[unreadable: TypeError: ",
+              "suffix": "]"
+            }
+          ],
+          "message": {
+            "$expect": "string",
+            "prefix": "[unreadable: TypeError: ",
+            "suffix": "]"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a revoked Proxy between other arguments",
+      "script": "var r = Proxy.revocable({}, {}); r.revoke(); console.log(\"before\", r.proxy, \"after\"); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            "before",
+            {
+              "$expect": "string",
+              "prefix": "[unreadable: TypeError: ",
+              "suffix": "]"
+            },
+            "after"
+          ],
+          "message": {
+            "$expect": "string",
+            "prefix": "before [unreadable: TypeError: ",
+            "suffix": "] after"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a revoked Proxy of a function",
+      "script": "var r = Proxy.revocable(function () {}, {}); r.revoke(); console.log(r.proxy); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "$expect": "string",
+              "prefix": "[unreadable: TypeError: ",
+              "suffix": "]"
+            }
+          ],
+          "message": {
+            "$expect": "string",
+            "prefix": "[unreadable: TypeError: ",
+            "suffix": "]"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a function whose toString throws",
+      "script": "var f = function () {}; f.toString = function () { throw new Error(\"no text\"); }; console.log(f); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            "[unreadable: Error: no text]"
+          ],
+          "message": "[unreadable: Error: no text]"
+        }
+      ]
+    },
+    {
+      "name": "integer-like keys come first, in ascending order",
+      "script": "console.log({ b: 1, 2: \"two\", a: 3, 1: \"one\" }); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "1": "one",
+              "2": "two",
+              "b": 1,
+              "a": 3
+            }
+          ],
+          "message": "{\"1\":\"one\",\"2\":\"two\",\"b\":1,\"a\":3}"
+        }
+      ]
+    },
+    {
+      "name": "a getter that throws an Error",
+      "script": "console.log({ get bad() { throw new Error(\"getter failed\"); } }); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            "[unreadable: Error: getter failed]"
+          ],
+          "message": "[unreadable: Error: getter failed]"
+        }
+      ]
+    },
+    {
+      "name": "a getter that throws a string",
+      "script": "console.log({ get bad() { throw \"nope\"; } }); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            "[unreadable: nope]"
+          ],
+          "message": "[unreadable: nope]"
+        }
+      ]
+    },
+    {
+      "name": "a getter that throws nested",
+      "script": "console.log(\"value:\", { outer: { get bad() { throw new TypeError(\"deep\"); } } }); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            "value:",
+            "[unreadable: TypeError: deep]"
+          ],
+          "message": "value: [unreadable: TypeError: deep]"
+        }
+      ]
+    },
+    {
+      "name": "an object whose toString throws",
+      "script": "console.log({ toString: function () { throw new Error(\"toString failed\"); }, a: 1 }); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "a": 1
+            }
+          ],
+          "message": "{\"a\":1}"
+        }
+      ]
+    },
+    {
+      "name": "an object whose valueOf throws",
+      "script": "console.log({ valueOf: function () { throw new Error(\"valueOf failed\"); }, a: 1 }); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "a": 1
+            }
+          ],
+          "message": "{\"a\":1}"
+        }
+      ]
+    },
+    {
+      "name": "several arguments of different kinds",
+      "script": "console.log(\"count:\", 3, { a: 1 }, [1, 2], null, undefined, true); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            "count:",
+            3,
+            {
+              "a": 1
+            },
+            [
+              1,
+              2
+            ],
+            null,
+            {
+              "$xript": "undefined"
+            },
+            true
+          ],
+          "message": "count: 3 {\"a\":1} [1,2] null undefined true"
+        }
+      ]
+    },
+    {
+      "name": "every console method",
+      "script": "console.log(\"via log\"); console.info(\"via info\"); console.warn(\"via warn\"); console.error(\"via error\"); console.debug(\"via debug\"); console.trace(\"via trace\"); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            "via log"
+          ],
+          "message": "via log"
+        },
+        {
+          "severity": "info",
+          "args": [
+            "via info"
+          ],
+          "message": "via info"
+        },
+        {
+          "severity": "warn",
+          "args": [
+            "via warn"
+          ],
+          "message": "via warn"
+        },
+        {
+          "severity": "error",
+          "args": [
+            "via error"
+          ],
+          "message": "via error"
+        },
+        {
+          "severity": "debug",
+          "args": [
+            "via debug"
+          ],
+          "message": "via debug"
+        },
+        {
+          "severity": "trace",
+          "args": [
+            "via trace"
+          ],
+          "message": "via trace"
+        }
+      ]
+    },
+    {
+      "name": "an object at every level",
+      "script": "console.warn({ level: \"warn\" }); console.error([1]); console.debug({ d: 1 }); console.trace(null); \"continued\"",
+      "logs": [
+        {
+          "severity": "warn",
+          "args": [
+            {
+              "level": "warn"
+            }
+          ],
+          "message": "{\"level\":\"warn\"}"
+        },
+        {
+          "severity": "error",
+          "args": [
+            [
+              1
+            ]
+          ],
+          "message": "[1]"
+        },
+        {
+          "severity": "debug",
+          "args": [
+            {
+              "d": 1
+            }
+          ],
+          "message": "{\"d\":1}"
+        },
+        {
+          "severity": "trace",
+          "args": [
+            null
+          ],
+          "message": "null"
+        }
+      ]
+    },
+    {
+      "name": "the script keeps going after unreadable arguments",
+      "script": "var r = Proxy.revocable({}, {}); r.revoke(); console.error(r.proxy); console.warn({ get bad() { throw new Error(\"x\"); } }); console.log(\"still here\"); \"continued\"",
+      "logs": [
+        {
+          "severity": "error",
+          "args": [
+            {
+              "$expect": "string",
+              "prefix": "[unreadable: TypeError: ",
+              "suffix": "]"
+            }
+          ],
+          "message": {
+            "$expect": "string",
+            "prefix": "[unreadable: TypeError: ",
+            "suffix": "]"
+          }
+        },
+        {
+          "severity": "warn",
+          "args": [
+            "[unreadable: Error: x]"
+          ],
+          "message": "[unreadable: Error: x]"
+        },
+        {
+          "severity": "info",
+          "args": [
+            "still here"
+          ],
+          "message": "still here"
+        }
+      ]
+    },
+    {
+      "name": "an object with own non-enumerable name, message, and stack",
+      "script": "var o = { a: 1 }; Object.defineProperty(o, \"name\", { value: \"Custom\" }); Object.defineProperty(o, \"message\", { value: \"own text\" }); Object.defineProperty(o, \"stack\", { value: \"custom stack\" }); console.log(o); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "a": 1,
+              "name": "Custom",
+              "message": "own text",
+              "stack": "custom stack"
+            }
+          ],
+          "message": "{\"a\":1,\"name\":\"Custom\",\"message\":\"own text\",\"stack\":\"custom stack\"}"
+        }
+      ]
+    },
+    {
+      "name": "an object that inherits name and message",
+      "script": "console.log(Object.create({ name: \"Inherited\", message: \"from the prototype\" })); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "name": "Inherited",
+              "message": "from the prototype"
+            }
+          ],
+          "message": "{\"name\":\"Inherited\",\"message\":\"from the prototype\"}"
+        }
+      ]
+    },
+    {
+      "name": "an object with enumerable name and message",
+      "script": "console.log({ name: \"Plain\", message: \"just data\" }); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "name": "Plain",
+              "message": "just data"
+            }
+          ],
+          "message": "{\"name\":\"Plain\",\"message\":\"just data\"}"
+        }
+      ]
+    },
+    {
+      "name": "a non-enumerable message getter runs once",
+      "script": "var reads = 0; var o = { a: 1 }; Object.defineProperty(o, \"message\", { get: function () { reads++; return \"read \" + reads; } }); console.log(o); console.log(reads); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "a": 1,
+              "message": "read 1"
+            }
+          ],
+          "message": "{\"a\":1,\"message\":\"read 1\"}"
+        },
+        {
+          "severity": "info",
+          "args": [
+            1
+          ],
+          "message": "1"
+        }
+      ]
+    },
+    {
+      "name": "a toJSON getter runs once",
+      "script": "var reads = 0; console.log({ get toJSON() { reads++; return function () { return \"replaced \" + reads; }; } }); console.log(reads); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            "replaced 1"
+          ],
+          "message": "replaced 1"
+        },
+        {
+          "severity": "info",
+          "args": [
+            1
+          ],
+          "message": "1"
+        }
+      ]
+    },
+    {
+      "name": "an object built on Error.prototype without a constructor",
+      "script": "console.error(Object.create(Error.prototype)); \"continued\"",
+      "logs": [
+        {
+          "severity": "error",
+          "args": [
+            {
+              "name": "Error",
+              "message": ""
+            }
+          ],
+          "message": "Error"
+        }
+      ]
+    },
+    {
+      "name": "an Error whose message is a getter",
+      "script": "var e = new Error(); Object.defineProperty(e, \"message\", { get: function () { return \"from a getter\"; } }); console.error(e); \"continued\"",
+      "logs": [
+        {
+          "severity": "error",
+          "args": [
+            {
+              "name": "Error",
+              "message": "from a getter",
+              "stack": {
+                "$expect": "string"
+              }
+            }
+          ],
+          "message": "Error: from a getter"
+        }
+      ]
+    },
+    {
+      "name": "an Error whose message getter throws",
+      "script": "var e = new Error(); Object.defineProperty(e, \"message\", { get: function () { throw new Error(\"no message\"); } }); console.error(e); \"continued\"",
+      "logs": [
+        {
+          "severity": "error",
+          "args": [
+            {
+              "name": "Error",
+              "stack": {
+                "$expect": "string",
+                "optional": true
+              }
+            }
+          ],
+          "message": "Error"
+        }
+      ]
+    },
+    {
+      "name": "an Error whose message is not a string",
+      "script": "var e = new Error(); Object.defineProperty(e, \"message\", { value: 42 }); console.error(e); \"continued\"",
+      "logs": [
+        {
+          "severity": "error",
+          "args": [
+            {
+              "name": "Error",
+              "message": 42,
+              "stack": {
+                "$expect": "string"
+              }
+            }
+          ],
+          "message": "Error"
+        }
+      ]
+    },
+    {
+      "name": "an Error whose message is an object",
+      "script": "var e = new Error(); Object.defineProperty(e, \"message\", { value: { code: 7 } }); console.error(e); \"continued\"",
+      "logs": [
+        {
+          "severity": "error",
+          "args": [
+            {
+              "name": "Error",
+              "message": {
+                "code": 7
+              },
+              "stack": {
+                "$expect": "string"
+              }
+            }
+          ],
+          "message": "Error"
+        }
+      ]
+    },
+    {
+      "name": "an Error whose name is not a string",
+      "script": "var e = new Error(\"boom\"); Object.defineProperty(e, \"name\", { value: 5 }); console.error(e); \"continued\"",
+      "logs": [
+        {
+          "severity": "error",
+          "args": [
+            {
+              "name": 5,
+              "message": "boom",
+              "stack": {
+                "$expect": "string"
+              }
+            }
+          ],
+          "message": "Error: boom"
+        }
+      ]
+    },
+    {
+      "name": "an Error whose name is a symbol",
+      "script": "var e = new Error(\"boom\"); Object.defineProperty(e, \"name\", { value: Symbol(\"n\") }); console.error(e); \"continued\"",
+      "logs": [
+        {
+          "severity": "error",
+          "args": [
+            {
+              "message": "boom",
+              "stack": {
+                "$expect": "string",
+                "optional": true
+              }
+            }
+          ],
+          "message": "Error: boom"
+        }
+      ]
+    },
+    {
+      "name": "an Error with toJSON",
+      "script": "var e = new Error(\"boom\"); e.toJSON = function () { return { via: \"toJSON\" }; }; console.error(e); \"continued\"",
+      "logs": [
+        {
+          "severity": "error",
+          "args": [
+            {
+              "via": "toJSON",
+              "name": "Error",
+              "message": "boom",
+              "stack": {
+                "$expect": "string"
+              }
+            }
+          ],
+          "message": "Error: boom"
+        }
+      ]
+    },
+    {
+      "name": "an Error nested in an array",
+      "script": "console.log([new Error(\"inner\")]); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            [
+              {}
+            ]
+          ],
+          "message": "[{}]"
+        }
+      ]
+    },
+    {
+      "name": "a BigInt wrapper",
+      "script": "console.log(Object(7n)); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "$xript": "bigint",
+              "value": "7"
+            }
+          ],
+          "message": "7n"
+        }
+      ]
+    },
+    {
+      "name": "a string that is not well-formed, nested",
+      "script": "console.log({ s: \"a\\uD800b\" }); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "s": {
+                "$xript": "string",
+                "units": [
+                  97,
+                  55296,
+                  98
+                ]
+              }
+            }
+          ],
+          "message": "{\"s\":\"a\\ud800b\"}"
+        }
+      ]
+    },
+    {
+      "name": "a getter that throws an object with no name",
+      "script": "console.log({ get bad() { throw { message: \"plain object\" }; } }); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            "[unreadable: Error: plain object]"
+          ],
+          "message": "[unreadable: Error: plain object]"
+        }
+      ]
+    },
+    {
+      "name": "a getter that throws an object with no message",
+      "script": "console.log({ get bad() { throw { name: \"Named\" }; } }); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            "[unreadable: Named]"
+          ],
+          "message": "[unreadable: Named]"
+        }
+      ]
+    },
+    {
+      "name": "a getter that throws an Error without a message",
+      "script": "console.log({ get bad() { throw new TypeError(); } }); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            "[unreadable: TypeError]"
+          ],
+          "message": "[unreadable: TypeError]"
+        }
+      ]
+    },
+    {
+      "name": "a getter that throws undefined",
+      "script": "console.log({ get bad() { throw undefined; } }); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            "[unreadable: undefined]"
+          ],
+          "message": "[unreadable: undefined]"
+        }
+      ]
+    },
+    {
+      "name": "a getter that throws a number",
+      "script": "console.log({ get bad() { throw 42; } }); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            "[unreadable: 42]"
+          ],
+          "message": "[unreadable: 42]"
+        }
+      ]
+    },
+    {
+      "name": "a toJSON that throws on a nested object",
+      "script": "console.log({ inner: { toJSON: function () { throw new Error(\"no\"); }, kept: 1 } }); \"continued\"",
+      "logs": [
+        {
+          "severity": "info",
+          "args": [
+            {
+              "inner": {
+                "kept": 1
+              }
+            }
+          ],
+          "message": "{\"inner\":{\"kept\":1}}"
+        }
+      ]
+    }
+  ]
+}

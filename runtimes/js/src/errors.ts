@@ -113,6 +113,20 @@ export class ExecutionLimitError extends Error {
 	}
 }
 
+/**
+ * Thrown on the host when the engine ran out of WebAssembly stack underneath a call. The
+ * engine's own state is no longer trustworthy after that, so the runtime refuses every later
+ * call with this error and `dispose()` releases nothing it would have to walk.
+ */
+export class EngineStackExhaustedError extends Error {
+	constructor() {
+		super(
+			"the sandbox engine ran out of native stack and this runtime can no longer be used. Dispose it and create a new one; calling into the runtime from a shallower host stack leaves the engine more room",
+		);
+		this.name = "EngineStackExhaustedError";
+	}
+}
+
 export class CancellationError extends Error {
 	constructor(message = "Script execution was cancelled by the host.") {
 		super(message);

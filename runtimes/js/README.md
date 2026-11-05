@@ -94,7 +94,7 @@ Creates a sandboxed runtime from a manifest object and host binding implementati
 
 ### `runtime.execute(code): ExecutionResult`
 
-Executes JavaScript code in the sandbox. Returns `{ value, duration_ms }`.
+Executes JavaScript code in the sandbox. Returns `{ value, duration_ms }`. A script that ends in a promise, or calls an async binding, belongs in `runtime.executeAsync(code)`; `execute` throws instead.
 
 ### `runtime.fireHook(name, options?): unknown[]`
 
@@ -113,7 +113,7 @@ Frees the WASM sandbox resources.
 | Sandbox mechanism | QuickJS WASM | Node.js `vm` module | QuickJS (native) |
 | Zero dependencies on Node | Yes | Requires Node.js | Rust crate |
 | Performance | Good (WASM overhead) | Native V8 speed | Native QuickJS speed |
-| Async bindings | Via asyncify WASM | Native `async`/`await` | Native (rquickjs) |
+| Async bindings | Real promises (`initXriptAsync`) | Native `async`/`await` | Native (rquickjs) |
 
 Use this package when you need **universal portability** (browser, edge, serverless). Use `@xriptjs/runtime-node` when you're Node.js-only and want native V8 performance. Use `xript-runtime` when your host application is written in Rust.
 

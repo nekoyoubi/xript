@@ -1,4 +1,5 @@
 import vm from "node:vm";
+import { BindingError, CrossingRefusal, MAX_CROSSING_DEPTH, TOO_DEEP_MESSAGE } from "./errors.js";
 
 /**
  * Context-side helpers, evaluated once inside the sandbox realm. Everything a value needs in
@@ -11,23 +12,48 @@ const REALM_SOURCE = `"use strict";
 	var defineProperty = Object.defineProperty;
 	var freeze = Object.freeze;
 	var setPrototypeOf = Object.setPrototypeOf;
+	var getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+	var hasOwn = Object.prototype.hasOwnProperty;
+	var apply = Reflect.apply;
+	var ErrorCtor = Error;
+	var StringOf = String;
+	var DateCtor = Date;
+	var RegExpCtor = RegExp;
+	var MapCtor = Map;
+	var SetCtor = Set;
+	var PromiseCtor = Promise;
+	var BufferCtor = ArrayBuffer;
+	var BytesCtor = Uint8Array;
+	var mapSet = Map.prototype.set;
+	var setAdd = Set.prototype.add;
+	var bytesSet = Object.getPrototypeOf(Uint8Array.prototype).set;
 	var errorCtors = {
 		Error: Error, TypeError: TypeError, RangeError: RangeError, SyntaxError: SyntaxError,
 		ReferenceError: ReferenceError, EvalError: EvalError, URIError: URIError,
 	};
+	var viewCtors = {
+		DataView: DataView, Int8Array: Int8Array, Uint8Array: Uint8Array, Uint8ClampedArray: Uint8ClampedArray,
+		Int16Array: Int16Array, Uint16Array: Uint16Array, Int32Array: Int32Array, Uint32Array: Uint32Array,
+		Float32Array: Float32Array, Float64Array: Float64Array,
+		BigInt64Array: typeof BigInt64Array === "function" ? BigInt64Array : undefined,
+		BigUint64Array: typeof BigUint64Array === "function" ? BigUint64Array : undefined,
+	};
+	function owned(table, key) {
+		return apply(hasOwn, table, [key]) ? table[key] : undefined;
+	}
 	function isForeign(value) {
 		return value !== null && (typeof value === "object" || typeof value === "function") && !(value instanceof Object);
 	}
 	function sanitize(error) {
 		if (!isForeign(error)) return error;
 		var message = "";
-		try { message = String(error.message); } catch (e) {}
-		return new Error(message);
+		try { message = StringOf(error.message); } catch (e) {}
+		return new ErrorCtor(message);
 	}
 	return {
 		Function: Function,
 		Object: Object,
-		Promise: Promise,
+		Promise: PromiseCtor,
 		object: function () { return {}; },
 		array: function () { return []; },
 		define: function (target, key, value) {
@@ -37,24 +63,26 @@ const REALM_SOURCE = `"use strict";
 			defineProperty(target, key, { get: get, set: set, enumerable: true, configurable: false });
 		},
 		freeze: function (target) { return freeze(target); },
-		date: function (time) { return new Date(time); },
-		regexp: function (source, flags) { return new RegExp(source, flags); },
-		map: function () { return new Map(); },
-		mapSet: function (map, key, value) { map.set(key, value); },
-		set: function () { return new Set(); },
-		setAdd: function (set, value) { set.add(value); },
+		date: function (time) { return new DateCtor(time); },
+		regexp: function (source, flags) { return new RegExpCtor(source, flags); },
+		map: function () { return new MapCtor(); },
+		mapSet: function (map, key, value) { apply(mapSet, map, [key, value]); },
+		set: function () { return new SetCtor(); },
+		setAdd: function (set, value) { apply(setAdd, set, [value]); },
 		typed: function (kind, bytes) {
-			var ctor = globalThis[kind];
-			var buffer = new ArrayBuffer(bytes.length);
-			new Uint8Array(buffer).set(bytes);
-			return kind === "ArrayBuffer" ? buffer : kind === "DataView" ? new DataView(buffer) : new ctor(buffer);
+			var buffer = new BufferCtor(bytes.length);
+			apply(bytesSet, new BytesCtor(buffer), [bytes]);
+			if (kind === "ArrayBuffer") return buffer;
+			var ctor = owned(viewCtors, kind) || BytesCtor;
+			return new ctor(buffer);
 		},
-		promise: function (executor) { return new Promise(executor); },
+		promise: function (executor) { return new PromiseCtor(executor); },
 		error: function (kind, ctorName, message) {
-			var ctor = errorCtors[ctorName] || Error;
+			var ctor = owned(errorCtors, ctorName) || ErrorCtor;
 			var error = new ctor(message);
-			var custom = globalThis[kind];
-			if (typeof custom === "function" && custom.prototype instanceof Error) setPrototypeOf(error, custom.prototype);
+			var found = getOwnPropertyDescriptor(globalThis, kind);
+			var custom = found && !found.configurable && !found.writable ? found.value : undefined;
+			if (typeof custom === "function" && custom.prototype instanceof ErrorCtor) setPrototypeOf(error, custom.prototype);
 			if (kind !== ctorName) defineProperty(error, "name", { value: kind, writable: true, enumerable: false, configurable: true });
 			return error;
 		},
@@ -130,6 +158,12 @@ export class RealmBridge {
 	 */
 	resolveRetained?: (value: object) => unknown;
 
+	/**
+	 * Maps a callback proxy crossing back in to the script function it stands for (or to
+	 * `undefined` once its call is over), returning null for any other function.
+	 */
+	resolveScoped?: (fn: object) => { value: unknown } | null;
+
 	constructor(context: vm.Context) {
 		this.helpers = vm.runInContext(REALM_SOURCE, context, { filename: "xript-realm.js" }) as RealmHelpers;
 	}
@@ -139,7 +173,7 @@ export class RealmBridge {
 		return typeof value === "function" ? value instanceof this.helpers.Function : value instanceof this.helpers.Object;
 	}
 
-	toContext(value: unknown, seen: Map<object, unknown> = new Map()): unknown {
+	toContext(value: unknown, seen: Map<object, unknown> = new Map(), depth = 0): unknown {
 		if (value === null || (typeof value !== "object" && typeof value !== "function")) return value;
 		const source = value as object;
 		const prior = seen.get(source);
@@ -152,11 +186,14 @@ export class RealmBridge {
 
 		if (typeof value === "function") {
 			if (this.isContextValue(source)) return value;
+			const scoped = this.resolveScoped?.(source);
+			if (scoped) return scoped.value;
 			return this.wrapFunction(value as (...args: unknown[]) => unknown);
 		}
 
-		if (this.isContextValue(source)) return this.reconcileContextValue(source, seen);
-		return this.copyHostValue(source, seen);
+		if (depth >= MAX_CROSSING_DEPTH) throw new CrossingRefusal(TOO_DEEP_MESSAGE);
+		if (this.isContextValue(source)) return this.reconcileContextValue(source, seen, depth);
+		return this.copyHostValue(source, seen, depth);
 	}
 
 	/** Wraps a host function in a context-realm function; the same host function always gets the same wrapper. */
@@ -167,7 +204,8 @@ export class RealmBridge {
 			try {
 				return [true, this.toContext(Reflect.apply(fn, self, Array.prototype.slice.call(args)))];
 			} catch (error) {
-				return [false, this.toContextError(error)];
+				const failure = error instanceof CrossingRefusal && name ? new BindingError(name, error.message) : error;
+				return [false, this.toContextError(failure)];
 			}
 		};
 		const wrapped = this.helpers.wrap(invoke, name);
@@ -180,7 +218,7 @@ export class RealmBridge {
 	 * into host-realm objects and arrays, so a host reads ordinary values. Functions, class
 	 * instances, and host values pass through unchanged.
 	 */
-	toHost(value: unknown, seen: Map<object, unknown> = new Map()): unknown {
+	toHost(value: unknown, seen: Map<object, unknown> = new Map(), depth = 0, key = "", applyToJSON = true): unknown {
 		// A script function carries no data across to the host, and handing one over would let
 		// the host call sandbox code outside the execution budget. It marshals to null at the top
 		// level and as an array element, and is omitted as an object property below, matching what
@@ -202,12 +240,35 @@ export class RealmBridge {
 		const proto = Object.getPrototypeOf(value);
 		if (!isArray && proto !== this.helpers.Object.prototype && proto !== null) return value;
 		if (!isArray && !this.isContextValue(value) && proto !== null) return value;
+		if (depth >= MAX_CROSSING_DEPTH) throw new CrossingRefusal(TOO_DEEP_MESSAGE);
+		const record = value as Record<string, unknown>;
+		if (applyToJSON) {
+			const toJSON = record.toJSON;
+			if (typeof toJSON === "function") {
+				let replaced: unknown;
+				let threw = false;
+				try {
+					replaced = Reflect.apply(toJSON, value, [key]);
+				} catch {
+					threw = true;
+				}
+				if (!threw) return this.toHost(replaced, seen, depth, key, false);
+			}
+		}
 		const copy: Record<string, unknown> | unknown[] = isArray ? [] : proto === null ? Object.create(null) : {};
 		seen.set(value, copy);
-		const record = value as Record<string, unknown>;
-		for (const key of Object.keys(record)) {
-			if (!isArray && typeof record[key] === "function") continue;
-			Object.defineProperty(copy, key, { value: this.toHost(record[key], seen), writable: true, enumerable: true, configurable: true });
+		if (isArray) {
+			const length = (value as unknown[]).length;
+			for (let i = 0; i < length; i++) {
+				const item = (value as unknown[])[i];
+				(copy as unknown[])[i] = typeof item === "symbol" ? null : this.toHost(item, seen, depth + 1, String(i));
+			}
+		} else {
+			for (const name of Object.keys(record)) {
+				const item = record[name];
+				if (typeof item === "function" || typeof item === "symbol") continue;
+				Object.defineProperty(copy, name, { value: this.toHost(item, seen, depth + 1, name), writable: true, enumerable: true, configurable: true });
+			}
 		}
 		return copy;
 	}
@@ -237,30 +298,28 @@ export class RealmBridge {
 	 * A context-realm container may still hold host values a host planted in it; the container
 	 * is kept when nothing inside needs re-creating, and copied when something does.
 	 */
-	private reconcileContextValue(source: object, seen: Map<object, unknown>): unknown {
+	private reconcileContextValue(source: object, seen: Map<object, unknown>, depth: number): unknown {
 		if (!Array.isArray(source) && Object.getPrototypeOf(source) !== this.helpers.Object.prototype) return source;
 		seen.set(source, source);
 		const record = source as Record<string, unknown>;
 		let copy: Record<string, unknown> | unknown[] | null = null;
-		for (const key of Object.keys(record)) {
-			const original = record[key];
-			const converted = this.toContext(original, seen);
-			if (converted !== original) {
-				if (!copy) {
-					copy = Array.isArray(source) ? this.helpers.array() : this.helpers.object();
-					for (const earlier of Object.keys(record)) {
-						if (earlier === key) break;
-						this.helpers.define(copy, earlier, record[earlier]);
-					}
-					seen.set(source, copy);
-				}
+		const keys = Object.keys(record);
+		const read: unknown[] = [];
+		for (let i = 0; i < keys.length; i++) {
+			const original = record[keys[i]];
+			read.push(original);
+			const converted = this.toContext(original, seen, depth + 1);
+			if (!Object.is(converted, original) && !copy) {
+				copy = Array.isArray(source) ? this.helpers.array() : this.helpers.object();
+				for (let j = 0; j < i; j++) this.helpers.define(copy, keys[j], read[j]);
+				seen.set(source, copy);
 			}
-			if (copy) this.helpers.define(copy, key, converted);
+			if (copy) this.helpers.define(copy, keys[i], converted);
 		}
 		return copy ?? source;
 	}
 
-	private copyHostValue(source: object, seen: Map<object, unknown>): unknown {
+	private copyHostValue(source: object, seen: Map<object, unknown>, depth: number): unknown {
 		const helpers = this.helpers;
 
 		if (source instanceof Error) {
@@ -287,13 +346,13 @@ export class RealmBridge {
 		if (source instanceof Map) {
 			const copy = helpers.map();
 			seen.set(source, copy);
-			for (const [key, value] of source) helpers.mapSet(copy, this.toContext(key, seen), this.toContext(value, seen));
+			for (const [key, value] of source) helpers.mapSet(copy, this.toContext(key, seen, depth + 1), this.toContext(value, seen, depth + 1));
 			return copy;
 		}
 		if (source instanceof Set) {
 			const copy = helpers.set();
 			seen.set(source, copy);
-			for (const value of source) helpers.setAdd(copy, this.toContext(value, seen));
+			for (const value of source) helpers.setAdd(copy, this.toContext(value, seen, depth + 1));
 			return copy;
 		}
 
@@ -303,7 +362,7 @@ export class RealmBridge {
 		for (const key of Object.keys(record)) {
 			const value = record[key];
 			if (value instanceof LiveAccessor) this.defineAccessor(copy, key, value);
-			else helpers.define(copy, key, this.toContext(value, seen));
+			else helpers.define(copy, key, this.toContext(value, seen, depth + 1));
 		}
 		return Object.isFrozen(source) ? helpers.freeze(copy) : copy;
 	}

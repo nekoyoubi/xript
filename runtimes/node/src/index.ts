@@ -672,8 +672,8 @@ export function createRuntime(manifest: unknown, options: RuntimeOptions): Xript
 
 	return {
 		manifest: m,
-		execute: sandbox.execute,
-		executeAsync: sandbox.executeAsync,
+		execute: (code) => sandbox.callerContext.run(null, () => sandbox.execute(code)),
+		executeAsync: (code) => sandbox.callerContext.run(null, () => sandbox.executeAsync(code)),
 		debugExecute: sandbox.debugExecute,
 		debugSession: sandbox.debugSession,
 		invokeExport(name: string, args: unknown[]): unknown {

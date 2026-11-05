@@ -1,0 +1,275 @@
+{
+  "description": "Conformance corpus for re-entering a runtime from inside one of its own host bindings. A host binding that calls a host entry point (`execute`, `executeAsync`, `invokeExport`, `invokeModExport`, `fireHook`, `emit`) on the runtime that is already running it re-enters that runtime: the inner call runs to completion, its result comes back to the binding, an error it raises reaches the binding the way it would reach any host, and the outer script carries on afterwards. No entry point hangs, refuses, or leaves the runtime unusable. Every runtime builds the `manifest` host below, loads `mod`, runs `setup`, runs each case's `script` through its synchronous `execute` (or performs the case's `kept` call), compares the result to `expected`, then runs `execute(\"'usable'\")` and expects `\"usable\"`.",
+  "notes": [
+    "`enter(entry, arg)` is the host binding that re-enters. `entry` names the host entry point and `arg` its arguments: `execute` runs the source `arg` and returns the script's value; `executeAsync` starts the async body `arg` and returns `null`, keeping the call (see below); `invokeExport` invokes export `arg[0]` with the argument list `arg[1]`; `invokeModExport` does the same inside mod `inner`'s namespace; `fireHook` fires hook `arg[0]` with `arg[1]` as its one data value; `emit` emits event `arg[0]` with `arg[1]` as its payload. The binding returns whatever the entry point returned, and a failure the entry point raises is the binding's failure, so the script sees a `BindingError` for `enter`, its message naming the binding once (`enter(): `) ahead of the inner failure's own message (see `spec/binding-error-tests.json`).",
+    "`executeAsync` is the asynchronous entry point, and a synchronous binding cannot wait for it. The JavaScript runtimes run the body up to its first `await` before `executeAsync` returns, so the side effects of a body that never awaits are visible to the outer script as soon as `enter` returns; the binding keeps the promise, and the runner settles every kept call after the outer script returns and compares their values, in the order they were started, to the case's `settled`. A runtime whose async entry point is a future that does nothing until it is driven (Rust) drives it to completion inside the binding instead, so the same side effects are visible at the same point and the same values settle. C# has no asynchronous entry point; its runner runs the body as an async function through `Execute`, which drains the job queue before it returns, with the same result.",
+    "`keep(fn)` retains `fn` (a `retain` parameter) and returns its index in the host's list of retained callbacks. `callKept(index, arg)` calls that retained callback with `arg` and returns its result. A case with `kept` makes the host call retained callback `kept.index` with `kept.args` directly, outside any script, after running `script`; the callback's result must equal `expected`.",
+    "`who()` reports its caller as `{ \"modId\": m, \"binding\": \"who\" }`, where `m` is the mod whose code made the call and `null` for a host-run script. Re-entering does not disturb caller identity: an inner call made on behalf of a mod reports that mod, an inner host script reports `null`, and the outer frame's caller is back in place once the inner call returns.",
+    "Hook `spin` declares its own `limits.timeout_ms` of 50, far below the manifest's 2000, so a fire of it is stopped by its own budget while the outer call still has plenty of time left. The JavaScript runtimes budget a fire only when created with `budgetHandlers: true`, so their runners pass it; Rust and C# always budget a fire. An inner call stopped by its budget fails like any other inner failure, and the outer call and the runtime both carry on.",
+    "Where an expected value is an array or object it is compared as JSON, and numbers compare by value. `failure(run, text)` in `setup` runs `run` and, when it throws, returns the error's `name`, whether it is an instance of `BindingError`, its `binding`, whether its message carries the `enter(): ` prefix exactly once, and whether the message contains `text`. The rest of the wording is the runtime's own."
+  ],
+  "manifest": {
+    "xript": "0.10",
+    "name": "reentrancy-probe",
+    "limits": {
+      "timeout_ms": 2000
+    },
+    "bindings": {
+      "enter": {
+        "description": "Re-enters the runtime through one host entry point."
+      },
+      "keep": {
+        "description": "Retains a function and returns its index.",
+        "params": [
+          {
+            "name": "fn",
+            "type": "function",
+            "retain": true
+          }
+        ]
+      },
+      "callKept": {
+        "description": "Calls a retained callback with one argument and returns its result."
+      },
+      "who": {
+        "description": "Reports the calling mod and binding."
+      }
+    },
+    "hooks": {
+      "tick": {
+        "description": "Answers with its data."
+      },
+      "relay": {
+        "description": "Re-emits its data as a tock event."
+      },
+      "spin": {
+        "description": "Never finishes.",
+        "limits": {
+          "timeout_ms": 50
+        }
+      }
+    },
+    "events": [
+      {
+        "id": "tock",
+        "description": "Answers with its payload."
+      }
+    ]
+  },
+  "mod": {
+    "manifest": {
+      "xript": "0.10",
+      "name": "inner",
+      "version": "1.0.0",
+      "entry": {
+        "script": "inner.js",
+        "exports": {
+          "echo": {
+            "description": "Returns its argument."
+          },
+          "boom": {
+            "description": "Throws."
+          },
+          "nest": {
+            "description": "Re-enters the runtime itself."
+          },
+          "who": {
+            "description": "Reports its caller."
+          },
+          "whoAround": {
+            "description": "Reports its caller before and after re-entering."
+          }
+        }
+      }
+    },
+    "source": "xript.exports.register('echo', function (x) { return 'echo:' + x; }); xript.exports.register('boom', function () { throw new Error('inner boom'); }); xript.exports.register('nest', function (entry, arg) { return 'nest(' + JSON.stringify(enter(entry, arg)) + ')'; }); xript.exports.register('who', function () { return who(); }); xript.exports.register('whoAround', function (entry, arg) { var before = who().modId; var inner = enter(entry, arg); return [before, inner, who().modId]; });"
+  },
+  "setup": "hooks.tick(function (x) { return 'tick:' + x; }); hooks.relay(function (x) { return enter('emit', ['tock', x]); }); hooks.spin(function () { for (;;) {} }); events.on('tock', function (x) { return 'tock:' + x; }); function failure(run, text) { try { run(); return 'no failure'; } catch (e) { return [e.name, e instanceof BindingError, e.binding, e.message.indexOf('enter(): ') === 0 && e.message.indexOf('enter(): enter(): ') !== 0, e.message.indexOf(text) !== -1]; } }",
+  "cases": [
+    {
+      "name": "execute re-enters and returns the inner script's value",
+      "script": "enter('execute', '1 + 1')",
+      "expected": 2
+    },
+    {
+      "name": "an inner script shares the outer script's globals both ways",
+      "script": "globalThis.a = 20; [enter('execute', 'a + 1'), enter('execute', 'globalThis.b = 3, b'), b]",
+      "expected": [
+        21,
+        3,
+        3
+      ]
+    },
+    {
+      "name": "executeAsync re-enters, runs its body before the binding returns, and settles to its value",
+      "script": "enter('executeAsync', 'globalThis.mark = \"ran\"; return 7'); [typeof mark, mark]",
+      "expected": [
+        "string",
+        "ran"
+      ],
+      "settled": [
+        7
+      ]
+    },
+    {
+      "name": "invokeExport re-enters and returns the export's result",
+      "script": "enter('invokeExport', ['echo', ['x']])",
+      "expected": "echo:x"
+    },
+    {
+      "name": "invokeModExport re-enters and returns the export's result",
+      "script": "enter('invokeModExport', ['echo', ['y']])",
+      "expected": "echo:y"
+    },
+    {
+      "name": "fireHook re-enters and returns the handlers' results",
+      "script": "enter('fireHook', ['tick', 'a'])",
+      "expected": [
+        "tick:a"
+      ]
+    },
+    {
+      "name": "emit re-enters and returns the handlers' results",
+      "script": "enter('emit', ['tock', 'b'])",
+      "expected": [
+        "tock:b"
+      ]
+    },
+    {
+      "name": "execute nested twice",
+      "script": "enter('execute', \"enter('execute', '2 + 3') * 10\")",
+      "expected": 50
+    },
+    {
+      "name": "an export that re-enters, called through a re-entered export call",
+      "script": "enter('invokeModExport', ['nest', ['invokeModExport', ['echo', ['z']]]])",
+      "expected": "nest(\"echo:z\")"
+    },
+    {
+      "name": "a re-entered fire whose handler re-enters with an emit",
+      "script": "enter('fireHook', ['relay', 'c'])",
+      "expected": [
+        [
+          "tock:c"
+        ]
+      ]
+    },
+    {
+      "name": "an export, a fire, and an execute nested inside one another",
+      "script": "enter('invokeExport', ['nest', ['fireHook', ['tick', enter('execute', \"enter('emit', ['tock', 'd'])[0]\")]]])",
+      "expected": "nest([\"tick:tock:d\"])"
+    },
+    {
+      "name": "an inner script that throws fails the binding, and the outer script carries on",
+      "script": "[failure(function () { enter('execute', \"throw new Error('inner text')\"); }, 'inner text'), enter('execute', '\"after\"')]",
+      "expected": [
+        [
+          "BindingError",
+          true,
+          "enter",
+          true,
+          true
+        ],
+        "after"
+      ]
+    },
+    {
+      "name": "an inner export that throws fails the binding, and the outer script carries on",
+      "script": "[failure(function () { enter('invokeModExport', ['boom', []]); }, 'inner boom'), enter('invokeModExport', ['echo', ['after']])]",
+      "expected": [
+        [
+          "BindingError",
+          true,
+          "enter",
+          true,
+          true
+        ],
+        "echo:after"
+      ]
+    },
+    {
+      "name": "an inner throw two levels down reaches the outer script once",
+      "script": "failure(function () { enter('execute', \"enter('invokeExport', ['boom', []])\"); }, 'inner boom')",
+      "expected": [
+        "BindingError",
+        true,
+        "enter",
+        true,
+        true
+      ]
+    },
+    {
+      "name": "an inner fire stopped by its own budget fails the binding without poisoning the outer call",
+      "script": "var stopped = failure(function () { enter('fireHook', ['spin', 0]); }, ''); var n = 0; for (var i = 0; i < 100000; i++) { n += 1; } [stopped, n, enter('fireHook', ['tick', 'next'])]",
+      "expected": [
+        [
+          "BindingError",
+          true,
+          "enter",
+          true,
+          true
+        ],
+        100000,
+        [
+          "tick:next"
+        ]
+      ]
+    },
+    {
+      "name": "an export reports its own mod as caller when invoked through a re-entered call",
+      "script": "enter('invokeModExport', ['who', []])",
+      "expected": {
+        "modId": "inner",
+        "binding": "who"
+      }
+    },
+    {
+      "name": "the outer caller is back in place after an inner host script",
+      "script": "enter('invokeModExport', ['whoAround', ['execute', 'who().modId']])",
+      "expected": [
+        "inner",
+        null,
+        "inner"
+      ]
+    },
+    {
+      "name": "a host script re-entered from an export reports no mod",
+      "script": "enter('invokeModExport', ['nest', ['execute', 'who().modId']])",
+      "expected": "nest(null)"
+    },
+    {
+      "name": "a retained callback called by the host re-enters from its own binding",
+      "script": "keep(function (code) { return enter('execute', code); })",
+      "kept": {
+        "index": 0,
+        "args": [
+          "6 * 7"
+        ]
+      },
+      "expected": 42
+    },
+    {
+      "name": "a retained callback called by the host re-enters through an export",
+      "script": "keep(function (x) { return enter('invokeModExport', ['echo', [x]]); })",
+      "kept": {
+        "index": 0,
+        "args": [
+          "kept"
+        ]
+      },
+      "expected": "echo:kept"
+    },
+    {
+      "name": "a retained callback called from inside a binding re-enters from its own binding",
+      "script": "keep(function (code) { return enter('execute', code); }); callKept(0, '3 + 4')",
+      "expected": 7
+    },
+    {
+      "name": "a retained callback re-entering through a fire, called from a re-entered script",
+      "script": "keep(function (x) { return enter('fireHook', ['tick', x]); }); enter('execute', \"callKept(0, 'deep')\")",
+      "expected": [
+        "tick:deep"
+      ]
+    }
+  ]
+}

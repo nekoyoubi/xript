@@ -9,6 +9,17 @@
 //! script calls (on a fresh budget), and releases it when done. A retained
 //! callback passed back into the sandbox as its marker
 //! ([`RetainedCallback::to_value`]) arrives as the original script function.
+//!
+//! [`RetainedCallback::call`] is synchronous and refuses a callback that
+//! returns a promise. [`RetainedCallback::call_async`] accepts one (an `async`
+//! function, say) and returns a future that drives the runtime's jobs until the
+//! promise settles. It is safe anywhere `call` is, nested inside a binding of
+//! the same runtime included:
+//!
+//! ```ignore
+//! // script: keep(async function (id) { const row = await db.load(id); return row.name; })
+//! let name = retained.call_async(&[serde_json::json!(7)]).await?;
+//! ```
 
 use std::collections::HashMap;
 use std::fmt;
@@ -18,7 +29,6 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 use std::thread::ThreadId;
 use std::time::{Duration, Instant};
 
-use rquickjs::function::{Rest, This};
 use rquickjs::{Ctx, Function, JsLifetime, Persistent, Value};
 
 use crate::callback::{CallbackError, ExpiredCause, CALLBACK_MARKER};
@@ -136,6 +146,34 @@ impl RetainedCallback {
         registry.call(self, args)
     }
 
+    /// Calls the script function with `args`, as [`call`](Self::call) does,
+    /// except that a promise it returns (an `async` function's, say) is not
+    /// refused: the returned future drives the runtime's jobs until that
+    /// promise settles, then resolves to its value, or fails with
+    /// [`CallbackError::Threw`] carrying its rejection.
+    ///
+    /// It is safe to call nested, as `call` is: from inside a host binding
+    /// running in this same runtime (where `call` refuses a promise with
+    /// [`CallbackError::Promise`]), from inside another retained callback, or
+    /// between script calls. Nested, it runs in place on the calling script's
+    /// budget and settles before the future is first polled to completion,
+    /// with any async binding the callback awaits settled in place, as on a
+    /// sync runtime. Between script calls it runs on a fresh budget, which
+    /// bounds the whole call, time spent waiting on the promise included. On
+    /// an async-mode runtime the future then yields while the promise waits
+    /// on an async binding, releasing the runtime to other calls; on a
+    /// sync-mode runtime it completes on its first poll.
+    ///
+    /// Fails like `call` once released and from another thread.
+    pub async fn call_async(&self, args: &[serde_json::Value]) -> Result<serde_json::Value, CallbackError> {
+        let Some(registry) = self.registry.upgrade() else {
+            return Err(CallbackError::Released {
+                binding: self.binding.clone(),
+            });
+        };
+        registry.call_async(self, args).await
+    }
+
     /// Releases the callback. Releasing twice does nothing.
     pub fn release(&self) {
         if let Some(registry) = self.registry.upgrade() {
@@ -213,12 +251,18 @@ pub(crate) enum ContextHandle {
 impl ContextHandle {
     fn with<R>(&self, f: impl for<'js> FnOnce(Ctx<'js>) -> R) -> R {
         match self {
-            ContextHandle::Sync(ctx) => ctx.with(f),
+            ContextHandle::Sync(ctx) => ctx.with(|ctx| {
+                let _held = crate::reentry::Holding::new(&ctx);
+                let _entry = crate::stack_guard::enter(&ctx);
+                f(ctx.clone())
+            }),
             ContextHandle::Async(ctx) => {
                 let f = crate::yielding::AssertSend(f);
                 pollster::block_on(ctx.with(move |ctx| {
                     let f = f;
-                    crate::yielding::AssertSend(f.into_inner()(ctx))
+                    let _held = crate::reentry::Holding::new(&ctx);
+                    let _entry = crate::stack_guard::enter(&ctx);
+                    crate::yielding::AssertSend(f.into_inner()(ctx.clone()))
                 }))
                 .into_inner()
             }
@@ -230,6 +274,8 @@ impl ContextHandle {
 /// and the runtime's interrupt frames and budget so it gets a fresh one.
 pub(crate) struct Attachment {
     pub(crate) context: ContextHandle,
+    /// The context's identity, to recognize it as already held on this thread.
+    pub(crate) key: usize,
     pub(crate) frames: crate::sandbox::InterruptFrames,
     pub(crate) timeout_ms: u64,
     pub(crate) cancellation: Option<crate::sandbox::CancellationToken>,
@@ -410,10 +456,23 @@ impl RetainedRegistry {
         let Some(attached) = self.attached.get() else {
             return Err(CallbackError::Released { binding });
         };
+        if let Some(raw) = crate::reentry::held(attached.key) {
+            let interrupted = AtomicBool::new(false);
+            let _caller = self.caller.enter(owner);
+            // SAFETY: `held` found the context on this thread's record, so its
+            // lock is held further up this thread's stack for the whole call.
+            return unsafe {
+                crate::reentry::with_held(raw, |ctx| {
+                    let Some(function) = self.restore(&ctx, handle.id) else {
+                        return Err(CallbackError::Released { binding: binding.clone() });
+                    };
+                    crate::callback::call_detached(&ctx, &function, &binding, args, &interrupted)
+                })
+            };
+        }
         if crate::sandbox::frames_live_on_this_thread(&attached.frames) {
-            // The runtime is running on this thread outside any binding call
-            // (a console handler, say): entering the context again would
-            // deadlock on its own lock.
+            // An execution region is live on this thread without its context
+            // recorded as held, so taking the lock could wait on that region.
             return Err(CallbackError::RetainedExpired {
                 binding,
                 cause: ExpiredCause::OtherThread,
@@ -440,6 +499,97 @@ impl RetainedRegistry {
             };
             crate::callback::call_detached(&ctx, &function, &binding, args, &interrupted)
         })
+    }
+
+    async fn call_async(
+        self: &Arc<Self>,
+        handle: &RetainedCallback,
+        args: &[serde_json::Value],
+    ) -> Result<serde_json::Value, CallbackError> {
+        let binding = handle.binding.clone();
+        let (thread, owner) = {
+            let inner = self.lock();
+            match inner.entries.get(&handle.id) {
+                Some(entry) if !inner.disposed && entry.function.is_some() => (entry.thread, entry.owner.clone()),
+                _ => return Err(CallbackError::Released { binding }),
+            }
+        };
+        if thread != std::thread::current().id() {
+            return Err(CallbackError::RetainedExpired {
+                binding,
+                cause: ExpiredCause::OtherThread,
+            });
+        }
+        let Some(attached) = self.attached.get() else {
+            return Err(CallbackError::Released { binding });
+        };
+
+        let interrupted = Arc::new(AtomicBool::new(false));
+        if let Some(raw) = crate::reentry::held(attached.key) {
+            let _caller = self.caller.enter(owner);
+            // SAFETY: `held` found the context on this thread's record, so its
+            // lock is held further up this thread's stack for the whole call.
+            return unsafe {
+                crate::reentry::with_held(raw, |ctx| {
+                    let Some(function) = self.restore(&ctx, handle.id) else {
+                        return Err(CallbackError::Released { binding: binding.clone() });
+                    };
+                    crate::callback::call_settling(&ctx, &function, &binding, args, &interrupted)
+                })
+            };
+        }
+
+        let frame = crate::sandbox::InterruptFrame {
+            deadline: Instant::now() + Duration::from_millis(attached.timeout_ms),
+            token: attached.cancellation.clone(),
+            call_token: None,
+            debug_clock: None,
+            interrupted: interrupted.clone(),
+            cancelled: Arc::new(AtomicBool::new(false)),
+            lane: None,
+        };
+        let _caller = self.caller.enter(owner);
+        match &attached.context {
+            ContextHandle::Sync(_) => {
+                let _frame = crate::sandbox::push_frame(&attached.frames, frame);
+                attached.context.with(|ctx| {
+                    let Some(function) = self.restore(&ctx, handle.id) else {
+                        return Err(CallbackError::Released { binding: binding.clone() });
+                    };
+                    crate::callback::call_settling(&ctx, &function, &binding, args, &interrupted)
+                })
+            }
+            ContextHandle::Async(context) => {
+                let watch = crate::yielding::Watch::new(&frame);
+                let lane = self.caller.fork();
+                let registry = self.clone();
+                let id = handle.id;
+                let args = args.to_vec();
+                let body_watch = watch.clone();
+                let body_binding = binding.clone();
+                let body_interrupted = interrupted.clone();
+                let call = rquickjs::async_with!(context => |ctx| {
+                    crate::stack_guard::fit(&ctx);
+                    let Some(function) = registry.restore(&ctx, id) else {
+                        return Err(CallbackError::Released { binding: body_binding });
+                    };
+                    crate::callback::call_settling_async(&ctx, &function, &body_binding, &args, &body_interrupted, body_watch).await
+                });
+                let outcome = PerPoll {
+                    frames: &attached.frames,
+                    frame,
+                    key: attached.key,
+                    caller: &self.caller,
+                    lane: lane.id(),
+                    inner: Box::pin(call),
+                    started: false,
+                    done: false,
+                }
+                .await;
+                watch.finish();
+                outcome
+            }
+        }
     }
 
     /// Resolves a marker token crossing into the sandbox to the function it
@@ -473,16 +623,52 @@ impl RetainedRegistry {
             .map(Some)
             .ok_or(CallbackError::Released { binding })
     }
+}
 
-    /// Whether every retained marker in `value` would resolve here, so a host
-    /// call can fail with the marker's own reason before reaching script.
-    pub(crate) fn check_markers<'js>(&self, ctx: &Ctx<'js>, value: &serde_json::Value) -> Result<(), CallbackError> {
-        let mut tokens = Vec::new();
-        collect_markers(value, &mut tokens);
-        for token in tokens {
-            self.resolve(ctx, token)?;
+/// Drives an async-mode [`RetainedCallback::call_async`] between script calls:
+/// each poll runs inside the call's interrupt frame, in the call's own caller
+/// lane, with the context recorded as held. Dropped before it completes, it
+/// cancels the call and drives it to that point here, because the suspended
+/// body owns JS values that may only be released under the runtime lock.
+struct PerPoll<'a, F: std::future::Future> {
+    frames: &'a crate::sandbox::InterruptFrames,
+    frame: crate::sandbox::InterruptFrame,
+    key: usize,
+    caller: &'a CallerContext,
+    lane: u64,
+    inner: std::pin::Pin<Box<F>>,
+    started: bool,
+    done: bool,
+}
+
+impl<F: std::future::Future> PerPoll<'_, F> {
+    fn poll_inner(&mut self, cx: &mut std::task::Context<'_>) -> std::task::Poll<F::Output> {
+        let _frame = crate::sandbox::push_frame(self.frames, self.frame.clone());
+        let _lane = self.caller.activate(self.lane);
+        let _held = crate::reentry::Holding::of(self.key);
+        self.started = true;
+        let polled = self.inner.as_mut().poll(cx);
+        self.done = polled.is_ready();
+        polled
+    }
+}
+
+impl<F: std::future::Future> std::future::Future for PerPoll<'_, F> {
+    type Output = F::Output;
+
+    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<F::Output> {
+        // SAFETY: nothing is moved out of `self`; `inner` is pinned on the heap.
+        unsafe { self.get_unchecked_mut() }.poll_inner(cx)
+    }
+}
+
+impl<F: std::future::Future> Drop for PerPoll<'_, F> {
+    fn drop(&mut self) {
+        if !self.started || self.done {
+            return;
         }
-        Ok(())
+        self.frame.cancelled.store(true, Ordering::Relaxed);
+        let _ = pollster::block_on(std::future::poll_fn(|cx| self.poll_inner(cx)));
     }
 }
 
@@ -555,27 +741,6 @@ pub(crate) fn marker_token(value: &serde_json::Value) -> Option<&str> {
     object.get(CALLBACK_MARKER)?.as_str()
 }
 
-/// Whether `value` holds a marker object anywhere, so the host-to-sandbox
-/// path only pays for reviving when there is something to revive.
-pub(crate) fn contains_marker(value: &serde_json::Value) -> bool {
-    match value {
-        serde_json::Value::Array(items) => items.iter().any(contains_marker),
-        serde_json::Value::Object(map) => marker_token(value).is_some() || map.values().any(contains_marker),
-        _ => false,
-    }
-}
-
-fn collect_markers<'a>(value: &'a serde_json::Value, into: &mut Vec<&'a str>) {
-    if let Some(token) = marker_token(value) {
-        into.push(token);
-        return;
-    }
-    match value {
-        serde_json::Value::Array(items) => items.iter().for_each(|v| collect_markers(v, into)),
-        serde_json::Value::Object(map) => map.values().for_each(|v| collect_markers(v, into)),
-        _ => {}
-    }
-}
 
 /// Ties a context to its runtime's registry, so a binding call can find the
 /// retain positions and the registry from the context alone.
@@ -591,99 +756,38 @@ pub(crate) fn registry_of(ctx: &Ctx<'_>) -> Option<Arc<RetainedRegistry>> {
     ctx.userdata::<RegistrySlot>()?.0.upgrade()
 }
 
-/// The global sandbox code reaches to turn retained markers back into
-/// functions. Non-writable and non-configurable, installed before any script.
-pub(crate) const REVIVE_GLOBAL: &str = "__xript_revive";
-
-/// The global a dispatch loop calls each handler through, so the handler
-/// runs as the mod that registered it.
-pub(crate) const CALL_AS_GLOBAL: &str = "__xript_call_as";
-
-const REVIVE_FACTORY: &str = r#"(function (resolve, marker) {
-    var isArray = Array.isArray;
-    var keys = Object.keys;
-    function walk(v) {
-        if (v === null || typeof v !== 'object') return v;
-        if (isArray(v)) {
-            for (var i = 0; i < v.length; i++) {
-                var item = walk(v[i]);
-                if (item !== v[i]) v[i] = item;
-            }
-            return v;
-        }
-        var k = keys(v);
-        if (k.length === 1 && k[0] === marker && typeof v[marker] === 'string') {
-            var resolved = resolve(v[marker]);
-            return resolved === null ? v : resolved;
-        }
-        for (var j = 0; j < k.length; j++) {
-            var before = v[k[j]];
-            var after = walk(before);
-            if (after !== before) v[k[j]] = after;
-        }
-        return v;
-    }
-    return walk;
-})"#;
-
-const DEFINE_HIDDEN: &str =
-    "(function (name, value) { Object.defineProperty(globalThis, name, { value: value, writable: false, enumerable: false, configurable: false }); })";
-
-/// Links `ctx` to `registry` and installs the sandbox-side helpers.
-pub(crate) fn install<'js>(ctx: &Ctx<'js>, registry: &Arc<RetainedRegistry>) -> rquickjs::Result<()> {
+/// Links `ctx` to `registry`.
+pub(crate) fn install(ctx: &Ctx<'_>, registry: &Arc<RetainedRegistry>) {
     let _ = ctx.store_userdata(RegistrySlot(Arc::downgrade(registry)));
-
-    let weak = Arc::downgrade(registry);
-    let resolve = Function::new(ctx.clone(), move |ctx: Ctx<'js>, token: String| -> rquickjs::Result<Value<'js>> {
-        let outcome = match weak.upgrade() {
-            Some(registry) => registry.resolve(&ctx, &token),
-            None => Ok(None),
-        };
-        match outcome {
-            Ok(Some(function)) => Ok(function.into_value()),
-            Ok(None) => Ok(Value::new_null(ctx.clone())),
-            Err(error) => Err(rquickjs::Exception::throw_message(&ctx, &error.to_string())),
-        }
-    })?;
-    let factory: Function = ctx.eval(REVIVE_FACTORY)?;
-    let revive: Function = factory.call((resolve, CALLBACK_MARKER))?;
-
-    let caller = registry.caller.clone();
-    let call_as = Function::new(
-        ctx.clone(),
-        move |ctx: Ctx<'js>, mod_id: String, handler: Function<'js>, args: rquickjs::Array<'js>| -> rquickjs::Result<Value<'js>> {
-            let _caller = caller.enter(if mod_id.is_empty() { None } else { Some(mod_id) });
-            let list = args.iter::<Value>().collect::<rquickjs::Result<Vec<_>>>()?;
-            handler.call((This(Value::new_null(ctx.clone())), Rest(list)))
-        },
-    )?;
-
-    let define: Function = ctx.eval(DEFINE_HIDDEN)?;
-    define.call::<_, ()>((REVIVE_GLOBAL, revive))?;
-    define.call::<_, ()>((CALL_AS_GLOBAL, call_as))?;
-    Ok(())
 }
 
 /// Turns host JSON into a sandbox value, reviving any retained marker in it
 /// into its function. A marker that does not resolve fails with its reason.
 pub(crate) fn host_value_to_js<'js>(ctx: &Ctx<'js>, value: &serde_json::Value) -> Result<Value<'js>, HostValueError> {
-    let converted = crate::sandbox::json_to_js(ctx, value).map_err(|e| HostValueError::Marshal(e.to_string()))?;
-    if !contains_marker(value) {
-        return Ok(converted);
-    }
-    if let Some(registry) = registry_of(ctx) {
-        registry.check_markers(ctx, value).map_err(HostValueError::Callback)?;
-    }
-    let revive: Function = ctx
-        .globals()
-        .get(REVIVE_GLOBAL)
-        .map_err(|e| HostValueError::Marshal(e.to_string()))?;
-    revive.call((converted,)).map_err(|e| {
-        let message = match e {
-            rquickjs::Error::Exception => ctx.catch().as_object().and_then(|o| o.get::<_, String>("message").ok()).unwrap_or_default(),
-            other => other.to_string(),
-        };
-        HostValueError::Marshal(message)
+    let resolve = |token: &str| match registry_of(ctx) {
+        Some(registry) => registry.resolve(ctx, token),
+        None => Ok(None),
+    };
+    crate::marshal::build(ctx, value, Some(&resolve)).map_err(|error| match error {
+        crate::marshal::BuildError::Engine(error) => HostValueError::Marshal(error.to_string()),
+        crate::marshal::BuildError::Refused(message) => HostValueError::Marshal(message),
+        crate::marshal::BuildError::Callback(error) => HostValueError::Callback(error),
+    })
+}
+
+/// [`host_value_to_js`] for a list of values, built as one sandbox array.
+pub(crate) fn host_list_to_js<'js>(
+    ctx: &Ctx<'js>,
+    items: &[serde_json::Value],
+) -> Result<rquickjs::Array<'js>, HostValueError> {
+    let resolve = |token: &str| match registry_of(ctx) {
+        Some(registry) => registry.resolve(ctx, token),
+        None => Ok(None),
+    };
+    crate::marshal::build_list(ctx, items, Some(&resolve)).map_err(|error| match error {
+        crate::marshal::BuildError::Engine(error) => HostValueError::Marshal(error.to_string()),
+        crate::marshal::BuildError::Refused(message) => HostValueError::Marshal(message),
+        crate::marshal::BuildError::Callback(error) => HostValueError::Callback(error),
     })
 }
 

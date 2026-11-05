@@ -233,13 +233,30 @@ for (const [variant, init] of [["sync", initXript], ["async", initXriptAsync]]) 
 			});
 		});
 
-		it("a cyclic value still crosses as its string, both ways", async () => {
+		it("a cyclic value crosses as a real cycle, both ways", async () => {
 			let received;
 			await withRuntime({ echo: (v) => (received = v) }, (runtime) => {
 				const cyclic = "(function () { var o = { a: 1 }; o.self = o; return o; })()";
 				runtime.execute(`echo(${cyclic})`);
-				assert.equal(received, "[object Object]");
-				assert.equal(runtime.execute(cyclic).value, "[object Object]");
+				assert.equal(received.self, received);
+				assert.equal(received.a, 1);
+				const result = runtime.execute(cyclic).value;
+				assert.equal(result.self, result);
+			});
+			await withRuntime({ echo: () => received }, (runtime) => {
+				assert.equal(runtime.execute("(function () { var v = echo(); return v.self === v && v.a === 1; })()").value, true);
+			});
+		});
+
+		it("a top-level symbol result, subscriber result, or callback return reaches the host as a symbol", async () => {
+			let returned;
+			await withRuntime({ apply: (fn) => (returned = fn()) }, (runtime) => {
+				const result = runtime.execute("Symbol('q')").value;
+				assert.equal(typeof result, "symbol");
+				assert.equal(result.description, "q");
+				assert.equal(runtime.execute("Symbol()").value.description, undefined);
+				runtime.execute("apply(function () { return Symbol('c'); })");
+				assert.equal(returned.description, "c");
 			});
 		});
 
@@ -257,9 +274,9 @@ for (const [variant, init] of [["sync", initXript], ["async", initXriptAsync]]) 
 			});
 		});
 
-		it("a promise result crosses as an empty object instead of breaking dispose", async () => {
+		it("a promise result is refused, and a hook's promise crosses as an empty object, without breaking dispose", async () => {
 			await withRuntime({}, (runtime) => {
-				assert.deepEqual(runtime.execute("Promise.resolve(1)").value, {});
+				assert.throws(() => runtime.execute("Promise.resolve(1)"), /executeAsync/);
 				runtime.execute("hooks.probe(function () { return Promise.resolve(1); })");
 				assert.deepEqual(runtime.fireHook("probe"), [{}]);
 			});

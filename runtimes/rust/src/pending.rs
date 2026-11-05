@@ -419,6 +419,7 @@ mod tests {
         assert_eq!(pending.wait().unwrap(), 3);
     }
 
+    #[cfg(feature = "threads")]
     #[test]
     fn the_before_delivery_hook_runs_before_a_waiter_sees_the_result() {
         for _ in 0..200 {
@@ -435,6 +436,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "threads")]
     #[test]
     fn the_before_delivery_hook_runs_when_the_completer_is_dropped() {
         let settled = Arc::new(AtomicBool::new(false));

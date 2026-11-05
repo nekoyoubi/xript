@@ -7,7 +7,7 @@ namespace Xript.Runtime.Tests;
 /// <summary>
 /// Holds the host boundary to the shared corpora in <c>spec/value-fidelity-tests.json</c>
 /// (run with <see cref="RuntimeOptions.ValueFidelity"/> on), <c>spec/key-order-tests.json</c>,
-/// and <c>spec/hook-phase-tests.json</c>.
+/// <c>spec/hook-phase-tests.json</c>, and the sections of <c>spec/async-tests.json</c> C# has a surface for.
 /// </summary>
 public class BoundaryCorpusTests
 {
@@ -20,23 +20,54 @@ public class BoundaryCorpusTests
     private const string KeyOrderHook =
         "hooks.probe(function () { return Array.prototype.join.call(arguments, ','); })";
 
+    private static readonly string[] FidelitySections =
+        ["inbound", "echo", "sink", "results", "hook", "event", "eventResult", "callbackResult", "depth", "prefix"];
+
+    private static readonly string[] OrderSections = ["inbound", "echo", "hook"];
+
+    private static readonly JsonDocumentOptions Deep = new() { MaxDepth = XriptValue.MaxDepth + 10 };
+
     public static TheoryData<string, int, string> Cases()
     {
         var data = new TheoryData<string, int, string>();
-        foreach (var section in new[] { "inbound", "echo", "results", "hook", "event", "eventResult" })
+        foreach (var (prefix, file, sections) in new[]
         {
-            var cases = Load("value-fidelity-tests.json")[section]!.AsArray();
-            for (var i = 0; i < cases.Count; i++)
-                data.Add($"fidelity.{section}", i, cases[i]!["name"]!.GetValue<string>());
-        }
-        foreach (var section in new[] { "inbound", "echo", "hook" })
+            ("fidelity", "value-fidelity-tests.json", FidelitySections),
+            ("order", "key-order-tests.json", OrderSections),
+        })
         {
-            var cases = Load("key-order-tests.json")[section]!.AsArray();
-            for (var i = 0; i < cases.Count; i++)
-                data.Add($"order.{section}", i, cases[i]!["name"]!.GetValue<string>());
+            var corpus = Load(file);
+            foreach (var section in sections)
+            {
+                if (corpus[section] is not JsonArray cases) continue;
+                for (var i = 0; i < cases.Count; i++)
+                    data.Add($"{prefix}.{section}", i, cases[i]!["name"]!.GetValue<string>());
+            }
         }
         return data;
     }
+
+    /// <summary>The host's arguments as one array, at any depth <see cref="XriptValue.MaxDepth"/> allows.</summary>
+    private static JsonElement ArrayOf(JsonElement[] items) =>
+        JsonDocument.Parse("[" + string.Join(",", items.Select(item => item.GetRawText())) + "]", Deep).RootElement.Clone();
+
+    private static JsonNode? NodeOf(JsonElement value) => JsonNode.Parse(value.GetRawText(), documentOptions: Deep);
+
+    /// <summary>
+    /// Structural equality that compares numbers by value, since <see cref="JsonNode.DeepEquals"/>
+    /// tells <c>1e21</c> and <c>1e+21</c> apart by their text.
+    /// </summary>
+    private static bool SameValue(JsonNode? expected, JsonNode? actual) => (expected, actual) switch
+    {
+        (null, null) => true,
+        (JsonObject e, JsonObject a) => e.Count == a.Count
+            && e.All(property => a.TryGetPropertyValue(property.Key, out var other) && SameValue(property.Value, other)),
+        (JsonArray e, JsonArray a) => e.Count == a.Count && e.Zip(a).All(pair => SameValue(pair.First, pair.Second)),
+        (JsonValue e, JsonValue a) when e.GetValueKind() == JsonValueKind.Number && a.GetValueKind() == JsonValueKind.Number =>
+            e.GetValue<double>().Equals(a.GetValue<double>()),
+        (JsonValue e, JsonValue a) => JsonNode.DeepEquals(e, a),
+        _ => false,
+    };
 
     [Theory]
     [MemberData(nameof(Cases))]
@@ -47,14 +78,29 @@ public class BoundaryCorpusTests
         var kind = section[(section.IndexOf('.') + 1)..];
         var testCase = corpus[kind]!.AsArray()[index]!.AsObject();
 
-        var hostValue = testCase["hostValue"] is { } hv ? Element(hv) : Element(null);
+        var hostValue = kind == "depth" && testCase["direction"]!.GetValue<string>() == "inbound"
+            ? Nest(testCase["shape"]!.GetValue<string>(), testCase["depth"]!.GetValue<int>())
+            : testCase["hostValue"] is { } hv ? Element(hv) : Element(null);
         JsonElement[] received = [];
+        JsonElement[]? sunk = null;
         var bindings = new HostBindings();
         bindings.AddFunction("value", _ => hostValue);
         bindings.AddFunction("echo", args =>
         {
             received = args;
-            return JsonSerializer.SerializeToElement(args);
+            return ArrayOf(args);
+        });
+        bindings.AddFunction("sink", args =>
+        {
+            sunk = args;
+            return XriptValue.Undefined;
+        });
+        JsonElement? callbackReturned = null;
+        bindings.AddFunction("call", args =>
+        {
+            var returned = XriptCallback.From(args[0])!.Invoke();
+            callbackReturned = returned;
+            return returned;
         });
 
         using var rt = XriptRuntime.Create(
@@ -74,14 +120,67 @@ public class BoundaryCorpusTests
                 var value = rt.Execute(testCase["script"]!.GetValue<string>()).Value;
                 Assert.True(testCase["expected"]!.GetValue<string>() == value.GetString(), $"{name}: got {value}");
                 if (testCase["received"] is { } expectedReceived)
-                    Assert.True(JsonNode.DeepEquals(expectedReceived, JsonSerializer.SerializeToNode(received)),
-                        $"{name}: host received {JsonSerializer.Serialize(received)}");
+                    Assert.True(SameValue(expectedReceived, NodeOf(ArrayOf(received))),
+                        $"{name}: host received {ArrayOf(received).GetRawText()}");
+                break;
+            }
+            case "sink":
+            {
+                var value = rt.Execute(testCase["script"]!.GetValue<string>()).Value;
+                Assert.True(testCase["expected"]!.GetValue<string>() == value.GetString(), $"{name}: got {value}");
+                if (testCase["received"] is { } expectedSunk)
+                    Assert.True(sunk is not null && SameValue(expectedSunk, NodeOf(ArrayOf(sunk))),
+                        $"{name}: host received {(sunk is null ? "nothing" : ArrayOf(sunk).GetRawText())}");
+                else
+                    Assert.True(sunk is null, $"{name}: sink was called with {(sunk is null ? "" : ArrayOf(sunk).GetRawText())}");
+                break;
+            }
+            case "depth":
+            {
+                var value = rt.Execute(testCase["script"]!.GetValue<string>()).Value.GetString()!;
+                if (testCase["error"] is { } error)
+                {
+                    Assert.True(value.StartsWith(error.GetValue<string>(), StringComparison.Ordinal), $"{name}: got {value}");
+                    break;
+                }
+                Assert.True(testCase["expected"]!.GetValue<string>() == value, $"{name}: got {value}");
+                if (testCase["direction"]!.GetValue<string>() == "outbound")
+                    Assert.Equal(testCase["depth"]!.GetValue<int>(), NestedLevels(testCase["shape"]!.GetValue<string>(), received[0]));
+                break;
+            }
+            case "callbackResult" when testCase["error"] is { } error:
+            {
+                var caught = rt.Execute(
+                    $"(function () {{ try {{ call(function () {{ return {testCase["returns"]!.GetValue<string>()}; }}); return 'crossed'; }} catch (e) {{ return e.name; }} }})()").Value;
+                Assert.True(error.GetValue<string>() == caught.GetString(), $"{name}: got {caught}");
+                break;
+            }
+            case "callbackResult":
+            {
+                rt.Execute($"call(function () {{ return {testCase["returns"]!.GetValue<string>()}; }}); undefined");
+                Assert.True(callbackReturned is { } returned && SameValue(testCase["expected"], NodeOf(returned)),
+                    $"{name}: host recorded {callbackReturned?.GetRawText() ?? "nothing"}");
+                break;
+            }
+            case "prefix":
+            {
+                var value = rt.Execute(testCase["script"]!.GetValue<string>()).Value.GetString()!;
+                var prefix = testCase["prefix"]!.GetValue<string>();
+                Assert.True(value.StartsWith(prefix, StringComparison.Ordinal), $"{name}: got {value}");
+                Assert.False(value.StartsWith(prefix + prefix, StringComparison.Ordinal), $"{name}: got {value}");
+                break;
+            }
+            case "results" when testCase["fails"] is { } fails && fails.GetValue<bool>():
+            {
+                var script = testCase["script"]!.GetValue<string>();
+                var failure = Record.Exception(() => rt.Execute(script));
+                Assert.True(failure is not null, $"{name}: the call did not fail");
                 break;
             }
             case "results":
             {
                 var value = rt.Execute(testCase["script"]!.GetValue<string>()).Value;
-                Assert.True(JsonNode.DeepEquals(testCase["expected"], JsonNode.Parse(value.GetRawText())),
+                Assert.True(SameValue(testCase["expected"], NodeOf(value)),
                     $"{name}: got {value.GetRawText()}");
                 break;
             }
@@ -106,11 +205,42 @@ public class BoundaryCorpusTests
                 rt.Execute($"events.on('probed', function () {{ return {testCase["returns"]!.GetValue<string>()}; }})");
                 var results = rt.Emit("probed");
                 Assert.Single(results);
-                Assert.True(JsonNode.DeepEquals(testCase["expected"], JsonNode.Parse(results[0].GetRawText())),
+                Assert.True(SameValue(testCase["expected"], NodeOf(results[0])),
                     $"{name}: got {results[0].GetRawText()}");
                 break;
             }
         }
+    }
+
+    /// <summary>
+    /// <c>spec/async-tests.json</c>, where C# has the surface. It has no <c>ExecuteAsync</c>, so
+    /// <c>body</c>, <c>promise</c>, and <c>syncReach</c> do not apply. For <c>executeResult</c> the
+    /// corpus has C# settle instead of refuse: Jint drains its job queue before <c>Execute</c>
+    /// returns, so a settled promise crosses as its value and a pending one fails clearly.
+    /// </summary>
+    [Fact]
+    public void Async_Corpus_Promise_Results_Settle()
+    {
+        var corpus = Load("async-tests.json");
+        var bindings = new HostBindings();
+        bindings.AddFunction("slow", args => args[1]);
+        bindings.AddFunction("fail", args => throw new InvalidOperationException(args[0].GetString()));
+        bindings.AddFunction("sync", _ => JsonSerializer.SerializeToElement("sync"));
+        using var rt = XriptRuntime.Create(corpus["manifest"]!.ToJsonString(), new RuntimeOptions { HostBindings = bindings });
+        foreach (var node in corpus["executeResult"]!.AsArray())
+        {
+            var script = node!["script"]!.GetValue<string>();
+            if (script.Contains("new Promise(function () {})"))
+            {
+                var pending = Assert.Throws<InvalidOperationException>(() => rt.Execute(script));
+                Assert.Contains("still pending", pending.Message);
+            }
+            else
+            {
+                Assert.Equal(1, rt.Execute(script).Value.GetInt32());
+            }
+        }
+        Assert.Equal("v", rt.Execute("slow(1, 'v')").Value.GetString());
     }
 
     [Fact]
@@ -193,11 +323,35 @@ public class BoundaryCorpusTests
         Assert.True(XriptValue.TryGetNumber(XriptValue.NegativeZero, out var zero) && zero == 0 && double.IsNegative(zero));
     }
 
+    /// <summary>A <c>depth</c> case's host value: <paramref name="levels"/> containers of <paramref name="shape"/> around <c>0</c>.</summary>
+    private static JsonElement Nest(string shape, int levels)
+    {
+        var (open, close) = shape == "object" ? ("{\"d\":", "}") : ("[", "]");
+        var text = new System.Text.StringBuilder(levels * (open.Length + close.Length) + 1);
+        for (var i = 0; i < levels; i++) text.Append(open);
+        text.Append('0');
+        for (var i = 0; i < levels; i++) text.Append(close);
+        return JsonDocument.Parse(text.ToString(), new JsonDocumentOptions { MaxDepth = levels + 1 }).RootElement.Clone();
+    }
+
+    private static int NestedLevels(string shape, JsonElement value)
+    {
+        var levels = 0;
+        while (shape == "object" ? value.ValueKind == JsonValueKind.Object : value.ValueKind == JsonValueKind.Array)
+        {
+            value = shape == "object" ? value.GetProperty("d") : value[0];
+            levels++;
+        }
+        return levels;
+    }
+
+    private static readonly JsonSerializerOptions DeepWrite = new() { MaxDepth = XriptValue.MaxDepth + 10 };
+
     private static JsonElement Element(JsonNode? node) =>
-        JsonDocument.Parse(node?.ToJsonString() ?? "null").RootElement.Clone();
+        JsonDocument.Parse(node?.ToJsonString(DeepWrite) ?? "null", Deep).RootElement.Clone();
 
     private static JsonObject Load(string file) =>
-        JsonNode.Parse(File.ReadAllText(CorpusPath(file)))!.AsObject();
+        JsonNode.Parse(File.ReadAllText(CorpusPath(file)), documentOptions: Deep)!.AsObject();
 
     private static string CorpusPath(string file)
     {

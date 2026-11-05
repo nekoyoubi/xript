@@ -15,6 +15,12 @@ const manifest = {
 
 const spin = (ms) => `var end = Date.now() + ${ms}; while (Date.now() < end) {}`;
 
+/**
+ * Enough bytecode for the engine to consult its interrupt check many times, without spending
+ * any time the test depends on: the budget test below moves the host's clock itself.
+ */
+const polls = "for (var i = 0; i < 200000; i++) {}";
+
 const slotManifest = {
 	xript: "0.10",
 	name: "slot-budget-probe",
@@ -78,12 +84,28 @@ for (const [label, make] of [
 		});
 
 		it("gives every fire a fresh budget and honours a hook's own limits", async () => {
-			const runtime = await factory.createRuntime(manifest, { hostBindings: {}, budgetHandlers: true });
-			runtime.execute(`events.on('ping', function () { ${spin(25)} return 'ok'; }); hooks.save(function () { ${spin(120)} return 'saved'; });`);
-			assert.deepEqual(runtime.emit("ping"), ["ok"]);
-			assert.deepEqual(runtime.emit("ping"), ["ok"]);
-			assert.deepEqual(runtime.fireHook("save"), ["saved"]);
-			runtime.dispose();
+			const realNow = Date.now;
+			let now = realNow();
+			Date.now = () => now;
+			try {
+				const clocked = { ...manifest, bindings: { advance: { description: "Moves the host clock forward." } } };
+				const runtime = await factory.createRuntime(clocked, {
+					hostBindings: { advance: (ms) => void (now += ms) },
+					budgetHandlers: true,
+				});
+				runtime.execute(
+					`events.on('ping', function () { advance(25); ${polls} return 'ok'; }); ` +
+						`hooks.save(function () { advance(120); ${polls} return 'saved'; }); ` +
+						`hooks.tick(function () { advance(60); ${polls} return 'late'; });`,
+				);
+				assert.deepEqual(runtime.emit("ping"), ["ok"]);
+				assert.deepEqual(runtime.emit("ping"), ["ok"]);
+				assert.deepEqual(runtime.fireHook("save"), ["saved"]);
+				assert.throws(() => runtime.fireHook("tick"), (e) => e.name === "ExecutionLimitError");
+				runtime.dispose();
+			} finally {
+				Date.now = realNow;
+			}
 		});
 
 		it("honours an event slot's own limits for its handlers and its fills", async () => {

@@ -1,0 +1,87 @@
+{
+  "description": "Conformance corpus for scripts that exhaust the stack. Plain recursion, recursion through the engine's own built-ins, and recursion over deeply nested data must each end with an error the script can catch, or simply succeed; none may take down the engine, the host process, or a later call. A runtime whose engine recurses on a native stack it does not measure must bound that recursion itself.",
+  "notes": [
+    "Each case's `script` is spliced into `template` at `SCRIPT`, and the runtime executes the result. It must evaluate to `\"caught\"` (the recursion stopped with an error the script caught) or `\"ok\"` (the runtime carried it to the end). Which of the two is the runtime's own business: a corpus case never requires a deep recursion to succeed, because engines bound different built-ins at different depths.",
+    "After every case the same runtime executes `after`, which must evaluate to `afterExpected`: an exhausted stack leaves the runtime usable. Disposing the runtime afterwards must not fail.",
+    "A deep value is built with a loop, and deep JSON text with `Array.prototype.join`, so building it never recurses; only the operation the case names does.",
+    "The manifest's `timeout_ms` is generous on purpose. Building and walking 100000 levels is slow on some engines and on small machines, and a case is about the stack, not the time budget, so running out of time would only hide what the case checks."
+  ],
+  "manifest": {
+    "xript": "0.10",
+    "name": "stack-probe",
+    "limits": { "timeout_ms": 60000 }
+  },
+  "template": "(function () { try { (function () { SCRIPT })(); return 'ok'; } catch (e) { return 'caught'; } })()",
+  "after": "(function () { function depth(n) { return n === 0 ? 0 : 1 + depth(n - 1); } return depth(100) + JSON.parse(JSON.stringify({ a: [1, 2] })).a.length; })()",
+  "afterExpected": 102,
+  "cases": [
+    {
+      "name": "plain recursion",
+      "script": "function f() { f(); } f();"
+    },
+    {
+      "name": "recursion carrying arguments and locals",
+      "script": "function f(n, a, b) { var c = [n, a, b]; return f(n + 1, c, { n: n }) + 1; } f(0, null, null);"
+    },
+    {
+      "name": "mutual recursion",
+      "script": "function a(n) { return b(n + 1) + 1; } function b(n) { return a(n + 1) + 1; } a(0);"
+    },
+    {
+      "name": "recursion through a getter",
+      "script": "var o = { get x() { return o.x; } }; o.x;"
+    },
+    {
+      "name": "recursion through toString",
+      "script": "var o = {}; o.toString = function () { return String(o); }; String(o);"
+    },
+    {
+      "name": "recursion through toJSON",
+      "script": "var o = { toJSON: function () { return JSON.stringify(o); } }; JSON.stringify(o);"
+    },
+    {
+      "name": "recursive descent over a deeply nested object",
+      "script": "var v = 0; for (var i = 0; i < 100000; i++) v = { d: v }; function walk(o) { return typeof o === 'object' ? walk(o.d) + 1 : 0; } walk(v);"
+    },
+    {
+      "name": "JSON.stringify of a deeply nested object",
+      "script": "var v = 0; for (var i = 0; i < 100000; i++) v = { d: v }; JSON.stringify(v);"
+    },
+    {
+      "name": "JSON.stringify of a deeply nested array",
+      "script": "var v = 0; for (var i = 0; i < 100000; i++) v = [v]; JSON.stringify(v);"
+    },
+    {
+      "name": "JSON.stringify of a deeply nested value with a replacer",
+      "script": "var v = 0; for (var i = 0; i < 100000; i++) v = { d: v }; JSON.stringify(v, function (k, x) { return x; });"
+    },
+    {
+      "name": "JSON.stringify of a deeply nested value with a property list",
+      "script": "var v = 0; for (var i = 0; i < 100000; i++) v = { d: v, e: 1 }; JSON.stringify(v, ['d']);"
+    },
+    {
+      "name": "JSON.parse of deeply nested arrays",
+      "script": "JSON.parse(new Array(100001).join('[') + '0' + new Array(100001).join(']'));"
+    },
+    {
+      "name": "JSON.parse of deeply nested objects",
+      "script": "JSON.parse(new Array(100001).join('{\"d\":') + '0' + new Array(100001).join('}'));"
+    },
+    {
+      "name": "String of a deeply nested array",
+      "script": "var v = 0; for (var i = 0; i < 100000; i++) v = [v]; String(v);"
+    },
+    {
+      "name": "flattening a deeply nested array",
+      "script": "var v = 0; for (var i = 0; i < 100000; i++) v = [v]; v.flat(Infinity);"
+    },
+    {
+      "name": "a long chain of proxies",
+      "script": "var p = {}; for (var i = 0; i < 100000; i++) p = new Proxy(p, {}); p.x;"
+    },
+    {
+      "name": "a long chain of bound functions",
+      "script": "var f = function () { return 1; }; for (var i = 0; i < 10000; i++) f = f.bind(null); f();"
+    }
+  ]
+}

@@ -4,8 +4,10 @@
     "The probe host is the same in every runtime. Each `probe` binding takes `(path, callArgs, ...payload)`, except `stash`, `kind`, and the typed bindings. `path` addresses a value inside the payload: its first element indexes the payload arguments, and each later element is an object key or an array index.",
     "`probe.call` resolves the callback at `path`, calls it with `callArgs` (each marshalled host to sandbox), and returns what it returned (marshalled sandbox to host) unchanged. It does not catch, so an error the callback throws propagates out of the binding call.",
     "`probe.catchCall` resolves and calls the same way, but catches. It returns `{ \"kind\": \"returned\", \"value\": v }` on success, and on failure `{ \"kind\": k }` where `k` is `threw` (the callback threw; the object also carries `message`, the thrown error's message), `promise` (the callback returned a promise), or `expired`. It must never swallow an execution-limit stop: a callback that exhausts the calling script's budget ends the script whatever the host does.",
+    "A thrown value's `message` is canonical text, the JavaScript runtimes' own, and the cases pin it exactly: an object's `message` as a string (`\"callback threw\"` when the object has no `message`, or it is `null` or `undefined`), and any other value, a primitive or a function, as `String(value)`, so `42` is `\"42\"`, `null` is `\"null\"`, and `undefined` is `\"undefined\"`.",
     "`probe.kind` returns `\"callback\"` when the value at `path` is a callback, `\"missing\"` when nothing is there, and otherwise the JSON type name of the value (`null`, `boolean`, `number`, `string`, `array`, `object`).",
     "`probe.stash` keeps the callback at `path` for the test to call after `execute` returns, then returns null. Calling it then must fail as expired, and the error must name the binding.",
+    "Handing a callback back. `probe.handBack(path, nested, ...payload)` returns the callback at `path` itself, or `{ \"inner\": [callback] }` when `nested` is true. `probe.callWithSelf(path, ...payload)` calls the callback at `path` with two arguments, the callback itself and `{ \"inner\": [callback] }`, and returns what it returned. `probe.callStashing(path, ...payload)` keeps the callback at `path` as `probe.stash` does and then calls it with no arguments, returning what it returned; `probe.handStashed()` returns the kept callback. A callback handed back into the sandbox while its binding call is running, a binding call nested inside it included, reaches script as the script's own original function (`===` holds). One that no longer resolves, because its call has ended or it belongs to another call or runtime, reaches script as `undefined`. Script never sees a callback's marker or anything inside it as data.",
     "`probe.typed`, `probe.typedOptional`, `probe.typedOptionalFlag`, and `probe.typedSignature` count their invocations and return `\"called\"` (or `\"absent\"` for `typedOptional` or `typedOptionalFlag` called without a function). `typedOptional` wraps its function type in `optional`; `typedOptionalFlag` marks a bare `function` parameter `\"optional\": true`, the inverse alias of `\"required\": false`. A non-function where the manifest declares a function parameter must be refused before the host runs: the count stays at zero and the error names the binding and the parameter.",
     "`expect.result` is compared as JSON. `expect.error` lists substrings the surfaced error message must contain. `expect.limit` means `execute` must fail with the runtime's execution-limit error. `expect.expiredAfter` means the test must call the stashed callback after `execute` and see an expired error naming `probe.stash`. `expect.typedCalls` is the probe's typed-binding call count after the case.",
     "A callback marker is produced only by the runtime, for a function the script actually passed. A value the script spells into plain data that merely looks like a marker (a string token, or a bare numeric marker) is not a callback: it reports as its own JSON type and cannot be called. Runtimes that pass functions directly never see a marker; runtimes that bridge through JSON make the token unforgeable with a per-scope nonce.",
@@ -33,6 +35,18 @@
           },
           "stash": {
             "description": "Keeps the callback at path past the end of the call."
+          },
+          "handBack": {
+            "description": "Returns the callback at path, bare or nested in an object."
+          },
+          "callWithSelf": {
+            "description": "Calls the callback at path with itself, bare and nested."
+          },
+          "callStashing": {
+            "description": "Keeps the callback at path, then calls it with no arguments."
+          },
+          "handStashed": {
+            "description": "Returns the kept callback."
           },
           "typed": {
             "description": "Declares a required function parameter.",
@@ -325,6 +339,46 @@
       }
     },
     {
+      "name": "a thrown string reaches the host as its text",
+      "script": "probe.catchCall([0], [], function () { throw 'boom'; })",
+      "expect": { "result": { "kind": "threw", "message": "boom" } }
+    },
+    {
+      "name": "a thrown plain object with a message reaches the host with that message",
+      "script": "probe.catchCall([0], [], function () { throw { message: 'plain' }; })",
+      "expect": { "result": { "kind": "threw", "message": "plain" } }
+    },
+    {
+      "name": "a thrown TypeError reaches the host with its message",
+      "script": "probe.catchCall([0], [], function () { throw new TypeError('typed'); })",
+      "expect": { "result": { "kind": "threw", "message": "typed" } }
+    },
+    {
+      "name": "a thrown RangeError reaches the host with its message",
+      "script": "probe.catchCall([0], [], function () { throw new RangeError('ranged'); })",
+      "expect": { "result": { "kind": "threw", "message": "ranged" } }
+    },
+    {
+      "name": "a thrown Error subclass reaches the host with its message",
+      "script": "(function () { class Custom extends Error { constructor(m) { super(m); this.name = 'Custom'; } } return probe.catchCall([0], [], function () { throw new Custom('sub'); }); })()",
+      "expect": { "result": { "kind": "threw", "message": "sub" } }
+    },
+    {
+      "name": "a thrown empty Error reaches the host with an empty message",
+      "script": "probe.catchCall([0], [], function () { throw new Error(); })",
+      "expect": { "result": { "kind": "threw", "message": "" } }
+    },
+    {
+      "name": "thrown values with no message of their own reach the host with the canonical text",
+      "script": "(function () { var thrown = [42, null, undefined, { valueOf: function () { return {}; }, toString: function () { return 's'; } }, { valueOf: function () { return {}; }, toString: function () { return {}; } }, { valueOf: 5 }, { message: null }, { message: 5 }, true]; return thrown.map(function (t) { var r = probe.catchCall([0], [], function () { throw t; }); return r.kind + ':' + r.message; }).join('|'); })()",
+      "expect": { "result": "threw:42|threw:null|threw:undefined|threw:callback threw|threw:callback threw|threw:callback threw|threw:callback threw|threw:5|threw:true" }
+    },
+    {
+      "name": "every thrown value the host lets escape reaches the script as itself",
+      "script": "(function () { class Custom extends Error {} var thrown = ['boom', 42, null, undefined, { message: 'plain' }, new TypeError('typed'), new RangeError('ranged'), new Custom('sub'), new Error(), { valueOf: function () { return {}; }, toString: function () { return {}; } }]; return thrown.map(function (t) { try { probe.call([0], [], function () { throw t; }); return 'no throw'; } catch (e) { return e === t; } }).join('|'); })()",
+      "expect": { "result": "true|true|true|true|true|true|true|true|true|true" }
+    },
+    {
       "name": "an uncaught throw propagates out of the binding as the script's own error",
       "script": "(function () { try { probe.call([0], [], function () { throw new RangeError('boom'); }); return 'no throw'; } catch (e) { return e.name + ':' + e.message; } })()",
       "expect": {
@@ -470,6 +524,55 @@
       "script": "probe.kind([0], { \"$xriptCallback\": 0 })",
       "expect": {
         "result": "object"
+      }
+    },
+    {
+      "name": "a forged numeric callback marker is not a callback even when the call passes a real function",
+      "script": "probe.kind([0], { \"$xriptCallback\": 0 }, function () {})",
+      "expect": {
+        "result": "object"
+      }
+    },
+    {
+      "name": "a callback handed back as a binding's return is the script's own function",
+      "script": "(function () { function f() {} return probe.handBack([0], false, f) === f; })()",
+      "expect": {
+        "result": true
+      }
+    },
+    {
+      "name": "a callback handed back nested in a binding's return is the script's own function",
+      "script": "(function () { function f() {} var r = probe.handBack([0], true, f); return [r.inner[0] === f, r.inner.length].join('|'); })()",
+      "expect": {
+        "result": "true|1"
+      }
+    },
+    {
+      "name": "a callback handed back in its own arguments is the script's own function, bare and nested",
+      "script": "probe.callWithSelf([0], function me(bare, nested) { return [bare === me, nested.inner[0] === me].join('|'); })",
+      "expect": {
+        "result": "true|true"
+      }
+    },
+    {
+      "name": "a callback handed back through a binding call nested inside its own call is the script's own function",
+      "script": "probe.callStashing([0], function me() { return probe.handStashed() === me; })",
+      "expect": {
+        "result": true
+      }
+    },
+    {
+      "name": "a callback handed back after its call has ended is undefined",
+      "script": "(function () { probe.callStashing([0], function () { return 1; }); var later = probe.handStashed(); return later === undefined; })()",
+      "expect": {
+        "result": true
+      }
+    },
+    {
+      "name": "a callback handed back never shows its marker to script",
+      "script": "(function () { function f() {} var r = probe.handBack([0], true, f); return [JSON.stringify(r), typeof r.inner[0], Object.keys(r.inner[0]).length].join('|'); })()",
+      "expect": {
+        "result": "{\"inner\":[null]}|function|0"
       }
     },
     {

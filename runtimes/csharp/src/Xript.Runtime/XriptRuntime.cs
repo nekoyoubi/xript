@@ -91,11 +91,21 @@ public sealed class XriptRuntime : IDisposable
         return Build(manifest, options ?? new());
     }
 
-    public ExecutionResult Execute(string code) =>
-        _sandbox.Execute(code);
+    /// <summary>
+    /// Runs <paramref name="code"/> as host code, on behalf of no mod, even when a host binding
+    /// calls it from inside a mod's export or handler.
+    /// </summary>
+    public ExecutionResult Execute(string code)
+    {
+        using var caller = _sandbox.Caller.Enter(null);
+        return _sandbox.Execute(code);
+    }
 
-    public ExecutionResult Execute(string code, string source) =>
-        _sandbox.Execute(code, source);
+    public ExecutionResult Execute(string code, string source)
+    {
+        using var caller = _sandbox.Caller.Enter(null);
+        return _sandbox.Execute(code, source);
+    }
 
     public JsonElement[] FireHook(string hookName, FireHookOptions? options = null)
     {

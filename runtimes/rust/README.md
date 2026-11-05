@@ -60,7 +60,8 @@ let result = runtime.execute("greet(\"World\")")?;
 - cooperative cancellation via a `CancellationToken` on `RuntimeOptions`; it interrupts in-flight execution at the next check point and surfaces a distinct cancellation error (not a timeout), with rquickjs interrupting mid-run
 - opt-in capability audit channel: a hook reporting every allowed host-binding invocation as `{ binding, capability, at }`
 - console severity: `ConsoleHandler` gained a severity enum (log/info/warn/error/debug) plus a trace channel
-- sandbox hard caps: host ceilings on memory, CPU time, and stack depth
+- console never throws: each call reaches the handler as one line, a string as itself, an `Error` as `name: message`, anything else as compact data (`{"a":1}`, `[1,2]`, `[Circular]` for a cycle), and an argument that cannot be read as `[unreadable: ...]`
+- sandbox hard caps: host ceilings on memory, CPU time, and stack depth. The engine's stack budget is measured at every entry from what the calling thread has left, less a 256 KiB margin for host code that runs after the engine gives up, and capped by `max_stack_depth` when the manifest or host sets one; a nested entry (a binding reaching back into script) never gets more than its outer entry had left. A big thread recurses deep (about 2200 levels of plain recursion on an 8 MiB thread in a release build) and runaway recursion or a deep `JSON.stringify` throws a catchable error even on a 1 MiB thread
 - manifest `extends` with deep-merge so a manifest can inherit and override host bindings; mod manifests gained an optional `family` field for grouping
 - host-invoke exports: mods declare named exports the host calls by name and whose return value it honors
 - ES module mods via `entry.format: "module"`, which evaluates the entry as a real ES module; top-level named exports auto-register as host-invokable, and external imports stay denied
@@ -143,6 +144,8 @@ Three rules carry the design:
 - **Host bindings are called from N threads.** A binding registered with a pool **must be reentrant and thread-safe**. xript does not and cannot serialize calls into host code: the pool never holds a binding it could wrap, and a per-binding lock would let a long-lane call block an interactive-lane one — the exact inversion the pool exists to prevent. This is a documented contract, not a mechanism.
 - **A wedged worker is detected, quarantined, and reported — never reclaimed.** Detection requires **both** an in-flight call past its threshold **and** a stalled heartbeat, where the heartbeat is bumped by the interrupt handler and therefore advances only while bytecode runs. A script legitimately grinding for a minute keeps ticking and is never marked wedged; only a thread parked inside host code stalls it. Once marked, the worker leaves routing, its queued calls are answered `WorkerWedged` by the pool itself, and `stats().wedged` names the binding. `retire_worker` abandons the thread — a thread blocked in host code cannot be safely killed and its runtime's memory cannot be reclaimed, so `PoolShutdownReport` reports what was abandoned and estimates the bytes that are not coming back.
 
+An event a mod emits reaches handlers on other workers through the pool's shared bus. Payloads and results crossing between workers keep everything a same-worker delivery carries except identity: BigInt, cycles, `undefined`/`NaN`/`-0`/the infinities, lone surrogates, symbols at any depth, key order, and values up to `MAX_DEPTH` levels deep, whatever `value_fidelity` is set to. A function cannot be called from another worker and arrives as `undefined`; a symbol arrives as a fresh one with the same description.
+
 `Route::Dedicated` is **execute-only**: a dedicated runtime has no mods loaded, so it cannot serve an export, a hook, or an event. The default `IntentRouter` clamps such a call to the mod's home and records it; a custom `PoolRouter` that asks for it explicitly gets `XriptError::RouteUnsupported`.
 
 Routing reads declared `execution` intent from the manifest — `duration` (`instant`/`brief`/`long`/`unbounded`) and `affinity` (`any`/`pinned`/`isolated`). Both are advisory: nothing is enforced, no capability is consulted, and enforcement lives in `limits`. Where intent pays off most is **placement**: a mod that declares a `long` export never homes on the interactive lane.
@@ -158,10 +161,12 @@ use xript_runtime::{create_async_runtime, RuntimeOptions};
 
 let rt = create_async_runtime(manifest, RuntimeOptions { host_bindings, ..Default::default() })?;
 let (slow, quick) = futures::join!(
-    rt.execute_async("(async () => await fetchData('users'))()"),
-    rt.execute_async("40 + 2"),   // finishes while the first call awaits
+    rt.execute_async("return await fetchData('users');"),
+    rt.execute_async("return 40 + 2;"),   // finishes while the first call awaits
 );
 ```
+
+`execute_async` and `execute_within_async` take their source as the body of an async function, as `executeAsync` does in the JavaScript runtimes: `return` gives the result, `await` works at the top level, and a script that ends on a bare expression statement resolves to `undefined`. `execute` takes a script and returns its completion value, awaiting it when it is a promise.
 
 Every call has an `*_async` twin: `execute_async`, `execute_within_async`, `load_mod_async`, `invoke_export_async`, `invoke_mod_export_async`, `invoke_mod_export_within_async`, `invoke_command_async`, `fire_hook_async`, `fire_hook_tagged_async`, `fire_hook_phase_async`, `fire_hook_phase_tagged_async`, `emit_async`, `emit_tagged_async`, `fire_fragment_hook_async`, plus `idle()` to settle work a script started without awaiting. The plain methods keep working and drive one call to completion on the calling thread. On a sync-mode runtime the `*_async` methods complete on first poll.
 
@@ -175,6 +180,19 @@ What holds and what differs in async mode:
 - **Executor-agnostic host futures**: futures are polled by whichever thread drives the call. A future that needs a particular reactor (a `tokio` timer, for example) must be driven from inside that executor.
 - **Interleaved budgets**: promise jobs belonging to one call can run while another call is being polled, and are charged to that call for that slice. Every budget stays bounded; per-call attribution across interleaved calls is approximate.
 - **Sync bindings and debugging** still hold the thread: a sync binding runs in line, and a paused debug session blocks the interpreter as it does in sync mode.
+
+### Calling back in from a binding
+
+A host binding can call the runtime that is running it, in either mode: reach the runtime through something like an `Arc<OnceLock<XriptRuntime>>` and call `execute`, `invoke_export`, `invoke_mod_export`, `fire_hook`, `emit`, or any `*_async` twin. The inner call runs in place on the context the outer call already holds, to completion, before the binding continues; its result or error comes back to the binding, its budget nests inside the outer call's, and caller identity follows it. A `*_async` twin called this way finishes on its first poll, so `pollster::block_on` inside a sync binding is fine, and an async binding the inner call awaits settles in place. The same holds from a console handler or any other host code the runtime calls. `spec/reentrancy-tests.json` pins it.
+
+Retained callbacks are synchronous: `RetainedCallback::call` refuses a callback that returns a promise. `RetainedCallback::call_async` accepts one, driving the runtime's jobs until the promise settles:
+
+```rust
+// script: keep(async function (id) { const row = await db.load(id); return row.name; })
+let name = retained.call_async(&[json!(7)]).await?;
+```
+
+Between script calls it runs on a fresh budget, and on an async-mode runtime it yields while the promise waits on an async binding. Called nested (from inside a binding of the same runtime, or from another callback) it runs in place on the calling script's budget and is ready on its first poll. A rejection fails with `CallbackError::Threw` carrying its message, and a budget stop with `CallbackError::Limit`.
 
 ### Hook phases
 
@@ -191,7 +209,9 @@ rt.fire_hook_phase("save", "post", None)?;                             // no arg
 
 A host binding's arguments and return, hook and event payloads, export arguments, and every result are `serde_json::Value`. Two opt-ins make that boundary carry what JavaScript hosts see:
 
-- **`RuntimeOptions::value_fidelity`** (off by default). `undefined`, `NaN`, `Infinity` and `-Infinity` cross as one-key marker objects instead of `null`: `{ "$xript": "undefined" }`, `{ "$xript": "NaN" }`, `{ "$xript": "Infinity" }`, `{ "$xript": "-Infinity" }`. A script value crossing out is encoded at any depth, so `echo(Infinity, undefined, 1)` reaches the binding as `[{"$xript":"Infinity"}, {"$xript":"undefined"}, 1]`; a marker crossing in is decoded back to the real value. It also returns an integral script number as an integer on every path: without it, `util.math.clamp(15, 0, 10)` reads `Number(10.0)` while `10` reads `Number(10)`. The `value` module builds and reads markers: `special::undefined()`, `special::nan()`, `special::infinity()`, `special::neg_infinity()`, `special::number(f64)`, `special::as_f64(&value)`, `special::is_undefined(&value)`, the `Special` enum, and the `XriptValue` trait (`value.as_js_number()`, `value.is_undefined()`, `value.special()`).
+- **`RuntimeOptions::value_fidelity`** (off by default). `undefined`, `NaN`, `Infinity` and `-Infinity` cross as one-key marker objects instead of `null`: `{ "$xript": "undefined" }`, `{ "$xript": "NaN" }`, `{ "$xript": "Infinity" }`, `{ "$xript": "-Infinity" }`. A script value crossing out is encoded at any depth, so `echo(Infinity, undefined, 1)` reaches the binding as `[{"$xript":"Infinity"}, {"$xript":"undefined"}, 1]`; a marker crossing in is decoded back to the real value. It also returns an integral script number as an integer on every path: without it, `util.math.clamp(15, 0, 10)` reads `Number(10.0)` while `10` reads `Number(10)`. Four more markers carry what JSON has no room for: `{ "$xript": "bigint", "value": "-12" }` for a BigInt, `{ "$xript": "symbol", "description": "k" }` for a symbol passed as a binding's top-level argument or returned as a whole result (nested symbols follow JSON), `{ "$xript": "string", "units": [97, 55296] }` for a string holding a lone surrogate, and `{ "$xript": "cycle", "up": 1 }` for a back-reference to the container `up` levels out (only a cycle becomes one; a value reached twice without a cycle still crosses as two copies). The `value` module builds and reads markers: `special::undefined()`, `special::nan()`, `special::infinity()`, `special::neg_infinity()`, `special::number(f64)`, `special::bigint(n)`, `special::symbol(description)`, `special::utf16(&units)`, `special::cycle(up)`, `special::as_f64(&value)`, `special::is_undefined(&value)`, the `Special` and `Marker` enums, and the `XriptValue` trait (`value.as_js_number()`, `value.is_undefined()`, `value.special()`, `value.marker()`).
+
+Whatever the setting, values cross the way `JSON.stringify` reads them: `toJSON` is applied (one that throws is skipped and the object crosses by its own properties), `Number`/`String`/`Boolean` wrappers unwrap to their primitive (`new Number(NaN)` is the `NaN` marker), each getter runs once, and a getter that throws fails the call with its own error. Values cross up to `MAX_DEPTH` (1024) levels deep in either direction; deeper fails with an error naming the binding. With value fidelity off, a lone surrogate becomes U+FFFD, and a BigInt or a cycle fails the call with an error naming the binding.
 - **The `preserve_order` cargo feature** (off by default). Objects keep the key order the host wrote, in both directions, so `Object.keys`, `for..in`, `JSON.stringify` and a hook payload spread to arguments all see authored order. Without it, `serde_json` sorts keys, and `{ x, a }` calls a handler as `(a, x)`.
 
 ### Local (non-`Send`) bindings

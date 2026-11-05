@@ -222,11 +222,7 @@ impl BusHub {
         let mut hub = self.lock();
         if let Some(answer) = hub.replies.remove(&ticket) {
             hub.reply_wakers.remove(&ticket);
-            let outcome = serde_json::from_str::<serde_json::Value>(&answer)
-                .ok()
-                .and_then(|parsed| parsed.get("outcome").map(|o| o.to_string()))
-                .unwrap_or_else(|| SKIPPED.to_string());
-            return std::task::Poll::Ready(outcome);
+            return std::task::Poll::Ready(outcome_of(&answer).to_string());
         }
         hub.reply_wakers.insert(ticket, cx.waker().clone());
         std::task::Poll::Pending
@@ -270,5 +266,16 @@ fn done(outcome: &str) -> String {
 }
 
 fn request_id(request: &str) -> Option<u64> {
-    serde_json::from_str::<serde_json::Value>(request).ok()?.get("id")?.as_u64()
+    let rest = request.strip_prefix(r#"{"id":"#)?;
+    let digits = rest.find(|c: char| !c.is_ascii_digit()).map_or(rest, |end| &rest[..end]);
+    digits.parse().ok()
+}
+
+/// The outcome inside an envelope [`done`] built, read without parsing it, so
+/// a value of any depth comes back whole.
+fn outcome_of(answer: &str) -> &str {
+    answer
+        .strip_prefix(r#"{"done":true,"outcome":"#)
+        .and_then(|rest| rest.strip_suffix('}'))
+        .unwrap_or(SKIPPED)
 }

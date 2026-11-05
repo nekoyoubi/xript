@@ -66,6 +66,19 @@ function createProbe() {
 			state.stashed = resolvePath(payload, path).value;
 			return null;
 		},
+		handBack: (path, nested, ...payload) => {
+			const callback = resolvePath(payload, path).value;
+			return nested ? { inner: [callback] } : callback;
+		},
+		callWithSelf: (path, ...payload) => {
+			const callback = resolvePath(payload, path).value;
+			return callback(callback, { inner: [callback] });
+		},
+		callStashing: (path, ...payload) => {
+			state.stashed = resolvePath(payload, path).value;
+			return state.stashed();
+		},
+		handStashed: () => state.stashed,
 		typed: () => {
 			state.typedCalls++;
 			return "called";

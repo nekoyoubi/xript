@@ -6,9 +6,10 @@ import { createDebugController } from "./debug-session.js";
 import { instrumentSource } from "./debug-instrument.js";
 import { grantedSatisfies } from "./capabilities.js";
 import { LiveAccessor, RealmBridge } from "./realm.js";
-import { CallbackScope, describeThrown, functionParamChecks, functionParamViolation, isThenable, type CallbackTracker } from "./callbacks.js";
+import { CallbackScope, describeThrown, functionParamChecks, functionParamViolation, isThenable, resolveScopedProxy, type CallbackTracker } from "./callbacks.js";
 import { CallerContext } from "./caller-context.js";
-import { CallbackError } from "./errors.js";
+import { readConsoleArgument } from "./console-args.js";
+import { CallbackError, CrossingRefusal } from "./errors.js";
 import { DEFAULT_MAX_RETAINED_CALLBACKS, RetainedRegistry, retainPositions, type DeclaredTypes, type RetainedRecord } from "./retained.js";
 import { trackContextRejections } from "./rejection-sink.js";
 import type { NodeRef } from "./fragment.js";
@@ -23,7 +24,7 @@ import {
 	type DeprecationHandler,
 	type HandlerClock,
 } from "./deprecations.js";
-import { hostAccessorFor, isAccessorBinding, omitsBinding, presenceProbe, providedBindingPaths, type HostAccessor } from "./presence.js";
+import { hostAccessorFor, isAccessorBinding, omitsBinding, ownMember, presenceProbe, providedBindingPaths, type HostAccessor } from "./presence.js";
 
 export { missingBindingNames } from "./presence.js";
 
@@ -313,24 +314,73 @@ const CONTEXT_PRELUDE = `"use strict";
 	globalThis.eval = function () {
 		throw new TypeError("eval() is not permitted. Dynamic code generation is disabled in xript.");
 	};
+	var defineProperty = Object.defineProperty;
+	function own(target, key, value) {
+		defineProperty(target, key, { value: value, writable: true, enumerable: true, configurable: true });
+	}
 	class BindingError extends Error {
 		constructor(binding, message) {
 			super(binding + "(): " + message);
-			this.name = "BindingError";
-			this.binding = binding;
+			own(this, "name", "BindingError");
+			own(this, "binding", binding);
 		}
 	}
 	class CapabilityDeniedError extends Error {
 		constructor(binding, capability) {
 			super(binding + '() requires the "' + capability + '" capability, which hasn\\'t been granted to this script. Ask the app developer to enable it.');
-			this.name = "CapabilityDeniedError";
-			this.capability = capability;
-			this.binding = binding;
+			own(this, "name", "CapabilityDeniedError");
+			own(this, "capability", capability);
+			own(this, "binding", binding);
 		}
 	}
 	globalThis.BindingError = BindingError;
 	globalThis.CapabilityDeniedError = CapabilityDeniedError;
 })();`;
+
+/**
+ * Defines `key` on `target` as an ordinary writable data property. Unlike an assignment it never
+ * reaches a setter, so a name such as `__proto__` lands as a property instead of a prototype.
+ */
+function put(target: Record<string, unknown>, key: string, value: unknown): void {
+	Object.defineProperty(target, key, { value, writable: true, enumerable: true, configurable: true });
+}
+
+/**
+ * Locks every global the runtime installed for scripts, inside the context: each becomes a
+ * non-writable, non-configurable property of `globalThis`, and `hooks`, `xript`, `console`, and
+ * the error classes are frozen. A mod can then neither replace nor delete a binding another mod
+ * calls.
+ */
+const SEAL_GLOBALS_SOURCE = `(function (names) {
+	function deepFreeze(obj) {
+		if (obj === null || (typeof obj !== "object" && typeof obj !== "function")) return obj;
+		var keys = Object.getOwnPropertyNames(obj);
+		for (var i = 0; i < keys.length; i++) {
+			var descriptor = Object.getOwnPropertyDescriptor(obj, keys[i]);
+			var value = descriptor && descriptor.value;
+			if (value !== null && typeof value === "object" && !Object.isFrozen(value)) deepFreeze(value);
+		}
+		return Object.freeze(obj);
+	}
+	var frozenHolders = Object.create(null);
+	frozenHolders.hooks = frozenHolders.xript = frozenHolders.console = true;
+	frozenHolders.BindingError = frozenHolders.CapabilityDeniedError = true;
+	for (var i = 0; i < names.length; i++) {
+		var descriptor = Object.getOwnPropertyDescriptor(globalThis, names[i]);
+		if (!descriptor) continue;
+		if (descriptor.configurable) {
+			if ("value" in descriptor) {
+				Object.defineProperty(globalThis, names[i], { value: descriptor.value, writable: false, enumerable: descriptor.enumerable, configurable: false });
+			} else {
+				Object.defineProperty(globalThis, names[i], { get: descriptor.get, set: descriptor.set, enumerable: descriptor.enumerable, configurable: false });
+			}
+		}
+		if (frozenHolders[names[i]] === true && "value" in descriptor) {
+			deepFreeze(descriptor.value);
+			if (typeof descriptor.value === "function" && descriptor.value.prototype) Object.freeze(descriptor.value.prototype);
+		}
+	}
+})`;
 
 function buildSandboxGlobal(options: SandboxOptions, tracker: CallbackTracker): Record<string, unknown> {
 	const { manifest, hostBindings, capabilities = [] } = options;
@@ -344,34 +394,34 @@ function buildSandboxGlobal(options: SandboxOptions, tracker: CallbackTracker): 
 	const consoleObj: Record<string, unknown> = {};
 	for (const method of Object.keys(CONSOLE_METHOD_SEVERITY)) {
 		const severity = CONSOLE_METHOD_SEVERITY[method];
-		consoleObj[method] = (...args: unknown[]) => dispatchConsole(sandboxConsole, method, severity, args);
+		consoleObj[method] = (...args: unknown[]) => dispatchConsole(sandboxConsole, method, severity, args.map(readConsoleArgument));
 	}
 	globals.console = consoleObj;
 
 	if (manifest.bindings) {
 		for (const [name, binding] of Object.entries(manifest.bindings)) {
 			if (omitsBinding(binding, hostBindings, name)) {
-				globals[name] = undefined;
+				put(globals, name, undefined);
 			} else if (isAccessor(binding)) {
-				globals[name] = buildAccessor(name, name, binding, hostBindings, grantedCapabilities, audit, tracker);
+				put(globals, name, buildAccessor(name, name, binding, hostBindings, grantedCapabilities, audit, tracker));
 			} else if (isNamespace(binding)) {
-				globals[name] = buildNamespace(
+				put(globals, name, buildNamespace(
 					name,
 					binding,
-					hostBindings[name] as HostNamespace | undefined,
+					ownMember(hostBindings, name) as HostNamespace | undefined,
 					grantedCapabilities,
 					audit,
 					tracker,
-				);
+				));
 			} else {
-				globals[name] = buildFunction(
+				put(globals, name, buildFunction(
 					name,
 					binding,
-					hostBindings[name] as HostFunction | undefined,
+					ownMember(hostBindings, name) as HostFunction | undefined,
 					grantedCapabilities,
 					audit,
 					tracker,
-				);
+				));
 			}
 		}
 	}
@@ -389,7 +439,7 @@ function buildFunction(
 ): HostFunction {
 	const functionChecks = functionParamChecks(binding.params);
 	const retainAt = retainPositions(binding.params, tracker.types);
-	return (...args: unknown[]) => {
+	const gated = (...args: unknown[]) => {
 		if (binding.capability && !grantedSatisfies(grantedCapabilities, binding.capability)) {
 			throw new CapabilityDeniedError(qualifiedName, binding.capability);
 		}
@@ -407,18 +457,30 @@ function buildFunction(
 
 		emitAudit(audit, qualifiedName, binding.capability ?? null);
 
+		const hostFailure = (e: unknown): unknown => {
+			if (e instanceof CapabilityDeniedError || e instanceof BindingError) return e;
+			const message = e instanceof Error ? e.message : String(e);
+			const prefix = `${qualifiedName}(): `;
+			return new BindingError(qualifiedName, message.startsWith(prefix) ? message.slice(prefix.length) : message);
+		};
 		const scope = new CallbackScope(qualifiedName, tracker, retainAt);
+		let wrapped: unknown[];
+		try {
+			wrapped = scope.wrapArgs(args);
+		} catch (e) {
+			scope.close();
+			if (e instanceof CrossingRefusal) throw new BindingError(qualifiedName, e.message);
+			throw e;
+		}
 		let result: unknown;
 		tracker.scopes.push(scope);
 		try {
-			result = hostFn(...scope.wrapArgs(args));
+			result = hostFn(...wrapped);
 		} catch (e) {
 			const original = scope.original(e);
 			scope.close();
 			if (original) throw original.value;
-			if (e instanceof CapabilityDeniedError || e instanceof BindingError) throw e;
-			const message = e instanceof Error ? e.message : String(e);
-			throw new BindingError(qualifiedName, message);
+			throw hostFailure(e);
 		} finally {
 			const open = tracker.scopes.lastIndexOf(scope);
 			if (open !== -1) tracker.scopes.splice(open, 1);
@@ -427,19 +489,27 @@ function buildFunction(
 		if (result !== null && typeof result === "object" && typeof (result as { then?: unknown }).then === "function") {
 			return (result as Promise<unknown>).then(
 				(value) => {
-					scope.close();
-					return value;
+					try {
+						return scope.cross(value);
+					} finally {
+						scope.close();
+					}
 				},
 				(e) => {
 					const original = scope.original(e);
 					scope.close();
-					throw original ? original.value : e;
+					throw original ? original.value : hostFailure(e);
 				},
 			);
 		}
-		scope.close();
-		return result;
+		try {
+			return scope.cross(result);
+		} finally {
+			scope.close();
+		}
 	};
+	Object.defineProperty(gated, "name", { value: qualifiedName, configurable: true });
+	return gated;
 }
 
 const ASYNC_IN_CALLBACK_MESSAGE =
@@ -486,15 +556,15 @@ function buildNamespace(
 	for (const [memberName, memberBinding] of Object.entries(binding.members)) {
 		const qualifiedName = `${namespaceName}.${memberName}`;
 		if (omitsBinding(memberBinding, hostNs, memberName)) {
-			ns[memberName] = undefined;
+			put(ns, memberName, undefined);
 		} else if (isAccessor(memberBinding)) {
-			ns[memberName] = buildAccessor(qualifiedName, memberName, memberBinding, hostNs, grantedCapabilities, audit, tracker);
+			put(ns, memberName, buildAccessor(qualifiedName, memberName, memberBinding, hostNs, grantedCapabilities, audit, tracker));
 		} else if (isNamespace(memberBinding)) {
-			const nestedHostNs = hostNs ? (hostNs[memberName] as HostNamespace | undefined) : undefined;
-			ns[memberName] = buildNamespace(qualifiedName, memberBinding, nestedHostNs, grantedCapabilities, audit, tracker);
+			const nestedHostNs = ownMember(hostNs, memberName) as HostNamespace | undefined;
+			put(ns, memberName, buildNamespace(qualifiedName, memberBinding, nestedHostNs, grantedCapabilities, audit, tracker));
 		} else {
-			const hostFn = hostNs ? (hostNs[memberName] as HostFunction | undefined) : undefined;
-			ns[memberName] = buildFunction(qualifiedName, memberBinding, hostFn, grantedCapabilities, audit, tracker);
+			const hostFn = ownMember(hostNs, memberName) as HostFunction | undefined;
+			put(ns, memberName, buildFunction(qualifiedName, memberBinding, hostFn, grantedCapabilities, audit, tracker));
 		}
 	}
 
@@ -594,7 +664,7 @@ function buildHooksGlobal(
 
 				for (const phase of hookDef.phases) {
 					const registryKey = `${hookName}:${phase}`;
-					hookNs[phase] = (handler: (...args: unknown[]) => unknown) => {
+					put(hookNs, phase, (handler: (...args: unknown[]) => unknown) => {
 						if (hookDef.capability && !grantedSatisfies(grantedCapabilities, hookDef.capability)) {
 							throw new CapabilityDeniedError(`hooks.${hookName}.${phase}`, hookDef.capability);
 						}
@@ -602,13 +672,13 @@ function buildHooksGlobal(
 							throw new BindingError(`hooks.${hookName}.${phase}`, "expected a handler function");
 						}
 						hookRegistry.register(registryKey, { fn: handler });
-					};
+					});
 				}
 
-				hooksObj[hookName] = Object.freeze(hookNs);
+				put(hooksObj, hookName, Object.freeze(hookNs));
 			} else {
 				const registryKey = hookName;
-				hooksObj[hookName] = (handler: (...args: unknown[]) => unknown) => {
+				put(hooksObj, hookName, (handler: (...args: unknown[]) => unknown) => {
 					if (hookDef.capability && !grantedSatisfies(grantedCapabilities, hookDef.capability)) {
 						throw new CapabilityDeniedError(`hooks.${hookName}`, hookDef.capability);
 					}
@@ -616,7 +686,7 @@ function buildHooksGlobal(
 						throw new BindingError(`hooks.${hookName}`, "expected a handler function");
 					}
 					hookRegistry.register(registryKey, { fn: handler });
-				};
+				});
 			}
 		}
 	}
@@ -907,6 +977,7 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 	const releaseRejectionSink = trackContextRejections(context);
 	const realm = new RealmBridge(context);
 	realm.resolveRetained = (value) => retained.resolve(value, callerContext.current());
+	realm.resolveScoped = (fn) => resolveScopedProxy(fn, tracker);
 	vm.runInContext(CONTEXT_PRELUDE, context, { filename: "xript-prelude.js" });
 	const toContext = (value: unknown): unknown => realm.toContext(value);
 	tracker.toContext = toContext;
@@ -914,10 +985,12 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 	const contextGlobalThis = vm.runInContext("globalThis", context) as object;
 	for (const [name, value] of Object.entries(sandboxGlobals)) {
 		if (value instanceof LiveAccessor) realm.defineAccessor(contextGlobalThis, name, value);
-		else contextGlobal[name] = realm.toContext(value);
+		else put(contextGlobal, name, realm.toContext(value));
 	}
 	const bus = installEventBus(context, realm, manifest.events, grantedCapabilities, callerContext, clock);
 	reportShadowedBindings(deprecations, shadowed);
+	const sealGlobals = vm.runInContext(SEAL_GLOBALS_SOURCE, context, { filename: "xript-seal.js" }) as (names: string[]) => void;
+	sealGlobals([...Object.keys(manifest.bindings ?? {}), "hooks", "events", "xript", "console", "BindingError", "CapabilityDeniedError", ...(debugController ? [debugController.probeNames.shouldStop, debugController.probeNames.pause] : [])]);
 
 	function cleanStack(err: Error): void {
 		if (!err.stack) return;
@@ -999,7 +1072,7 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 	async function executeAsync(code: string): Promise<ExecutionResult> {
 		if (cancellation?.cancelled) throw new CancellationError();
 		const start = performance.now();
-		const wrappedCode = `(async () => { ${code} })()`;
+		const wrappedCode = `(async () => { ${code}\n})()`;
 		const script = new vm.Script(wrappedCode, { filename: "xript-script.js", ...DENY_IMPORT });
 		try {
 			const promise = runGuarded(() => script.runInContext(context, { timeout: timeoutMs }));
@@ -1113,7 +1186,7 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 		const { code: instrumented, breakableLines } = instrumentSource(code, debugController.probeNames);
 		debugController.setBreakableLines("xript-script.js", breakableLines);
 		const start = performance.now();
-		const wrappedCode = `(async () => { ${instrumented} })()`;
+		const wrappedCode = `(async () => { ${instrumented}\n})()`;
 		const script = new vm.Script(wrappedCode, { filename: "xript-script.js", ...DENY_IMPORT });
 		try {
 			const promise = script.runInContext(context);

@@ -1,4 +1,4 @@
-import { CallbackError } from "./errors.js";
+import { CallbackError, CrossingRefusal, MAX_CROSSING_DEPTH, TOO_DEEP_MESSAGE } from "./errors.js";
 import type { CallerContext } from "./caller-context.js";
 import type { DeclaredTypes, RetainedCallback, RetainedRegistry, RetainPositions } from "./retained.js";
 
@@ -78,6 +78,24 @@ export interface CallbackTracker {
 	types?: DeclaredTypes;
 }
 
+interface ScopedProxy {
+	scope: CallbackScope;
+	fn: ScriptFunction;
+}
+
+const scopedProxies = new WeakMap<object, ScopedProxy>();
+
+/**
+ * What a callback proxy crossing back into the sandbox becomes: the script's own function while
+ * its binding call is still running in the runtime `tracker` belongs to, otherwise `undefined`.
+ * Returns null for a function that is no callback proxy.
+ */
+export function resolveScopedProxy(fn: object, tracker: CallbackTracker): { value: unknown } | null {
+	const proxy = scopedProxies.get(fn);
+	if (!proxy) return null;
+	return { value: proxy.scope.isActiveIn(tracker) ? proxy.fn : undefined };
+}
+
 /** A callback as the host receives it: the proxy function, plus `retain()`. */
 export type HostCallback = ((...args: unknown[]) => unknown) & { retain(): RetainedCallback };
 
@@ -95,6 +113,10 @@ export function describeThrown(e: unknown): { name?: string; message?: string } 
 
 type ScriptFunction = (...args: unknown[]) => unknown;
 
+function put(target: object, key: string | number, value: unknown): void {
+	Object.defineProperty(target, key, { value, writable: true, enumerable: true, configurable: true });
+}
+
 /**
  * One binding call's callbacks. Script functions anywhere in the arguments are swapped for
  * proxies that are valid only while the scope is open; containers holding one are copied so
@@ -111,6 +133,11 @@ export class CallbackScope {
 		private readonly retainable: RetainPositions = () => false,
 	) {}
 
+	/**
+	 * Swaps every script function in the arguments for a proxy. Each property is read once; a
+	 * getter that throws ends the call with its own error, and a value nested past
+	 * `MAX_CROSSING_DEPTH` is refused with a `CrossingRefusal`.
+	 */
 	wrapArgs(args: unknown[]): unknown[] {
 		const seen = new Set<object>();
 		return args.map((arg, index) => this.wrap(arg, seen, [index]));
@@ -122,28 +149,29 @@ export class CallbackScope {
 		}
 		if (value === null || typeof value !== "object") return value;
 		if (seen.has(value) || ArrayBuffer.isView(value)) return value;
+		if (seen.size >= MAX_CROSSING_DEPTH) throw new CrossingRefusal(TOO_DEEP_MESSAGE);
 		seen.add(value);
 		try {
-			if (Array.isArray(value)) {
-				let copy: unknown[] | null = null;
-				for (let i = 0; i < value.length; i++) {
-					const wrapped = this.wrap(value[i], seen, [...path, i]);
-					if (wrapped !== value[i]) {
-						copy ??= value.slice();
-						copy[i] = wrapped;
-					}
-				}
-				return copy ?? value;
-			}
-			let copy: Record<string, unknown> | null = null;
+			const array = Array.isArray(value);
 			const record = value as Record<string, unknown>;
-			for (const key of Object.keys(record)) {
-				const original = record[key];
+			const keys = array ? null : Object.keys(record);
+			const length = array ? (value as unknown[]).length : (keys as string[]).length;
+			const read: unknown[] = [];
+			let copy: Record<string, unknown> | unknown[] | null = null;
+			for (let i = 0; i < length; i++) {
+				const key = array ? i : (keys as string[])[i];
+				const original = record[key as string];
+				read.push(original);
 				const wrapped = this.wrap(original, seen, [...path, key]);
-				if (wrapped !== original) {
-					copy ??= { ...record };
-					copy[key] = wrapped;
+				if (Object.is(wrapped, original)) {
+					if (copy) put(copy, key, original);
+					continue;
 				}
+				if (!copy) {
+					copy = array ? [] : {};
+					for (let j = 0; j < i; j++) put(copy, array ? j : (keys as string[])[j], read[j]);
+				}
+				put(copy, key, wrapped);
 			}
 			return copy ?? value;
 		} finally {
@@ -164,7 +192,22 @@ export class CallbackScope {
 				return registry.retain(fn, scope.binding, scope.tracker.caller?.current() ?? null, retainable);
 			},
 		});
+		scopedProxies.set(callback, { scope, fn });
 		return callback as HostCallback;
+	}
+
+	/** Whether this binding call is still running in the runtime `tracker` belongs to. */
+	isActiveIn(tracker: CallbackTracker): boolean {
+		return this.active && this.tracker === tracker;
+	}
+
+	/**
+	 * Re-creates `value` in the sandbox realm while this binding call is still open, so a
+	 * callback of the call that comes back in it arrives as the script's own function.
+	 */
+	cross(value: unknown): unknown {
+		const toContext = this.tracker.toContext;
+		return toContext ? toContext(value) : value;
 	}
 
 	/**
@@ -175,8 +218,7 @@ export class CallbackScope {
 		this.tracker.depth++;
 		let result: unknown;
 		try {
-			const toContext = this.tracker.toContext;
-			result = Reflect.apply(fn, undefined, toContext ? args.map((arg) => toContext(arg)) : args);
+			result = Reflect.apply(fn, undefined, args.map((arg) => this.cross(arg)));
 		} catch (e) {
 			const error = new CallbackError(binding, "threw", describeThrown(e));
 			this.thrown.set(error, e);
@@ -184,8 +226,19 @@ export class CallbackScope {
 		} finally {
 			this.tracker.depth--;
 		}
-		if (isThenable(result)) throw new CallbackError(binding, "promise");
-		return this.tracker.toHost ? this.tracker.toHost(result) : result;
+		let thenable: boolean;
+		let crossed: unknown;
+		try {
+			thenable = isThenable(result);
+			crossed = thenable || !this.tracker.toHost ? result : this.tracker.toHost(result);
+		} catch (e) {
+			if (e instanceof CrossingRefusal) throw e;
+			const error = new CallbackError(binding, "threw", describeThrown(e));
+			this.thrown.set(error, e);
+			throw error;
+		}
+		if (thenable) throw new CallbackError(binding, "promise");
+		return crossed;
 	}
 
 	/** The script's own error when the host let a callback's throw escape, else the host error. */

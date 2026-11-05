@@ -106,18 +106,13 @@ describe("caller identity across interleaved async calls (js, async sandbox)", (
 		runtime.dispose();
 	});
 
-	it("refuses a second suspension with a binding error naming the limit", async () => {
+	it("runs a second call into an async binding while the first is still pending", async () => {
 		const { runtime, seen } = await setup((ms) => new Promise((resolve) => setTimeout(() => resolve(ms), ms)));
 		const first = runtime.invokeModExportAsync("mod-a", "suspend", ["a", 20]);
-		const second = runtime.executeAsync(
-			"try { await wait(1); return 'suspended'; } catch (e) { return e.name + ': ' + e.message; }",
-		);
-		const [a, b] = await Promise.all([first, second]);
-		assert.equal(a, 20);
-		assert.match(b.value, /^BindingError: wait\(\): cannot suspend while another call on this runtime is suspended/);
-		assert.match(b.value, /suspends one call at a time/);
-		assert.deepEqual(seen, ["a:before=mod-a", "a:after=mod-a"]);
-		assert.equal(await runtime.invokeModExportAsync("mod-b", "suspend", ["b", 1]), 1);
+		const second = runtime.invokeModExportAsync("mod-b", "suspend", ["b", 1]);
+		assert.deepEqual(await Promise.all([first, second]), [20, 1]);
+		assertOwnMods(seen);
+		assert.deepEqual(seen, ["a:before=mod-a", "b:before=mod-b", "b:after=mod-b", "a:after=mod-a"]);
 		runtime.dispose();
 	});
 });

@@ -26,8 +26,11 @@ internal sealed class EventBus
     private readonly Engine _engine;
     private readonly string _token = Guid.NewGuid().ToString("N");
     private readonly ObjectInstance _api;
-    private readonly Func<JsonElement, JsValue> _toJs;
-    private readonly Func<JsValue, JsonElement> _toJson;
+    private const string EmitBinding = "events.emit";
+    private const string DeclareBinding = "declareEvent";
+
+    private readonly Func<JsonElement, string, JsValue> _toJs;
+    private readonly Func<JsValue, string, JsonElement> _toJson;
 
     internal EventBus(
         Engine engine,
@@ -35,8 +38,8 @@ internal sealed class EventBus
         HashSet<string> granted,
         CallerContext caller,
         bool installGlobal,
-        Func<JsonElement, JsValue> toJs,
-        Func<JsValue, JsonElement> toJson)
+        Func<JsonElement, string, JsValue> toJs,
+        Func<JsValue, string, JsonElement> toJson)
     {
         _engine = engine;
         _toJs = toJs;
@@ -73,7 +76,7 @@ internal sealed class EventBus
     /// </summary>
     internal IReadOnlyList<(string? Owner, JsonElement Value)> Emit(string eventId, JsonElement[] args)
     {
-        var array = _toJs(JsonSerializer.SerializeToElement(args));
+        var array = new JsArray(_engine, args.Select(arg => _toJs(arg, EmitBinding)).ToArray());
         var result = Call("emit", new JsString(eventId), array);
         if (result is not ObjectInstance list)
             return [];
@@ -84,7 +87,7 @@ internal sealed class EventBus
         {
             var entry = list.Get(i.ToString()).AsObject();
             var owner = entry.Get("owner");
-            results.Add((owner.IsString() ? owner.AsString() : null, _toJson(entry.Get("value"))));
+            results.Add((owner.IsString() ? owner.AsString() : null, _toJson(entry.Get("value"), EmitBinding)));
         }
         return results;
     }
@@ -93,7 +96,7 @@ internal sealed class EventBus
         (int)Call("cancelOwned", owner is null ? JsValue.Null : new JsString(owner)).AsNumber();
 
     internal JsonElement Declare(JsonElement entry) =>
-        _toJson(Call("declare", _toJs(entry)));
+        _toJson(Call("declare", _toJs(entry, DeclareBinding)), DeclareBinding);
 
     private JsValue Call(string method, params JsValue[] args)
     {

@@ -1255,7 +1255,7 @@ impl CommandKind {
 
 async fn dispatch_yielding(rt: &crate::sandbox::XriptRuntime, kind: CommandKind) {
     match kind {
-        CommandKind::Execute { code, reply } => reply.complete(rt.execute_async(&code).await),
+        CommandKind::Execute { code, reply } => reply.complete(rt.eval_async(&code).await),
         CommandKind::InvokeExport {
             mod_name,
             name,

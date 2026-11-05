@@ -80,13 +80,15 @@ pub(crate) fn stash_shadowable(ctx: &Ctx<'_>, manifest: &Manifest) -> Result<()>
     if names.is_empty() {
         return Ok(());
     }
-    let script = format!(
-        "(function (names) {{ var probe = {{}}; for (var i = 0; i < names.length; i++) probe[names[i]] = globalThis[names[i]]; \
-         Object.defineProperty(globalThis, '__xript_shadow_probe', {{ value: probe, configurable: true }}); }})({})",
-        serde_json::to_string(&names).unwrap_or_else(|_| "[]".into()),
-    );
-    ctx.eval::<(), _>(script.as_str())
-        .map_err(|e| XriptError::Engine(e.to_string()))
+    crate::internals::run::<_, ()>(
+        ctx,
+        "names",
+        "var probe = objectCreate(null); \
+         for (var i = 0; i < names.length; i++) put(probe, names[i], globalThis[names[i]]); \
+         internals.shadowProbe = probe;",
+        (names.to_vec(),),
+    )
+    .map_err(|e| XriptError::Engine(e.to_string()))
 }
 
 /// The bindings [`stash_shadowable`] recorded that a built-in has since
@@ -95,17 +97,16 @@ pub(crate) fn replaced_bindings(ctx: &Ctx<'_>, manifest: &Manifest) -> Result<Ve
     if declared_shadowable(manifest).is_empty() {
         return Ok(Vec::new());
     }
-    let script = format!(
-        "(function (order) {{ var probe = globalThis.__xript_shadow_probe; delete globalThis.__xript_shadow_probe; \
-         var out = []; for (var i = 0; i < order.length; i++) {{ var n = order[i]; \
-         if (Object.prototype.hasOwnProperty.call(probe, n) && globalThis[n] !== probe[n]) out.push(n); }} \
-         return JSON.stringify(out); }})({})",
-        serde_json::to_string(&SHADOWABLE).unwrap_or_else(|_| "[]".into()),
-    );
-    let raw: String = ctx
-        .eval(script.as_str())
-        .map_err(|e| XriptError::Engine(e.to_string()))?;
-    Ok(serde_json::from_str(&raw).unwrap_or_default())
+    crate::internals::run(
+        ctx,
+        "order",
+        "var probe = internals.shadowProbe; delete internals.shadowProbe; var out = []; \
+         for (var i = 0; i < order.length; i++) { var n = order[i]; \
+         if (ownDescriptor(probe, n) !== undefined && globalThis[n] !== probe[n]) append(out, n); } \
+         return out;",
+        (SHADOWABLE.to_vec(),),
+    )
+    .map_err(|e| XriptError::Engine(e.to_string()))
 }
 
 /// Raises `binding-shadows-builtin` naming every replaced binding.

@@ -29,8 +29,14 @@
  *   `events.emitAsync` walks its deliveries through it instead of blocking in `peer.poll`.
  *   Without `peer` the state lives in the closure.
  *   Payloads and results cross between runtimes as JSON with the `$xript` special-value markers
- *   always on, so they arrive as they left; a function crosses as the plain callback marker
- *   `{ "$xriptCallback": "cross-worker" }`, which names no callback where it lands.
+ *   always on, so they arrive as they left; a function crosses as `undefined`, since no callback
+ *   it stands for could be called where it lands.
+ * - `encode(value)` (optional, with `peer`): spells one payload or result for another runtime as
+ *   the JSON text of a tape, a flat list of tokens (`["a"]` / `["o"]` open an array or object,
+ *   `["k", key]` names the next entry's key, `["e"]` closes, `["v", leaf]` is a value, with every
+ *   marker of `spec/value-fidelity-tests.json` allowed as a leaf, `cycle` among them). A runtime
+ *   that supplies it carries BigInts, symbols, lone surrogates and cycles between workers; one
+ *   that does not crosses payloads as the JSON above.
  *
  * It assigns the frozen `events` global and returns the host API: `emit(token, id, args)`
  * (results as `{ owner, value }`), `cancelOwned(token, owner)`, `declare(token, entry)`, and
@@ -61,15 +67,107 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 	var ENTRY_FIELDS = ["id", "description", "payload", "capability", "emit", "pattern", "addressed", "keys"];
 	var SKIPPED = { ran: false };
 	var SPECIAL_KEY = "$xript";
-	var CALLBACK_KEY = "$xriptCallback";
-	var CROSSED_FUNCTION = "cross-worker";
 	var SPECIAL_VALUES = { "undefined": undefined, "NaN": NaN, "Infinity": Infinity, "-Infinity": -Infinity, "-0": -0 };
+	var encode = typeof host.encode === "function" ? host.encode : null;
+	var DECIMAL = /^-?[0-9]+$/;
+	var BigIntCtor = typeof BigInt === "function" ? BigInt : null;
+	var SymbolCtor = Symbol;
+	var fromCharCode = String.fromCharCode;
+	var BindingErrorCtor = typeof BindingError === "function" ? BindingError : null;
+	var CapabilityDeniedErrorCtor = typeof CapabilityDeniedError === "function" ? CapabilityDeniedError : null;
+	var reflectApply = Reflect.apply;
+	var create = Object.create;
+	var setPrototypeOf = Object.setPrototypeOf;
+	var ErrorCtor = Error;
+	var arrayIndexOf = Array.prototype.indexOf;
+	var arraySort = Array.prototype.sort;
+	var arrayJoin = Array.prototype.join;
+	var stringIndexOf = String.prototype.indexOf;
+	var stringSlice = String.prototype.slice;
+	var regexpExec = RegExp.prototype.exec;
+	var promiseResolve = Promise.resolve;
+	var promiseReject = Promise.reject;
+
+	function hasOwnKey(object, key) {
+		return reflectApply(hasOwn, object, [key]);
+	}
+
+	function own(object, key) {
+		return object !== null && typeof object === "object" && hasOwnKey(object, key) ? object[key] : undefined;
+	}
+
+	function put(object, key, value) {
+		define(object, key, { value: value, writable: true, enumerable: true, configurable: true });
+	}
+
+	function append(list, value) {
+		put(list, list.length, value);
+	}
+
+	function bareList() {
+		var list = [];
+		setPrototypeOf(list, null);
+		return list;
+	}
+
+	function copyList(list) {
+		var out = bareList();
+		for (var i = 0; i < list.length; i++) out[out.length] = list[i];
+		return out;
+	}
+
+	function mapList(list, each) {
+		var out = [];
+		for (var i = 0; i < list.length; i++) append(out, each(list[i]));
+		return out;
+	}
+
+	function removeAt(list, index) {
+		for (var i = index; i + 1 < list.length; i++) list[i] = list[i + 1];
+		list.length -= 1;
+	}
+
+	function indexIn(list, value) {
+		return reflectApply(arrayIndexOf, list, [value]);
+	}
+
+	function sorted(list, compare) {
+		return reflectApply(arraySort, list, [compare]);
+	}
+
+	function test(pattern, text) {
+		return reflectApply(regexpExec, pattern, [text]) !== null;
+	}
+
+	function splitDots(text) {
+		var parts = bareList();
+		var start = 0;
+		for (var i = 0; i <= text.length; i++) {
+			if (i === text.length || text[i] === ".") {
+				parts[parts.length] = reflectApply(stringSlice, text, [start, i]);
+				start = i + 1;
+			}
+		}
+		return parts;
+	}
+
+	function bare(value) {
+		if (value === null || typeof value !== "object" || isArray(value)) return value;
+		var out = create(null);
+		var keys = objectKeys(value);
+		for (var i = 0; i < keys.length; i++) out[keys[i]] = value[keys[i]];
+		return out;
+	}
+
+	function parseBare(text) {
+		return parse(text, function (key, value) { return bare(value); });
+	}
 
 	var local = blankState();
-	var handlers = Object.create(null);
+	var handlers = create(null);
 
 	function blankState() {
-		return { catalogue: [], byEvent: {}, subscriptions: {}, spent: {}, claims: [], sequence: 0, seeded: false };
+		return { catalogue: [], byEvent: create(null), subscriptions: create(null), spent: create(null), claims: [], sequence: 0, seeded: false };
 	}
 
 	function filled(state) {
@@ -83,13 +181,13 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 
 	function view(read) {
 		if (peer === null) return read(local);
-		return read(filled(parse(peer.read()).state));
+		return read(filled(parseBare(peer.read()).state));
 	}
 
 	function mutate(change) {
 		if (peer === null) return change(local);
 		for (;;) {
-			var box = parse(peer.read());
+			var box = parseBare(peer.read());
 			var state = filled(box.state);
 			var result = change(state);
 			if (peer.write(box.version, stringify(state))) return result;
@@ -97,17 +195,19 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 	}
 
 	function bindingError(binding, message) {
-		var error = new Error(binding + "(): " + message);
-		error.name = "BindingError";
-		error.binding = binding;
+		if (BindingErrorCtor) return new BindingErrorCtor(binding, message);
+		var error = new ErrorCtor(binding + "(): " + message);
+		put(error, "name", "BindingError");
+		put(error, "binding", binding);
 		return error;
 	}
 
 	function capabilityError(binding, capability) {
-		var error = new Error(binding + "() requires the \"" + capability + "\" capability, which hasn't been granted to this script. Ask the app developer to enable it.");
-		error.name = "CapabilityDeniedError";
-		error.binding = binding;
-		error.capability = capability;
+		if (CapabilityDeniedErrorCtor) return new CapabilityDeniedErrorCtor(binding, capability);
+		var error = new ErrorCtor(binding + "() requires the \"" + capability + "\" capability, which hasn't been granted to this script. Ask the app developer to enable it.");
+		put(error, "name", "CapabilityDeniedError");
+		put(error, "binding", binding);
+		put(error, "capability", capability);
 		return error;
 	}
 
@@ -120,11 +220,12 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 	}
 
 	function isVariableSegment(segment) {
-		return segment.length > 2 && segment.charAt(0) === "<" && segment.charAt(segment.length - 1) === ">";
+		return segment.length > 2 && segment[0] === "<" && segment[segment.length - 1] === ">";
 	}
 
 	function isConcrete(id) {
-		var segments = id.split(".");
+		if (reflectApply(stringIndexOf, id, ["<"]) === -1) return true;
+		var segments = splitDots(id);
 		for (var i = 0; i < segments.length; i++) {
 			if (isVariableSegment(segments[i])) return false;
 		}
@@ -133,16 +234,16 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 
 	function isShape(id) {
 		if (typeof id !== "string") return false;
-		var segments = id.split(".");
+		var segments = splitDots(id);
 		for (var i = 0; i < segments.length; i++) {
-			if (VARIABLE_SEGMENT.test(segments[i])) segments[i] = "x";
+			if (test(VARIABLE_SEGMENT, segments[i])) segments[i] = "x";
 		}
-		return ID_GRAMMAR.test(segments.join("."));
+		return test(ID_GRAMMAR, reflectApply(arrayJoin, segments, ["."]));
 	}
 
 	function shapeMatches(shape, id) {
-		var want = shape.split(".");
-		var got = id.split(".");
+		var want = splitDots(shape);
+		var got = splitDots(id);
 		if (want.length !== got.length) return false;
 		for (var i = 0; i < want.length; i++) {
 			if (isVariableSegment(want[i])) {
@@ -195,7 +296,10 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 	function argsFor(args) {
 		if (args.length === 1 && isPlainObject(args[0])) {
 			var payload = args[0];
-			return objectKeys(payload).map(function (key) { return payload[key]; });
+			var keys = objectKeys(payload);
+			var values = bareList();
+			for (var i = 0; i < keys.length; i++) values[i] = payload[keys[i]];
+			return values;
 		}
 		return args;
 	}
@@ -217,8 +321,8 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 		delete state.subscriptions[subscriptionToken];
 		var list = state.byEvent[subscription.event];
 		if (!list) return;
-		var index = list.indexOf(subscriptionToken);
-		if (index !== -1) list.splice(index, 1);
+		var index = indexIn(list, subscriptionToken);
+		if (index !== -1) removeAt(list, index);
 		if (list.length === 0) delete state.byEvent[subscription.event];
 	}
 
@@ -248,7 +352,7 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 		var value;
 		enter(subscription.owner);
 		try {
-			value = held.handler.apply(undefined, argsFor(args));
+			value = reflectApply(held.handler, undefined, argsFor(args));
 		} catch (error) {
 			value = undefined;
 		} finally {
@@ -259,7 +363,7 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 
 	function marker(key, tag) {
 		var crossing = {};
-		crossing[key] = tag;
+		put(crossing, key, tag);
 		return crossing;
 	}
 
@@ -271,7 +375,7 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 			if (value === -Infinity) return marker(SPECIAL_KEY, "-Infinity");
 			if (value === 0 && 1 / value < 0) return marker(SPECIAL_KEY, "-0");
 		}
-		if (typeof value === "function") return marker(CALLBACK_KEY, CROSSED_FUNCTION);
+		if (typeof value === "function") return marker(SPECIAL_KEY, "undefined");
 		return value;
 	}
 
@@ -284,11 +388,11 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 		var keys = objectKeys(value);
 		if (keys.length !== 1 || keys[0] !== SPECIAL_KEY) return null;
 		var tag = value[SPECIAL_KEY];
-		if (typeof tag !== "string" || !hasOwn.call(SPECIAL_VALUES, tag)) return null;
+		if (typeof tag !== "string" || !hasOwnKey(SPECIAL_VALUES, tag)) return null;
 		return { value: SPECIAL_VALUES[tag] };
 	}
 
-	function fromCrossing(value) {
+	function fromJson(value) {
 		var special = specialOf(value);
 		if (special !== null) return special.value;
 		if (value === null || typeof value !== "object") return value;
@@ -296,27 +400,126 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 		for (var i = 0; i < keys.length; i++) {
 			var child = value[keys[i]];
 			if (child === null || typeof child !== "object") continue;
-			define(value, keys[i], { value: fromCrossing(child), writable: true, enumerable: true, configurable: true });
+			define(value, keys[i], { value: fromJson(child), writable: true, enumerable: true, configurable: true });
 		}
 		return value;
 	}
 
+	function allUnits(units) {
+		for (var i = 0; i < units.length; i++) {
+			var unit = units[i];
+			if (typeof unit !== "number" || unit < 0 || unit > 0xffff || unit % 1 !== 0) return false;
+		}
+		return true;
+	}
+
+	function fromUnits(units) {
+		var text = "";
+		for (var i = 0; i < units.length; i++) text += fromCharCode(units[i]);
+		return text;
+	}
+
+	function markerOf(value, ancestors) {
+		if (isArray(value) || !hasOwnKey(value, SPECIAL_KEY)) return null;
+		var tag = value[SPECIAL_KEY];
+		if (typeof tag !== "string") return null;
+		var size = objectKeys(value).length;
+		if (size === 1 && hasOwnKey(SPECIAL_VALUES, tag)) return { value: SPECIAL_VALUES[tag] };
+		if (size === 1 && tag === "symbol") return { value: SymbolCtor() };
+		if (size !== 2) return null;
+		if (tag === "bigint" && BigIntCtor !== null && typeof value.value === "string" && test(DECIMAL, value.value)) {
+			return { value: BigIntCtor(value.value) };
+		}
+		if (tag === "symbol" && typeof value.description === "string") return { value: SymbolCtor(value.description) };
+		if (tag === "string" && isArray(value.units) && allUnits(value.units)) return { value: fromUnits(value.units) };
+		if (tag === "cycle" && typeof value.up === "number" && value.up % 1 === 0 && value.up >= 1 && value.up <= ancestors.length) {
+			return { value: ancestors[ancestors.length - value.up].node };
+		}
+		return null;
+	}
+
+	function leafOf(leaf, ancestors) {
+		if (leaf === null || typeof leaf !== "object") return leaf;
+		var found = markerOf(leaf, ancestors);
+		return found === null ? leaf : found.value;
+	}
+
+	function fromTape(tape) {
+		var ancestors = [];
+		var root;
+		var key = null;
+		for (var i = 0; i < tape.length; i++) {
+			var token = tape[i];
+			var op = token[0];
+			if (op === "k") {
+				key = token[1];
+				continue;
+			}
+			if (op === "e") {
+				ancestors.length -= 1;
+				continue;
+			}
+			var opened = op === "a" ? [] : op === "o" ? {} : null;
+			var value = opened !== null ? opened : leafOf(token[1], ancestors);
+			if (ancestors.length === 0) {
+				root = value;
+			} else {
+				var holder = ancestors[ancestors.length - 1].node;
+				var slot = isArray(holder) ? holder.length : key;
+				define(holder, slot, { value: value, writable: true, enumerable: true, configurable: true });
+			}
+			if (opened !== null) ancestors[ancestors.length] = { node: opened };
+		}
+		return root;
+	}
+
+	function fromWire(value) {
+		return encode === null ? fromJson(value) : fromTape(value);
+	}
+
+	function argsFromWire(list) {
+		if (encode === null) return fromJson(list);
+		var args = [];
+		for (var i = 0; i < list.length; i++) args[i] = fromTape(list[i]);
+		return args;
+	}
+
+	function requestText(subscriptionToken, args) {
+		if (encode === null) return toCrossing({ token: subscriptionToken, args: args });
+		var parts = [];
+		for (var i = 0; i < args.length; i++) append(parts, encode(args[i]));
+		return '{"token":' + stringify(subscriptionToken) + ',"args":[' + reflectApply(arrayJoin, parts, [","]) + "]}";
+	}
+
+	function outcomeText(owner, encodedValue) {
+		return '{"ran":true,"owner":' + stringify(owner === undefined ? null : owner) + ',"value":' + encodedValue + "}";
+	}
+
 	function encodeOutcome(outcome) {
 		if (!outcome.ran) return stringify({ ran: false });
-		try {
-			return toCrossing({ ran: true, owner: outcome.owner, value: outcome.value });
-		} catch (error) {
-			return toCrossing({ ran: true, owner: outcome.owner, value: undefined });
+		if (encode === null) {
+			try {
+				return toCrossing({ ran: true, owner: outcome.owner, value: outcome.value });
+			} catch (error) {
+				return toCrossing({ ran: true, owner: outcome.owner, value: undefined });
+			}
 		}
+		var encodedValue;
+		try {
+			encodedValue = encode(outcome.value);
+		} catch (error) {
+			encodedValue = encode(undefined);
+		}
+		return outcomeText(outcome.owner, encodedValue);
 	}
 
 	function decodeOutcome(outcome) {
-		if (!outcome.ran) return SKIPPED;
-		return { ran: true, owner: outcome.owner, value: fromCrossing(outcome.value) };
+		if (!own(outcome, "ran")) return SKIPPED;
+		return { ran: true, owner: own(outcome, "owner"), value: fromWire(own(outcome, "value")) };
 	}
 
 	function serveRequest(request) {
-		peer.reply(request.id, encodeOutcome(serve(request.token, fromCrossing(request.args))));
+		peer.reply(own(request, "id"), encodeOutcome(serve(own(request, "token"), argsFromWire(own(request, "args")))));
 	}
 
 	function spin() {
@@ -324,14 +527,14 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 	}
 
 	function deliverRemote(worker, subscriptionToken, args) {
-		var ticket = peer.call(worker, toCrossing({ token: subscriptionToken, args: args }));
+		var ticket = peer.call(worker, requestText(subscriptionToken, args));
 		for (;;) {
 			var message = peer.poll(ticket);
 			if (message === null) continue;
 			if (message === "stop") spin();
 			var parsed = parse(message);
-			if (parsed.done) return decodeOutcome(parsed.outcome);
-			serveRequest(parsed.serve);
+			if (own(parsed, "done")) return decodeOutcome(own(parsed, "outcome"));
+			serveRequest(own(parsed, "serve"));
 		}
 	}
 
@@ -350,27 +553,31 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 			var subscriptionToken = session.snapshot[session.index];
 			var subscription = view(function (state) { return state.subscriptions[subscriptionToken] || null; });
 			if (subscription !== null && !isMine(subscription)) {
-				return toCrossing({ remote: subscription.worker, request: toCrossing({ token: subscriptionToken, args: session.args }) });
+				return stringify({ remote: subscription.worker, request: requestText(subscriptionToken, session.args) });
 			}
 			var outcome = subscription === null ? SKIPPED : serve(subscriptionToken, session.args);
-			if (outcome.ran) session.results.push({ owner: outcome.owner, value: outcome.value });
+			if (outcome.ran) session.results[session.results.length] = { owner: outcome.owner, value: outcome.value };
 			session.index += 1;
 		}
 		return stringify({ done: true });
 	}
 
+	function listenersOf(id) {
+		return view(function (state) { return copyList(state.byEvent[id] || []); });
+	}
+
 	function dispatch(id, args) {
-		var snapshot = view(function (state) { return (state.byEvent[id] || []).slice(); });
-		var results = [];
+		var snapshot = listenersOf(id);
+		var results = bareList();
 		for (var i = 0; i < snapshot.length; i++) {
 			var outcome = deliver(snapshot[i], args);
-			if (outcome.ran) results.push({ owner: outcome.owner, value: outcome.value });
+			if (outcome.ran) results[results.length] = { owner: outcome.owner, value: outcome.value };
 		}
 		return results;
 	}
 
 	function valuesOf(results) {
-		return results.map(function (result) { return result.value; });
+		return mapList(results, function (result) { return result.value; });
 	}
 
 	function requireModEmit(binding, id) {
@@ -382,20 +589,20 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 
 	function dispatchAwaiting(id, args) {
 		var session = {
-			snapshot: view(function (state) { return (state.byEvent[id] || []).slice(); }),
+			snapshot: listenersOf(id),
 			args: args,
 			index: 0,
-			results: [],
+			results: bareList(),
 		};
 		return new PromiseCtor(function (resolve, reject) {
 			function walk() {
 				try {
 					var step = parse(stepSession(session));
-					if (step.done) {
+					if (own(step, "done")) {
 						resolve(valuesOf(session.results));
 						return;
 					}
-					peer.ask(step.remote, step.request, answered);
+					peer.ask(own(step, "remote"), own(step, "request"), answered);
 				} catch (error) {
 					reject(error);
 				}
@@ -407,7 +614,7 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 				}
 				try {
 					var outcome = decodeOutcome(parse(message));
-					if (outcome.ran) session.results.push({ owner: outcome.owner, value: outcome.value });
+					if (outcome.ran) session.results[session.results.length] = { owner: outcome.owner, value: outcome.value };
 					session.index += 1;
 				} catch (error) {
 					reject(error);
@@ -459,11 +666,11 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 					if (!isPlainObject(options.match)) {
 						throw bindingError(binding, "options.match must be an object of payload keys to values");
 					}
-					match = {};
+					match = create(null);
 					var keys = objectKeys(options.match);
-					var declared = record.entry.keys;
+					var declared = own(record.entry, "keys");
 					for (var i = 0; i < keys.length; i++) {
-						if (isArray(declared) && declared.indexOf(keys[i]) === -1) {
+						if (isArray(declared) && indexIn(declared, keys[i]) === -1) {
 							throw bindingError(binding, "match key '" + keys[i] + "' is not one of the payload keys event '" + id + "' declares");
 						}
 						match[keys[i]] = options.match[keys[i]];
@@ -476,7 +683,7 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 				state.sequence += 1;
 				var issued = "sub-" + state.sequence;
 				state.subscriptions[issued] = { token: issued, event: id, owner: owner, once: once, worker: peer === null ? null : peer.self };
-				(state.byEvent[id] || (state.byEvent[id] = [])).push(issued);
+				append(state.byEvent[id] || (state.byEvent[id] = []), issued);
 				live = state.subscriptions;
 				return issued;
 			});
@@ -513,12 +720,12 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 
 	function covers(prefix, id) {
 		if (id === prefix) return true;
-		if (id.indexOf(prefix) !== 0) return false;
-		return prefix.charAt(prefix.length - 1) === "." || id.charAt(prefix.length) === ".";
+		if (reflectApply(stringIndexOf, id, [prefix]) !== 0) return false;
+		return prefix[prefix.length - 1] === "." || id[prefix.length] === ".";
 	}
 
 	function sortedClaims() {
-		return view(function (state) { return state.claims.slice(); }).sort(function (a, b) {
+		return sorted(view(function (state) { return copyList(state.claims); }), function (a, b) {
 			if (a.prefix.length !== b.prefix.length) return b.prefix.length - a.prefix.length;
 			return a.prefix < b.prefix ? -1 : a.prefix > b.prefix ? 1 : 0;
 		});
@@ -532,7 +739,7 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 		if (!isPlainObject(entry)) throw bindingError(binding, "expected an event entry object");
 		var fields = objectKeys(entry);
 		for (var i = 0; i < fields.length; i++) {
-			if (ENTRY_FIELDS.indexOf(fields[i]) === -1) {
+			if (indexIn(ENTRY_FIELDS, fields[i]) === -1) {
 				throw bindingError(binding, "unknown field '" + fields[i] + "' in the event entry");
 			}
 		}
@@ -569,7 +776,7 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 				}
 			}
 		}
-		var normalized = {};
+		var normalized = create(null);
 		for (var f = 0; f < ENTRY_FIELDS.length; f++) {
 			if (entry[ENTRY_FIELDS[f]] !== undefined) normalized[ENTRY_FIELDS[f]] = copy(entry[ENTRY_FIELDS[f]]);
 		}
@@ -591,22 +798,22 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 				existing.entry = normalized;
 				return copy(normalized);
 			}
-			state.catalogue.push({ entry: normalized, source: "runtime", party: party });
+			append(state.catalogue, { entry: normalized, source: "runtime", party: party });
 			return copy(normalized);
 		});
 	}
 
 	function requireToken(given) {
-		if (given !== token) throw new Error("xript event bus: host call refused");
+		if (given !== token) throw new ErrorCtor("xript event bus: host call refused");
 	}
 
-	var manifestEvents = parse(host.events || "[]");
+	var manifestEvents = parseBare(host.events || "[]");
 	mutate(function (state) {
 		if (state.seeded) return;
 		state.seeded = true;
 		for (var m = 0; m < manifestEvents.length; m++) {
 			if (isPlainObject(manifestEvents[m]) && typeof manifestEvents[m].id === "string") {
-				state.catalogue.push({ entry: manifestEvents[m], source: "manifest", party: null });
+				append(state.catalogue, { entry: manifestEvents[m], source: "manifest", party: null });
 			}
 		}
 	});
@@ -628,7 +835,7 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 				var list = state.byEvent[id];
 				if (!list) return 0;
 				var dropped = 0;
-				var snapshot = list.slice();
+				var snapshot = copyList(list);
 				for (var i = 0; i < snapshot.length; i++) {
 					if (everyone || state.subscriptions[snapshot[i]].owner === caller) {
 						detachIn(state, snapshot[i]);
@@ -647,10 +854,10 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 			try {
 				requireModEmit("events.emitAsync", id);
 				if (peer === null || typeof peer.ask !== "function") {
-					return PromiseCtor.resolve(valuesOf(dispatch(id, args)));
+					return reflectApply(promiseResolve, PromiseCtor, [valuesOf(dispatch(id, args))]);
 				}
 			} catch (error) {
-				return PromiseCtor.reject(error);
+				return reflectApply(promiseReject, PromiseCtor, [error]);
 			}
 			return dispatchAwaiting(id, args);
 		},
@@ -678,12 +885,12 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 				for (var i = 0; i < state.claims.length; i++) {
 					if (state.claims[i].prefix === prefix) return state.claims[i].owner === caller;
 				}
-				state.claims.push({ prefix: prefix, owner: caller });
+				append(state.claims, { prefix: prefix, owner: caller });
 				return true;
 			});
 		},
 		namespaces: function () {
-			return sortedClaims().map(function (claim) { return { prefix: claim.prefix, owner: claim.owner }; });
+			return mapList(sortedClaims(), function (claim) { return { prefix: claim.prefix, owner: claim.owner }; });
 		},
 		ownerOf: function (id) {
 			requireId("events.ownerOf", id);
@@ -704,11 +911,11 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 		},
 		catalogue: function () {
 			return view(function (state) {
-				return state.catalogue.map(function (record) { return copy(record.entry); });
+				return mapList(state.catalogue, function (record) { return copy(record.entry); });
 			});
 		},
 		names: function () {
-			return view(function (state) { return objectKeys(state.byEvent); }).sort();
+			return sorted(view(function (state) { return objectKeys(state.byEvent); }), undefined);
 		},
 		listenerCount: function (id) {
 			if (id === undefined) {
@@ -720,9 +927,9 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 		subscribers: function (id) {
 			requireId("events.subscribers", id);
 			var owners = view(function (state) {
-				return (state.byEvent[id] || []).map(function (issued) { return state.subscriptions[issued].owner; });
+				return mapList(state.byEvent[id] || [], function (issued) { return state.subscriptions[issued].owner; });
 			});
-			var counts = Object.create(null);
+			var counts = create(null);
 			var untracked = 0;
 			for (var i = 0; i < owners.length; i++) {
 				if (owners[i] === null) {
@@ -731,12 +938,16 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 					counts[owners[i]] = (counts[owners[i]] || 0) + 1;
 				}
 			}
-			var named = objectKeys(counts).sort();
+			var named = sorted(objectKeys(counts), undefined);
+			var repeated = [];
+			for (var r = 0; r < named.length; r++) {
+				if (counts[named[r]] > 1) append(repeated, named[r]);
+			}
 			return {
 				event: id,
 				total: owners.length,
-				owners: named.map(function (owner) { return { owner: owner, count: counts[owner] }; }),
-				repeated: named.filter(function (owner) { return counts[owner] > 1; }),
+				owners: mapList(named, function (owner) { return { owner: owner, count: counts[owner] }; }),
+				repeated: repeated,
 				untracked: untracked,
 			};
 		},
@@ -763,10 +974,10 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 			if (typeof id !== "string" || id.length === 0 || !isConcrete(id) || resolve(id) === null) return -1;
 			sessionSequence += 1;
 			sessions[sessionSequence] = {
-				snapshot: view(function (state) { return (state.byEvent[id] || []).slice(); }),
+				snapshot: listenersOf(id),
 				args: isArray(args) ? args : [],
 				index: 0,
-				results: [],
+				results: bareList(),
 			};
 			return sessionSequence;
 		},
@@ -778,7 +989,7 @@ export const EVENT_BUS_KERNEL = String.raw`(function (host) {
 			requireToken(given);
 			var held = sessions[session];
 			var answered = decodeOutcome(parse(outcome));
-			if (answered.ran) held.results.push({ owner: answered.owner, value: answered.value });
+			if (answered.ran) held.results[held.results.length] = { owner: answered.owner, value: answered.value };
 			held.index += 1;
 		},
 		finish: function (given, session) {

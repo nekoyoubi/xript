@@ -67,7 +67,7 @@ public class BindingTests
             """, new RuntimeOptions { HostBindings = bindings });
 
         var result = rt.Execute("try { fail(); 'no error' } catch(e) { e.message }");
-        Assert.Equal("intentional error", result.Value.GetString());
+        Assert.Equal("fail(): intentional error", result.Value.GetString());
     }
 
     [Fact]
@@ -84,7 +84,7 @@ public class BindingTests
             """);
 
         var result = rt.Execute("try { notProvided(); 'no error' } catch(e) { e.message }");
-        Assert.Contains("not provided", result.Value.GetString());
+        Assert.Contains("not implemented by the app", result.Value.GetString());
     }
 
     [Fact]
@@ -115,7 +115,7 @@ public class BindingTests
         using var rt = XriptRuntime.Create(TestManifests.WithNamespace);
 
         var result = rt.Execute("try { player.getName(); 'no error' } catch(e) { e.message }");
-        Assert.Contains("not provided", result.Value.GetString());
+        Assert.Contains("not implemented by the app", result.Value.GetString());
     }
 
     [Fact]

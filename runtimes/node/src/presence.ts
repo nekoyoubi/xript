@@ -41,6 +41,12 @@ function asContainer(value: unknown): Record<string, unknown> | undefined {
 	return value !== null && (typeof value === "object" || typeof value === "function") ? (value as Record<string, unknown>) : undefined;
 }
 
+/** A host bindings object's own member, never one it inherits from `Object.prototype` or a class. */
+export function ownMember(container: unknown, name: string): unknown {
+	const holder = asContainer(container);
+	return holder && Object.prototype.hasOwnProperty.call(holder, name) ? holder[name] : undefined;
+}
+
 /**
  * The accessor a host supplies for `name` in `container`, or `undefined` when it supplies none
  * the declaration can use. A `get-set` declaration needs both halves; a host that can only read
@@ -55,7 +61,7 @@ export function hostAccessorFor(container: unknown, name: string, mode: "get" | 
 		const { get, set } = descriptor;
 		accessor = { get: () => get.call(holder), set: set ? (value) => set.call(holder, value) : undefined };
 	} else {
-		const supplied = asContainer(holder[name]);
+		const supplied = asContainer(ownMember(holder, name));
 		if (supplied && typeof supplied.get === "function") {
 			const get = supplied.get as () => unknown;
 			const set = typeof supplied.set === "function" ? (supplied.set as (value: unknown) => unknown) : undefined;
@@ -69,11 +75,11 @@ export function hostAccessorFor(container: unknown, name: string, mode: "get" | 
 
 function supplies(binding: PresenceBinding, container: Record<string, unknown> | undefined, name: string): boolean {
 	if (isNamespaceBinding(binding)) {
-		const supplied = container?.[name];
+		const supplied = ownMember(container, name);
 		return typeof supplied === "object" && supplied !== null;
 	}
 	if (isAccessorBinding(binding)) return hostAccessorFor(container, name, binding.accessor) !== undefined;
-	return typeof container?.[name] === "function";
+	return typeof ownMember(container, name) === "function";
 }
 
 /**
@@ -99,7 +105,7 @@ export function providedBindingPaths(
 		if (!supplies(binding, container, name)) continue;
 		const qualified = prefix ? `${prefix}.${name}` : name;
 		provided.push(qualified);
-		if (isNamespaceBinding(binding)) provided.push(...providedBindingPaths(binding.members, container?.[name], qualified));
+		if (isNamespaceBinding(binding)) provided.push(...providedBindingPaths(binding.members, ownMember(container, name), qualified));
 	}
 	return provided.sort();
 }
@@ -126,7 +132,7 @@ export function missingBindingNames(
 		const qualified = prefix ? `${prefix}.${name}` : name;
 		if (omitsBinding(binding, container, name)) continue;
 		if (isNamespaceBinding(binding)) {
-			const nested = container?.[name];
+			const nested = ownMember(container, name);
 			missing.push(...missingBindingNames(binding.members, typeof nested === "object" ? nested : undefined, qualified));
 		} else if (!supplies(binding, container, name)) {
 			missing.push(qualified);

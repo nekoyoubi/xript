@@ -31,5 +31,8 @@ The xript specification defines how applications expose functionality to scripts
 - [value-fidelity-tests.json](./value-fidelity-tests.json): `undefined`, `NaN` and the infinities across the host boundary, in marker spelling, under value fidelity
 - [key-order-tests.json](./key-order-tests.json): authored object key order across the host boundary and through a hook payload spread
 - [hook-phase-tests.json](./hook-phase-tests.json): firing one phase of a phased hook (which handlers run, how `data` spreads, refused phases)
+- [console-tests.json](./console-tests.json): sandbox `console` conformance corpus (no argument makes a console call throw, and how each argument reaches the handler as data or as text)
 - [escape-tests.json](./escape-tests.json): code-generation conformance corpus (every `.constructor` chain a script can walk, through its own values and the host's, ends in a `TypeError`)
+- [names-as-data-tests.json](./names-as-data-tests.json): every name a manifest, mod manifest, or host call carries reaches the sandbox as data (quotes, line breaks, crafted breakouts, and the names a plain object inherits)
+- [isolation-tests.json](./isolation-tests.json): isolation between mods sharing a runtime (whatever a second mod rewrites, deletes, forges, or monkeypatches, the first mod's handlers, exports, bindings, and console behave exactly as before, and no runtime internal is visible to scripts)
 - [fragment-applier-tests.json](./fragment-applier-tests.json): fragment op applier conformance table, run by a host through `runFragmentApplierConformance`
