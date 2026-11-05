@@ -225,6 +225,20 @@ Here `stat.hero.changed` resolves to `stat.changed`, and a subscriber to `stat.h
 
 A host declares these in its `capabilities` to make them grantable. Prefix subsumption applies as usual, so a grant of `events` covers all three.
 
+### A host's own bus
+
+A host that already runs an event bus, with its own catalogue and its own answer shapes, can give mods that bus as `events` instead of this one. It declares the bus as a top-level binding named `events` (a namespace or a function) and constructs the runtime in host events mode: `hostEvents: true` in `@xriptjs/runtime` and `@xriptjs/runtime-node`, `RuntimeOptions::host_events` in Rust, `RuntimeOptions.HostEvents` in C#.
+
+- **The binding is `events`.** The runtime installs it as the script-visible `events` global and does not install the built-in bus there. It is an ordinary binding in every other respect: capability-gated per member, called with the caller's identity, values crossing as for any binding, and sealed once the runtime is built, so no mod can reassign, redefine, or delete it or any of its members.
+- **Construction is refused** with a host events error when the manifest declares no top-level `events` binding.
+- **A catalogue is allowed.** A manifest `events` catalogue can sit beside the binding to document the host's events. It is wired to no script-visible bus, and the binding is still `events` in every runtime.
+- **The built-in bus's host API is refused.** No script can subscribe to the built-in bus in this mode, so a host `emit`, `declareEvent`, or `cancelOwned` (in Rust also the tagged and async forms, on a runtime, a handle, or a pool) throws a host events error instead of answering an empty list that looks like success. The host emits on its own bus.
+- **Hooks are untouched.** `hooks`, hook fills, and event-typed slots dispatch through the hook path, never through the bus, and behave as before.
+- **Typegen types the binding.** Whenever the manifest declares a top-level `events` binding, `xript typegen` (host-facing and `--ambient`) types `events` as that binding and emits none of the built-in bus's API. A catalogue beside it still yields the `XriptEvents` id-to-payload map.
+- **Off by default.** Without the option nothing changes.
+
+`spec/host-events-tests.json` pins the mode in all four runtimes.
+
 ## Capability Gating
 
 Hooks can require capabilities, the same model as bindings:

@@ -968,7 +968,7 @@ export function generateAmbientTypes(manifest: unknown, options?: TypegenOptions
 
 	if (env.events && env.events.length > 0) {
 		globalBlocks.push(generateEventCatalog(env.events, env.types as Record<string, TypeDefinition> | undefined));
-		globalBlocks.push(generateEventsGlobal());
+		if (!declaresEventsBinding(env)) globalBlocks.push(generateEventsGlobal());
 	}
 
 	if (env.capabilities && !Array.isArray(env.capabilities) && Object.keys(env.capabilities).length > 0) {
@@ -1067,7 +1067,7 @@ export function generateTypes(manifest: unknown, options?: TypegenOptions): stri
 
 	if (m.events && m.events.length > 0) {
 		sections.push(generateEventCatalog(m.events, m.types as Record<string, TypeDefinition> | undefined));
-		sections.push(generateEventsGlobal(true));
+		if (!declaresEventsBinding(m)) sections.push(generateEventsGlobal(true));
 	}
 
 	if (m.capabilities && !Array.isArray(m.capabilities) && Object.keys(m.capabilities).length > 0) {
@@ -1489,6 +1489,16 @@ function eventIdType(id: string, shape: boolean): string {
 function eventKey(id: string, shape: boolean): string {
 	const type = eventIdType(id, shape);
 	return type.startsWith("`") ? `[id: ${type}]` : type;
+}
+
+/**
+ * Whether the manifest declares a top-level binding named `events`. Such a host gives mods its own
+ * bus as `events` (host events mode), so the binding's declaration is the `events` global and the
+ * built-in bus's types would describe methods that host does not have. A host that has not opted
+ * in gets the built-in bus at runtime, and `xript lint` warns it with `binding-shadows-builtin`.
+ */
+function declaresEventsBinding(manifest: { bindings?: Record<string, unknown> }): boolean {
+	return !!manifest.bindings && Object.prototype.hasOwnProperty.call(manifest.bindings, "events");
 }
 
 function generateEventsGlobal(declare = false): string {

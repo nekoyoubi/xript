@@ -296,3 +296,16 @@ export class MissingBindingsError extends Error {
 		this.missing = missing;
 	}
 }
+
+/**
+ * Raised under `hostEvents` when the runtime cannot honour host events mode: at construction
+ * when the manifest declares no top-level `events` binding, and on a host call into the
+ * built-in bus's API, which serves no script once the
+ * host's own binding is `events`.
+ */
+export class HostEventsError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "HostEventsError";
+	}
+}

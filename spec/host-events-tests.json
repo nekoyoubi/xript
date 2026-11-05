@@ -1,0 +1,164 @@
+{
+	"description": "Conformance corpus for host events mode: a runtime option (`hostEvents` in JavaScript, `host_events` in Rust, `HostEvents` in C#) under which a host-declared top-level `events` binding is the script-visible `events` global, in place of the built-in events bus. Every runtime builds each case's host, constructs it with or without the option, and asserts the outcome.",
+	"notes": [
+		"Per case: take the manifest `hosts[case.host]` and supply every binding it declares. A function binding returns its own name, a colon, and its first argument (`events('x')` answers \"events:x\"); a namespace is supplied as an object whose every member returns the member's name, a colon, and its first argument (`events.on('x')` answers \"on:x\"). Grant no capabilities. Construct the runtime with host events mode on when `hostEvents` is true and off otherwise, with a deprecation handler that records each code it receives.",
+		"`error`: construction must fail, and the surfaced message must contain this substring. Nothing else is asserted for the case.",
+		"Otherwise construction succeeds, and the codes the deprecation handler received during construction equal `deprecations` exactly, in order.",
+		"`tamper`, when present, is loaded as the entry script of the mod manifest `mod` after construction. Loading may fail: a tamper that throws at declaration is still a tamper, and the runner ignores the failure. Every attempt inside a tamper is wrapped in `try`, so a refused attempt does not stop the next one, except where the attempt is the declaration itself.",
+		"Step kinds. `{ execute, expected }`: host code whose value equals `expected`. `{ host, args, expected }`: the host calls its own bus API `host` (`emit`, `declareEvent`, or `cancelOwned`, in each runtime's own casing) with `args`; the result equals `expected` (for `emit`, the list of handler results). `{ host, args, throws }`: as before, but the call must fail with a message containing `throws`.",
+		"In host events mode the built-in bus serves no script: no mod can subscribe to it, since `events` is the host's. Its host-side API (`emit`, `declareEvent`, `cancelOwned`, and in Rust also their tagged and async forms on a runtime, a handle, or a pool) is therefore refused rather than left to answer an empty list that looks like success.",
+		"A manifest `events` catalogue is allowed in host events mode. It documents the host's events, but it is wired to no script-visible bus: the binding is still `events`, in every runtime, and nothing is replaced.",
+		"Not opted in, nothing changes. The not-opted-in case uses the catalogue host, where every runtime installs the built-in bus over the binding. Without a catalogue the outcome already differs by runtime (the Rust and C# runtimes leave such a binding as `events`, the JavaScript runtimes replace it; see `bindings.md`, Built-in Globals), and this corpus does not pin it."
+	],
+	"mod": { "xript": "0.10", "name": "b", "version": "1.0.0", "entry": { "script": "b.js" } },
+	"hosts": {
+		"namespace": {
+			"xript": "0.10",
+			"name": "host-events-namespace",
+			"bindings": {
+				"events": {
+					"description": "The host's own event bus.",
+					"members": {
+						"on": { "description": "Subscribes to a host event." },
+						"emit": { "description": "Emits a host event.", "capability": "bus.emit" }
+					}
+				}
+			},
+			"capabilities": { "bus.emit": { "description": "Emit on the host's bus." } }
+		},
+		"function": {
+			"xript": "0.10",
+			"name": "host-events-function",
+			"bindings": {
+				"events": { "description": "The host's own event entry point, as one function." }
+			}
+		},
+		"catalogue": {
+			"xript": "0.10",
+			"name": "host-events-catalogue",
+			"bindings": {
+				"events": {
+					"description": "The host's own event bus.",
+					"members": { "on": { "description": "Subscribes to a host event." } }
+				}
+			},
+			"events": [{ "id": "tick", "description": "A host event the catalogue documents." }]
+		},
+		"undeclared": {
+			"xript": "0.10",
+			"name": "host-events-undeclared",
+			"bindings": {
+				"log": { "description": "Logs a line." }
+			}
+		}
+	},
+	"cases": [
+		{
+			"name": "the host's events namespace reaches mods in place of the built-in bus",
+			"host": "namespace",
+			"hostEvents": true,
+			"deprecations": [],
+			"steps": [
+				{ "execute": "events.on('tick')", "expected": "on:tick" },
+				{ "execute": "[typeof events.once, typeof events.subscribe, typeof events.declare, typeof events.describe]", "expected": ["undefined", "undefined", "undefined", "undefined"] },
+				{ "execute": "try { events.emit('tick'); 'allowed'; } catch (e) { e.name; }", "expected": "CapabilityDeniedError" },
+				{ "execute": "Object.getOwnPropertyNames(globalThis).filter(function (n) { return n.slice(0, 7) === '__xript'; })", "expected": [] }
+			]
+		},
+		{
+			"name": "a function binding named events reaches mods in place of the built-in bus",
+			"host": "function",
+			"hostEvents": true,
+			"deprecations": [],
+			"steps": [
+				{ "execute": "events('tick')", "expected": "events:tick" },
+				{ "execute": "[typeof events, typeof events.on, typeof events.once]", "expected": ["function", "undefined", "undefined"] }
+			]
+		},
+		{
+			"name": "a mod cannot reassign or delete the host's events",
+			"host": "namespace",
+			"hostEvents": true,
+			"deprecations": [],
+			"tamper": "try { events = { on: function () { return 'evil'; } }; } catch (e) {}\ntry { globalThis.events = { on: function () { return 'evil'; } }; } catch (e) {}\ntry { delete globalThis.events; } catch (e) {}\ntry { Object.defineProperty(globalThis, 'events', { value: { on: function () { return 'evil'; } }, writable: true, configurable: true }); } catch (e) {}",
+			"steps": [
+				{ "execute": "events.on('tick')", "expected": "on:tick" },
+				{ "execute": "var d = Object.getOwnPropertyDescriptor(globalThis, 'events'); [d.writable, d.configurable]", "expected": [false, false] }
+			]
+		},
+		{
+			"name": "a mod cannot replace a member of the host's events",
+			"host": "namespace",
+			"hostEvents": true,
+			"deprecations": [],
+			"tamper": "try { events.on = function () { return 'evil'; }; } catch (e) {}\ntry { Object.defineProperty(events, 'on', { value: function () { return 'evil'; } }); } catch (e) {}\ntry { delete events.on; } catch (e) {}\ntry { events.once = function () { return 'evil'; }; } catch (e) {}",
+			"steps": [
+				{ "execute": "events.on('tick')", "expected": "on:tick" },
+				{ "execute": "[Object.isFrozen(events), typeof events.once]", "expected": [true, "undefined"] }
+			]
+		},
+		{
+			"name": "a mod cannot redeclare the host's events",
+			"host": "namespace",
+			"hostEvents": true,
+			"deprecations": [],
+			"tamper": "var events = { on: function () { return 'evil'; } };",
+			"steps": [
+				{ "execute": "events.on('tick')", "expected": "on:tick" }
+			]
+		},
+		{
+			"name": "a mod cannot replace a function binding named events",
+			"host": "function",
+			"hostEvents": true,
+			"deprecations": [],
+			"tamper": "function events() { return 'evil'; }",
+			"steps": [
+				{ "execute": "events('tick')", "expected": "events:tick" }
+			]
+		},
+		{
+			"name": "opting in without an events binding is refused at construction",
+			"host": "undeclared",
+			"hostEvents": true,
+			"error": "host events mode needs a top-level `events` binding"
+		},
+		{
+			"name": "opting in alongside a manifest events catalogue keeps the host's binding as events",
+			"host": "catalogue",
+			"hostEvents": true,
+			"deprecations": [],
+			"tamper": "try { events = { on: function () { return 'evil'; } }; } catch (e) {}\ntry { delete globalThis.events; } catch (e) {}",
+			"steps": [
+				{ "execute": "events.on('tick')", "expected": "on:tick" },
+				{ "execute": "[typeof events.once, typeof events.declare, typeof events.catalogue]", "expected": ["undefined", "undefined", "undefined"] },
+				{ "execute": "var d = Object.getOwnPropertyDescriptor(globalThis, 'events'); [d.writable, d.configurable]", "expected": [false, false] },
+				{ "host": "emit", "args": ["tick"], "throws": "is not available in host events mode" }
+			]
+		},
+		{
+			"name": "the built-in bus's host API is refused in host events mode",
+			"host": "namespace",
+			"hostEvents": true,
+			"deprecations": [],
+			"steps": [
+				{ "host": "emit", "args": ["tick"], "throws": "is not available in host events mode" },
+				{ "host": "declareEvent", "args": [{ "id": "later", "description": "Declared at runtime." }], "throws": "is not available in host events mode" },
+				{ "host": "cancelOwned", "args": ["b"], "throws": "is not available in host events mode" },
+				{ "execute": "events.on('tick')", "expected": "on:tick" }
+			]
+		},
+		{
+			"name": "not opted in, the built-in bus still replaces an events binding",
+			"host": "catalogue",
+			"hostEvents": false,
+			"deprecations": ["binding-shadows-builtin"],
+			"steps": [
+				{ "execute": "[typeof events.on, typeof events.once, typeof events.declare]", "expected": ["function", "function", "function"] },
+				{ "execute": "events.on('tick', function () { return 'mod'; }); 'subscribed'", "expected": "subscribed" },
+				{ "host": "emit", "args": ["tick"], "expected": ["mod"] },
+				{ "host": "cancelOwned", "args": ["b"], "expected": 0 }
+			]
+		}
+	]
+}

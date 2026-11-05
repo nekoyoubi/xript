@@ -57,6 +57,7 @@ const runtime = await createRuntimeFromFile("./manifest.json", {
 | `commandPreferences` | `Record<string, string>` | none | Preferred mod per command id or slot id for `resolveCommand` |
 | `validateInput` | `CommandInputValidator` | none | Opt-in argument checking at command invoke; the runtime bundles no JSON Schema validator, so a host wanting full `input` validation passes its own predicate |
 | `debug` | `DebugOptions` | none | Attaches a DAP-shaped debug session to the runtime |
+| `hostEvents` | `boolean` | `false` | Host events mode: the manifest's top-level `events` binding is the script-visible `events` in place of the built-in bus. See [A host's own event bus](#a-hosts-own-event-bus) |
 
 ### Audit channel
 
@@ -116,6 +117,19 @@ const valueAsync = await runtime.invokeExportAsync("transcribe", ["hello"]);
 ```
 
 Module-format mods expose their top-level named function exports automatically: `export function transcribe()` becomes host-invokable with no `xript.exports.register` call. Calling an export gated by an ungranted capability throws `CapabilityDeniedError`.
+
+## A host's own event bus
+
+A host that already runs an event bus, with its own catalogue and answer shapes, declares it as a top-level binding named `events` and passes `hostEvents: true`:
+
+```javascript
+const runtime = createRuntime(manifest, {
+  hostBindings: { events: { on: hostBus.on, emit: hostBus.emit } },
+  hostEvents: true,
+});
+```
+
+That binding is then the `events` mods see, in place of the built-in bus, and it behaves like every other binding: capability-gated, called with the caller's identity, and sealed once the runtime is built, so no mod can replace or delete it or its members. Construction throws a `HostEventsError` when the manifest declares no top-level `events` binding. A manifest `events` catalogue is allowed beside it; it documents the host's events and is wired to no script-visible bus. No script can subscribe to the built-in bus in this mode, so `runtime.emit`, `runtime.declareEvent`, and `runtime.cancelOwned` throw a `HostEventsError` too; the host emits on its own bus. Hooks are untouched. See [Event Delivery](/spec/hooks/#a-hosts-own-bus).
 
 ## Cleanup
 

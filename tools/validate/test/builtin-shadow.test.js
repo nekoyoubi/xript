@@ -23,6 +23,12 @@ describe("binding-shadows-builtin", () => {
 		assert.match(byName.console, /host's binding replaces the runtime's `console`/);
 	});
 
+	it("points an events binding at host events mode, and only an events binding", () => {
+		const [events, hooks] = shadows({ events: { description: "Shadow." }, hooks: { description: "Shadow." } });
+		assert.match(events.suggestion, /host events mode \(`hostEvents: true` in JavaScript, `host_events` in Rust, `HostEvents` in C#\)/);
+		assert.doesNotMatch(hooks.suggestion, /host events mode/);
+	});
+
 	it("leaves namespace members and ordinary names alone", () => {
 		assert.deepEqual(shadows({ game: { description: "Game.", members: { events: { description: "Lists the game's events." } } } }), []);
 		assert.deepEqual(shadows({ constructor: { description: "Not a runtime global." } }), []);

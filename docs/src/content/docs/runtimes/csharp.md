@@ -80,6 +80,7 @@ using var runtime = XriptRuntime.CreateFromValue(doc, new RuntimeOptions
 | `RolePreferences` | `IReadOnlyDictionary<string, string>` | Per-role addon preference used by `ResolveRole` (overrides the mod-name tiebreak) |
 | `CommandPreferences` | `IReadOnlyDictionary<string, string>` | Per-command or per-slot mod preference used by `ResolveCommand` |
 | `Debug` | `DebugOptions?` | Enables the DAP-shaped debug session (breakpoints, stepping, scope inspection) |
+| `HostEvents` | `bool` | Host events mode: the manifest's top-level `events` binding is the script-visible `events` in place of the built-in bus. See [A host's own event bus](#a-hosts-own-event-bus) |
 
 ### Host Bindings
 
@@ -205,6 +206,20 @@ Pass data to hook handlers:
 var data = JsonDocument.Parse("""{"x": 10}""").RootElement;
 var results = runtime.FireHook("onInit", new FireHookOptions { Data = data });
 ```
+
+## A host's own event bus
+
+A host that already runs an event bus, with its own catalogue and answer shapes, declares it as a top-level binding named `events` and sets `HostEvents`:
+
+```csharp
+using var runtime = XriptRuntime.Create(manifestJson, new RuntimeOptions
+{
+    HostBindings = bindings, // supplies the `events` namespace or function
+    HostEvents = true,
+});
+```
+
+That binding is then the `events` mods see, in place of the built-in bus, and it behaves like every other binding: capability-gated, called with the caller's identity, and sealed once the runtime is built, so no mod can replace or delete it or its members. Construction throws a `HostEventsException` when the manifest declares no top-level `events` binding. A manifest `events` catalogue is allowed beside it; it documents the host's events and is wired to no script-visible bus. No script can subscribe to the built-in bus in this mode, so `Emit`, `DeclareEvent`, and `CancelOwned` throw a `HostEventsException` too; the host emits on its own bus. Hooks are untouched. See [Event Delivery](/spec/hooks/#a-hosts-own-bus).
 
 ## Loading Mods
 

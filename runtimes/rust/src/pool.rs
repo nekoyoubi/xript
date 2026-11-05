@@ -621,6 +621,8 @@ struct Worker {
     wedged: Mutex<Option<WedgedWorker>>,
     /// Last heartbeat the supervisor observed, and when it changed.
     beat: Mutex<(u64, Instant)>,
+    /// Built in host events mode, where the shared bus serves no script.
+    host_events: bool,
 }
 
 impl Worker {
@@ -793,6 +795,7 @@ fn build_worker(
     bus: &Arc<BusHub>,
 ) -> (Arc<Worker>, Pending<()>) {
     let mut options = factory(id);
+    let host_events = options.host_events;
     stamp_audit(&mut options, id, Arc::new(AtomicU64::new(0)));
     let seat = match id {
         WorkerId::Worker(index) => Some(BusPeer { hub: bus.clone(), worker: index }),
@@ -813,6 +816,7 @@ fn build_worker(
             state: Mutex::new(WorkerState::Idle),
             wedged: Mutex::new(None),
             beat: Mutex::new((0, Instant::now())),
+            host_events,
         }),
         ready,
     )
@@ -1500,6 +1504,15 @@ impl PoolInner {
     /// A host emit on the shared bus, driven from the worker that holds the
     /// earliest subscription so the first handler runs without a hop.
     fn emit(self: &Arc<Self>, event: &str, payload: &[serde_json::Value]) -> Pending<Vec<serde_json::Value>> {
+        let host_events = self
+            .workers
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .any(|worker| worker.host_events);
+        if host_events {
+            return Pending::ready(Err(crate::event_bus::host_events_refusal("emit")));
+        }
         let Some((home, owners)) = self.bus.subscribers_of(event) else {
             return Pending::ready(Ok(Vec::new()));
         };

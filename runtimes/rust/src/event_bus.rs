@@ -110,8 +110,37 @@ pub(crate) fn installs_global(manifest: &Manifest) -> bool {
     declares_events || !binding_named_events
 }
 
+/// Refuses construction in host events mode unless the manifest declares a
+/// top-level `events` binding for the runtime to install. A manifest `events`
+/// catalogue is allowed; it documents the host's events but is wired to no
+/// script-visible bus.
+pub(crate) fn check_host_events(manifest: &Manifest) -> Result<()> {
+    let binding_named_events = manifest
+        .bindings
+        .as_ref()
+        .is_some_and(|bindings| bindings.contains_key("events"));
+    if !binding_named_events {
+        return Err(XriptError::HostEvents {
+            message: "host events mode needs a top-level `events` binding in the manifest to install as the `events` global; declare one, or construct the runtime without host events mode to get the built-in bus".into(),
+        });
+    }
+    Ok(())
+}
+
+/// The error for a host call into the built-in bus's API while the host's
+/// own binding is `events`.
+pub(crate) fn host_events_refusal(api: &str) -> XriptError {
+    XriptError::HostEvents {
+        message: format!(
+            "`{api}` is not available in host events mode: the host's own `events` binding is the bus mods see, so the built-in bus has no subscribers to reach"
+        ),
+    }
+}
+
 /// Evaluates the kernel in `ctx` and wires it to this runtime. With a `peer`,
 /// the bus is the one every runtime holding a seat on the same hub shares.
+/// Under `host_events` the kernel never assigns the `events` global, so the
+/// host's binding keeps the name whether or not the manifest has a catalogue.
 pub(crate) fn install<'js>(
     ctx: &Ctx<'js>,
     manifest: &Manifest,
@@ -119,6 +148,7 @@ pub(crate) fn install<'js>(
     caller: &CallerContext,
     token: &str,
     peer: Option<&Seat>,
+    host_events: bool,
 ) -> Result<()> {
     let engine = |e: rquickjs::Error| XriptError::Engine(e.to_string());
     let kernel: Function = ctx.eval(KERNEL).map_err(engine)?;
@@ -153,7 +183,7 @@ pub(crate) fn install<'js>(
     config.set("token", token).map_err(engine)?;
     config.set("encode", encode).map_err(engine)?;
     config.set("events", events_json).map_err(engine)?;
-    config.set("installGlobal", installs_global(manifest)).map_err(engine)?;
+    config.set("installGlobal", installs_global(manifest) && !host_events).map_err(engine)?;
 
     let peer_object = match peer {
         Some(seat) => Some(peer_object(ctx, seat, caller).map_err(engine)?),

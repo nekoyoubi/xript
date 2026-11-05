@@ -97,6 +97,38 @@ describe("generated declarations compile", () => {
 	});
 });
 
+describe("a host's own events binding", () => {
+	const corpus = JSON.parse(readFileSync(new URL("../../../spec/host-events-tests.json", import.meta.url), "utf8"));
+
+	const builtInBus = /function once|function catalogue|interface XriptSubscription/;
+
+	for (const name of ["namespace", "function", "catalogue"]) {
+		it(`types the ${name} host's binding as \`events\`, with no built-in bus beside it`, () => {
+			const ambient = generateAmbientTypes(corpus.hosts[name]);
+			assert.deepEqual(typeCheck(ambient), []);
+			assert.match(ambient, name === "function" ? /function events\(/ : /namespace events \{/);
+			assert.doesNotMatch(ambient, builtInBus);
+		});
+	}
+
+	it("keeps a catalogue's event types beside the host's binding", () => {
+		const ambient = generateAmbientTypes(corpus.hosts.catalogue);
+		assert.match(ambient, /interface XriptEvents \{/);
+		assert.match(ambient, /"tick"/);
+	});
+
+	it("types the host-facing declarations the same way", () => {
+		const host = generateTypes(corpus.hosts.catalogue);
+		assert.deepEqual(typeCheck(host), []);
+		assert.doesNotMatch(host, builtInBus);
+	});
+
+	it("still types the built-in bus for a host with a catalogue and no events binding", () => {
+		const ambient = generateAmbientTypes({ ...corpus.hosts.catalogue, bindings: {} });
+		assert.match(ambient, builtInBus);
+	});
+});
+
 describe("JSDoc comment safety", () => {
 	// A `*/` in a description closed the generated JSDoc block early and spilled the rest as code,
 	// breaking the whole declaration file. Every free-text field must be neutralized.

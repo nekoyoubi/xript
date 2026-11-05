@@ -60,11 +60,13 @@ export function installEventBus(
 	granted: Set<string>,
 	caller: CallerContext,
 	clock: HandlerClock = UNTIMED,
+	installGlobal = true,
 ): EventBus {
 	const token = busToken();
 	const kernel = unwrap(context, context.evalCode(EVENT_BUS_KERNEL, "xript-event-bus.js"), "event bus kernel");
 
 	const host = context.newObject();
+	if (!installGlobal) context.setProp(host, "installGlobal", context.false);
 	const tokenHandle = context.newString(token);
 	context.setProp(host, "token", tokenHandle);
 	tokenHandle.dispose();

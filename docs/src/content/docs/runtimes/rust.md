@@ -107,6 +107,7 @@ let runtime = create_runtime_from_value(manifest, RuntimeOptions {
 | `command_preferences` | `HashMap<String, String>` | Per-command or per-slot preference (command id or slot id → preferred mod name) for `resolve_command` |
 | `debug` | `Option<DebugOptions>` | DAP-shaped debug session options; `None` for zero-overhead off |
 | `mode` | `RuntimeMode` | `Sync` (default) settles async bindings on the interpreter thread; `Async` hands script pending promises and yields. See [Async Host Bindings](#async-host-bindings) |
+| `host_events` | `bool` | Host events mode: the manifest's top-level `events` binding is the script-visible `events` in place of the built-in bus. See [A host's own event bus](#a-hosts-own-event-bus) |
 
 ### Host Bindings
 
@@ -197,6 +198,7 @@ All errors are variants of `XriptError`:
 | `ModEntry { mod_name, message }` | Mod entry script (classic or module) threw an uncaught error |
 | `ImportDenied { mod_name, specifier }` | A mod attempted to import an external module |
 | `CommonJsDetected { mod_name, artifact }` | A mod entry used CommonJS (`require` / `module.exports`) instead of ES modules |
+| `HostEvents { message }` | Under `host_events`: construction without a top-level `events` binding or alongside an `events` catalogue, or a call into the built-in bus's host API |
 | `Engine(String)` | QuickJS engine error |
 | `Json(serde_json::Error)` | Manifest JSON parsing failed |
 | `Io(std::io::Error)` | File I/O failed (for `create_runtime_from_file`) |
@@ -413,6 +415,20 @@ let value = rt.invoke_command(&one.unwrap(), json!({ "close": ")" }))?;
 ```
 
 Ordering is `priority` descending, then command `id`, then owning mod name, so it does not depend on load order, and a `multiple: false` command slot resolves to exactly one command across all mods. `invoke_command` merges the fill's bound `args` under the caller's (shallow, caller wins) and routes through `invoke_mod_export`, so the handler's export capability is re-checked at call time and the call is never ambiguous between two mods exporting the same name. A throwing handler propagates its error, unlike a hook handler. `XriptHandle` carries the same four methods.
+
+## A host's own event bus
+
+A host that already runs an event bus, with its own catalogue and answer shapes, declares it as a top-level binding named `events` and sets `host_events`:
+
+```rust
+let rt = create_runtime(manifest_json, RuntimeOptions {
+    host_bindings,          // supplies the `events` namespace or function
+    host_events: true,
+    ..Default::default()
+})?;
+```
+
+That binding is then the `events` mods see, in place of the built-in bus, and it behaves like every other binding: capability-gated, called with the caller's identity, and sealed once the runtime is built, so no mod can replace or delete it or its members. Construction fails with `XriptError::HostEvents` when the manifest declares no top-level `events` binding. A manifest `events` catalogue is allowed beside it; it documents the host's events and is wired to no script-visible bus. No script can subscribe to the built-in bus in this mode, so `emit`, `emit_tagged`, `emit_async`, `cancel_owned`, and `declare_event` fail with `XriptError::HostEvents` too, on `XriptRuntime`, `XriptHandle`, and `XriptPool`; the host emits on its own bus. Hooks are untouched. See [Event Delivery](/spec/hooks/#a-hosts-own-bus).
 
 ## Cooperative Cancellation
 

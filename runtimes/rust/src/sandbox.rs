@@ -500,6 +500,18 @@ pub struct RuntimeOptions {
     /// call, and a BigInt or a cyclic value fails the call with an error
     /// naming the binding.
     pub value_fidelity: bool,
+    /// Host events mode, for a host that runs its own event bus. The
+    /// manifest's top-level `events` binding is the script-visible `events`
+    /// global in place of the built-in bus, installed, gated, and sealed like
+    /// any other binding, so no mod can replace or delete it.
+    ///
+    /// Construction fails with [`XriptError::HostEvents`] when the manifest
+    /// declares no such binding. A manifest `events` catalogue is allowed and
+    /// is wired to no script-visible bus. The built-in bus's host API (`emit` and
+    /// its tagged and async forms, `cancel_owned`, `declare_event`, on a
+    /// runtime, a handle, or a pool) serves no script in this mode and fails
+    /// with the same error. Off by default.
+    pub host_events: bool,
 }
 
 /// The engine a runtime is built on, and with it what `await` on an async
@@ -1295,6 +1307,7 @@ pub struct XriptRuntime {
     on_mod_diagnostic: Option<crate::mod_load::ModDiagnosticSink>,
     probe: Arc<RuntimeProbe>,
     value_fidelity: bool,
+    host_events: bool,
     bus_token: String,
     #[cfg_attr(not(feature = "threads"), allow(dead_code))]
     bus_peer: Option<crate::bus_hub::BusPeer>,
@@ -1407,6 +1420,10 @@ impl XriptRuntime {
         bus_peer: Option<crate::bus_hub::BusPeer>,
     ) -> Result<Self> {
         crate::manifest::validate_structure(&manifest)?;
+        let host_events = options.host_events;
+        if host_events {
+            crate::event_bus::check_host_events(&manifest)?;
+        }
 
         let mode = options.mode;
         probe.yielding.store(mode == RuntimeMode::Async, Ordering::Relaxed);
@@ -1547,7 +1564,7 @@ impl XriptRuntime {
             crate::deprecation::stash_shadowable(&ctx, &manifest)?;
             register_exports_surface(&ctx)?;
             register_hooks(&ctx, &manifest, &granted, hook_seq.clone())?;
-            crate::event_bus::install(&ctx, &manifest, &granted, &caller, &bus_token, seat.as_ref())?;
+            crate::event_bus::install(&ctx, &manifest, &granted, &caller, &bus_token, seat.as_ref(), host_events)?;
             crate::dispatch::Dispatch::install(&ctx).map_err(|e| XriptError::Engine(e.to_string()))?;
             let shadowed = crate::deprecation::replaced_bindings(&ctx, &manifest)?;
             if let Some(ref session) = debug {
@@ -1649,6 +1666,7 @@ impl XriptRuntime {
             on_mod_diagnostic,
             probe,
             value_fidelity,
+            host_events,
             bus_token,
             bus_peer,
         })
@@ -2657,6 +2675,10 @@ impl XriptRuntime {
     /// contract: object payloads spread to positional args, errors swallowed to
     /// `undefined`, results collected in order. An unknown or undeclared event id
     /// delivers to nobody and returns an empty list.
+    ///
+    /// Fails with [`XriptError::HostEvents`] under
+    /// [`RuntimeOptions::host_events`], where the built-in bus reaches no script;
+    /// so do [`emit_tagged`](Self::emit_tagged) and the async forms.
     pub fn emit(
         &self,
         event: &str,
@@ -2676,8 +2698,18 @@ impl XriptRuntime {
         Ok(untag(self.emit_tagged_async(event, payload).await?))
     }
 
+    /// Fails with [`XriptError::HostEvents`] when this runtime runs in host
+    /// events mode, where the built-in bus's host API reaches no script.
+    fn refuse_in_host_events(&self, api: &str) -> Result<()> {
+        if self.host_events {
+            return Err(crate::event_bus::host_events_refusal(api));
+        }
+        Ok(())
+    }
+
     /// [`emit_tagged`](Self::emit_tagged) as a future.
     pub async fn emit_tagged_async(&self, event: &str, payload: &[serde_json::Value]) -> Result<Vec<TaggedResult>> {
+        self.refuse_in_host_events("emit")?;
         #[cfg(feature = "threads")]
         if self.mode == RuntimeMode::Async
             && let Some(ref peer) = self.bus_peer
@@ -2755,7 +2787,11 @@ impl XriptRuntime {
     /// Cancels every event subscription `mod_id` holds and returns how many
     /// there were. For re-running one mod's scripts without unloading it;
     /// `None` clears the listeners no mod owns.
+    ///
+    /// Fails with [`XriptError::HostEvents`] under
+    /// [`RuntimeOptions::host_events`], where the built-in bus reaches no script.
     pub fn cancel_owned(&self, mod_id: Option<&str>) -> Result<usize> {
+        self.refuse_in_host_events("cancel_owned")?;
         let owner = mod_id.map_or(serde_json::Value::Null, |id| serde_json::Value::String(id.to_string()));
         Ok(self.call_internal("busCancelOwned", &[owner])?.as_u64().unwrap_or(0) as usize)
     }
@@ -2765,7 +2801,11 @@ impl XriptRuntime {
     /// emitted, and described. Returns the entry as stored. A malformed entry,
     /// or an id the manifest or another owner already declared, is an
     /// [`XriptError::Binding`] carrying the bus's reason.
+    ///
+    /// Fails with [`XriptError::HostEvents`] under
+    /// [`RuntimeOptions::host_events`], where the built-in bus reaches no script.
     pub fn declare_event(&self, entry: serde_json::Value) -> Result<serde_json::Value> {
+        self.refuse_in_host_events("declare_event")?;
         let envelope = self.call_internal("busDeclare", &[entry])?;
         if let Some(message) = envelope.get("err").and_then(|v| v.as_str()) {
             let message = message.strip_prefix("declareEvent(): ").unwrap_or(message);

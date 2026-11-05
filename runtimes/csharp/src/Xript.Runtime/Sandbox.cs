@@ -58,6 +58,26 @@ internal sealed class Sandbox : IDisposable
     private static bool InstallsEventsGlobal(Manifest manifest) =>
         manifest.Events is { Count: > 0 } || manifest.Bindings?.ContainsKey("events") != true;
 
+    private readonly bool _hostEvents;
+
+    /// <summary>
+    /// Refuses construction in host events mode unless the manifest declares a top-level
+    /// <c>events</c> binding for the runtime to install. A manifest <c>events</c> catalogue is
+    /// allowed; it documents the host's events but is wired to no script-visible bus.
+    /// </summary>
+    private static void CheckHostEvents(Manifest manifest)
+    {
+        if (manifest.Bindings?.ContainsKey("events") != true)
+            throw new HostEventsException(
+                "host events mode needs a top-level `events` binding in the manifest to install as the `events` global; " +
+                "declare one, or construct the runtime without host events mode to get the built-in bus");
+    }
+
+    private void RefuseInHostEvents(string api)
+    {
+        if (_hostEvents) throw HostEventsException.Refused(api);
+    }
+
     internal DebugSession? DebugSession { get; }
 
     /// <summary>Which mod is running right now.</summary>
@@ -81,6 +101,9 @@ internal sealed class Sandbox : IDisposable
 
     internal Sandbox(Manifest manifest, RuntimeOptions options)
     {
+        if (options.HostEvents)
+            CheckHostEvents(manifest);
+        _hostEvents = options.HostEvents;
         _manifest = manifest;
         _cancellation = options.Cancellation;
         Deprecations = new DeprecationChannel(options.OnDeprecation);
@@ -179,7 +202,7 @@ internal sealed class Sandbox : IDisposable
         RegisterHooks(hooks, granted);
         _internals.InstallExports();
         _bus = new EventBus(
-            _engine, manifest.Events, granted, Caller, InstallsEventsGlobal(manifest),
+            _engine, manifest.Events, granted, Caller, InstallsEventsGlobal(manifest) && !_hostEvents,
             JsonElementToJsValue, JsValueToJsonElement);
         ReportShadowedBindings(shadowable);
         SealGlobals();
@@ -637,13 +660,22 @@ internal sealed class Sandbox : IDisposable
     /// </summary>
     internal IReadOnlyList<(string? Owner, JsonElement Value)> EmitTagged(string eventId, FireHookOptions? options = null)
     {
+        RefuseInHostEvents("Emit");
         JsonElement[] args = options?.Data is { } data ? [data] : [];
         return Dispatch(() => _bus.Emit(eventId, args));
     }
 
-    internal int CancelOwned(string? owner) => _bus.CancelOwned(owner);
+    internal int CancelOwned(string? owner)
+    {
+        RefuseInHostEvents("CancelOwned");
+        return _bus.CancelOwned(owner);
+    }
 
-    internal JsonElement DeclareEvent(JsonElement entry) => _bus.Declare(entry);
+    internal JsonElement DeclareEvent(JsonElement entry)
+    {
+        RefuseInHostEvents("DeclareEvent");
+        return _bus.Declare(entry);
+    }
 
 
     private HostFunction CallerAware(CallerHostFunction function, string binding) =>
