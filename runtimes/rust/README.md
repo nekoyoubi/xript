@@ -205,6 +205,20 @@ rt.fire_hook_phase("save", "post", None)?;                             // no arg
 
 `data` is a single value: a plain object spreads to its values in key order, anything else is the one argument, and `None` passes nothing. A phase the hook does not declare, a hook with no phases, and an unknown hook all run nothing and return an empty list. Hook fills are unphased and never run on a phased fire. `fire_hook_phase_tagged` and the `_async` twins mirror `fire_hook`'s; `XriptHandle`, `BlockingHandle` and `XriptPool` each have `fire_hook_phase` too.
 
+### A host that runs its own event bus
+
+A host with its own event bus, its own catalogue and its own answer shapes, declares it as a top-level binding named `events` and sets `RuntimeOptions::host_events`:
+
+```rust
+let rt = create_runtime(manifest_json, RuntimeOptions {
+    host_bindings,          // supplies the `events` namespace or function
+    host_events: true,
+    ..Default::default()
+})?;
+```
+
+That binding is then the `events` mods see, in place of the built-in bus. It is installed like any other binding: capability-gated, called with caller identity, and sealed once the runtime is built, so no mod can replace or delete it (or any of its members). Construction fails with `XriptError::HostEvents` when the manifest declares no top-level `events` binding. A manifest `events` catalogue is allowed beside it; it documents the host's events and is wired to no script-visible bus. In this mode no script can subscribe to the built-in bus, so its host API (`emit`, `emit_tagged`, `emit_async`, `cancel_owned`, `declare_event`, on `XriptRuntime`, `XriptHandle` and `XriptPool`) fails with `XriptError::HostEvents` rather than answering an empty list. Hooks and event-typed slots are untouched. Without the option nothing changes. `spec/host-events-tests.json` is the conformance corpus.
+
 ### Values across the boundary
 
 A host binding's arguments and return, hook and event payloads, export arguments, and every result are `serde_json::Value`. Two opt-ins make that boundary carry what JavaScript hosts see:

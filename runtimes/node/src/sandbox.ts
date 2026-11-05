@@ -1,5 +1,5 @@
 import vm from "node:vm";
-import { AmbiguousExportError, BindingError, CapabilityDeniedError, ExecutionLimitError, CancellationError, InvokeError, ModEntryError, ImportDeniedError, ModuleUnsupportedError, LibraryUnavailableError, LibraryRegistrationError } from "./errors.js";
+import { AmbiguousExportError, BindingError, CapabilityDeniedError, ExecutionLimitError, CancellationError, InvokeError, ModEntryError, ImportDeniedError, ModuleUnsupportedError, LibraryUnavailableError, LibraryRegistrationError, HostEventsError } from "./errors.js";
 import { findImportSpecifier, findImportSpecifiers, detectCommonJS } from "./module-support.js";
 import type { DebugOptions, DebugSession } from "./debug-types.js";
 import { createDebugController } from "./debug-session.js";
@@ -235,6 +235,8 @@ export interface SandboxOptions {
 	onDeprecation?: DeprecationHandler;
 	/** Runs each hook and event fire under the script timeout, a fresh budget per fire. */
 	budgetHandlers?: boolean;
+	/** Installs the manifest's top-level `events` binding as the `events` global, in place of the built-in bus. */
+	hostEvents?: boolean;
 }
 
 export interface ExecutionResult {
@@ -846,6 +848,23 @@ interface SourceTextModuleInstance {
 	readonly status: string;
 }
 
+/** The message for a host call into the built-in bus's API while the host's binding is `events`. */
+function hostEventsRefusal(api: string): string {
+	return `\`${api}\` is not available in host events mode: the host's own \`events\` binding is the bus mods see, so the built-in bus has no subscribers to reach`;
+}
+
+/**
+ * Refuses construction in host events mode unless the manifest declares a top-level `events`
+ * binding for the runtime to install. A manifest `events` catalogue is allowed; it documents the
+ * host's events but is wired to no script-visible bus.
+ */
+function assertHostEventsManifest(manifest: Manifest, hostEvents: boolean | undefined): void {
+	if (!hostEvents) return;
+	if (!manifest.bindings || !Object.prototype.hasOwnProperty.call(manifest.bindings, "events")) {
+		throw new HostEventsError("host events mode needs a top-level `events` binding in the manifest to install as the `events` global; declare one, or construct the runtime without host events mode to get the built-in bus");
+	}
+}
+
 function validateLibraryRegistration(manifest: Manifest, libraries: Record<string, string> | undefined): void {
 	for (const [specifier, source] of Object.entries(libraries ?? {})) {
 		if (!manifest.libraries?.[specifier]) {
@@ -894,6 +913,7 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 	const { manifest, capabilities = [], cancellation } = options;
 	const grantedCapabilities = new Set(capabilities);
 	validateLibraryRegistration(manifest, options.libraries);
+	assertHostEventsManifest(manifest, options.hostEvents);
 	const resolveLibrary = makeLibraryResolver(manifest, options.libraries, grantedCapabilities);
 	const libraryModules = new Map<string, SourceTextModuleInstance>();
 	const limits = manifest.limits || {};
@@ -942,7 +962,7 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 		{ ...options, hostBindings: resolveCallerAware(options.hostBindings, callerContext) },
 		tracker,
 	);
-	const shadowed = SHADOWING_BUILTINS.filter((name) => Object.prototype.hasOwnProperty.call(sandboxGlobals, name));
+	const shadowed = SHADOWING_BUILTINS.filter((name) => Object.prototype.hasOwnProperty.call(sandboxGlobals, name) && !(options.hostEvents && name === "events"));
 	sandboxGlobals.hooks = buildHooksGlobal(manifest, grantedCapabilities, hookRegistry, fragmentRegistry);
 
 	const debugController = options.debug ? createDebugController(options.debug, "instrumented") : null;
@@ -987,7 +1007,7 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 		if (value instanceof LiveAccessor) realm.defineAccessor(contextGlobalThis, name, value);
 		else put(contextGlobal, name, realm.toContext(value));
 	}
-	const bus = installEventBus(context, realm, manifest.events, grantedCapabilities, callerContext, clock);
+	const bus = installEventBus(context, realm, manifest.events, grantedCapabilities, callerContext, clock, !options.hostEvents);
 	reportShadowedBindings(deprecations, shadowed);
 	const sealGlobals = vm.runInContext(SEAL_GLOBALS_SOURCE, context, { filename: "xript-seal.js" }) as (names: string[]) => void;
 	sealGlobals([...Object.keys(manifest.bindings ?? {}), "hooks", "events", "xript", "console", "BindingError", "CapabilityDeniedError", ...(debugController ? [debugController.probeNames.shouldStop, debugController.probeNames.pause] : [])]);
@@ -1302,6 +1322,7 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 	}
 
 	function emitTagged(eventId: string, payload?: unknown): EmitResult[] {
+		refuseInHostEvents("emit");
 		return runFire(options.budgetHandlers ? timeoutMs : undefined, () => bus.emit(eventId, payload === undefined ? [] : [payload]));
 	}
 
@@ -1309,8 +1330,18 @@ export function createSandbox(options: SandboxOptions): SandboxResult {
 		return emitTagged(eventId, payload).map((result) => result.value);
 	}
 
-	const cancelOwned = (owner: string | null): number => bus.cancelOwned(owner);
-	const declareEvent = (entry: unknown): unknown => bus.declare(entry);
+	function refuseInHostEvents(api: string): void {
+		if (options.hostEvents) throw new HostEventsError(hostEventsRefusal(api));
+	}
+
+	const cancelOwned = (owner: string | null): number => {
+		refuseInHostEvents("cancelOwned");
+		return bus.cancelOwned(owner);
+	};
+	const declareEvent = (entry: unknown): unknown => {
+		refuseInHostEvents("declareEvent");
+		return bus.declare(entry);
+	};
 
 	function fireFragmentHook(fragmentId: string, lifecycle: string, bindings?: Record<string, unknown>): RawFragmentOp[] {
 		return fireFragmentHookFromRegistry(fragmentRegistry, fragmentId, lifecycle, bindings, toContext);

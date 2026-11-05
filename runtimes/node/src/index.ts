@@ -64,7 +64,7 @@ import {
 import { grantedSatisfies } from "./capabilities.js";
 import type { DebugOptions, DebugSession } from "./debug-types.js";
 
-export { MissingBindingsError } from "./errors.js";
+export { MissingBindingsError, HostEventsError } from "./errors.js";
 export type { CallbackFailure, RetainFailure } from "./errors.js";
 export type { RetainedCallback } from "./retained.js";
 export type { HostCallback } from "./callbacks.js";
@@ -231,6 +231,16 @@ export interface RuntimeOptions {
 	 * execution-limit error. Off by default: handlers run without a budget.
 	 */
 	budgetHandlers?: boolean;
+	/**
+	 * Host events mode, for a host that runs its own event bus. The manifest's top-level `events`
+	 * binding becomes the script-visible `events` global in place of the built-in bus, installed,
+	 * gated, and sealed like any other binding. Construction throws a `HostEventsError` when the
+	 * manifest declares no such binding. A manifest `events` catalogue is allowed and is wired to
+	 * no script-visible bus. The built-in
+	 * bus's host API (`emit`, `declareEvent`, `cancelOwned`) serves no script in this mode and
+	 * throws a `HostEventsError`. Off by default.
+	 */
+	hostEvents?: boolean;
 	/**
 	 * What `loadMod` does when a mod's entry cannot run (a script that was not supplied, or
 	 * one that throws). Defaults to `"throw"`. `"report"` records the failure on
@@ -587,6 +597,7 @@ export function createRuntime(manifest: unknown, options: RuntimeOptions): Xript
 		debug: options.debug,
 		onDeprecation: options.onDeprecation,
 		budgetHandlers: options.budgetHandlers,
+		hostEvents: options.hostEvents,
 	});
 
 	function declaredOwner(name: string): string | undefined {

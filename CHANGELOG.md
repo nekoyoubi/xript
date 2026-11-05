@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.10.2
+
+0.10.1 sealed `events` and every host binding once a runtime is built, and that seal is what stops one mod from rewriting what another mod calls. It also shut the only door a host with its own event bus had for handing that bus to mods: swapping it in over the built-in `events` after construction is now ignored on the JavaScript runtimes and throws on Rust. This release gives that host a supported way in, opt-in and identical across all four runtimes. A host that doesn't ask for it sees no change.
+
+- **A host can bring its own `events`.** One new runtime option installs the manifest's top-level `events` binding as the `events` mods see, in place of the built-in bus: `hostEvents: true` in `@xriptjs/runtime` and `@xriptjs/runtime-node`, `RuntimeOptions::host_events` in `xript-runtime`, and `RuntimeOptions.HostEvents` in `Xript.Runtime`
+  - the binding is capability-gated, carries caller identity, and is sealed like every other binding, so no mod can reassign or delete it or any of its members
+  - nothing is replaced, so the runtime raises no `binding-shadows-builtin` notice in this mode
+- **Host events mode needs the binding and keeps the catalogue.** Construction fails with `HostEventsError` (`XriptError::HostEvents`, `HostEventsException`) when the manifest declares no top-level `events` binding; a manifest `events` catalogue can still sit beside it for docs and declarations, but it isn't wired to a script-visible bus
+- **The built-in bus's host API is refused in host events mode.** Once `events` belongs to the host, no script can subscribe to the built-in bus, so `emit`, `declareEvent`, and `cancelOwned` throw instead of answering with an empty list that passes for success
+  - in Rust that covers `emit_tagged` and `emit_async` too, on a runtime, an `XriptHandle`, and an `XriptPool`
+  - hooks and event-typed slots are untouched
+- **`binding-shadows-builtin` points at the new option.** `xript lint` can't see runtime options, so it still warns on a top-level `events` binding; its suggestion now names `hostEvents`, `host_events`, and `HostEvents`
+- **`xript typegen` types a top-level `events` binding as `events`.** Whenever the manifest had an `events` catalogue, typegen used to emit the built-in bus's API and merge it into the binding's declaration; now the declared binding wins in host-facing and `--ambient` output alike, and a catalogue beside it still yields the `XriptEvents` id-to-payload map
+- **A new conformance corpus pins all of it.** `spec/host-events-tests.json` runs its 11 cases in all four runtimes: the binding reaches mods in place of the built-in bus, with or without a catalogue beside it; a second mod can't reassign, redefine, redeclare, or delete it or its members; construction is refused without a binding; the host API is refused; and nothing changes with the option off
+  - documented in `spec/hooks.md`, `spec/bindings.md`, `spec/deprecations.md`, each runtime's docs page, and the `xript-runtime` README
+
+### Test counts
+
+| package | before | after |
+| --- | --- | --- |
+| `@xriptjs/sanitize` | 960 | 960 |
+| `@xriptjs/runtime` | 3116 | 3136 |
+| `@xriptjs/runtime-node` | 2174 | 2184 |
+| `@xriptjs/validate` | 575 | 576 |
+| `@xriptjs/typegen` | 215 | 221 |
+| `@xriptjs/docgen` | 193 | 193 |
+| `@xriptjs/init` | 55 | 55 |
+| `@xriptjs/cli` | 136 | 136 |
+| `xript-runtime` | 629 | 635 |
+| `xript-tree` | 22 | 22 |
+| `xript-expr` | 19 | 19 |
+| `xript-ratatui` | 60 | 60 |
+| `xript-wiz` | 38 | 38 |
+| `Xript.Runtime` | 2663 | 2673 |
+| **total** | **10855** | **10908** |
+
 ## v0.10.1
 
 A host running the same mods on the Rust runtime and on the JavaScript runtimes, comparing results value by value, turned up dozens of places where the four runtimes disagreed about what crossed the boundary, plus several real sandbox-safety holes and some large performance costs on the Rust side. This release settles every one of them against a shared conformance corpus, so all four runtimes now give the same answer, and the Rust host boundary gets roughly 10 to 35 times cheaper. The rule from 0.10.0 still holds: nothing changes for an existing host or mod unless it fixes a silent bug, closes a security hole, or moves an outlier runtime onto what the JavaScript runtimes already do.

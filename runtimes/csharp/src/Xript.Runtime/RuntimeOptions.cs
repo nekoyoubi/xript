@@ -78,6 +78,18 @@ public class RuntimeOptions
     public bool ValueFidelity { get; set; }
 
     /// <summary>
+    /// Host events mode, for a host that runs its own event bus. The manifest's top-level
+    /// <c>events</c> binding is the script-visible <c>events</c> global in place of the built-in
+    /// bus, installed, gated, and sealed like any other binding, so no mod can replace or delete
+    /// it. Construction throws a <see cref="HostEventsException"/> when the manifest declares no
+    /// such binding. A manifest <c>events</c> catalogue is allowed and is wired to no
+    /// script-visible bus. The built-in bus's host API (<see cref="XriptRuntime.Emit"/>,
+    /// <see cref="XriptRuntime.CancelOwned"/>, <see cref="XriptRuntime.DeclareEvent"/>) serves no
+    /// script in this mode and throws the same exception. Off by default.
+    /// </summary>
+    public bool HostEvents { get; set; }
+
+    /// <summary>
     /// Replaces the clock every call budget is measured on, in <see cref="System.Diagnostics.Stopwatch"/>
     /// ticks, so a test decides when time passes. With it set, that clock alone ends a call: the
     /// real-time timer and Jint's timeout interval behind the inline deadline are not armed.

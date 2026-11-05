@@ -61,6 +61,7 @@ const runtime = await xript.createRuntime(manifest, {
 | `commandPreferences` | `Record<string, string>` | none | Per-command or per-slot preference (`command id` or `slot id` → mod name) consulted by `resolveCommand` |
 | `validateInput` | `CommandInputValidator` | none | Opt-in argument checking at command invoke; the runtime bundles no JSON Schema validator, so a host that wants full `input` validation passes its own predicate |
 | `debug` | `DebugOptions` | none | Enables the DAP-shaped debug session reachable via `debugExecute` / `debugSession` |
+| `hostEvents` | `boolean` | `false` | Host events mode: the manifest's top-level `events` binding is the script-visible `events` in place of the built-in bus. See [A host's own event bus](#a-hosts-own-event-bus) |
 
 ### Host Bindings
 
@@ -213,6 +214,19 @@ const async = await runtime.invokeCommandAsync(one, { close: ")" });
 Ordering is `priority` descending, then command `id`, then owning mod name, so it does not depend on load order. A `multiple: false` command slot resolves to exactly one command across all mods, the same way it resolves to one fragment.
 
 `invokeCommand` merges the fill's bound `args` under the caller's arguments (shallow, caller wins) and routes through the addressed, per-mod export path, so it re-checks the handler's export capability at call time and can never be ambiguous about which mod's export it means. A throwing handler propagates its error, unlike a hook handler. Command fills are delivered on `mod.commandFills`; before v0.8.0 they arrived untyped in `mod.dataFills[slotId]`.
+
+## A host's own event bus
+
+A host that already runs an event bus, with its own catalogue and answer shapes, declares it as a top-level binding named `events` and passes `hostEvents: true`:
+
+```javascript
+const runtime = xript.createRuntime(manifest, {
+  hostBindings: { events: { on: hostBus.on, emit: hostBus.emit } },
+  hostEvents: true,
+});
+```
+
+That binding is then the `events` mods see, in place of the built-in bus, and it behaves like every other binding: capability-gated, called with the caller's identity, and sealed once the runtime is built, so no mod can replace or delete it or its members. Construction throws a `HostEventsError` when the manifest declares no top-level `events` binding. A manifest `events` catalogue is allowed beside it; it documents the host's events and is wired to no script-visible bus. No script can subscribe to the built-in bus in this mode, so `runtime.emit`, `runtime.declareEvent`, and `runtime.cancelOwned` throw a `HostEventsError` too; the host emits on its own bus. Hooks are untouched. See [Event Delivery](/spec/hooks/#a-hosts-own-bus).
 
 ## Cleanup
 

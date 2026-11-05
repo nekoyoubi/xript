@@ -548,6 +548,8 @@ A top-level binding becomes a global of the same name, and the runtime installs 
 
 `xript lint` reports each collision as a `binding-shadows-builtin` warning naming the built-in and the side that wins, and every runtime raises the same code once on its [deprecation channel](./deprecations.md) at construction when a built-in actually replaced a host binding. Move the binding under a namespace, where a member named `events` or `console` is just a property and collides with nothing. A host that wanted an events binding should declare its events in the manifest's `events` instead; mods then get the bus.
 
+A host that runs its own event bus can keep a top-level `events` binding and construct the runtime in [host events mode](./hooks.md#a-hosts-own-bus) (`hostEvents: true`, `host_events`, `HostEvents`). The binding is then `events` in every runtime, sealed like any other binding, and the runtime raises no `binding-shadows-builtin` notice, since nothing replaced it. `xript typegen` types `events` as the binding whenever one is declared, catalogue or not. `xript lint` cannot see runtime options, so it still warns, and its suggestion names the option.
+
 ## Naming Conventions
 
 ### Function Names

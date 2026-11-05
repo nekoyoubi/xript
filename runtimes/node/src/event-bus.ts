@@ -48,11 +48,13 @@ export function installEventBus(
 	granted: Set<string>,
 	caller: CallerContext,
 	clock: HandlerClock = UNTIMED,
+	installGlobal = true,
 ): EventBus {
 	const token = randomBytes(16).toString("hex");
 	const kernel = vm.runInContext(EVENT_BUS_KERNEL, context, { filename: "xript-event-bus.js" }) as (host: unknown) => KernelApi;
 	const host = realm.toContext({
 		token,
+		installGlobal,
 		events: JSON.stringify(manifestEvents ?? []),
 		caller: () => caller.current(),
 		enter: (owner: unknown) => {

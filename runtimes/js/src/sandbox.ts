@@ -7,7 +7,7 @@ import type {
 	QuickJSWASMModule,
 } from "quickjs-emscripten-core";
 import type { AsyncVariant } from "./quickjs-loader.js";
-import { AmbiguousExportError, BindingError, CapabilityDeniedError, CancellationError, InvokeError, ModEntryError, ImportDeniedError, ModuleUnsupportedError, LibraryUnavailableError, LibraryRegistrationError } from "./errors.js";
+import { AmbiguousExportError, BindingError, CapabilityDeniedError, CancellationError, InvokeError, ModEntryError, ImportDeniedError, ModuleUnsupportedError, LibraryUnavailableError, LibraryRegistrationError, HostEventsError } from "./errors.js";
 import { grantedSatisfies } from "./capabilities.js";
 import { findImportSpecifier, findImportSpecifiers, detectCommonJS } from "./module-support.js";
 import { marshalArgsToQuickJS, marshalToQuickJS, safeDispose } from "./marshal.js";
@@ -328,6 +328,8 @@ export interface SandboxOptions {
 	onDeprecation?: DeprecationHandler;
 	/** Runs each hook and event fire under the script timeout, a fresh budget per fire. */
 	budgetHandlers?: boolean;
+	/** Installs the manifest's top-level `events` binding as the `events` global, in place of the built-in bus. */
+	hostEvents?: boolean;
 }
 
 export interface ExecutionResult {
@@ -1681,6 +1683,37 @@ function busSurface(bus: EventBus, callerContext: CallerContext, budget?: FireBu
 	};
 }
 
+/** The message for a host call into the built-in bus's API while the host's binding is `events`. */
+function hostEventsRefusal(api: string): string {
+	return `\`${api}\` is not available in host events mode: the host's own \`events\` binding is the bus mods see, so the built-in bus has no subscribers to reach`;
+}
+
+/**
+ * Refuses construction in host events mode unless the manifest declares a top-level `events`
+ * binding for the runtime to install. A manifest `events` catalogue is allowed; it documents the
+ * host's events but is wired to no script-visible bus.
+ */
+function assertHostEventsManifest(manifest: { bindings?: Record<string, unknown> }, hostEvents: boolean | undefined): void {
+	if (!hostEvents) return;
+	if (!manifest.bindings || !Object.prototype.hasOwnProperty.call(manifest.bindings, "events")) {
+		throw new HostEventsError("host events mode needs a top-level `events` binding in the manifest to install as the `events` global; declare one, or construct the runtime without host events mode to get the built-in bus");
+	}
+}
+
+/** The built-in bus's host API, refused: in host events mode no script can subscribe to it. */
+function refusedBusSurface(callerContext: CallerContext): ReturnType<typeof busSurface> {
+	const refuse = (api: string) => () => {
+		throw new HostEventsError(hostEventsRefusal(api));
+	};
+	return {
+		emit: refuse("emit"),
+		emitTagged: refuse("emit"),
+		cancelOwned: refuse("cancelOwned"),
+		declareEvent: refuse("declareEvent"),
+		callerContext,
+	};
+}
+
 /**
  * The current value of each top-level binding the runtime may install a built-in over, taken
  * once bindings are in place so the end of construction can tell which ones a built-in replaced.
@@ -1858,6 +1891,7 @@ export function createSandboxSync(
 	const hostBindings = resolveCallerAware(options.hostBindings, callerContext);
 	const grantedCapabilities = new Set(capabilities);
 	validateLibraryRegistration(manifest, options.libraries);
+	assertHostEventsManifest(manifest, options.hostEvents);
 	const limits = manifest.limits || {};
 	const hard = options.hardLimits || {};
 	const timeoutMs = clampLimit(limits.timeout_ms ?? 5000, hard.timeout_ms) ?? 5000;
@@ -1908,7 +1942,7 @@ export function createSandboxSync(
 	const handlerBudget = options.budgetHandlers ? fireBudget(pushInterruptFrame, cancellation) : undefined;
 	const clock: HandlerClock = handlerBudget ? UNTIMED : unbudgetedHandlerClock(timeoutMs, deprecations);
 	injectHooks(context, manifest, grantedCapabilities, callerContext, clock);
-	const bus = installEventBus(context, manifest.events, grantedCapabilities, callerContext, clock);
+	const bus = installEventBus(context, manifest.events, grantedCapabilities, callerContext, clock, !options.hostEvents);
 	injectFragmentAPI(context);
 	injectExportsAPI(context);
 	freezeHooksAndFragments(context, manifest);
@@ -2068,7 +2102,7 @@ export function createSandboxSync(
 		runtime.dispose();
 	}
 
-	return containSurface(context, { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, setExportOwner, fireHook, fireFragmentHook, ...busSurface(bus, callerContext, handlerBudget, callTimeoutMs()), debugSession, releaseRetained, dispose });
+	return containSurface(context, { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, setExportOwner, fireHook, fireFragmentHook, ...(options.hostEvents ? refusedBusSurface(callerContext) : busSurface(bus, callerContext, handlerBudget, callTimeoutMs())), debugSession, releaseRetained, dispose });
 }
 
 export async function createSandboxAsync(
@@ -2078,6 +2112,7 @@ export async function createSandboxAsync(
 	const { newAsyncContext } = await import("#quickjs-async");
 
 	const { manifest, capabilities = [], cancellation } = options;
+	assertHostEventsManifest(manifest, options.hostEvents);
 	const callerContext = new CallerContext();
 	const hostBindings = resolveCallerAware(options.hostBindings, callerContext);
 	const grantedCapabilities = new Set(capabilities);
@@ -2136,7 +2171,7 @@ export async function createSandboxAsync(
 	const handlerBudget = options.budgetHandlers ? fireBudget(pushInterruptFrame, cancellation) : undefined;
 	const clock: HandlerClock = handlerBudget ? UNTIMED : unbudgetedHandlerClock(timeoutMs, deprecations);
 	injectHooks(context, manifest, grantedCapabilities, callerContext, clock);
-	const bus = installEventBus(context, manifest.events, grantedCapabilities, callerContext, clock);
+	const bus = installEventBus(context, manifest.events, grantedCapabilities, callerContext, clock, !options.hostEvents);
 	injectFragmentAPI(context);
 	injectExportsAPI(context);
 	freezeHooksAndFragments(context, manifest);
@@ -2452,5 +2487,5 @@ export async function createSandboxAsync(
 		runtime.dispose();
 	}
 
-	return containSurface(context, { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, setExportOwner, fireHook, fireFragmentHook, ...busSurface(bus, callerContext, handlerBudget, callTimeoutMs()), debugSession, releaseRetained, dispose });
+	return containSurface(context, { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, setExportOwner, fireHook, fireFragmentHook, ...(options.hostEvents ? refusedBusSurface(callerContext) : busSurface(bus, callerContext, handlerBudget, callTimeoutMs())), debugSession, releaseRetained, dispose });
 }

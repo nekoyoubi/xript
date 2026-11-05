@@ -47,7 +47,8 @@ const BUILTIN_GLOBALS: Record<string, { what: string; wins: string; instead: str
 	events: {
 		what: "the events bus",
 		wins: "the runtime's `events` replaces the binding, so mods never see it",
-		instead: "Mods already get an events bus from `events`; declare the host's events under `events` in the manifest instead of a binding.",
+		instead:
+			"Mods already get an events bus from `events`; declare the host's events under `events` in the manifest instead of a binding. A host that runs its own event bus can keep the binding and construct the runtime in host events mode (`hostEvents: true` in JavaScript, `host_events` in Rust, `HostEvents` in C#), which installs this binding as `events` in place of the built-in bus.",
 	},
 	hooks: {
 		what: "hook registration",

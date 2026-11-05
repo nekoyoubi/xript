@@ -10,6 +10,14 @@ pub enum XriptError {
     #[error("the manifest declares {} binding(s) the host did not supply: {}. Supply them, remove them from the manifest, or construct the runtime without `strict_bindings` to install them as stubs that throw when called.", .missing.len(), .missing.join(", "))]
     MissingBindings { missing: Vec<String> },
 
+    /// Raised under [`RuntimeOptions::host_events`](crate::RuntimeOptions::host_events)
+    /// when the runtime cannot honour host events mode: at construction when
+    /// the manifest declares no top-level `events` binding, and on a host call
+    /// into the built-in bus's API, which serves no script once the host's own
+    /// binding is `events`.
+    #[error("{message}")]
+    HostEvents { message: String },
+
     #[error("binding error in `{binding}`: {message}")]
     Binding { binding: String, message: String },
 
