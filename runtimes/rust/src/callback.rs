@@ -9,6 +9,14 @@
 //! runs the script function synchronously against the calling script's budget.
 //! A callback found at a position the manifest marks `retain` can outlive the
 //! call through [`Callback::retain`]; see [`crate::retained`].
+//!
+//! A host hands a callback back into the sandbox (as a binding's return, or in
+//! a callback's arguments) with its marker, [`Callback::to_value`]. While its
+//! binding call is running, a binding call nested inside it included, script
+//! receives its own original function; once that call has ended, or in another
+//! runtime, it receives `undefined`. A marker never reaches script as data, so
+//! script never learns a token's nonce, and plain script data shaped like a
+//! marker is never taken for a callback.
 
 use std::cell::{Cell, RefCell};
 use std::fmt;
@@ -17,7 +25,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use rquickjs::function::Rest;
-use rquickjs::{Ctx, Error as QjsError, Function, Object, Value};
+use rquickjs::{Ctx, Error as QjsError, Function, Value};
 
 use crate::retained::{PathStep, RetainError, RetainedCallback, RetainedRegistry};
 
@@ -167,6 +175,16 @@ impl Callback {
         &self.binding
     }
 
+    /// The marker that hands this callback back into the sandbox, as a
+    /// binding's return or inside a callback's arguments. While its binding
+    /// call is running (a binding call nested inside it included), script
+    /// receives its own original function; once the call has ended, or in
+    /// another runtime, `undefined`.
+    pub fn to_value(&self) -> serde_json::Value {
+        let token = format!("{}:{}:{}:{}", self.scope, self.index, self.nonce, self.binding);
+        serde_json::json!({ CALLBACK_MARKER: token })
+    }
+
     /// Calls the script function with `args` and returns what it returned, both
     /// marshalled as JSON. Fails with [`CallbackError::Expired`] once the
     /// binding call has returned.
@@ -218,6 +236,9 @@ trait Invoke {
         owner: Option<String>,
         args: &[serde_json::Value],
     ) -> Result<serde_json::Value, CallbackError>;
+    /// The `index`th function, as one new reference, when this scope runs in
+    /// `context`.
+    fn function_raw(&self, context: *mut rquickjs::qjs::JSContext, index: usize) -> Option<rquickjs::qjs::JSValue>;
 }
 
 fn find_scope(scope: u64, nonce: u64) -> Option<*const (dyn Invoke + 'static)> {
@@ -226,7 +247,7 @@ fn find_scope(scope: u64, nonce: u64) -> Option<*const (dyn Invoke + 'static)> {
             .borrow()
             .iter()
             .rev()
-            .find(|(id, n, _)| *id == scope && *n == nonce)
+            .find(|(id, n, _)| *id != 0 && *id == scope && *n == nonce)
             .map(|(_, _, invoker)| *invoker)
     })
 }
@@ -268,28 +289,171 @@ pub(crate) fn call_detached<'js>(
         let _depth = DepthGuard::enter();
         function.call((Rest(js_args),))
     };
-    match outcome {
-        Ok(value) => settled(ctx, binding, value),
-        Err(QjsError::Exception) => {
-            let exception = ctx.catch();
-            let (name, message) = describe_exception(&exception);
-            if interrupted.load(Ordering::Relaxed) || message.contains("interrupted") {
-                return Err(CallbackError::Limit {
-                    binding: binding.to_string(),
-                });
-            }
-            Err(CallbackError::Threw {
+    let exception = match outcome {
+        Ok(value) => match settled(ctx, binding, value) {
+            Ok(json) => return Ok(json),
+            Err(Unsettled::Error(error)) => return Err(error),
+            Err(Unsettled::Threw(exception)) => exception,
+        },
+        Err(QjsError::Exception) => ctx.catch(),
+        Err(other) => {
+            return Err(CallbackError::Threw {
                 binding: binding.to_string(),
-                name,
-                message,
+                name: None,
+                message: other.to_string(),
             })
         }
-        Err(other) => Err(CallbackError::Threw {
+    };
+    let (name, message) = describe_exception(&exception);
+    if interrupted.load(Ordering::Relaxed) || message.contains("interrupted") {
+        return Err(CallbackError::Limit {
             binding: binding.to_string(),
-            name: None,
-            message: other.to_string(),
-        }),
+        });
     }
+    Err(CallbackError::Threw {
+        binding: binding.to_string(),
+        name,
+        message,
+    })
+}
+
+/// What a callback called through [`call_settling`] or [`call_settling_async`]
+/// returned: a promise to settle (a thenable adopted as one), or a value as it
+/// stands.
+enum Returned<'js> {
+    Value(Value<'js>),
+    Promise(rquickjs::Promise<'js>),
+}
+
+/// Calls `function` with nothing marking a callback in flight, so an async
+/// binding it reaches may start, and turns a thenable return into a promise.
+fn call_returning<'js>(
+    ctx: &Ctx<'js>,
+    function: &Function<'js>,
+    binding: &str,
+    args: &[serde_json::Value],
+    interrupted: &AtomicBool,
+) -> Result<Returned<'js>, CallbackError> {
+    let js_args = host_args(ctx, binding, args)?;
+    let value: Value = match function.call((Rest(js_args),)) {
+        Ok(value) => value,
+        Err(QjsError::Exception) => return Err(failure(binding, &ctx.catch(), interrupted)),
+        Err(other) => return Err(threw_text(binding, other.to_string())),
+    };
+    match is_thenable(&value) {
+        Ok(false) => return Ok(Returned::Value(value)),
+        Ok(true) => {}
+        Err(QjsError::Exception) => return Err(failure(binding, &ctx.catch(), interrupted)),
+        Err(other) => return Err(threw_text(binding, other.to_string())),
+    }
+    if let Ok(promise) = rquickjs::Promise::from_value(value.clone()) {
+        return Ok(Returned::Promise(promise));
+    }
+    let adopted = ctx
+        .globals()
+        .get::<_, rquickjs::Object>("Promise")
+        .and_then(|constructor| {
+            let resolve: Function = constructor.get("resolve")?;
+            resolve.call::<_, rquickjs::Promise>((rquickjs::function::This(constructor), value))
+        });
+    match adopted {
+        Ok(promise) => Ok(Returned::Promise(promise)),
+        Err(QjsError::Exception) => Err(failure(binding, &ctx.catch(), interrupted)),
+        Err(other) => Err(threw_text(binding, other.to_string())),
+    }
+}
+
+/// Calls `function` and, when it returns a promise, runs the context's jobs
+/// in place until the promise settles. An async binding the function reaches
+/// settles in place too (see [`crate::reentry::inside`]), so the whole call
+/// completes before this returns.
+pub(crate) fn call_settling<'js>(
+    ctx: &Ctx<'js>,
+    function: &Function<'js>,
+    binding: &str,
+    args: &[serde_json::Value],
+    interrupted: &AtomicBool,
+) -> Result<serde_json::Value, CallbackError> {
+    let promise = match call_returning(ctx, function, binding, args, interrupted)? {
+        Returned::Value(value) => return read_result(ctx, binding, &value, interrupted),
+        Returned::Promise(promise) => promise,
+    };
+    loop {
+        match promise.state() {
+            rquickjs::promise::PromiseState::Pending => {
+                if !ctx.execute_pending_job() {
+                    if interrupted.load(Ordering::Relaxed) {
+                        return Err(CallbackError::Limit { binding: binding.to_string() });
+                    }
+                    return Err(threw_text(binding, format!("{binding}(): {UNSETTLED_MESSAGE}")));
+                }
+            }
+            rquickjs::promise::PromiseState::Resolved => {
+                let value = promise.result::<Value>().and_then(|r| r.ok()).unwrap_or_else(|| Value::new_undefined(ctx.clone()));
+                return read_result(ctx, binding, &value, interrupted);
+            }
+            rquickjs::promise::PromiseState::Rejected => {
+                let _ = promise.result::<Value>();
+                return Err(failure(binding, &ctx.catch(), interrupted));
+            }
+        }
+    }
+}
+
+/// [`call_settling`] for a runtime that yields: a promise is awaited, so the
+/// executor driving the call also drives the host futures the promise waits
+/// on, and gives up when `watch` says the budget is spent or the call was
+/// cancelled.
+pub(crate) async fn call_settling_async<'js>(
+    ctx: &Ctx<'js>,
+    function: &Function<'js>,
+    binding: &str,
+    args: &[serde_json::Value],
+    interrupted: &AtomicBool,
+    watch: Arc<crate::yielding::Watch>,
+) -> Result<serde_json::Value, CallbackError> {
+    let promise = match call_returning(ctx, function, binding, args, interrupted)? {
+        Returned::Value(value) => return read_result(ctx, binding, &value, interrupted),
+        Returned::Promise(promise) => promise,
+    };
+    crate::sandbox::drain_jobs(ctx);
+    match crate::yielding::Abortable::new(promise.into_future::<Value>(), watch).await {
+        Ok(Ok(value)) => read_result(ctx, binding, &value, interrupted),
+        Ok(Err(_)) => Err(failure(binding, &ctx.catch(), interrupted)),
+        Err(_) => Err(CallbackError::Limit { binding: binding.to_string() }),
+    }
+}
+
+const UNSETTLED_MESSAGE: &str = "callback's promise never settled: it awaited something that never resolves, and no pending jobs remain";
+
+fn read_result<'js>(
+    ctx: &Ctx<'js>,
+    binding: &str,
+    value: &Value<'js>,
+    interrupted: &AtomicBool,
+) -> Result<serde_json::Value, CallbackError> {
+    match crate::marshal::try_to_json(ctx, value) {
+        Ok(json) => Ok(json),
+        Err(crate::marshal::CrossError::Thrown(thrown)) => Err(failure(binding, &thrown, interrupted)),
+        Err(crate::marshal::CrossError::Refused(message)) => Err(threw_text(
+            binding,
+            format!("{binding}(): callback returned a value that cannot cross: {message}"),
+        )),
+    }
+}
+
+/// The error a callback ends with when it threw `exception`: a budget stop
+/// when the interrupt handler fired, the script's own error otherwise.
+fn failure(binding: &str, exception: &Value<'_>, interrupted: &AtomicBool) -> CallbackError {
+    let (name, message) = describe_exception(exception);
+    if interrupted.load(Ordering::Relaxed) || message.contains("interrupted") {
+        return CallbackError::Limit { binding: binding.to_string() };
+    }
+    CallbackError::Threw { binding: binding.to_string(), name, message }
+}
+
+fn threw_text(binding: &str, message: String) -> CallbackError {
+    CallbackError::Threw { binding: binding.to_string(), name: None, message }
 }
 
 fn host_args<'js>(ctx: &Ctx<'js>, binding: &str, args: &[serde_json::Value]) -> Result<Vec<Value<'js>>, CallbackError> {
@@ -302,7 +466,7 @@ fn host_args<'js>(ctx: &Ctx<'js>, binding: &str, args: &[serde_json::Value]) -> 
                 return Err(CallbackError::Threw {
                     binding: binding.to_string(),
                     name: None,
-                    message,
+                    message: format!("{binding}(): {message}"),
                 })
             }
         }
@@ -310,13 +474,52 @@ fn host_args<'js>(ctx: &Ctx<'js>, binding: &str, args: &[serde_json::Value]) -> 
     Ok(js_args)
 }
 
-fn settled<'js>(ctx: &Ctx<'js>, binding: &str, value: Value<'js>) -> Result<serde_json::Value, CallbackError> {
-    if is_thenable(&value) {
-        return Err(CallbackError::Promise {
-            binding: binding.to_string(),
-        });
+/// The path from the arguments to step `at`, following each step's parent.
+fn path_to(steps: &[(Option<usize>, PathStep)], at: usize) -> Vec<PathStep> {
+    let mut path = Vec::new();
+    let mut cursor = Some(at);
+    while let Some(index) = cursor {
+        let (parent, step) = &steps[index];
+        path.push(step.clone());
+        cursor = *parent;
     }
-    Ok(crate::sandbox::js_value_to_json(ctx, &value))
+    path.reverse();
+    path
+}
+
+/// Why a callback's return did not reach the host.
+enum Unsettled<'js> {
+    Error(CallbackError),
+    /// Script threw while the return was read, as a getter on it can.
+    Threw(Value<'js>),
+}
+
+fn settled<'js>(ctx: &Ctx<'js>, binding: &str, value: Value<'js>) -> Result<serde_json::Value, Unsettled<'js>> {
+    match is_thenable(&value) {
+        Ok(true) => {
+            return Err(Unsettled::Error(CallbackError::Promise {
+                binding: binding.to_string(),
+            }))
+        }
+        Ok(false) => {}
+        Err(QjsError::Exception) => return Err(Unsettled::Threw(ctx.catch())),
+        Err(other) => {
+            return Err(Unsettled::Error(CallbackError::Threw {
+                binding: binding.to_string(),
+                name: None,
+                message: other.to_string(),
+            }))
+        }
+    }
+    match crate::marshal::try_to_json(ctx, &value) {
+        Ok(json) => Ok(json),
+        Err(crate::marshal::CrossError::Thrown(thrown)) => Err(Unsettled::Threw(thrown)),
+        Err(crate::marshal::CrossError::Refused(message)) => Err(Unsettled::Error(CallbackError::Threw {
+            binding: binding.to_string(),
+            name: None,
+            message: format!("{binding}(): callback returned a value that cannot cross: {message}"),
+        })),
+    }
 }
 
 thread_local! {
@@ -328,7 +531,7 @@ static NEXT_SCOPE: AtomicU64 = AtomicU64::new(1);
 
 /// Whether a scope with this id and nonce is live on the calling thread.
 fn scope_is_live(scope: u64, nonce: u64) -> bool {
-    SCOPES.with(|scopes| scopes.borrow().iter().any(|(id, n, _)| *id == scope && *n == nonce))
+    SCOPES.with(|scopes| scopes.borrow().iter().any(|(id, n, _)| *id != 0 && *id == scope && *n == nonce))
 }
 
 /// True while a callback is running on this thread; an async binding refuses
@@ -350,16 +553,58 @@ pub(crate) struct CallScope<'js> {
     retainable: RefCell<Vec<bool>>,
 }
 
-impl<'js> CallScope<'js> {
-    pub(crate) fn new(ctx: Ctx<'js>, binding: &str, functions: Vec<Function<'js>>) -> Self {
+/// The id and nonce a binding call's callback tokens carry, fixed before its
+/// arguments are read so each function is spelled as its final token at once.
+/// A random, process-local nonce makes a token unforgeable: script data shaped
+/// like one cannot carry a live scope's nonce, so it never resolves, and a
+/// token handed back into the sandbox reaches script as the function it names
+/// (or `undefined`), never as the token.
+#[derive(Clone, Copy)]
+pub(crate) struct ScopeIdentity {
+    id: u64,
+    nonce: u64,
+}
+
+impl ScopeIdentity {
+    /// The identity of a call passed no functions. It issues no tokens, and no
+    /// token resolves against it, so it needs no nonce; its scope still lets a
+    /// retained callback be called from inside the binding call.
+    pub(crate) const EMPTY: ScopeIdentity = ScopeIdentity { id: 0, nonce: 0 };
+
+    pub(crate) fn new() -> Self {
         let id = NEXT_SCOPE.fetch_add(1, Ordering::Relaxed);
+        Self { id, nonce: RandomState::new().hash_one(id) }
+    }
+
+    /// The token for the `index`th function passed to `binding`.
+    pub(crate) fn token(&self, index: usize, binding: &str) -> String {
+        format!("{}:{}:{}:{}", self.id, index, self.nonce, binding)
+    }
+}
+
+/// The script function a call-scoped token names, when its binding call is
+/// running on this thread in this context. `None` for a token that no longer
+/// resolves: its call has ended, or it belongs to another call or runtime.
+pub(crate) fn live_function<'js>(ctx: &Ctx<'js>, token: &str) -> Option<Function<'js>> {
+    let mut parts = token.splitn(4, ':');
+    let scope: u64 = parts.next()?.parse().ok()?;
+    let index: usize = parts.next()?.parse().ok()?;
+    let nonce: u64 = parts.next()?.parse().ok()?;
+    let invoker = find_scope(scope, nonce)?;
+    // SAFETY: an entry in `SCOPES` points at a live scope (see `Callback::call`).
+    let raw = unsafe { (*invoker).function_raw(ctx.as_raw().as_ptr(), index) }?;
+    // SAFETY: `function_raw` handed over one reference to a value of this
+    // context, which the new `Value` now owns.
+    unsafe { Value::from_raw(ctx.clone(), raw) }.into_function()
+}
+
+impl<'js> CallScope<'js> {
+    pub(crate) fn new(ctx: Ctx<'js>, binding: &str, functions: Vec<Function<'js>>, identity: ScopeIdentity) -> Self {
         let registry = crate::retained::registry_of(&ctx);
         let retainable = RefCell::new(vec![false; functions.len()]);
         Self {
-            id,
-            // A random, process-local nonce makes a callback token unforgeable: script data
-            // shaped like a token cannot carry a live scope's nonce, so it never resolves.
-            nonce: RandomState::new().hash_one(id),
+            id: identity.id,
+            nonce: identity.nonce,
             ctx,
             binding: binding.to_string(),
             functions,
@@ -370,52 +615,58 @@ impl<'js> CallScope<'js> {
         }
     }
 
-    /// Rewrites the numeric markers the sandbox emitted into resolvable tokens,
-    /// noting which callbacks sit at a position the manifest marks `retain`.
-    pub(crate) fn resolve_markers(&self, args: &mut [serde_json::Value]) {
+    /// Notes which of this call's callbacks sit at a position the manifest
+    /// marks `retain`. Only tokens carrying this call's own id and nonce count;
+    /// anything else shaped like a marker is the script's plain data.
+    pub(crate) fn note_retainable(&self, args: &[serde_json::Value]) {
+        self.mark_retainable(args)
+    }
+
+    /// The function index a token names, when it is one of this call's own.
+    fn own_index(&self, token: &str) -> Option<usize> {
+        let mut parts = token.splitn(4, ':');
+        let id: u64 = parts.next()?.parse().ok()?;
+        let index: usize = parts.next()?.parse().ok()?;
+        let nonce: u64 = parts.next()?.parse().ok()?;
+        (id == self.id && nonce == self.nonce && index < self.functions.len()).then_some(index)
+    }
+
+    fn mark_retainable(&self, args: &[serde_json::Value]) {
         if self.functions.is_empty() {
             return;
         }
-        let mut path = Vec::new();
-        for (index, arg) in args.iter_mut().enumerate() {
-            path.push(PathStep::Index(index));
-            self.resolve_value(arg, &mut path);
-            path.pop();
+        let mut steps: Vec<(Option<usize>, PathStep)> = Vec::new();
+        let mut pending: Vec<(&serde_json::Value, usize)> = Vec::new();
+        for (index, arg) in args.iter().enumerate() {
+            steps.push((None, PathStep::Index(index)));
+            pending.push((arg, steps.len() - 1));
         }
-    }
-
-    fn resolve_value(&self, value: &mut serde_json::Value, path: &mut Vec<PathStep>) {
-        match value {
-            serde_json::Value::Array(items) => {
-                for (index, item) in items.iter_mut().enumerate() {
-                    path.push(PathStep::Index(index));
-                    self.resolve_value(item, path);
-                    path.pop();
-                }
-            }
-            serde_json::Value::Object(map) => {
-                if map.len() == 1
-                    && let Some(index) = map.get(CALLBACK_MARKER).and_then(|v| v.as_u64())
-                    && (index as usize) < self.functions.len()
-                {
-                    if let Some(registry) = &self.registry
-                        && registry.is_retainable(&self.binding, path)
-                    {
-                        self.retainable.borrow_mut()[index as usize] = true;
+        while let Some((value, at)) = pending.pop() {
+            match value {
+                serde_json::Value::Array(items) => {
+                    for (index, item) in items.iter().enumerate() {
+                        steps.push((Some(at), PathStep::Index(index)));
+                        pending.push((item, steps.len() - 1));
                     }
-                    map.insert(
-                        CALLBACK_MARKER.to_string(),
-                        serde_json::Value::String(format!("{}:{}:{}:{}", self.id, index, self.nonce, self.binding)),
-                    );
-                    return;
                 }
-                for (key, item) in map.iter_mut() {
-                    path.push(PathStep::Key(key.clone()));
-                    self.resolve_value(item, path);
-                    path.pop();
+                serde_json::Value::Object(map) => {
+                    if map.len() == 1
+                        && let Some(index) = map.get(CALLBACK_MARKER).and_then(|v| v.as_str()).and_then(|t| self.own_index(t))
+                    {
+                        if let Some(registry) = &self.registry
+                            && registry.is_retainable(&self.binding, &path_to(&steps, at))
+                        {
+                            self.retainable.borrow_mut()[index] = true;
+                        }
+                        continue;
+                    }
+                    for (key, item) in map.iter() {
+                        steps.push((Some(at), PathStep::Key(key.clone())));
+                        pending.push((item, steps.len() - 1));
+                    }
                 }
+                _ => {}
             }
-            _ => {}
         }
     }
 
@@ -439,31 +690,35 @@ impl<'js> CallScope<'js> {
             function.call((Rest(js_args),))
         };
 
-        match outcome {
-            Ok(value) => settled(&self.ctx, binding, value),
-            Err(QjsError::Exception) => {
-                let exception = self.ctx.catch();
-                let (name, message) = describe_exception(&exception);
-                if message.contains("interrupted") {
-                    *self.fatal.borrow_mut() = Some(exception);
-                    return Err(CallbackError::Limit {
-                        binding: binding.to_string(),
-                    });
-                }
-                let error = CallbackError::Threw {
+        let exception = match outcome {
+            Ok(value) => match settled(&self.ctx, binding, value) {
+                Ok(json) => return Ok(json),
+                Err(Unsettled::Error(error)) => return Err(error),
+                Err(Unsettled::Threw(exception)) => exception,
+            },
+            Err(QjsError::Exception) => self.ctx.catch(),
+            Err(other) => {
+                return Err(CallbackError::Threw {
                     binding: binding.to_string(),
-                    name,
-                    message,
-                };
-                self.thrown.borrow_mut().push((error.to_string(), exception));
-                Err(error)
+                    name: None,
+                    message: other.to_string(),
+                })
             }
-            Err(other) => Err(CallbackError::Threw {
+        };
+        let (name, message) = describe_exception(&exception);
+        if message.contains("interrupted") {
+            *self.fatal.borrow_mut() = Some(exception);
+            return Err(CallbackError::Limit {
                 binding: binding.to_string(),
-                name: None,
-                message: other.to_string(),
-            }),
+            });
         }
+        let error = CallbackError::Threw {
+            binding: binding.to_string(),
+            name,
+            message,
+        };
+        self.thrown.borrow_mut().push((error.to_string(), exception));
+        Err(error)
     }
 
     /// Runs `body` with this scope's callbacks callable, then expires them.
@@ -523,6 +778,16 @@ impl Drop for DepthGuard {
 }
 
 impl Invoke for CallScope<'_> {
+    fn function_raw(&self, context: *mut rquickjs::qjs::JSContext, index: usize) -> Option<rquickjs::qjs::JSValue> {
+        if self.ctx.as_raw().as_ptr() != context {
+            return None;
+        }
+        let function = self.functions.get(index)?;
+        // SAFETY: `context` is this scope's live context and the function is
+        // a live value of it; the duplicate is the one reference handed over.
+        Some(unsafe { rquickjs::qjs::JS_DupValue(context, function.as_raw()) })
+    }
+
     fn invoke(&self, index: usize, args: &[serde_json::Value]) -> Result<serde_json::Value, CallbackError> {
         if self.fatal.borrow().is_some() {
             return Err(CallbackError::Limit {
@@ -574,35 +839,57 @@ impl Invoke for CallScope<'_> {
     }
 }
 
-fn is_thenable(value: &Value<'_>) -> bool {
+/// Whether `value` is a promise or has a callable `then`. Reading `then` can
+/// throw (a getter, a revoked proxy); that throw is the caller's to report.
+fn is_thenable(value: &Value<'_>) -> rquickjs::Result<bool> {
     if value.is_promise() {
-        return true;
+        return Ok(true);
     }
     let Some(object) = value.as_object() else {
-        return false;
+        return Ok(false);
     };
-    object
-        .get::<_, Value>("then")
-        .map(|then| then.is_function())
-        .unwrap_or(false)
+    object.get::<_, Value>("then").map(|then| then.is_function())
 }
 
+/// What a script threw, as the JavaScript runtimes describe it: an object's
+/// `name` and its `message` as text (`"callback threw"` when it has none), and
+/// anything else, a function included, as `String(value)`.
 fn describe_exception(exception: &Value<'_>) -> (Option<String>, String) {
-    if let Some(text) = exception.as_string().and_then(|s| s.to_string().ok()) {
-        return (None, text);
-    }
-    if let Some(object) = exception.as_object() {
-        let read = |object: &Object<'_>, key: &str| -> Option<String> {
-            object
-                .get::<_, Value>(key)
-                .ok()
-                .and_then(|v| v.as_string().and_then(|s| s.to_string().ok()))
+    const NO_MESSAGE: &str = "callback threw";
+    if let Some(object) = exception.as_object().filter(|_| !exception.is_function()) {
+        let name = object
+            .get::<_, Value>("name")
+            .ok()
+            .and_then(|v| v.as_string().and_then(|s| s.to_string().ok()));
+        let message = match object.get::<_, Value>("message") {
+            Ok(message) if !message.is_undefined() && !message.is_null() => {
+                js_string(&message).unwrap_or_else(|| NO_MESSAGE.to_string())
+            }
+            Ok(_) => NO_MESSAGE.to_string(),
+            Err(_) => {
+                let _ = exception.ctx().catch();
+                NO_MESSAGE.to_string()
+            }
         };
-        let name = read(object, "name");
-        let message = read(object, "message").unwrap_or_default();
         return (name, message);
     }
-    (None, String::from("callback threw a non-error value"))
+    (None, js_string(exception).unwrap_or_else(|| NO_MESSAGE.to_string()))
+}
+
+/// `String(value)`; `None` when that throws.
+fn js_string(value: &Value<'_>) -> Option<String> {
+    if let Some(symbol) = value.as_symbol() {
+        let description = symbol.description().ok()?;
+        let description = description.as_string().and_then(|s| s.to_string().ok()).unwrap_or_default();
+        return Some(format!("Symbol({description})"));
+    }
+    match value.get::<rquickjs::convert::Coerced<String>>() {
+        Ok(text) => Some(text.0),
+        Err(_) => {
+            let _ = value.ctx().catch();
+            None
+        }
+    }
 }
 
 /// A parameter the manifest declares as a function, checked before the host runs.

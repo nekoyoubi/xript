@@ -72,9 +72,9 @@ fn a_slow_continuation_is_charged_to_its_own_call() {
     )
     .unwrap();
 
-    let tight = rt.execute_within_async("(async () => { await wait(60); return 'tight'; })()", Some(150));
+    let tight = rt.execute_within_async("await wait(60); return 'tight';", Some(150));
     let slow = rt.execute_within_async(
-        "(async () => { await wait(10); var end = Date.now() + 300; while (Date.now() < end) {} return 'slow'; })()",
+        "await wait(10); var end = Date.now() + 300; while (Date.now() < end) {} return 'slow';",
         Some(5_000),
     );
     let (tight, slow) = join(tight, slow);

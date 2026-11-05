@@ -20,6 +20,13 @@ public class CallbackCorpusTests
         }
     }
 
+    /// <summary>
+    /// A fresh budget clock per case that advances 10 µs on every read. The corpus's runaway
+    /// callbacks are bare <c>while (true) {}</c> loops, so this ends them after a fixed number of
+    /// statements, and a case that should fit inside its budget fits however slow the machine is.
+    /// </summary>
+    private static Helpers.TestClock BudgetClock => new(stepMs: 0.01);
+
     public static TheoryData<string> CaseNames()
     {
         var data = new TheoryData<string>();
@@ -32,6 +39,7 @@ public class CallbackCorpusTests
     {
         public int TypedCalls;
         public XriptCallback? Stashed;
+        public JsonElement? StashedMarker;
         public readonly List<RetainedCallback> Kept = [];
 
         public int Keep(RetainedCallback handle)
@@ -81,6 +89,10 @@ public class CallbackCorpusTests
         (XriptCallback.From(value) ?? throw new InvalidOperationException("not a callback")).Retain();
 
     private static JsonElement Json(object? value) => JsonSerializer.SerializeToElement(value);
+
+    /// <summary><c>{ "inner": [value] }</c>, the nested shape the hand-back probes use.</summary>
+    private static JsonElement Inner(JsonElement value) =>
+        JsonDocument.Parse($$"""{"inner":[{{value.GetRawText()}}]}""").RootElement.Clone();
 
     private static JsonElement? Resolve(JsonElement[] payload, JsonElement path)
     {
@@ -177,8 +189,28 @@ public class CallbackCorpusTests
             {
                 var at = Resolve(args.Skip(1).ToArray(), args[0]);
                 state.Stashed = at is { } value ? XriptCallback.From(value) : null;
+                state.StashedMarker = at;
                 return Json(null);
             },
+            ["handBack"] = args =>
+            {
+                var at = Resolve(args.Skip(2).ToArray(), args[0]) ?? Json(null);
+                return args[1].GetBoolean() ? Inner(at) : at;
+            },
+            ["callWithSelf"] = args =>
+            {
+                var at = Resolve(args.Skip(1).ToArray(), args[0]) ?? throw new InvalidOperationException("nothing at path");
+                var callback = XriptCallback.From(at) ?? throw new InvalidOperationException("not a callback");
+                return callback.Invoke(at, Inner(at));
+            },
+            ["callStashing"] = args =>
+            {
+                var at = Resolve(args.Skip(1).ToArray(), args[0]) ?? throw new InvalidOperationException("nothing at path");
+                state.Stashed = XriptCallback.From(at) ?? throw new InvalidOperationException("not a callback");
+                state.StashedMarker = at;
+                return state.Stashed.Invoke();
+            },
+            ["handStashed"] = _ => state.StashedMarker ?? Json(null),
             ["typed"] = _ =>
             {
                 state.TypedCalls++;
@@ -378,7 +410,7 @@ public class CallbackCorpusTests
         var script = entry.TryGetProperty("script", out var s) ? s.GetString() : null;
         var state = new ProbeState();
 
-        XriptRuntime? rt = XriptRuntime.Create(ManifestFor(entry), new RuntimeOptions { HostBindings = Probe(state) });
+        XriptRuntime? rt = XriptRuntime.Create(ManifestFor(entry), BudgetClock.Drive(new RuntimeOptions { HostBindings = Probe(state) }));
         try
         {
             if (entry.TryGetProperty("mods", out var mods))

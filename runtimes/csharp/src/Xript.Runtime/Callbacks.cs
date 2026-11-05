@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Runtime.ExceptionServices;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using Jint;
 using Jint.Native;
 using Jint.Native.Object;
@@ -97,19 +96,28 @@ internal sealed class CallbackScope : IDisposable
     private static readonly ConcurrentDictionary<long, CallbackScope> Live = new();
     private static long _nextId;
 
+    /// <summary>
+    /// The process-local key a token's nonce is derived from. A token cannot be forged without
+    /// it, and a token this process issued stays recognisable after its call has ended.
+    /// </summary>
+    private static readonly byte[] TokenKey = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+
     private readonly long _id = Interlocked.Increment(ref _nextId);
-    // A random, process-local nonce makes a callback token unforgeable: script data shaped
-    // like a token cannot carry a live scope's nonce, so it never resolves.
-    private readonly long _nonce = BitConverter.ToInt64(System.Security.Cryptography.RandomNumberGenerator.GetBytes(8));
+    private long? _nonce;
+
+    private long Nonce => _nonce ??= NonceFor(_id);
+
+    private static long NonceFor(long id) =>
+        BitConverter.ToInt64(System.Security.Cryptography.HMACSHA256.HashData(TokenKey, BitConverter.GetBytes(id)), 0);
     private readonly int _thread = Environment.CurrentManagedThreadId;
     private readonly Engine _engine;
     private readonly string _binding;
-    private readonly JsValue[] _functions;
-    private readonly Func<JsonElement, JsValue> _toJs;
-    private readonly Func<JsValue, JsonElement> _toJson;
+    private readonly List<JsValue> _functions = [];
+    private readonly Func<JsonElement, string, JsValue> _toJs;
+    private readonly Func<JsValue, string, JsonElement> _toJson;
     private readonly RetainPositions _positions;
     private readonly RetainedRegistry? _registry;
-    private readonly bool[] _retainable;
+    private readonly List<bool> _retainable = [];
     private readonly List<(CallbackException Error, JsValue Original)> _thrown = [];
 
     [ThreadStatic]
@@ -121,9 +129,8 @@ internal sealed class CallbackScope : IDisposable
     internal CallbackScope(
         Engine engine,
         string binding,
-        JsValue functions,
-        Func<JsonElement, JsValue> toJs,
-        Func<JsValue, JsonElement> toJson,
+        Func<JsonElement, string, JsValue> toJs,
+        Func<JsValue, string, JsonElement> toJson,
         RetainPositions? positions = null,
         RetainedRegistry? registry = null)
     {
@@ -133,10 +140,6 @@ internal sealed class CallbackScope : IDisposable
         _toJson = toJson;
         _positions = positions ?? RetainPositions.None;
         _registry = registry;
-        _functions = functions is ObjectInstance array && functions.IsArray()
-            ? Enumerable.Range(0, (int)array.Get("length").AsNumber()).Select(i => array.Get(i.ToString())).ToArray()
-            : [];
-        _retainable = new bool[_functions.Length];
         Live[_id] = this;
         (_open ??= []).Add(this);
     }
@@ -155,82 +158,59 @@ internal sealed class CallbackScope : IDisposable
 
     internal RetainedCallback Retain(int index)
     {
-        if (_registry is null || index < 0 || index >= _functions.Length)
+        if (_registry is null || index < 0 || index >= _functions.Count)
             throw new RetainException(_binding, "undeclared");
         return _registry.Retain(_functions[index], _retainable[index], _binding);
     }
 
     internal static bool TryFind(long id, long nonce, out CallbackScope scope)
     {
-        if (Live.TryGetValue(id, out scope!) && scope._thread == Environment.CurrentManagedThreadId && scope._nonce == nonce)
+        if (Live.TryGetValue(id, out scope!) && scope._thread == Environment.CurrentManagedThreadId && scope.Nonce == nonce)
             return true;
         scope = null!;
         return false;
     }
 
+    /// <summary>
+    /// What a callback marker crossing into the sandbox of <paramref name="engine"/> becomes:
+    /// the script's own function while the call it was passed to is running here, <c>undefined</c>
+    /// for a token this process issued that no longer resolves (its call ended, or it belongs to
+    /// another runtime or thread), and null for anything else, which stays plain data. The token
+    /// itself never reaches the script.
+    /// </summary>
+    internal static JsValue? Revive(string token, Engine engine)
+    {
+        var parts = token.Split(':', 4);
+        if (parts.Length != 4
+            || !long.TryParse(parts[0], out var id)
+            || !int.TryParse(parts[1], out var index)
+            || !long.TryParse(parts[2], out var nonce)
+            || nonce != NonceFor(id))
+            return null;
+        if (TryFind(id, nonce, out var scope) && ReferenceEquals(scope._engine, engine)
+            && index >= 0 && index < scope._functions.Count)
+            return scope._functions[index];
+        return JsValue.Undefined;
+    }
+
     /// <summary>Whether a scope with this id and nonce is live on the calling thread.</summary>
     internal static bool IsLive(long id, long nonce) => TryFind(id, nonce, out _);
 
-    /// <summary>Rewrites the numeric markers the sandbox emitted into resolvable tokens.</summary>
-    internal JsonElement[] ResolveMarkers(JsonElement[] args)
+    /// <summary>
+    /// Takes a script function found at <paramref name="path"/> in the binding's arguments and
+    /// returns the token its callback marker carries.
+    /// </summary>
+    internal string Add(JsValue function, IReadOnlyList<object> path)
     {
-        if (_functions.Length == 0) return args;
-        return args.Select((arg, index) =>
-        {
-            var node = JsonNode.Parse(arg.GetRawText());
-            node = Resolve(node, [index]);
-            return JsonSerializer.SerializeToElement(node);
-        }).ToArray();
-    }
-
-    private JsonNode? Resolve(JsonNode? node, List<object> path)
-    {
-        switch (node)
-        {
-            case JsonArray array:
-                for (var i = 0; i < array.Count; i++)
-                {
-                    path.Add(i);
-                    var resolved = Resolve(array[i], path);
-                    path.RemoveAt(path.Count - 1);
-                    if (!ReferenceEquals(resolved, array[i]))
-                    {
-                        array[i] = null;
-                        array[i] = resolved;
-                    }
-                }
-                return array;
-            case JsonObject obj:
-                if (obj.Count == 1
-                    && obj.TryGetPropertyValue(XriptCallback.Marker, out var marker)
-                    && marker is JsonValue value
-                    && value.TryGetValue<double>(out var number)
-                    && number >= 0 && number < _functions.Length && number == Math.Floor(number))
-                {
-                    _retainable[(int)number] = _positions.Matches(path);
-                    return new JsonObject { [XriptCallback.Marker] = $"{_id}:{(int)number}:{_nonce}:{_binding}" };
-                }
-                foreach (var key in obj.Select(p => p.Key).ToList())
-                {
-                    var current = obj[key];
-                    path.Add(key);
-                    var resolved = Resolve(current, path);
-                    path.RemoveAt(path.Count - 1);
-                    if (!ReferenceEquals(resolved, current))
-                    {
-                        obj[key] = null;
-                        obj[key] = resolved;
-                    }
-                }
-                return obj;
-            default:
-                return node;
-        }
+        var index = _functions.Count;
+        _functions.Add(function);
+        _retainable.Add(_positions.Matches(path));
+        return $"{_id}:{index}:{Nonce}:{_binding}";
     }
 
     internal JsonElement Invoke(int index, JsonElement[] args)
     {
-        if (index < 0 || index >= _functions.Length)
+        if (index < 0 || index >= _functions.Count)
         {
             if (Fatal is not null)
                 throw new CallbackException(_binding, "limit");
@@ -250,15 +230,17 @@ internal sealed class CallbackScope : IDisposable
         if (Fatal is not null)
             throw new CallbackException(binding, "limit");
 
-        var jsArgs = args.Select(_toJs).ToArray();
-        JsValue result;
+        var jsArgs = args.Select(arg => _toJs(arg, binding)).ToArray();
         try
         {
-            result = _engine.Call(function, JsValue.Undefined, jsArgs);
+            var result = _engine.Call(function, JsValue.Undefined, jsArgs);
+            if (IsThenable(result))
+                throw new CallbackException(binding, "promise");
+            return _toJson(result, binding);
         }
         catch (JavaScriptException ex)
         {
-            var (name, message) = Describe(ex.Error, ex.Message);
+            var (name, message) = Describe(ex.Error);
             var error = new CallbackException(binding, "threw", name, message);
             _thrown.Add((error, ex.Error));
             throw error;
@@ -268,10 +250,6 @@ internal sealed class CallbackScope : IDisposable
             Fatal = ex;
             throw new CallbackException(binding, "limit");
         }
-
-        if (IsThenable(result))
-            throw new CallbackException(binding, "promise");
-        return _toJson(result);
     }
 
     /// <summary>
@@ -308,15 +286,35 @@ internal sealed class CallbackScope : IDisposable
         return value is ObjectInstance obj && obj.Get("then") is { } then && then.IsObject() && then.AsObject() is Jint.Native.Function.Function;
     }
 
-    internal static (string? Name, string Message) Describe(JsValue error, string fallback)
+    /// <summary>
+    /// The <c>name</c> and message a thrown value reaches the host with, the way the JavaScript
+    /// runtimes describe it: an object's own <c>message</c> (a string, or a number or boolean as
+    /// its text), <c>callback threw</c> for an object without one, and any other thrown value,
+    /// a primitive or a function, as <c>String(value)</c> (<c>42</c>, <c>null</c>, <c>undefined</c>).
+    /// </summary>
+    internal static (string? Name, string Message) Describe(JsValue error)
     {
+        if (error is Jint.Native.Function.Function function)
+        {
+            try
+            {
+                return (null, Jint.Runtime.TypeConverter.ToString(function));
+            }
+            catch (JavaScriptException)
+            {
+                return (null, "callback threw");
+            }
+        }
         if (error is ObjectInstance obj)
         {
             var name = obj.Get("name");
             var message = obj.Get("message");
-            return (name.IsString() ? name.AsString() : null, message.IsString() ? message.AsString() : fallback);
+            var text = message.IsString() ? message.AsString()
+                : message.IsNumber() || message.IsBoolean() ? Jint.Runtime.TypeConverter.ToString(message)
+                : "callback threw";
+            return (name.IsString() ? name.AsString() : null, text);
         }
-        return (null, error.IsString() ? error.AsString() : fallback);
+        return (null, error.IsSymbol() ? error.ToString() : Jint.Runtime.TypeConverter.ToString(error));
     }
 }
 
@@ -357,7 +355,4 @@ internal sealed record FunctionParamCheck(int Index, string Name, bool Optional)
     private static bool IsFunctionType(JsonElement type) =>
         (type.ValueKind == JsonValueKind.String && type.GetString() == "function")
         || (type.ValueKind == JsonValueKind.Object && type.TryGetProperty("function", out _));
-
-    internal static string ToJson(List<FunctionParamCheck> checks) =>
-        JsonSerializer.Serialize(checks.Select(c => new { index = c.Index, name = c.Name, optional = c.Optional }));
 }

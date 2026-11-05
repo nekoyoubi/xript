@@ -1,7 +1,13 @@
 using Xript.Runtime;
+using Xript.Runtime.Tests.Helpers;
 
 namespace Xript.Runtime.Tests;
 
+/// <summary>
+/// Budgets run on a <see cref="TestClock"/>: <c>spin</c> spends three seconds through
+/// <c>elapse</c>, so every outcome is decided by the declared numbers, not by how busy the
+/// machine is.
+/// </summary>
 public class SlotLimitsTests
 {
     /// <summary>
@@ -13,6 +19,7 @@ public class SlotLimitsTests
             "xript": "0.8",
             "name": "limits-host",
             "limits": { "timeout_ms": {{manifestTimeoutMs}} },
+            "bindings": { {{TestClock.ElapseDeclaration}} },
             "slots": [
                 {
                     "id": "bounded.commands",
@@ -35,7 +42,7 @@ public class SlotLimitsTests
         {
             "xript": "0.8", "name": "spinner", "version": "1.0.0",
             "entry": { "script": "main.js", "format": "script", "exports": {
-                "spin": { "description": "burns wall clock" },
+                "spin": { "description": "spends three seconds of budget" },
                 "quick": { "description": "returns at once" }
             }},
             "fills": {
@@ -48,12 +55,9 @@ public class SlotLimitsTests
         }
         """;
 
-    // `spin` outlasts every budget under test, so whether it returns is decided entirely
-    // by the deadline in force.
     private const string SpinnerSource = """
         xript.exports.register('spin', function() {
-            var end = Date.now() + 3000;
-            while (Date.now() < end) {}
+            elapse(3000);
             return 'finished';
         });
         xript.exports.register('quick', function() { return 'quick'; });
@@ -61,7 +65,10 @@ public class SlotLimitsTests
 
     private static XriptRuntime MakeRuntime(long manifestTimeoutMs, long slotTimeoutMs, long? hardTimeoutMs = null)
     {
-        var options = new RuntimeOptions { Capabilities = [] };
+        var clock = new TestClock();
+        var bindings = new HostBindings();
+        bindings.AddFunction("elapse", clock.ElapseBinding);
+        var options = clock.Drive(new RuntimeOptions { Capabilities = [], HostBindings = bindings });
         if (hardTimeoutMs is { } hard)
             options.HardLimits = new ExecutionLimits { TimeoutMs = hard };
 

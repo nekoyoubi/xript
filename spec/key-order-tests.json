@@ -28,6 +28,12 @@
       "hostValue": { "outer": { "z": true, "b": false } },
       "probe": "(function () { var keys = []; for (var k in v.outer) keys.push(k); return keys.join(','); })()",
       "expected": "z,b"
+    },
+    {
+      "name": "unusual keys keep JavaScript's own key order",
+      "hostValue": { "": 1, "\u0000": 2, "😀": 3, "4294967295": 4, "-1": 5, "01": 6, "4294967294": 7 },
+      "probe": "JSON.stringify(Object.keys(v)) + '|' + Object.keys(v).map(function (k) { return v[k]; }).join(',')",
+      "expected": "[\"4294967294\",\"\",\"\\u0000\",\"😀\",\"4294967295\",\"-1\",\"01\"]|7,1,2,3,4,5,6"
     }
   ],
   "echo": [
@@ -35,6 +41,11 @@
       "name": "a script object round-trips in authored order",
       "script": "(function () { var r = echo({ x: 1, a: 2 }); return Object.keys(r[0]).join(','); })()",
       "expected": "x,a"
+    },
+    {
+      "name": "unusual keys round-trip in JavaScript's own key order",
+      "script": "(function () { var o = {}; o[''] = 1; o['\\u0000'] = 2; o['\\uD83D\\uDE00'] = 3; o['4294967295'] = 4; o['-1'] = 5; o['01'] = 6; o['4294967294'] = 7; var r = echo(o)[0]; return JSON.stringify(Object.keys(r)) + '|' + Object.keys(r).map(function (k) { return r[k]; }).join(','); })()",
+      "expected": "[\"4294967294\",\"\",\"\\u0000\",\"😀\",\"4294967295\",\"-1\",\"01\"]|7,1,2,3,4,5,6"
     }
   ],
   "hook": [

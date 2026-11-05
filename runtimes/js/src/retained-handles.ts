@@ -18,3 +18,23 @@ export function retainedResolverFor(value: unknown): RetainedResolver | undefine
 	if (value === null || typeof value !== "object") return undefined;
 	return resolvers.get(value);
 }
+
+/**
+ * Resolves a call-scoped callback crossing back into a sandbox: a fresh handle on the original
+ * script function while its binding call is still running in `context`'s runtime, otherwise
+ * `undefined`.
+ */
+export type ScopedResolver = (context: QuickJSContext) => QuickJSHandle | undefined;
+
+const scopedResolvers = new WeakMap<object, ScopedResolver>();
+
+/** Records `callback` as a call-scoped callback proxy, so its own call recognizes it coming back. */
+export function registerScopedCallback(callback: object, resolver: ScopedResolver): void {
+	scopedResolvers.set(callback, resolver);
+}
+
+/** The resolver for `value` when it is a call-scoped callback proxy from any runtime. */
+export function scopedResolverFor(value: unknown): ScopedResolver | undefined {
+	if (typeof value !== "function") return undefined;
+	return scopedResolvers.get(value);
+}

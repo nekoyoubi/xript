@@ -5,15 +5,16 @@ import type {
 	QuickJSAsyncContext,
 	QuickJSAsyncRuntime,
 	QuickJSWASMModule,
-	AsyncFunctionImplementation,
 } from "quickjs-emscripten-core";
 import type { AsyncVariant } from "./quickjs-loader.js";
 import { AmbiguousExportError, BindingError, CapabilityDeniedError, CancellationError, InvokeError, ModEntryError, ImportDeniedError, ModuleUnsupportedError, LibraryUnavailableError, LibraryRegistrationError } from "./errors.js";
 import { grantedSatisfies } from "./capabilities.js";
 import { findImportSpecifier, findImportSpecifiers, detectCommonJS } from "./module-support.js";
-import { marshalToQuickJS, safeDispose } from "./marshal.js";
+import { marshalArgsToQuickJS, marshalToQuickJS, safeDispose } from "./marshal.js";
+import { containFault, containSurface, guardEngineCallback, guardHostCallbacks, GUARDED_JSON_SOURCE, isExhausted, SAFE_ASYNC_STACK_BYTES, stackLimitBytes } from "./stack-guard.js";
 import { CallbackScope, callbackSupportFor, configureCallbacks, functionParamChecks, functionParamViolation, readResult, releaseCallbackSupport, type CallbackSupport } from "./callbacks.js";
 import { CallerContext, type CallerLane } from "./caller-context.js";
+import { installConsoleSupport, readConsoleArgument, releaseConsoleSupport } from "./console-args.js";
 import { DEFAULT_MAX_RETAINED_CALLBACKS } from "./retained.js";
 import { retainPositions } from "./retain-positions.js";
 import type { DebugOptions, DebugSession } from "./debug-types.js";
@@ -37,6 +38,7 @@ import {
 	hostAccessorFor,
 	isAccessorBinding,
 	omitsBinding,
+	ownMember,
 	presenceProbeSource,
 	providedBindingPaths,
 	type HostAccessor,
@@ -44,24 +46,53 @@ import {
 
 export { missingBindingNames } from "./presence.js";
 
+/**
+ * Builds an error through the sandbox's own error factory, so it is a real instance of the
+ * class a script catches it as (`BindingError`, `CapabilityDeniedError`, `TypeError`).
+ * `null` when the factory is not installed or cannot run, and the caller builds a plain one.
+ */
+function constructError(
+	context: QuickJSContext | QuickJSAsyncContext,
+	kind: "binding" | "capability" | "type",
+	first: string,
+	second = "",
+): QuickJSHandle | null {
+	const factory = callbackSupportFor(context).errors;
+	if (!factory?.alive) return null;
+	const args = [context.newString(kind), context.newString(first), context.newString(second)];
+	const result = context.callFunction(factory, context.undefined, ...args);
+	for (const arg of args) arg.dispose();
+	if (result.error) {
+		result.error.dispose();
+		return null;
+	}
+	return result.value;
+}
+
 function createCapabilityError(
 	context: QuickJSContext | QuickJSAsyncContext,
 	binding: string,
 	capability: string,
 ): { error: QuickJSHandle } {
+	const constructed = constructError(context, "capability", binding, capability);
+	if (constructed) return { error: constructed };
 	const err = context.newError(
 		`${binding}() requires the "${capability}" capability, which hasn't been granted to this script. Ask the app developer to enable it.`,
 	);
 	const nameStr = context.newString("CapabilityDeniedError");
-	context.setProp(err, "name", nameStr);
+	defineValue(context, err, "name", nameStr);
 	nameStr.dispose();
 	const capStr = context.newString(capability);
-	context.setProp(err, "capability", capStr);
+	defineValue(context, err, "capability", capStr);
 	capStr.dispose();
 	const bindStr = context.newString(binding);
-	context.setProp(err, "binding", bindStr);
+	defineValue(context, err, "binding", bindStr);
 	bindStr.dispose();
 	return { error: err };
+}
+
+function createTypeError(context: QuickJSContext | QuickJSAsyncContext, message: string): { error: QuickJSHandle } {
+	return { error: constructError(context, "type", message) ?? context.newError({ name: "TypeError", message }) };
 }
 
 function createBindingError(
@@ -69,14 +100,41 @@ function createBindingError(
 	binding: string,
 	message: string,
 ): { error: QuickJSHandle } {
+	const constructed = constructError(context, "binding", binding, message);
+	if (constructed) return { error: constructed };
 	const err = context.newError(`${binding}(): ${message}`);
 	const nameStr = context.newString("BindingError");
-	context.setProp(err, "name", nameStr);
+	defineValue(context, err, "name", nameStr);
 	nameStr.dispose();
 	const bindStr = context.newString(binding);
-	context.setProp(err, "binding", bindStr);
+	defineValue(context, err, "binding", bindStr);
 	bindStr.dispose();
 	return { error: err };
+}
+
+/**
+ * A synchronous call (`execute`, a host-facing export invocation) runs the script to completion,
+ * so a promise it ends with has not settled and has no value to hand over; the call belongs in
+ * its async counterpart, which awaits it.
+ */
+function refusePromiseResult(context: QuickJSContext | QuickJSAsyncContext, handle: QuickJSHandle, subject = "execute()", asyncEntry = "executeAsync()"): void {
+	const state = context.getPromiseState(handle);
+	if (state.type === "fulfilled" && state.notAPromise) return;
+	if (state.type === "fulfilled" && state.value !== handle) state.value.dispose();
+	if (state.type === "rejected") state.error.dispose();
+	handle.dispose();
+	throw new Error(
+		`${subject} returned a promise, which a synchronous call cannot await. Use ${asyncEntry}, which awaits the promise and returns what it settles to`,
+	);
+}
+
+/** Reads a result for the host and releases its handle, whether or not reading it threw. */
+function readAndRelease(context: QuickJSContext | QuickJSAsyncContext, handle: QuickJSHandle): unknown {
+	try {
+		return readResult(context, handle);
+	} finally {
+		if (handle.alive) handle.dispose();
+	}
 }
 
 interface Manifest {
@@ -366,12 +424,18 @@ function injectConsole(
 	context: QuickJSContext | QuickJSAsyncContext,
 	sandboxConsole: ConsoleHandler,
 ): void {
+	installConsoleSupport(context);
 	const consoleObj = context.newObject();
 
 	for (const method of Object.keys(CONSOLE_METHOD_SEVERITY)) {
 		const severity = CONSOLE_METHOD_SEVERITY[method];
 		const fn = context.newFunction(method, (...handles: QuickJSHandle[]) => {
-			const args = handles.map((h) => (context.typeof(h) === "function" ? context.dump(h) : readResult(context, h)));
+			const args: unknown[] = [];
+			for (const handle of handles) {
+				const read = readConsoleArgument(context, handle);
+				if ("interrupted" in read) return { error: read.interrupted };
+				args.push(read.value);
+			}
 			dispatchConsole(sandboxConsole, method, severity, args);
 		});
 		context.setProp(consoleObj, method, fn);
@@ -414,6 +478,80 @@ function blockCodeGeneration(context: QuickJSContext | QuickJSAsyncContext): voi
 		};
 		${SEAL_FUNCTION_CONSTRUCTORS}
 	`);
+	evalAndDispose(context, GUARDED_JSON_SOURCE);
+}
+
+/**
+ * The built-ins the runtime's own sandbox-side code calls, captured when that code is installed,
+ * before any script runs, so a script that later replaces one changes nothing the runtime does.
+ */
+const CAPTURED_INTRINSICS = `
+	var reflectApply = Reflect.apply;
+	var defineProperty = Object.defineProperty;
+	var objectKeys = Object.keys;
+	var objectCreate = Object.create;
+	var objectFreeze = Object.freeze;
+	var isArray = Array.isArray;
+	var ErrorCtor = Error;
+	var TypeErrorCtor = TypeError;
+	function put(target, key, value) {
+		defineProperty(target, key, { value: value, writable: true, enumerable: true, configurable: true });
+	}
+	function append(list, value) {
+		put(list, list.length, value);
+	}
+	var setPrototypeOf = Object.setPrototypeOf;
+	function bareList() {
+		var list = [];
+		setPrototypeOf(list, null);
+		return list;
+	}
+`;
+
+const internalsByContext = new WeakMap<QuickJSContext | QuickJSAsyncContext, QuickJSHandle>();
+
+/** The host-held, prototype-free object the runtime's sandbox-side internals live on. No script can reach it. */
+function internalsOf(context: QuickJSContext | QuickJSAsyncContext): QuickJSHandle {
+	let held = internalsByContext.get(context);
+	if (!held) {
+		held = context.unwrapResult(context.evalCode(
+			`(function () {${CAPTURED_INTRINSICS} var internals = objectCreate(null); internals.put = put; internals.lock = function (target, key, value) { defineProperty(target, key, { value: value, writable: false, enumerable: false, configurable: false }); }; return internals; })()`,
+			"xript-internals.js",
+		));
+		internalsByContext.set(context, held);
+	}
+	return held;
+}
+
+function internal(context: QuickJSContext | QuickJSAsyncContext, name: string): QuickJSHandle {
+	return context.getProp(internalsOf(context), name);
+}
+
+/**
+ * Defines `key` on `target` as an ordinary writable data property. Unlike an assignment it never
+ * reaches a setter, so a name such as `__proto__` lands as a property instead of a prototype.
+ */
+function defineValue(context: QuickJSContext | QuickJSAsyncContext, target: QuickJSHandle, key: string, value: QuickJSHandle): void {
+	const put = internal(context, "put");
+	const keyHandle = context.newString(key);
+	const result = context.callFunction(put, context.undefined, target, keyHandle, value);
+	keyHandle.dispose();
+	put.dispose();
+	context.unwrapResult(result).dispose();
+}
+
+function releaseInternals(context: QuickJSContext | QuickJSAsyncContext): void {
+	const held = internalsByContext.get(context);
+	internalsByContext.delete(context);
+	if (held?.alive) held.dispose();
+}
+
+/** Evaluates `body` as the body of a function given the internals object, with the captured intrinsics in scope. */
+function installInternals(context: QuickJSContext | QuickJSAsyncContext, body: string): void {
+	const fn = context.unwrapResult(context.evalCode(`(function (internals) {${CAPTURED_INTRINSICS}${body}\n})`, "xript-internals.js"));
+	const result = context.callFunction(fn, context.undefined, internalsOf(context));
+	fn.dispose();
+	context.unwrapResult(result).dispose();
 }
 
 function evalAndDispose(context: QuickJSContext | QuickJSAsyncContext, code: string): void {
@@ -426,25 +564,36 @@ function evalAndDispose(context: QuickJSContext | QuickJSAsyncContext, code: str
 }
 
 function injectErrorClasses(context: QuickJSContext | QuickJSAsyncContext): void {
-	evalAndDispose(context, `
+	const factory = context.evalCode(`(function () {
+		var defineProperty = Object.defineProperty;
+		function own(target, key, value) {
+			defineProperty(target, key, { value: value, writable: true, enumerable: true, configurable: true });
+		}
 		class BindingError extends Error {
 			constructor(binding, message) {
 				super(binding + "(): " + message);
-				this.name = "BindingError";
-				this.binding = binding;
+				own(this, "name", "BindingError");
+				own(this, "binding", binding);
 			}
 		}
 		class CapabilityDeniedError extends Error {
 			constructor(binding, capability) {
 				super(binding + '() requires the "' + capability + '" capability, which hasn\\'t been granted to this script. Ask the app developer to enable it.');
-				this.name = "CapabilityDeniedError";
-				this.capability = capability;
-				this.binding = binding;
+				own(this, "name", "CapabilityDeniedError");
+				own(this, "capability", capability);
+				own(this, "binding", binding);
 			}
 		}
 		globalThis.BindingError = BindingError;
 		globalThis.CapabilityDeniedError = CapabilityDeniedError;
-	`);
+		var TypeErrorCtor = TypeError;
+		return function (kind, first, second) {
+			if (kind === "binding") return new BindingError(first, second);
+			if (kind === "capability") return new CapabilityDeniedError(first, second);
+			return new TypeErrorCtor(first);
+		};
+	})()`, "xript-errors.js");
+	callbackSupportFor(context).errors = context.unwrapResult(factory);
 }
 
 function emitAudit(
@@ -465,21 +614,35 @@ function stripBindingPrefix(error: BindingError): string {
 	return error.message.startsWith(prefix) ? error.message.slice(prefix.length) : error.message;
 }
 
+/** A host error's message without a leading `<binding>(): `, so the binding error names it once. */
+function unprefixed(binding: string, error: unknown): string {
+	const message = error instanceof Error ? error.message : String(error);
+	const prefix = `${binding}(): `;
+	return message.startsWith(prefix) ? message.slice(prefix.length) : message;
+}
+
 const ASYNC_ON_SYNC_TIER_MESSAGE =
 	'declares "async": true in the manifest, and the synchronous sandbox cannot await it. The app must create the runtime with the async entry point (initXriptAsync / createSandboxAsync) for this binding to be callable.';
 
 const ASYNC_IN_CALLBACK_MESSAGE =
 	"cannot be called from inside a callback passed to a binding: it is async, and a callback runs synchronously";
 
-/**
- * The asyncify build can hold one suspended call per runtime. A second async binding called
- * while one is suspended is refused with this, rather than failing inside the engine.
- */
-const ONE_SUSPENDED_CALL_MESSAGE =
-	"cannot suspend while another call on this runtime is suspended in an async binding: the asyncify build suspends one call at a time, so await async bindings from one call at a time, or give concurrent work its own runtime";
+const ASYNC_FROM_EXECUTE_MESSAGE =
+	"is async, and a synchronous call (execute(), invokeExport()) runs to completion, so nothing can await it. Use executeAsync() or invokeExportAsync() instead";
 
-/** Async contexts with a call suspended in an async binding right now. */
-const suspendedContexts = new WeakSet<QuickJSAsyncContext>();
+/**
+ * How an async sandbox settles the promises its async bindings hand out: `drain` runs the job
+ * queue after one settles, as the call that started it, and `syncDepth` counts the synchronous
+ * `execute` calls running right now, during which an async binding refuses to start.
+ */
+interface AsyncHost {
+	drain(lane: CallerLane): void;
+	syncDepth: number;
+	/** Promises handed to scripts whose host work has not settled; disposing the runtime releases them. */
+	pending: Set<{ dispose(): void }>;
+}
+
+const asyncHosts = new WeakMap<QuickJSAsyncContext, AsyncHost>();
 
 function createAsyncUnsupportedStub(
 	context: QuickJSContext | QuickJSAsyncContext,
@@ -511,7 +674,7 @@ function createHostFunctionWrapper(
 		}
 
 		const refusal = functionParamViolation(qualifiedName, functionChecks, (i) => argTypeOf(context, handles[i]));
-		if (refusal) return { error: context.newError({ name: "TypeError", message: refusal }) };
+		if (refusal) return createTypeError(context, refusal);
 
 		if (audit) audit(qualifiedName, binding.capability ?? null);
 
@@ -534,8 +697,7 @@ function createHostFunctionWrapper(
 			if (e instanceof BindingError) {
 				return createBindingError(context, e.binding, stripBindingPrefix(e));
 			}
-			const message = e instanceof Error ? e.message : String(e);
-			return createBindingError(context, qualifiedName, message);
+			return createBindingError(context, qualifiedName, unprefixed(qualifiedName, e));
 		} finally {
 			scope.close();
 		}
@@ -557,11 +719,11 @@ function registerAsyncBinding(
 	grantedCapabilities: Set<string>,
 	callerContext: CallerContext,
 	audit?: (binding: string, capability: string | null) => void,
-): void {
-	const asyncKey = `__xript_async_${qualifiedName.replace(/\./g, "_")}`;
+): QuickJSHandle {
 	const capabilityDenied = !!(binding.capability && !grantedSatisfies(grantedCapabilities, binding.capability));
 	const missingImpl = !hostFn;
 
+	let asyncImpl: QuickJSHandle = context.undefined;
 	if (!capabilityDenied && !missingImpl) {
 		const functionChecks = functionParamChecks(binding.params);
 		const support = callbackSupportFor(context);
@@ -569,10 +731,12 @@ function registerAsyncBinding(
 		const settle = async (scope: CallbackScope, nativeArgs: unknown[]) => {
 			try {
 				const result = await hostFn!(...nativeArgs);
+				if (!context.alive) return context.undefined;
 				const stopped = scope.takeOutcome(undefined);
 				if (stopped) return { error: stopped };
 				return marshalToQuickJS(context, result, qualifiedName);
 			} catch (e) {
+				if (!context.alive) return context.undefined;
 				const original = scope.takeOutcome(e);
 				if (original) return { error: original };
 				if (e instanceof CapabilityDeniedError) {
@@ -581,17 +745,17 @@ function registerAsyncBinding(
 				if (e instanceof BindingError) {
 					return createBindingError(context, e.binding, stripBindingPrefix(e));
 				}
-				const message = e instanceof Error ? e.message : String(e);
-				return createBindingError(context, qualifiedName, message);
+				return createBindingError(context, qualifiedName, unprefixed(qualifiedName, e));
 			} finally {
 				scope.close();
 			}
 		};
-		const asyncImpl = context.newAsyncifiedFunction(asyncKey, ((...handles: QuickJSHandle[]) => {
+		asyncImpl = context.newFunction(qualifiedName, (...handles: QuickJSHandle[]) => {
 			const refusal = functionParamViolation(qualifiedName, functionChecks, (i) => argTypeOf(context, handles[i]));
-			if (refusal) return { error: context.newError({ name: "TypeError", message: refusal }) };
+			if (refusal) return createTypeError(context, refusal);
 			if (support.depth > 0) return createBindingError(context, qualifiedName, ASYNC_IN_CALLBACK_MESSAGE);
-			if (suspendedContexts.has(context)) return createBindingError(context, qualifiedName, ONE_SUSPENDED_CALL_MESSAGE);
+			const host = asyncHosts.get(context);
+			if (!host || host.syncDepth > 0) return createBindingError(context, qualifiedName, ASYNC_FROM_EXECUTE_MESSAGE);
 			if (audit) audit(qualifiedName, binding.capability ?? null);
 			const scope = new CallbackScope(context, support, qualifiedName, retainsAt);
 			let nativeArgs: unknown[];
@@ -607,69 +771,50 @@ function registerAsyncBinding(
 				return { error: halted };
 			}
 			const lane = callerContext.lane();
+			const deferred = context.newPromise();
+			const held = {
+				dispose(): void {
+					deferred.dispose();
+					scope.close();
+				},
+			};
+			host.pending.add(held);
+			let pending: Promise<QuickJSHandle | { error: QuickJSHandle }>;
 			scope.enter();
 			try {
-				const pending = settle(scope, nativeArgs);
-				suspendedContexts.add(context);
-				return resumeWithin(callerContext, lane, pending, () => suspendedContexts.delete(context));
+				pending = settle(scope, nativeArgs);
 			} finally {
 				scope.leave();
 			}
-		}) as AsyncFunctionImplementation);
-		context.setProp(context.global, asyncKey, asyncImpl);
-		asyncImpl.dispose();
+			void pending.then((outcome) => {
+				const handle = "error" in outcome ? outcome.error : outcome;
+				host.pending.delete(held);
+				if (!context.alive) return;
+				if ("error" in outcome) deferred.reject(handle);
+				else deferred.resolve(handle);
+				safeDispose(context, handle);
+				host.drain(lane);
+			}, () => undefined);
+			return deferred.handle;
+		});
 	}
 
-	const escapedName = qualifiedName.replace(/"/g, '\\"');
-	const escapedCap = (binding.capability || "").replace(/"/g, '\\"');
-
-	let wrapperCode: string;
-	if (capabilityDenied) {
-		wrapperCode = `(function() { throw new CapabilityDeniedError("${escapedName}", "${escapedCap}"); })`;
-	} else if (missingImpl) {
-		wrapperCode = `(function() { throw new BindingError("${escapedName}", "not implemented by the app"); })`;
-	} else {
-		wrapperCode = `(function(...args) { return globalThis["${asyncKey}"](...args); })`;
-	}
-
-	const wrapperResult = context.evalCode(wrapperCode, "xript-async-binding.js");
-	if (wrapperResult.error) {
-		wrapperResult.error.dispose();
-		return;
-	}
-
-	context.setProp(context.global, `__xript_gate_${qualifiedName.replace(/\./g, "_")}`, wrapperResult.value);
-	wrapperResult.value.dispose();
+	const kind = capabilityDenied ? "denied" : missingImpl ? "missing" : "call";
+	const args = [kind, qualifiedName, binding.capability || ""].map((text) => context.newString(text));
+	const factory = context.unwrapResult(context.evalCode(ASYNC_GATE_FACTORY_SOURCE, "xript-async-binding.js"));
+	const gate = context.callFunction(factory, context.undefined, ...args, asyncImpl);
+	factory.dispose();
+	for (const handle of args) handle.dispose();
+	if (asyncImpl !== context.undefined) asyncImpl.dispose();
+	return context.unwrapResult(gate);
 }
 
-/**
- * Re-enters `lane` around the resumption of the call that awaited `pending`. The asyncify build
- * resumes a suspended call synchronously inside the callback it passes to `then`, so running
- * that callback in the lane brackets exactly the code the resumed call runs.
- */
-function resumeWithin<T>(
-	callerContext: CallerContext,
-	lane: CallerLane,
-	pending: Promise<T>,
-	resumed: () => void,
-): Promise<T> {
-	const then = pending.then.bind(pending);
-	Object.defineProperty(pending, "then", {
-		value: (onFulfilled?: (value: T) => unknown, onRejected?: (reason: unknown) => unknown) =>
-			then(
-				(value: T) => {
-					resumed();
-					return onFulfilled ? callerContext.within(lane, () => onFulfilled(value)) : value;
-				},
-				(reason: unknown) => {
-					resumed();
-					if (onRejected) return callerContext.within(lane, () => onRejected(reason));
-					throw reason;
-				},
-			),
-	});
-	return pending;
-}
+/** Builds an async binding's sandbox-side wrapper; the binding's names arrive as arguments, never as source. */
+const ASYNC_GATE_FACTORY_SOURCE = `(function (kind, name, capability, impl) {
+	if (kind === "denied") return function () { throw new CapabilityDeniedError(name, capability); };
+	if (kind === "missing") return function () { throw new BindingError(name, "not implemented by the app"); };
+	return function (...args) { return impl(...args); };
+})`;
 
 function registerBinding(
 	context: QuickJSContext | QuickJSAsyncContext,
@@ -683,18 +828,16 @@ function registerBinding(
 	audit?: (binding: string, capability: string | null) => void,
 ): void {
 	if (asyncCaller && binding.async) {
-		registerAsyncBinding(context as QuickJSAsyncContext, qualifiedName, binding, hostFn, grantedCapabilities, asyncCaller, audit);
-		const gateKey = `__xript_gate_${qualifiedName.replace(/\./g, "_")}`;
-		const gateFn = context.getProp(context.global, gateKey);
-		context.setProp(target, propName, gateFn);
+		const gateFn = registerAsyncBinding(context as QuickJSAsyncContext, qualifiedName, binding, hostFn, grantedCapabilities, asyncCaller, audit);
+		defineValue(context, target, propName, gateFn);
 		gateFn.dispose();
 	} else if (!asyncCaller && binding.async) {
 		const stub = createAsyncUnsupportedStub(context, qualifiedName);
-		context.setProp(target, propName, stub);
+		defineValue(context, target, propName, stub);
 		stub.dispose();
 	} else {
 		const fn = createHostFunctionWrapper(context, qualifiedName, binding, hostFn, grantedCapabilities, audit);
-		context.setProp(target, propName, fn);
+		defineValue(context, target, propName, fn);
 		fn.dispose();
 	}
 }
@@ -712,12 +855,12 @@ function registerNamespaceMembers(
 	for (const [memberName, memberBinding] of Object.entries(binding.members)) {
 		const qualifiedName = `${qualifiedPrefix}.${memberName}`;
 		if (omitsBinding(memberBinding, hostNs, memberName)) {
-			context.setProp(nsObj, memberName, context.undefined);
+			defineValue(context, nsObj, memberName, context.undefined);
 		} else if (isAccessor(memberBinding)) {
 			registerAccessor(context, nsObj, memberName, qualifiedName, memberBinding, hostNs, grantedCapabilities, audit);
 		} else if (isNamespace(memberBinding)) {
 			const nestedNsObj = context.newObject();
-			const nestedHostNs = hostNs ? (hostNs[memberName] as HostNamespace | undefined) : undefined;
+			const nestedHostNs = ownMember(hostNs, memberName) as HostNamespace | undefined;
 			registerNamespaceMembers(
 				context,
 				nestedNsObj,
@@ -728,10 +871,10 @@ function registerNamespaceMembers(
 				asyncCaller,
 				audit,
 			);
-			context.setProp(nsObj, memberName, nestedNsObj);
+			defineValue(context, nsObj, memberName, nestedNsObj);
 			nestedNsObj.dispose();
 		} else {
-			const hostFn = hostNs ? (hostNs[memberName] as HostFunction | undefined) : undefined;
+			const hostFn = ownMember(hostNs, memberName) as HostFunction | undefined;
 			registerBinding(context, nsObj, memberName, qualifiedName, memberBinding, hostFn, grantedCapabilities, asyncCaller, audit);
 		}
 	}
@@ -784,17 +927,17 @@ function injectBindings(
 
 	for (const [name, binding] of Object.entries(manifest.bindings)) {
 		if (omitsBinding(binding, hostBindings, name)) {
-			context.setProp(context.global, name, context.undefined);
+			defineValue(context, context.global, name, context.undefined);
 		} else if (isAccessor(binding)) {
 			registerAccessor(context, context.global, name, name, binding, hostBindings, grantedCapabilities, audit);
 		} else if (isNamespace(binding)) {
 			const nsObj = context.newObject();
-			const hostNs = hostBindings[name] as HostNamespace | undefined;
+			const hostNs = ownMember(hostBindings, name) as HostNamespace | undefined;
 			registerNamespaceMembers(context, nsObj, binding, hostNs, name, grantedCapabilities, asyncCaller, audit);
-			context.setProp(context.global, name, nsObj);
+			defineValue(context, context.global, name, nsObj);
 			nsObj.dispose();
 		} else {
-			const hostFn = hostBindings[name] as HostFunction | undefined;
+			const hostFn = ownMember(hostBindings, name) as HostFunction | undefined;
 			registerBinding(context, context.global, name, name, binding, hostFn, grantedCapabilities, asyncCaller, audit);
 		}
 	}
@@ -802,20 +945,17 @@ function injectBindings(
 	freezeNamespaces(context, manifest);
 }
 
-const DEEP_FREEZE_HELPER = `
-	globalThis.__xript_deep_freeze = function(obj) {
-		if (obj === null || typeof obj !== "object") return obj;
-		var keys = Object.getOwnPropertyNames(obj);
-		for (var i = 0; i < keys.length; i++) {
-			var descriptor = Object.getOwnPropertyDescriptor(obj, keys[i]);
-			var value = descriptor && descriptor.value;
-			if (value !== null && typeof value === "object") {
-				globalThis.__xript_deep_freeze(value);
-			}
-		}
-		return Object.freeze(obj);
-	};
-`;
+/** A function expression that freezes an object and every object reachable through its data properties. */
+const DEEP_FREEZE_SOURCE = `function deepFreeze(obj) {
+	if (obj === null || (typeof obj !== "object" && typeof obj !== "function")) return obj;
+	var keys = Object.getOwnPropertyNames(obj);
+	for (var i = 0; i < keys.length; i++) {
+		var descriptor = Object.getOwnPropertyDescriptor(obj, keys[i]);
+		var value = descriptor && descriptor.value;
+		if (value !== null && typeof value === "object" && !Object.isFrozen(value)) deepFreeze(value);
+	}
+	return Object.freeze(obj);
+}`;
 
 function freezeNamespaces(context: QuickJSContext | QuickJSAsyncContext, manifest: Manifest): void {
 	if (!manifest.bindings) return;
@@ -826,9 +966,58 @@ function freezeNamespaces(context: QuickJSContext | QuickJSAsyncContext, manifes
 
 	if (namespaceNames.length === 0) return;
 
-	evalAndDispose(context, DEEP_FREEZE_HELPER);
-	const freezeCode = namespaceNames.map((name) => `__xript_deep_freeze(${name});`).join("\n");
-	evalAndDispose(context, freezeCode);
+	callWithNames(
+		context,
+		`(function (names) { ${DEEP_FREEZE_SOURCE} for (var i = 0; i < names.length; i++) deepFreeze(Object.getOwnPropertyDescriptor(globalThis, names[i]).value); })`,
+		namespaceNames,
+	);
+}
+
+/**
+ * Locks every global the runtime installed for scripts: each becomes a non-writable,
+ * non-configurable property of `globalThis`, and `hooks`, `xript`, `console`, and the error
+ * classes are frozen. A mod can then neither replace nor delete a binding another mod calls.
+ */
+function sealGlobals(context: QuickJSContext | QuickJSAsyncContext, manifest: Manifest): void {
+	const names = [...Object.keys(manifest.bindings ?? {}), "hooks", "events", "xript", "console", "BindingError", "CapabilityDeniedError"];
+	callWithNames(
+		context,
+		`(function (names) {
+			${DEEP_FREEZE_SOURCE}
+			var frozenHolders = { hooks: true, xript: true, console: true, BindingError: true, CapabilityDeniedError: true };
+			for (var i = 0; i < names.length; i++) {
+				var descriptor = Object.getOwnPropertyDescriptor(globalThis, names[i]);
+				if (!descriptor) continue;
+				if (descriptor.configurable) {
+					if ("value" in descriptor) {
+						Object.defineProperty(globalThis, names[i], { value: descriptor.value, writable: false, enumerable: descriptor.enumerable, configurable: false });
+					} else {
+						Object.defineProperty(globalThis, names[i], { get: descriptor.get, set: descriptor.set, enumerable: descriptor.enumerable, configurable: false });
+					}
+				}
+				if (frozenHolders[names[i]] === true && "value" in descriptor) {
+					deepFreeze(descriptor.value);
+					if (typeof descriptor.value === "function" && descriptor.value.prototype) Object.freeze(descriptor.value.prototype);
+				}
+			}
+		})`,
+		names,
+	);
+}
+
+/** Evaluates `source`, a function expression taking one array of strings, and calls it with `names` as data. */
+function callWithNames(context: QuickJSContext | QuickJSAsyncContext, source: string, names: string[]): void {
+	const fn = context.unwrapResult(context.evalCode(source, "xript-names.js"));
+	const array = context.newArray();
+	names.forEach((name, index) => {
+		const text = context.newString(name);
+		context.setProp(array, index, text);
+		text.dispose();
+	});
+	const result = context.callFunction(fn, context.undefined, array);
+	array.dispose();
+	fn.dispose();
+	context.unwrapResult(result).dispose();
 }
 
 export interface FireHookOptions {
@@ -847,7 +1036,10 @@ function evalWithCallerContext(
 	factorySource: string,
 	clock: HandlerClock = UNTIMED,
 ): void {
-	const factory = context.unwrapResult(context.evalCode(factorySource, "xript-dispatch.js"));
+	const factory = context.unwrapResult(context.evalCode(
+		`(function (enterCaller, leaveCaller, internals) {${CAPTURED_INTRINSICS} return (${factorySource})(enterCaller, leaveCaller, internals); })`,
+		"xript-dispatch.js",
+	));
 	const enter = context.newFunction("enterCaller", (owner: QuickJSHandle) => {
 		const modId = context.dump(owner);
 		callerContext.enter(typeof modId === "string" ? modId : null);
@@ -857,7 +1049,7 @@ function evalWithCallerContext(
 		clock.stop(callerContext.depth);
 		callerContext.leave();
 	});
-	const result = context.callFunction(factory, context.undefined, enter, leave);
+	const result = context.callFunction(factory, context.undefined, enter, leave, internalsOf(context));
 	enter.dispose();
 	leave.dispose();
 	factory.dispose();
@@ -865,35 +1057,35 @@ function evalWithCallerContext(
 }
 
 function injectHookHelpers(context: QuickJSContext | QuickJSAsyncContext, callerContext: CallerContext, clock: HandlerClock): void {
-	evalWithCallerContext(context, callerContext, `(function (enterCaller, leaveCaller) {
-		var owners = {};
-		globalThis.__xript_hook_handlers = {};
-		globalThis.__xript_register_handler = function(key, handler, owner) {
-			if (!globalThis.__xript_hook_handlers[key]) {
-				globalThis.__xript_hook_handlers[key] = [];
+	evalWithCallerContext(context, callerContext, `(function (enterCaller, leaveCaller, internals) {
+		var handlersByKey = objectCreate(null);
+		var owners = objectCreate(null);
+		internals.__xript_register_handler = function(key, handler, owner) {
+			if (!handlersByKey[key]) {
+				handlersByKey[key] = [];
 				owners[key] = [];
 			}
-			globalThis.__xript_hook_handlers[key].push(handler);
-			owners[key].push(typeof owner === "string" ? owner : null);
+			append(handlersByKey[key], handler);
+			append(owners[key], typeof owner === "string" ? owner : null);
 		};
-		globalThis.__xript_fire_handlers = function(key, data) {
-			var handlers = globalThis.__xript_hook_handlers[key];
+		internals.__xript_fire_handlers = function(key, data) {
+			var handlers = handlersByKey[key];
 			if (!handlers || handlers.length === 0) return [];
 			var args;
-			if (data === undefined) {
-				args = [];
-			} else if (typeof data === "object" && data !== null && !Array.isArray(data)) {
-				args = Object.values(data);
+			if (typeof data === "object" && data !== null && !isArray(data)) {
+				var keys = objectKeys(data);
+				args = bareList();
+				for (var k = 0; k < keys.length; k++) args[k] = data[keys[k]];
 			} else {
-				args = [data];
+				args = data === undefined ? [] : [data];
 			}
-			var results = [];
+			var results = bareList();
 			for (var i = 0; i < handlers.length; i++) {
-				enterCaller(owners[key] ? owners[key][i] : null);
+				enterCaller(owners[key][i]);
 				try {
-					results.push(handlers[i].apply(null, args));
+					results[i] = reflectApply(handlers[i], null, args);
 				} catch(e) {
-					results.push(undefined);
+					results[i] = undefined;
 				} finally {
 					leaveCaller();
 				}
@@ -909,7 +1101,7 @@ function registerHandlerInContext(
 	handlerHandle: QuickJSHandle,
 	owner: string | null,
 ): void {
-	const registerFn = context.getProp(context.global, "__xript_register_handler");
+	const registerFn = internal(context, "__xript_register_handler");
 	const keyStr = context.newString(registryKey);
 	const ownerHandle = owner === null ? context.null : context.newString(owner);
 	const callResult = context.callFunction(registerFn, context.undefined, keyStr, handlerHandle, ownerHandle);
@@ -952,11 +1144,11 @@ function injectHooks(
 					}
 					registerHandlerInContext(context, registryKey, handles[0], callerContext.current());
 				});
-				context.setProp(hookNs, phase, regFn);
+				defineValue(context, hookNs, phase, regFn);
 				regFn.dispose();
 			}
 
-			context.setProp(hooksObj, hookName, hookNs);
+			defineValue(context, hooksObj, hookName, hookNs);
 			hookNs.dispose();
 		} else {
 			const registryKey = hookName;
@@ -969,7 +1161,7 @@ function injectHooks(
 				}
 				registerHandlerInContext(context, registryKey, handles[0], callerContext.current());
 			});
-			context.setProp(hooksObj, hookName, regFn);
+			defineValue(context, hooksObj, hookName, regFn);
 			regFn.dispose();
 		}
 	}
@@ -987,44 +1179,40 @@ function freezeHooksAndFragments(
 		.filter(([_, h]) => h.phases && h.phases.length > 0)
 		.map(([name]) => name);
 
-	const freezeParts = [
-		...hookNsNames.map((n) => `Object.freeze(hooks.${n});`),
-		"if (hooks.fragment) Object.freeze(hooks.fragment);",
-		"Object.freeze(hooks);",
-	];
-
-	evalAndDispose(context, freezeParts.join("\n"));
+	callWithNames(
+		context,
+		"(function (names) { for (var i = 0; i < names.length; i++) Object.freeze(hooks[names[i]]); if (hooks.fragment) Object.freeze(hooks.fragment); Object.freeze(hooks); })",
+		hookNsNames,
+	);
 }
 
 function injectFragmentAPI(context: QuickJSContext | QuickJSAsyncContext): void {
-	evalAndDispose(context, `
-		globalThis.__xript_fragment_handlers = {};
-		globalThis.__xript_register_fragment_handler = function(key, handler) {
-			if (!globalThis.__xript_fragment_handlers[key]) {
-				globalThis.__xript_fragment_handlers[key] = [];
+	installInternals(context, `
+		var fragmentHandlers = objectCreate(null);
+		internals.__xript_register_fragment_handler = function(key, handler) {
+			if (!fragmentHandlers[key]) {
+				fragmentHandlers[key] = [];
 			}
-			globalThis.__xript_fragment_handlers[key].push(handler);
+			append(fragmentHandlers[key], handler);
 		};
-		globalThis.__xript_fire_fragment_handlers = function(key, bindings) {
-			var handlers = globalThis.__xript_fragment_handlers[key];
+		internals.__xript_fire_fragment_handlers = function(key, bindings) {
+			var handlers = fragmentHandlers[key];
 			if (!handlers || handlers.length === 0) return [];
-			var allOps = [];
+			var allOps = bareList();
 			for (var i = 0; i < handlers.length; i++) {
-				var ops = [];
 				var fragmentProxy = {
-					toggle: function(target, condition) { ops.push({ op: "toggle", selector: target, value: !!condition }); },
-					addClass: function(target, className) { ops.push({ op: "addClass", selector: target, value: className }); },
-					removeClass: function(target, className) { ops.push({ op: "removeClass", selector: target, value: className }); },
-					setText: function(target, text) { ops.push({ op: "setText", selector: target, value: text }); },
-					setProp: function(target, prop, value) { ops.push({ op: "setProp", selector: target, prop: prop, value: value }); },
-					setAttr: function(target, attr, value) { ops.push({ op: "setAttr", selector: target, attr: attr, prop: attr, value: value }); },
-					removeAttr: function(target, attr) { ops.push({ op: "removeAttr", selector: target, attr: attr, prop: attr }); },
-					replaceChildren: function(target, content) { ops.push({ op: "replaceChildren", selector: target, value: content }); }
+					toggle: function(target, condition) { allOps[allOps.length] = ({ op: "toggle", selector: target, value: !!condition }); },
+					addClass: function(target, className) { allOps[allOps.length] = ({ op: "addClass", selector: target, value: className }); },
+					removeClass: function(target, className) { allOps[allOps.length] = ({ op: "removeClass", selector: target, value: className }); },
+					setText: function(target, text) { allOps[allOps.length] = ({ op: "setText", selector: target, value: text }); },
+					setProp: function(target, prop, value) { allOps[allOps.length] = ({ op: "setProp", selector: target, prop: prop, value: value }); },
+					setAttr: function(target, attr, value) { allOps[allOps.length] = ({ op: "setAttr", selector: target, attr: attr, prop: attr, value: value }); },
+					removeAttr: function(target, attr) { allOps[allOps.length] = ({ op: "removeAttr", selector: target, attr: attr, prop: attr }); },
+					replaceChildren: function(target, content) { allOps[allOps.length] = ({ op: "replaceChildren", selector: target, value: content }); }
 				};
 				try {
-					handlers[i](bindings, fragmentProxy);
+					reflectApply(handlers[i], undefined, [bindings, fragmentProxy]);
 				} catch(e) {}
-				allOps = allOps.concat(ops);
 			}
 			return allOps;
 		};
@@ -1042,7 +1230,7 @@ function injectFragmentAPI(context: QuickJSContext | QuickJSAsyncContext): void 
 			const fragmentId = context.dump(handles[0]);
 			const registryKey = `fragment:${lifecycle}:${fragmentId}`;
 
-			const registerFn = context.getProp(context.global, "__xript_register_fragment_handler");
+			const registerFn = internal(context, "__xript_register_fragment_handler");
 			const keyStr = context.newString(registryKey);
 			const callResult = context.callFunction(registerFn, context.undefined, keyStr, handles[1]);
 			keyStr.dispose();
@@ -1060,65 +1248,64 @@ function injectFragmentAPI(context: QuickJSContext | QuickJSAsyncContext): void 
 }
 
 function injectExportsAPI(context: QuickJSContext | QuickJSAsyncContext): void {
-	evalAndDispose(context, `
-		globalThis.__xript_exports = { "": {} };
-		globalThis.__xript_export_owner = "";
-		globalThis.__xript_set_export_owner = function(owner) {
+	installInternals(context, `
+		var exportsByOwner = objectCreate(null);
+		exportsByOwner[""] = objectCreate(null);
+		var exportOwner = "";
+		internals.__xript_set_export_owner = function(owner) {
 			var key = typeof owner === "string" ? owner : "";
-			globalThis.__xript_export_owner = key;
-			if (!globalThis.__xript_exports[key]) globalThis.__xript_exports[key] = {};
+			exportOwner = key;
+			if (!exportsByOwner[key]) exportsByOwner[key] = objectCreate(null);
 			return key;
 		};
-		globalThis.__xript_export_owners_of = function(name) {
+		function ownersOf(name) {
 			var owners = [];
-			var keys = Object.keys(globalThis.__xript_exports);
+			var keys = objectKeys(exportsByOwner);
 			for (var i = 0; i < keys.length; i++) {
-				if (typeof globalThis.__xript_exports[keys[i]][name] === "function") owners.push(keys[i]);
+				if (typeof exportsByOwner[keys[i]][name] === "function") append(owners, keys[i]);
 			}
 			return owners;
-		};
-		globalThis.xript = globalThis.xript || {};
-		globalThis.xript.exports = {
+		}
+		internals.__xript_export_owners_of = ownersOf;
+		if (typeof globalThis.xript !== "object" || globalThis.xript === null) globalThis.xript = {};
+		globalThis.xript.exports = objectFreeze({
 			register: function(name, fn) {
 				if (typeof name !== "string" || name.length === 0) {
-					throw new TypeError("xript.exports.register: name must be a non-empty string");
+					throw new TypeErrorCtor("xript.exports.register: name must be a non-empty string");
 				}
 				if (typeof fn !== "function") {
-					throw new TypeError("xript.exports.register: fn must be a function");
+					throw new TypeErrorCtor("xript.exports.register: fn must be a function");
 				}
-				var bucket = globalThis.__xript_exports[globalThis.__xript_export_owner];
-				bucket[name] = fn;
+				exportsByOwner[exportOwner][name] = fn;
 			}
-		};
-		Object.freeze(globalThis.xript.exports);
-		globalThis.__xript_invoke_export = function(name, args, owner) {
+		});
+		function failure(message, name, fields) {
+			var error = new ErrorCtor(message);
+			var keys = objectKeys(fields);
+			for (var i = 0; i < keys.length; i++) put(error, keys[i], fields[keys[i]]);
+			return error;
+		}
+		internals.__xript_invoke_export = function(name, args, owner) {
 			var fn;
 			if (typeof owner === "string") {
-				var bucket = globalThis.__xript_exports[owner];
+				var bucket = exportsByOwner[owner];
 				fn = bucket ? bucket[name] : undefined;
 			} else {
-				var owners = globalThis.__xript_export_owners_of(name);
+				var owners = ownersOf(name);
 				if (owners.length > 1) {
-					var ambiguous = new Error("export " + name + " is provided by more than one mod");
-					ambiguous.name = "AmbiguousExportError";
-					ambiguous.export = name;
-					ambiguous.owners = owners;
-					throw ambiguous;
+					throw failure("export " + name + " is provided by more than one mod", name, { name: "AmbiguousExportError", export: name, owners: owners });
 				}
-				fn = owners.length === 1 ? globalThis.__xript_exports[owners[0]][name] : undefined;
+				fn = owners.length === 1 ? exportsByOwner[owners[0]][name] : undefined;
 			}
 			if (typeof fn !== "function") {
-				var notFound = new Error("export " + name + " not found");
-				notFound.name = "InvokeError";
-				notFound.export = name;
-				throw notFound;
+				throw failure("export " + name + " not found", name, { name: "InvokeError", export: name });
 			}
-			return fn.apply(null, args || []);
+			return reflectApply(fn, null, args || []);
 		};
-		globalThis.__xript_harvest_exports = function(ns) {
+		internals.__xript_harvest_exports = function(ns) {
 			var harvested = [];
-			var bucket = globalThis.__xript_exports[globalThis.__xript_export_owner];
-			var keys = Object.keys(ns);
+			var bucket = exportsByOwner[exportOwner];
+			var keys = objectKeys(ns);
 			for (var i = 0; i < keys.length; i++) {
 				var name = keys[i];
 				if (name === "default") continue;
@@ -1126,7 +1313,7 @@ function injectExportsAPI(context: QuickJSContext | QuickJSAsyncContext): void {
 				if (typeof value !== "function") continue;
 				if (typeof bucket[name] === "function") continue;
 				bucket[name] = value;
-				harvested.push(name);
+				append(harvested, name);
 			}
 			return harvested;
 		};
@@ -1149,8 +1336,8 @@ function callInvokeExport(
 	args: unknown[],
 	owner: string | undefined,
 ) {
-	const argsHandle = marshalToQuickJS(context, args);
-	const invokeFn = context.getProp(context.global, "__xript_invoke_export");
+	const argsHandle = marshalArgsToQuickJS(context, args);
+	const invokeFn = internal(context, "__xript_invoke_export");
 	const nameStr = context.newString(exportName);
 	const ownerHandle = owner === undefined ? context.undefined : context.newString(owner);
 
@@ -1172,7 +1359,7 @@ function exportCaller(
 	owner: string | undefined,
 ): string | null {
 	if (owner !== undefined) return owner === "" ? null : owner;
-	const ownersOf = context.getProp(context.global, "__xript_export_owners_of");
+	const ownersOf = internal(context, "__xript_export_owners_of");
 	const nameStr = context.newString(exportName);
 	const result = context.callFunction(ownersOf, context.undefined, nameStr);
 	nameStr.dispose();
@@ -1191,7 +1378,7 @@ function setExportOwnerInContext(
 	context: QuickJSContext | QuickJSAsyncContext,
 	owner: string | null,
 ): void {
-	const setter = context.getProp(context.global, "__xript_set_export_owner");
+	const setter = internal(context, "__xript_set_export_owner");
 	const ownerStr = context.newString(owner ?? "");
 	const result = context.callFunction(setter, context.undefined, ownerStr);
 	ownerStr.dispose();
@@ -1205,6 +1392,7 @@ function invokeExportInContext(
 	exportName: string,
 	args: unknown[],
 	owner?: string,
+	refusePromise = false,
 ): unknown {
 	const callResult = callInvokeExport(context, exportName, args, owner);
 
@@ -1214,8 +1402,8 @@ function invokeExportInContext(
 		throwInvokeFailure(errorObj, exportName);
 	}
 
-	const value = readResult(context, callResult.value);
-	callResult.value.dispose();
+	if (refusePromise) refusePromiseResult(context, callResult.value, `the export "${exportName}"`, "its async invocation (invokeExportAsync(), invokeModExportAsync(), invokeCommandAsync())");
+	const value = readAndRelease(context, callResult.value);
 	return value;
 }
 
@@ -1246,8 +1434,7 @@ async function invokeExportAsyncInContext(
 		throwInvokeFailure(errorObj, exportName);
 	}
 
-	const value = readResult(context, awaited.value);
-	if (awaited.value.alive) awaited.value.dispose();
+	const value = readAndRelease(context, awaited.value);
 	return value;
 }
 
@@ -1262,7 +1449,7 @@ function fireFragmentHookInContext(
 		? marshalToQuickJS(context, bindings)
 		: context.undefined;
 
-	const fireFn = context.getProp(context.global, "__xript_fire_fragment_handlers");
+	const fireFn = internal(context, "__xript_fire_fragment_handlers");
 	const keyStr = context.newString(registryKey);
 
 	const callResult = context.callFunction(fireFn, context.undefined, keyStr, bindingsHandle);
@@ -1275,7 +1462,7 @@ function fireFragmentHookInContext(
 		return [];
 	}
 
-	const result = context.dump(callResult.value) as RawFragmentOp[];
+	const result = readResult(context, callResult.value) as RawFragmentOp[];
 	callResult.value.dispose();
 	return Array.isArray(result) ? result : [];
 }
@@ -1305,7 +1492,7 @@ function fireHookInContext(
 		? marshalToQuickJS(context, data)
 		: context.undefined;
 
-	const fireFn = context.getProp(context.global, "__xript_fire_handlers");
+	const fireFn = internal(context, "__xript_fire_handlers");
 	const keyStr = context.newString(registryKey);
 
 	const callResult = context.callFunction(fireFn, context.undefined, keyStr, dataHandle);
@@ -1378,25 +1565,12 @@ export interface RawFragmentOp {
 	value?: unknown;
 }
 
-/**
- * Evaluates to the host's half of a one-value slot: the host puts an invocation's arguments in
- * and the evaluated call takes them out, so they reach the sandbox without passing through a
- * global a mod could have replaced.
- */
-const INVOKE_ARGS_SLOT = `(function () {
-	var held;
-	Object.defineProperty(globalThis, "__xript_take_invoke_args", {
-		value: function () { var value = held; held = undefined; return value; },
-	});
-	return function (value) { held = value; };
-})()`;
-
 function harvestModuleExports(
 	context: QuickJSAsyncContext,
 	namespace: QuickJSHandle,
 	modName: string,
 ): string[] {
-	const harvestFn = context.getProp(context.global, "__xript_harvest_exports");
+	const harvestFn = internal(context, "__xript_harvest_exports");
 	const callResult = context.callFunction(harvestFn, context.undefined, namespace);
 	harvestFn.dispose();
 	if (namespace.alive) namespace.dispose();
@@ -1424,8 +1598,11 @@ export interface SandboxResult {
 	 * `timeoutOverrideMs` stands in for the manifest-wide budget for this one
 	 * call — a slot's `limits.timeout_ms` arrives here. The embedder's hard
 	 * ceiling still clamps it, so a manifest cannot buy more than the host gave.
+	 * `refusePromise` is set by the host-facing synchronous invocations: an export that ends in a
+	 * promise is refused rather than handed over unsettled, and in the async sandbox an async
+	 * binding refuses to start during the call. A hook fill dispatch leaves it unset.
 	 */
-	invokeExport: (name: string, args: unknown[], owner?: string, timeoutOverrideMs?: number) => unknown;
+	invokeExport: (name: string, args: unknown[], owner?: string, timeoutOverrideMs?: number, refusePromise?: boolean) => unknown;
 	invokeExportAsync: (
 		name: string,
 		args: unknown[],
@@ -1560,13 +1737,15 @@ interface InterruptFrame {
 function createInterruptStack(runtime: QuickJSRuntime | QuickJSAsyncRuntime, callerContext: CallerContext) {
 	const frames: InterruptFrame[] = [];
 
-	function handler(): boolean {
+	function due(): boolean {
 		for (const frame of frames) {
 			if (frame.cancellation?.cancelled) return true;
 			if (Date.now() >= frame.deadline) return true;
 		}
 		return false;
 	}
+
+	const handler = guardEngineCallback(runtime, due, true);
 
 	return function pushInterruptFrame(deadline: number, cancellation?: CancellationToken): () => void {
 		const frame: InterruptFrame = { deadline, cancellation };
@@ -1633,6 +1812,16 @@ function throwFromError(
 	throw err;
 }
 
+/** Installs `value` as a non-writable, non-configurable global no script can replace or delete. */
+function lockGlobal(context: QuickJSContext | QuickJSAsyncContext, name: string, value: QuickJSHandle): void {
+	const lock = internal(context, "lock");
+	const key = context.newString(name);
+	const result = context.callFunction(lock, context.undefined, context.global, key, value);
+	key.dispose();
+	lock.dispose();
+	context.unwrapResult(result).dispose();
+}
+
 function injectDebugProbe(context: QuickJSAsyncContext, controller: DebugController): void {
 	const shouldStop = controller.makeShouldStop();
 	const pause = controller.makePause();
@@ -1641,7 +1830,7 @@ function injectDebugProbe(context: QuickJSAsyncContext, controller: DebugControl
 		const line = context.dump(lineHandle) as number;
 		return shouldStop(line) ? context.true : context.false;
 	});
-	context.setProp(context.global, controller.probeNames.shouldStop, shouldFn);
+	lockGlobal(context, controller.probeNames.shouldStop, shouldFn);
 	shouldFn.dispose();
 
 	const pauseFn = context.newAsyncifiedFunction(controller.probeNames.pause, async (...handles: QuickJSHandle[]) => {
@@ -1651,7 +1840,7 @@ function injectDebugProbe(context: QuickJSAsyncContext, controller: DebugControl
 		await pause(line, column, locals);
 		return context.undefined;
 	});
-	context.setProp(context.global, controller.probeNames.pause, pauseFn);
+	lockGlobal(context, controller.probeNames.pause, pauseFn);
 	pauseFn.dispose();
 }
 
@@ -1689,11 +1878,10 @@ export function createSandboxSync(
 	if (memoryMb) {
 		runtime.setMemoryLimit(memoryMb * 1024 * 1024);
 	}
-	if (maxStackDepth) {
-		runtime.setMaxStackSize(maxStackDepth * 1024);
-	}
+	runtime.setMaxStackSize(stackLimitBytes(maxStackDepth));
 
 	const context = runtime.newContext();
+	guardHostCallbacks(context);
 	const retained = configureCallbacks(context, manifest.types, {
 		callerContext,
 		limit: limits.max_retained_callbacks ?? DEFAULT_MAX_RETAINED_CALLBACKS,
@@ -1725,6 +1913,7 @@ export function createSandboxSync(
 	injectExportsAPI(context);
 	freezeHooksAndFragments(context, manifest);
 	reportShadowedBindings(deprecations, replacedBindings(context, shadowable));
+	sealGlobals(context, manifest);
 
 	function execute(code: string): ExecutionResult {
 		if (cancellation?.cancelled) throw new CancellationError();
@@ -1744,14 +1933,14 @@ export function createSandboxSync(
 			throwFromError(errorObj, timeoutMs, cancellation);
 		}
 
-		const value = readResult(context, result.value);
-		result.value.dispose();
+		refusePromiseResult(context, result.value);
+		const value = readAndRelease(context, result.value);
 		return { value, duration_ms };
 	}
 
 	async function executeAsync(code: string): Promise<ExecutionResult> {
 		if (cancellation?.cancelled) throw new CancellationError();
-		const wrappedCode = `(async () => { ${code} })()`;
+		const wrappedCode = `(async () => { ${code}\n})()`;
 		const popInterrupt = pushInterruptFrame(Date.now() + timeoutMs, cancellation);
 		const start = performance.now();
 		let result;
@@ -1781,18 +1970,17 @@ export function createSandboxSync(
 			throwFromError(errorObj, timeoutMs, cancellation);
 		}
 
-		const value = readResult(context, awaited.value);
-		if (awaited.value.alive) awaited.value.dispose();
+		const value = readAndRelease(context, awaited.value);
 		return { value, duration_ms };
 	}
 
-	function invokeExport(name: string, args: unknown[], owner?: string, timeoutOverrideMs?: number): unknown {
+	function invokeExport(name: string, args: unknown[], owner?: string, timeoutOverrideMs?: number, refusePromise = false): unknown {
 		if (cancellation?.cancelled) throw new CancellationError();
 		const budgetMs = callTimeoutMs(timeoutOverrideMs);
 		const popInterrupt = pushInterruptFrame(Date.now() + budgetMs, cancellation);
 		try {
 			return callerContext.run(exportCaller(context, name, owner), () =>
-				invokeExportInContext(context, name, args, owner),
+				invokeExportInContext(context, name, args, owner, refusePromise),
 			);
 		} catch (error) {
 			throw interruptAsLimit(error, budgetMs, cancellation);
@@ -1871,13 +2059,16 @@ export function createSandboxSync(
 	}
 
 	function dispose(): void {
+		if (isExhausted(context)) return;
 		bus.dispose();
+		releaseConsoleSupport(context);
 		releaseCallbackSupport(context);
+		releaseInternals(context);
 		context.dispose();
 		runtime.dispose();
 	}
 
-	return { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, setExportOwner, fireHook, fireFragmentHook, ...busSurface(bus, callerContext, handlerBudget, callTimeoutMs()), debugSession, releaseRetained, dispose };
+	return containSurface(context, { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, setExportOwner, fireHook, fireFragmentHook, ...busSurface(bus, callerContext, handlerBudget, callTimeoutMs()), debugSession, releaseRetained, dispose });
 }
 
 export async function createSandboxAsync(
@@ -1905,6 +2096,7 @@ export async function createSandboxAsync(
 	const auditEmit = makeAuditEmitter(options.audit);
 
 	const context = await newAsyncContext(variant);
+	guardHostCallbacks(context);
 	const runtime = context.runtime;
 	const pushInterruptFrame = createInterruptStack(runtime, callerContext);
 	const retained = configureCallbacks(context, manifest.types, {
@@ -1929,9 +2121,7 @@ export async function createSandboxAsync(
 	if (memoryMb) {
 		runtime.setMemoryLimit(memoryMb * 1024 * 1024);
 	}
-	if (maxStackDepth) {
-		runtime.setMaxStackSize(maxStackDepth * 1024);
-	}
+	runtime.setMaxStackSize(stackLimitBytes(maxStackDepth, SAFE_ASYNC_STACK_BYTES));
 
 	const sandboxConsole = options.console ?? {};
 
@@ -1951,38 +2141,61 @@ export async function createSandboxAsync(
 	injectExportsAPI(context);
 	freezeHooksAndFragments(context, manifest);
 	reportShadowedBindings(deprecations, replacedBindings(context, shadowable));
+	sealGlobals(context, manifest);
 
 	if (debugController) {
 		injectDebugProbe(context, debugController);
 	}
 
-	const putInvokeArgs = context.unwrapResult(context.evalCode(INVOKE_ARGS_SLOT, "xript-invoke-args.js"));
+
+	const stalls = new Set<(failure: unknown) => void>();
+	const asyncHost: AsyncHost = { drain: drainWithin, syncDepth: 0, pending: new Set() };
+	asyncHosts.set(context, asyncHost);
 
 	/**
-	 * Drains the job queue in `lane`: the continuations it runs belong to the call that queued
-	 * them, so they are credited to that call's mod rather than to whichever call drains them.
+	 * Drains the job queue in `lane` under a fresh budget: the continuations it runs belong to
+	 * the call that queued them, so they are credited to that call's mod rather than to whichever
+	 * call drains them. A continuation stopped by its budget can never settle the call it belongs
+	 * to, so every call still waiting is failed with the stop instead of waiting forever.
 	 */
 	function drainWithin(lane: CallerLane): void {
-		callerContext.within(lane, () => runtime.executePendingJobs());
+		if (isExhausted(context)) return;
+		const popInterrupt = pushInterruptFrame(Date.now() + timeoutMs, cancellation);
+		let drained;
+		try {
+			drained = callerContext.within(lane, () => runtime.executePendingJobs());
+		} catch (error) {
+			const failure = containFault(context, error);
+			for (const stall of [...stalls]) stall(failure);
+			return;
+		} finally {
+			popInterrupt();
+		}
+		if (drained.error) {
+			const failure = context.dump(drained.error);
+			if (drained.error.alive) drained.error.dispose();
+			for (const stall of [...stalls]) stall(failure);
+		}
+	}
+
+	/** Waits for a call's promise, or for a drain that stopped the continuation it waits on. */
+	function untilSettled<T>(pending: Promise<T>): Promise<T> {
+		let stall: (failure: unknown) => void = () => undefined;
+		const stalled = new Promise<never>((_, reject) => {
+			stall = reject;
+		});
+		stalls.add(stall);
+		return Promise.race([pending, stalled]).finally(() => stalls.delete(stall));
 	}
 
 	/**
-	 * Invokes an export through `evalCodeAsync`, the one entry point the asyncify build can
-	 * suspend, so an export that awaits an async binding parks until the binding settles
-	 * instead of returning before it has run.
+	 * Invokes an export and waits on what it returns. The invocation and the first drain of the
+	 * job queue run back to back, before any other call can queue work, so everything that drain
+	 * runs belongs to this call; an export awaiting an async binding resumes when it settles.
 	 */
 	async function invokeSuspendable(name: string, args: unknown[], owner: string | undefined): Promise<unknown> {
 		const lane = callerContext.lane();
-		const argsHandle = marshalToQuickJS(context, args);
-		const put = context.callFunction(putInvokeArgs, context.undefined, argsHandle);
-		safeDispose(context, argsHandle);
-		if (put.error) put.error.dispose();
-		else put.value.dispose();
-		const ownerExpr = owner === undefined ? "undefined" : JSON.stringify(owner);
-		const result = await context.evalCodeAsync(
-			`__xript_invoke_export(${JSON.stringify(name)}, __xript_take_invoke_args(), ${ownerExpr})`,
-			"xript-invoke.js",
-		);
+		const result = callInvokeExport(context, name, args, owner);
 		if (result.error) {
 			const errorObj = context.dump(result.error) as InvokeErrorDump;
 			if (result.error.alive) result.error.dispose();
@@ -1991,14 +2204,19 @@ export async function createSandboxAsync(
 		const resolved = context.resolvePromise(result.value);
 		if (result.value.alive) result.value.dispose();
 		drainWithin(lane);
-		const awaited = await resolved;
+		let awaited;
+		try {
+			awaited = await untilSettled(resolved);
+		} catch (failure) {
+			if (failure instanceof Error) throw failure;
+			throwInvokeFailure(failure as InvokeErrorDump, name);
+		}
 		if (awaited.error) {
 			const errorObj = context.dump(awaited.error) as InvokeErrorDump;
 			if (awaited.error.alive) awaited.error.dispose();
 			throwInvokeFailure(errorObj, name);
 		}
-		const value = readResult(context, awaited.value);
-		if (awaited.value.alive) awaited.value.dispose();
+		const value = readAndRelease(context, awaited.value);
 		return value;
 	}
 
@@ -2007,9 +2225,11 @@ export async function createSandboxAsync(
 		const popInterrupt = pushInterruptFrame(Date.now() + timeoutMs, cancellation);
 		const start = performance.now();
 		let result;
+		asyncHost.syncDepth++;
 		try {
 			result = context.evalCode(code, "xript-script.js");
 		} finally {
+			asyncHost.syncDepth--;
 			popInterrupt();
 		}
 		const duration_ms = performance.now() - start;
@@ -2020,8 +2240,8 @@ export async function createSandboxAsync(
 			throwFromError(errorObj, timeoutMs, cancellation);
 		}
 
-		const value = readResult(context, result.value);
-		result.value.dispose();
+		refusePromiseResult(context, result.value);
+		const value = readAndRelease(context, result.value);
 		return { value, duration_ms };
 	}
 
@@ -2032,7 +2252,7 @@ export async function createSandboxAsync(
 		}
 		const { code: instrumented, breakableLines } = instrumentSource(code, debugController.probeNames);
 		debugController.setBreakableLines("xript-script.js", breakableLines);
-		const wrappedCode = `(async () => { ${instrumented} })()`;
+		const wrappedCode = `(async () => { ${instrumented}\n})()`;
 		const start = performance.now();
 		const lane = callerContext.lane();
 		const result = await context.evalCodeAsync(wrappedCode, "xript-script.js");
@@ -2057,8 +2277,7 @@ export async function createSandboxAsync(
 			throwFromError(errorObj, timeoutMs, cancellation);
 		}
 
-		const value = readResult(context, awaited.value);
-		if (awaited.value.alive) awaited.value.dispose();
+		const value = readAndRelease(context, awaited.value);
 		debugController.session.resume();
 		return { value, duration_ms };
 	}
@@ -2105,13 +2324,13 @@ export async function createSandboxAsync(
 
 	async function executeAsync(code: string): Promise<ExecutionResult> {
 		if (cancellation?.cancelled) throw new CancellationError();
-		const wrappedCode = `(async () => { ${code} })()`;
+		const wrappedCode = `(async () => { ${code}\n})()`;
 		const popInterrupt = pushInterruptFrame(Date.now() + timeoutMs, cancellation);
 		const start = performance.now();
 		const lane = callerContext.lane();
 		let result;
 		try {
-			result = await context.evalCodeAsync(wrappedCode, "xript-script.js");
+			result = context.evalCode(wrappedCode, "xript-script.js");
 		} finally {
 			popInterrupt();
 		}
@@ -2127,7 +2346,13 @@ export async function createSandboxAsync(
 		if (promiseHandle.alive) promiseHandle.dispose();
 		drainWithin(lane);
 
-		const awaited = await resolved;
+		let awaited;
+		try {
+			awaited = await untilSettled(resolved);
+		} catch (failure) {
+			if (failure instanceof Error) throw failure;
+			throwFromError(failure as { message?: string; name?: string }, timeoutMs, cancellation);
+		}
 		const duration_ms = performance.now() - start;
 
 		if (awaited.error) {
@@ -2136,22 +2361,23 @@ export async function createSandboxAsync(
 			throwFromError(errorObj, timeoutMs, cancellation);
 		}
 
-		const value = readResult(context, awaited.value);
-		if (awaited.value.alive) awaited.value.dispose();
+		const value = readAndRelease(context, awaited.value);
 		return { value, duration_ms };
 	}
 
-	function invokeExport(name: string, args: unknown[], owner?: string, timeoutOverrideMs?: number): unknown {
+	function invokeExport(name: string, args: unknown[], owner?: string, timeoutOverrideMs?: number, refusePromise = false): unknown {
 		if (cancellation?.cancelled) throw new CancellationError();
 		const budgetMs = callTimeoutMs(timeoutOverrideMs);
 		const popInterrupt = pushInterruptFrame(Date.now() + budgetMs, cancellation);
+		if (refusePromise) asyncHost.syncDepth++;
 		try {
 			return callerContext.run(exportCaller(context, name, owner), () =>
-				invokeExportInContext(context, name, args, owner),
+				invokeExportInContext(context, name, args, owner, refusePromise),
 			);
 		} catch (error) {
 			throw interruptAsLimit(error, budgetMs, cancellation);
 		} finally {
+			if (refusePromise) asyncHost.syncDepth--;
 			popInterrupt();
 		}
 	}
@@ -2212,12 +2438,19 @@ export async function createSandboxAsync(
 	}
 
 	function dispose(): void {
+		if (isExhausted(context)) {
+			asyncHost.pending.clear();
+			return;
+		}
 		bus.dispose();
-		putInvokeArgs.dispose();
+		for (const deferred of asyncHost.pending) deferred.dispose();
+		asyncHost.pending.clear();
+		releaseConsoleSupport(context);
 		releaseCallbackSupport(context);
+		releaseInternals(context);
 		context.dispose();
 		runtime.dispose();
 	}
 
-	return { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, setExportOwner, fireHook, fireFragmentHook, ...busSurface(bus, callerContext, handlerBudget, callTimeoutMs()), debugSession, releaseRetained, dispose };
+	return containSurface(context, { execute, executeAsync, debugExecute, evaluateModule, invokeExport, invokeExportAsync, setExportOwner, fireHook, fireFragmentHook, ...busSurface(bus, callerContext, handlerBudget, callTimeoutMs()), debugSession, releaseRetained, dispose });
 }

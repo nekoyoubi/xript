@@ -1,0 +1,188 @@
+{
+	"description": "Conformance corpus for isolation between mods sharing one runtime. Mod `a` is loaded and registers handlers at load time; mod `b` is loaded next with a case's `tamper` as its entry source; then mod `a`'s `setup` export registers a second set of handlers. Whatever `b` attempted, every step in `steps` must still hold: `a`'s handlers all run with their own results, its exports resolve to its own functions, host bindings it calls answer as the host wrote them, its console output reaches the host, and nothing `b` did let it read `a`'s functions or the runtime's internals.",
+	"notes": [
+		"Per case: create a runtime from `host` granting no capabilities, with the host functions `log(x)` returning \"log:\" + x and `ns.get(x)` returning \"get:\" + x, and a console handler that records every call. Load `a.manifest` with `a.source` as its entry script. Run `internals` as host code; its value must equal `[]`, since no runtime leaves a global whose name starts with `__xript` where a script can see it. Then load `b` (manifest `b`, entry source the case's `tamper`). Loading `b` may fail: a tamper that throws at declaration is still a tamper, and the runner ignores the failure. Then invoke `a`'s `setup` export through the owned-export entry point, clear the recorded console calls, and run `steps` in order.",
+		"Step kinds. `{ fire, phase?, data, expected }`: the host fires hook `fire` (at `phase` when present) with `data` as the one payload value; the results equal `expected`. `{ fragment, lifecycle, ops }`: the host fires the fragment hook and receives `ops` operations. `{ invoke, mod, expected }`: the host invokes export `invoke` of mod `mod`; the result equals `expected`. `{ invoke, mod, logs }`: as before, and afterwards the console calls recorded since the last clear are exactly `logs`, each a single string argument (a JavaScript runtime's handler) or that string as the message (a runtime whose handler receives text). `{ emit, payload, expected }`: the host emits event `emit` with the one payload value; the handler results equal `expected`. `{ execute, expected }`: host code whose value equals `expected`.",
+		"`steps` is shared by every case. The last step reads `globalThis.stolen`, which several tampers set to whatever they managed to read. `b` registers no handler of its own in any case, so every result list holds only `a`'s.",
+		"Each tamper wraps its attempts in `try`, so a refused attempt does not stop the next one, except where the attempt is the declaration itself.",
+		"A runtime defends against a monkeypatched built-in by capturing the built-ins its own sandbox-side code calls when it installs that code, before any script runs, and never looking one up again. It defends against a rewritten global by keeping its internals in closures rather than on `globalThis`, and by installing the bindings, `hooks`, `events`, `xript`, and `console` globals as non-writable, non-configurable properties of frozen objects."
+	],
+	"host": {
+		"xript": "0.10",
+		"name": "isolation-host",
+		"bindings": {
+			"log": { "description": "Returns its argument prefixed with 'log:'." },
+			"ns": { "description": "A namespace.", "members": { "get": { "description": "Returns its argument prefixed with 'get:'." } } }
+		},
+		"hooks": {
+			"tick": { "description": "An unphased hook." },
+			"save": { "description": "A phased hook.", "phases": ["pre"] }
+		},
+		"events": [{ "id": "signal", "description": "An event mods subscribe to." }],
+		"slots": [{ "id": "ping", "accepts": ["application/x-xript-hook"], "description": "An event slot mods fill." }]
+	},
+	"a": {
+		"manifest": {
+			"xript": "0.10",
+			"name": "a",
+			"version": "1.0.0",
+			"entry": {
+				"script": "a.js",
+				"exports": {
+					"onPing": { "description": "Answers the ping slot." },
+					"probe": { "description": "Calls the host bindings." },
+					"speak": { "description": "Writes to the console." },
+					"setup": { "description": "Registers a second set of handlers." }
+				}
+			},
+			"fills": { "ping": [{ "handler": "onPing" }] }
+		},
+		"source": "xript.exports.register('onPing', function (x) { return 'a:' + x; });\nxript.exports.register('probe', function () { return [log('x'), ns.get('y'), xript.has('log')]; });\nxript.exports.register('speak', function () { console.log('a-said'); return null; });\nxript.exports.register('setup', function () {\n\thooks.tick(function () { return 'a2'; });\n\thooks.save.pre(function (x) { return x * 3; });\n\thooks.fragment.update('panel', function (bindings, fragment) { fragment.setText('.t', 'a2'); });\n\tevents.on('signal', function (p) { return 'a2:' + p; });\n\treturn null;\n});\nhooks.tick(function () { return 'a'; });\nhooks.save.pre(function (x) { return x * 2; });\nhooks.fragment.update('panel', function (bindings, fragment) { fragment.setText('.t', 'a'); });\nevents.on('signal', function (p) { return 'a:' + p; });\n"
+	},
+	"b": {
+		"xript": "0.10",
+		"name": "b",
+		"version": "1.0.0",
+		"entry": { "script": "b.js" }
+	},
+	"debugCase": {
+		"name": "replace a debug probe",
+		"description": "A runtime whose debugger instruments host code installs probe globals the instrumented code calls by name, so while a debug session is attached they are the one exception to `internals`. Run this case like any other but with a debug session attached and without the `internals` check: record `probes` as host code after loading `a`, load `b` with `tamper`, run `setup` and `steps`, then `probes` must evaluate to the same list and `locked` to `[]`. A runtime whose debugger installs no globals sees an empty list and passes. A runtime that can debug only in one of its modes runs this case in that mode.",
+		"probes": "(function () { var names = Object.getOwnPropertyNames(globalThis); var found = []; for (var i = 0; i < names.length; i++) { if (names[i].slice(0, 7) === '__xript') found.push(names[i]); } return found.sort(); })()",
+		"tamper": "var names = Object.getOwnPropertyNames(globalThis);\nfor (var i = 0; i < names.length; i++) {\n\tif (names[i].slice(0, 7) !== '__xript') continue;\n\ttry { globalThis[names[i]] = function () { globalThis.stolen = arguments; }; } catch (e) {}\n\ttry { delete globalThis[names[i]]; } catch (e) {}\n\ttry { Object.defineProperty(globalThis, names[i], { value: function () { globalThis.stolen = arguments; } }); } catch (e) {}\n}",
+		"locked": "(function () { var names = Object.getOwnPropertyNames(globalThis); var open = []; for (var i = 0; i < names.length; i++) { if (names[i].slice(0, 7) !== '__xript') continue; var d = Object.getOwnPropertyDescriptor(globalThis, names[i]); if (d.configurable || d.writable === true || d.set) open.push(names[i]); } return open; })()"
+	},
+	"internals": "(function () { var names = Object.getOwnPropertyNames(globalThis); var found = []; for (var i = 0; i < names.length; i++) { if (names[i].slice(0, 7) === '__xript') found.push(names[i]); } return found; })()",
+	"steps": [
+		{ "fire": "tick", "data": 0, "expected": ["a", "a2"] },
+		{ "fire": "save", "phase": "pre", "data": 2, "expected": [4, 6] },
+		{ "fire": "ping", "data": 1, "expected": ["a:1"] },
+		{ "fragment": "panel", "lifecycle": "update", "ops": 2 },
+		{ "invoke": "probe", "mod": "a", "expected": ["log:x", "get:y", true] },
+		{ "invoke": "speak", "mod": "a", "logs": ["a-said"] },
+		{ "emit": "signal", "payload": 5, "expected": ["a:5", "a2:5"] },
+		{ "execute": "typeof globalThis.stolen", "expected": "undefined" }
+	],
+	"cases": [
+		{
+			"name": "nothing tampered",
+			"tamper": ""
+		},
+		{
+			"name": "assign over a top-level binding",
+			"tamper": "try { log = function () { return 'evil'; }; } catch (e) {}\ntry { globalThis.log = function () { return 'evil'; }; } catch (e) {}"
+		},
+		{
+			"name": "delete a top-level binding",
+			"tamper": "try { delete globalThis.log; } catch (e) {}\ntry { delete globalThis.ns; } catch (e) {}"
+		},
+		{
+			"name": "redefine a top-level binding",
+			"tamper": "try { Object.defineProperty(globalThis, 'log', { value: function () { return 'evil'; }, writable: true, configurable: true }); } catch (e) {}"
+		},
+		{
+			"name": "declare a global function over a binding",
+			"tamper": "function log() { return 'evil'; }"
+		},
+		{
+			"name": "declare a global variable over a binding",
+			"tamper": "var log = function () { return 'evil'; };"
+		},
+		{
+			"name": "replace a namespace",
+			"tamper": "try { globalThis.ns = { get: function () { return 'evil'; } }; } catch (e) {}\ntry { Object.defineProperty(globalThis, 'ns', { value: { get: function () { return 'evil'; } } }); } catch (e) {}"
+		},
+		{
+			"name": "rewrite a namespace member",
+			"tamper": "try { ns.get = function () { return 'evil'; }; } catch (e) {}\ntry { Object.defineProperty(ns, 'get', { value: function () { return 'evil'; } }); } catch (e) {}"
+		},
+		{
+			"name": "replace the hooks object",
+			"tamper": "try { globalThis.hooks = { tick: function () {}, save: { pre: function () {} }, fragment: { update: function () {} } }; } catch (e) {}\ntry { Object.defineProperty(globalThis, 'hooks', { value: { tick: function () {}, save: { pre: function () {} }, fragment: { update: function () {} } } }); } catch (e) {}"
+		},
+		{
+			"name": "rewrite a hook registration function",
+			"tamper": "try { hooks.tick = function () {}; } catch (e) {}\ntry { hooks.save.pre = function () {}; } catch (e) {}\ntry { hooks.fragment.update = function () {}; } catch (e) {}\ntry { Object.defineProperty(hooks, 'tick', { value: function () {} }); } catch (e) {}"
+		},
+		{
+			"name": "replace the xript namespace",
+			"tamper": "try { xript.has = function () { return false; }; } catch (e) {}\ntry { xript.exports.register = function () {}; } catch (e) {}\ntry { globalThis.xript = { has: function () { return false; }, exports: { register: function () {} } }; } catch (e) {}"
+		},
+		{
+			"name": "replace the events object",
+			"tamper": "try { events.on = function () {}; } catch (e) {}\ntry { globalThis.events = { on: function () {}, emit: function () {}, subscribe: function () {} }; } catch (e) {}"
+		},
+		{
+			"name": "replace the console",
+			"tamper": "try { console.log = function () {}; } catch (e) {}\ntry { globalThis.console = { log: function () {}, info: function () {} }; } catch (e) {}"
+		},
+		{
+			"name": "read the runtime's internals",
+			"tamper": "var names = Object.getOwnPropertyNames(globalThis); var found = []; for (var i = 0; i < names.length; i++) { if (names[i].slice(0, 7) === '__xript') found.push(names[i]); } if (found.length > 0) globalThis.stolen = found;"
+		},
+		{
+			"name": "empty every internal registry",
+			"tamper": "var names = Object.getOwnPropertyNames(globalThis);\nfor (var i = 0; i < names.length; i++) {\n\tif (names[i].slice(0, 7) !== '__xript') continue;\n\ttry {\n\t\tvar value = globalThis[names[i]];\n\t\tif (value !== null && typeof value === 'object') {\n\t\t\tvar keys = Object.getOwnPropertyNames(value);\n\t\t\tfor (var j = 0; j < keys.length; j++) { try { var entry = value[keys[j]]; if (Array.isArray(entry)) entry.length = 0; delete value[keys[j]]; } catch (e) {} }\n\t\t}\n\t} catch (e) {}\n}"
+		},
+		{
+			"name": "replace every internal helper",
+			"tamper": "var names = Object.getOwnPropertyNames(globalThis);\nfor (var i = 0; i < names.length; i++) {\n\tif (names[i].slice(0, 7) !== '__xript') continue;\n\ttry {\n\t\tvar value = globalThis[names[i]];\n\t\tif (typeof value === 'function') globalThis[names[i]] = function () { globalThis.stolen = arguments; return ['evil']; };\n\t\telse if (typeof value === 'string') globalThis[names[i]] = 'a';\n\t\telse if (value !== null && typeof value === 'object') globalThis[names[i]] = {};\n\t} catch (e) {}\n}"
+		},
+		{
+			"name": "forge the export owner",
+			"tamper": "try { __xript_set_export_owner('a'); } catch (e) {}\ntry { globalThis.__xript_export_owner = 'a'; } catch (e) {}\ntry { xript.exports.register('probe', function () { return 'evil'; }); } catch (e) {}\ntry { xript.exports.register('onPing', function () { return 'evil'; }); } catch (e) {}"
+		},
+		{
+			"name": "monkeypatch Array.prototype.push",
+			"tamper": "try { Array.prototype.push = function () { globalThis.stolen = arguments[0]; return 0; }; } catch (e) {}"
+		},
+		{
+			"name": "monkeypatch Function.prototype.apply and call",
+			"tamper": "try { Function.prototype.apply = function () { globalThis.stolen = this; return 'evil'; }; } catch (e) {}\ntry { Function.prototype.call = function () { globalThis.stolen = this; return 'evil'; }; } catch (e) {}\ntry { Function.prototype.bind = function () { globalThis.stolen = this; return function () { return 'evil'; }; }; } catch (e) {}"
+		},
+		{
+			"name": "monkeypatch Reflect",
+			"tamper": "try { Reflect.apply = function (fn) { globalThis.stolen = fn; return 'evil'; }; } catch (e) {}\ntry { Reflect.ownKeys = function () { return []; }; } catch (e) {}\ntry { Reflect.defineProperty = function () { return false; }; } catch (e) {}"
+		},
+		{
+			"name": "monkeypatch the Object statics",
+			"tamper": "try { Object.keys = function () { return []; }; } catch (e) {}\ntry { Object.values = function () { return []; }; } catch (e) {}\ntry { Object.entries = function () { return []; }; } catch (e) {}\ntry { Object.getOwnPropertyNames = function () { return []; }; } catch (e) {}\ntry { Object.defineProperty = function (o) { return o; }; } catch (e) {}\ntry { Object.freeze = function (o) { return o; }; } catch (e) {}\ntry { Object.create = function () { return {}; }; } catch (e) {}\ntry { Object.assign = function (o) { return o; }; } catch (e) {}"
+		},
+		{
+			"name": "monkeypatch hasOwnProperty",
+			"tamper": "try { Object.prototype.hasOwnProperty = function () { return false; }; } catch (e) {}\ntry { Object.hasOwn = function () { return false; }; } catch (e) {}"
+		},
+		{
+			"name": "monkeypatch JSON",
+			"tamper": "try { JSON.stringify = function () { return '\"evil\"'; }; } catch (e) {}\ntry { JSON.parse = function () { return 'evil'; }; } catch (e) {}"
+		},
+		{
+			"name": "monkeypatch the Array statics and methods",
+			"tamper": "try { Array.isArray = function () { return false; }; } catch (e) {}\ntry { Array.from = function () { return []; }; } catch (e) {}\ntry { Array.prototype.slice = function () { return []; }; } catch (e) {}\ntry { Array.prototype.concat = function () { return []; }; } catch (e) {}\ntry { Array.prototype.map = function () { return []; }; } catch (e) {}\ntry { Array.prototype.forEach = function () {}; } catch (e) {}\ntry { Array.prototype.filter = function () { return []; }; } catch (e) {}\ntry { Array.prototype.indexOf = function () { return -1; }; } catch (e) {}\ntry { Array.prototype.splice = function () { return []; }; } catch (e) {}\ntry { Array.prototype.sort = function () { return this; }; } catch (e) {}\ntry { Array.prototype.join = function () { return 'evil'; }; } catch (e) {}"
+		},
+		{
+			"name": "monkeypatch the String methods",
+			"tamper": "try { String.prototype.slice = function () { return 'evil'; }; } catch (e) {}\ntry { String.prototype.indexOf = function () { return -1; }; } catch (e) {}\ntry { String.prototype.replace = function () { return 'evil'; }; } catch (e) {}\ntry { String.prototype.split = function () { return []; }; } catch (e) {}\ntry { String.prototype.charCodeAt = function () { return 0; }; } catch (e) {}\ntry { String.prototype.toString = function () { return 'evil'; }; } catch (e) {}\ntry { String.prototype.concat = function () { return 'evil'; }; } catch (e) {}"
+		},
+		{
+			"name": "monkeypatch Map and Set",
+			"tamper": "try { Map.prototype.get = function () { return undefined; }; } catch (e) {}\ntry { Map.prototype.set = function () { return this; }; } catch (e) {}\ntry { Map.prototype.has = function () { return false; }; } catch (e) {}\ntry { Map.prototype.delete = function () { return true; }; } catch (e) {}\ntry { Set.prototype.add = function () { return this; }; } catch (e) {}\ntry { Set.prototype.has = function () { return false; }; } catch (e) {}"
+		},
+		{
+			"name": "pollute Object.prototype with registry keys",
+			"tamper": "var keys = ['tick', 'save', 'save:pre', 'ping', 'signal', 'panel', 'a', 'b', 'probe', 'onPing', 'speak', 'setup', 'fragment:update:panel', 'update'];\nfor (var i = 0; i < keys.length; i++) {\n\ttry { Object.defineProperty(Object.prototype, keys[i], { get: function () { globalThis.stolen = true; return []; }, set: function (v) { globalThis.stolen = v; }, configurable: true }); } catch (e) {}\n}"
+		},
+		{
+			"name": "define array index setters",
+			"tamper": "for (var i = 0; i < 4; i++) {\n\ttry { Object.defineProperty(Array.prototype, String(i), { get: function () { return undefined; }, set: function (v) { globalThis.stolen = v; }, configurable: true }); } catch (e) {}\n}"
+		},
+		{
+			"name": "define index setters on Object.prototype",
+			"tamper": "for (var i = 0; i < 4; i++) {\n\ttry { Object.defineProperty(Object.prototype, String(i), { get: function () { return undefined; }, set: function (v) { globalThis.stolen = v; }, configurable: true }); } catch (e) {}\n}"
+		},
+		{
+			"name": "replace Error and the error classes",
+			"tamper": "try { globalThis.Error = function () { globalThis.stolen = arguments; }; } catch (e) {}\ntry { globalThis.TypeError = function () { globalThis.stolen = arguments; }; } catch (e) {}\ntry { globalThis.BindingError = function () { globalThis.stolen = arguments; }; } catch (e) {}\ntry { globalThis.CapabilityDeniedError = function () { globalThis.stolen = arguments; }; } catch (e) {}"
+		}
+	]
+}

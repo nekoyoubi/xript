@@ -152,4 +152,23 @@ describe("async bindings on the asynchronous sandbox", () => {
 		assert.deepEqual(result.value, { ok: true });
 		runtime.dispose();
 	});
+
+	it("stops a runaway continuation after an async binding settles, and stays usable", async () => {
+		const runtime = await asyncXript.createRuntime(
+			{ ...asyncManifest, limits: { timeout_ms: 50 } },
+			{ hostBindings: { fetchThing: () => new Promise((resolve) => setTimeout(() => resolve({ ok: true }), 5)) } },
+		);
+		await assert.rejects(runtime.executeAsync("await fetchThing(); for (;;) {}"), { name: "ExecutionLimitError" });
+		assert.deepEqual((await runtime.executeAsync("return await fetchThing();")).value, { ok: true });
+		runtime.dispose();
+	});
+
+	it("releases a promise still pending when the runtime is disposed", async () => {
+		const runtime = await asyncXript.createRuntime(asyncManifest, {
+			hostBindings: { fetchThing: () => new Promise((resolve) => setTimeout(() => resolve({ ok: true }), 30)) },
+		});
+		runtime.executeAsync("return await fetchThing();").catch(() => undefined);
+		assert.doesNotThrow(() => runtime.dispose());
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	});
 });

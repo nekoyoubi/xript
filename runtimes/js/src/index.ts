@@ -61,7 +61,7 @@ export { MissingBindingsError } from "./errors.js";
 export type { CallbackFailure, ExpiredCause, RetainFailure } from "./errors.js";
 export type { RetainedCallback } from "./retained.js";
 export type { XriptCallback } from "./callbacks.js";
-export { AmbiguousExportError, BindingError, CallbackError, RetainError, CapabilityDeniedError, CommandInputError, ExecutionLimitError, CancellationError, InvokeError, ModEntryError, MissingEntryScriptError, ImportDeniedError, CommonJSDetectedError, ModuleUnsupportedError, LibraryUnavailableError, LibraryRegistrationError } from "./errors.js";
+export { AmbiguousExportError, BindingError, CallbackError, RetainError, CapabilityDeniedError, CommandInputError, ExecutionLimitError, EngineStackExhaustedError, CancellationError, InvokeError, ModEntryError, MissingEntryScriptError, ImportDeniedError, CommonJSDetectedError, ModuleUnsupportedError, LibraryUnavailableError, LibraryRegistrationError } from "./errors.js";
 export { ModManifestValidationError } from "./fragment.js";
 export { CancellationToken } from "./sandbox.js";
 export { resolveExtends } from "./extends.js";
@@ -654,9 +654,9 @@ function buildRuntime(
 		return effective;
 	}
 
-	function invokeModExport(mod: string, name: string, args: unknown[], timeoutOverrideMs?: number): unknown {
+	function invokeModExport(mod: string, name: string, args: unknown[], timeoutOverrideMs?: number, refusePromise = false): unknown {
 		gateModExport(mod, name);
-		return sandbox.invokeExport(name, args, mod, timeoutOverrideMs);
+		return sandbox.invokeExport(name, args, mod, timeoutOverrideMs, refusePromise);
 	}
 
 	/**
@@ -695,19 +695,21 @@ function buildRuntime(
 
 	return {
 		manifest: m,
-		execute: sandbox.execute,
-		executeAsync: sandbox.executeAsync,
+		execute: (code) => sandbox.callerContext.run(null, () => sandbox.execute(code)),
+		executeAsync: (code) => sandbox.callerContext.run(null, () => sandbox.executeAsync(code)),
 		debugExecute: sandbox.debugExecute,
 		debugSession: sandbox.debugSession,
 		invokeExport(name: string, args: unknown[]): unknown {
 			const owner = gateExport(name);
-			return sandbox.invokeExport(name, args, owner);
+			return sandbox.invokeExport(name, args, owner, undefined, true);
 		},
 		invokeExportAsync(name: string, args: unknown[]): Promise<unknown> {
 			const owner = gateExport(name);
 			return sandbox.invokeExportAsync(name, args, owner);
 		},
-		invokeModExport,
+		invokeModExport(mod: string, name: string, args: unknown[]): unknown {
+			return invokeModExport(mod, name, args, undefined, true);
+		},
 		invokeModExportAsync(mod: string, name: string, args: unknown[]): Promise<unknown> {
 			gateModExport(mod, name);
 			return sandbox.invokeExportAsync(name, args, mod);
@@ -848,6 +850,7 @@ function buildRuntime(
 				command.handler,
 				[commandArgs(command, callArgs)],
 				effectiveSlotTimeoutMs(command.slot),
+				true,
 			);
 		},
 

@@ -137,8 +137,8 @@ fn async_runtime() -> (XriptRuntime, Log) {
     (rt, log)
 }
 
-const AWAITS_SLOW: &str = "(async () => { mark('A:start'); const v = await slow(300); mark('A:end'); return v; })()";
-const QUICK: &str = "mark('B'); 40 + 2";
+const AWAITS_SLOW: &str = "mark('A:start'); const v = await slow(300); mark('A:end'); return v;";
+const QUICK: &str = "mark('B'); return 40 + 2;";
 
 #[test]
 fn reports_its_mode() {
@@ -185,12 +185,12 @@ fn a_second_call_completes_first_when_the_first_is_slower() {
     let (o1, o2) = (order.clone(), order.clone());
     let (a, b) = join(
         async {
-            let r = rt.execute_async("slow(300)").await;
+            let r = rt.execute_async("return slow(300);").await;
             o1.lock().unwrap().push("first".into());
             r
         },
         async {
-            let r = rt.execute_async("slow(20)").await;
+            let r = rt.execute_async("return slow(20);").await;
             o2.lock().unwrap().push("second".into());
             r
         },
@@ -221,12 +221,12 @@ fn the_blocking_methods_drive_a_yielding_call_to_completion() {
 fn rejection_propagates_to_script_and_to_the_host() {
     let (rt, _) = async_runtime();
     let caught = pollster::block_on(
-        rt.execute_async("(async () => { try { await failing(); return 'no'; } catch (e) { return e.message; } })()"),
+        rt.execute_async("try { await failing(); return 'no'; } catch (e) { return e.message; }"),
     )
     .unwrap();
-    assert_eq!(caught.value, json!("boom"));
+    assert_eq!(caught.value, json!("failing(): boom"));
 
-    let uncaught = pollster::block_on(rt.execute_async("(async () => { await failing(); })()"));
+    let uncaught = pollster::block_on(rt.execute_async("await failing();"));
     match uncaught {
         Err(XriptError::Script(message)) => assert!(message.contains("boom"), "{message}"),
         other => panic!("expected a script error, got {other:?}"),
@@ -239,7 +239,7 @@ fn the_budget_covers_time_spent_awaiting() {
     let manifest = APP.replace("\"timeout_ms\": 5000", "\"timeout_ms\": 100");
     let rt = create_async_runtime(&manifest, options(&log)).unwrap();
     let started = Instant::now();
-    let result = pollster::block_on(rt.execute_async("slow(5000)"));
+    let result = pollster::block_on(rt.execute_async("return slow(5000);"));
     assert!(
         matches!(result, Err(XriptError::ExecutionLimit { ref limit }) if limit == "timeout_ms"),
         "{result:?}"
@@ -258,7 +258,7 @@ fn the_interrupt_still_cuts_a_runaway_loop_before_and_after_an_await() {
     let spin = pollster::block_on(rt.execute_async("while (true) {}"));
     assert!(matches!(spin, Err(XriptError::ExecutionLimit { .. })), "{spin:?}");
 
-    let after_await = pollster::block_on(rt.execute_async("(async () => { await slow(10); while (true) {} })()"));
+    let after_await = pollster::block_on(rt.execute_async("await slow(10); while (true) {}"));
     assert!(matches!(after_await, Err(XriptError::ExecutionLimit { .. })), "{after_await:?}");
 
     assert_eq!(rt.execute("2 + 2").unwrap().value, json!(4));
@@ -269,7 +269,7 @@ fn one_call_timing_out_does_not_take_its_neighbour_down() {
     let log: Log = Arc::new(Mutex::new(Vec::new()));
     let manifest = APP.replace("\"timeout_ms\": 5000", "\"timeout_ms\": 400");
     let rt = create_async_runtime(&manifest, options(&log)).unwrap();
-    let (a, b) = join(rt.execute_async("slow(5000)"), rt.execute_async("slow(50)"));
+    let (a, b) = join(rt.execute_async("return slow(5000);"), rt.execute_async("return slow(50);"));
     assert!(matches!(a, Err(XriptError::ExecutionLimit { .. })), "{a:?}");
     assert_eq!(b.unwrap().value, json!("slept 50"));
 }
@@ -292,7 +292,7 @@ fn cancellation_reaches_a_call_parked_on_a_binding() {
         canceller.cancel();
     });
     let started = Instant::now();
-    let result = pollster::block_on(rt.execute_async("slow(5000)"));
+    let result = pollster::block_on(rt.execute_async("return slow(5000);"));
     assert!(matches!(result, Err(XriptError::Cancelled)), "{result:?}");
     assert!(started.elapsed() < Duration::from_millis(2000));
 }
@@ -301,7 +301,7 @@ fn cancellation_reaches_a_call_parked_on_a_binding() {
 fn dropping_an_in_flight_call_cancels_it_and_leaves_the_runtime_usable() {
     let (rt, _) = async_runtime();
     {
-        let mut call = Box::pin(rt.execute_async("(async () => { await slow(5000); return 'late'; })()"));
+        let mut call = Box::pin(rt.execute_async("await slow(5000); return 'late';"));
         let waker = Waker::noop();
         let mut cx = Context::from_waker(waker);
         assert!(call.as_mut().poll(&mut cx).is_pending());
@@ -405,7 +405,7 @@ fn the_runtime_and_its_futures_are_send() {
     fn assert_send<T: Send>(_: &T) {}
     let (rt, _) = async_runtime();
     assert_send(&rt);
-    let call = rt.execute_async("1");
+    let call = rt.execute_async("return 1;");
     assert_send(&call);
     drop(call);
     let moved = std::thread::spawn(move || rt.execute("3 * 3").unwrap().value)
@@ -448,7 +448,7 @@ fn a_debug_breakpoint_pauses_and_resumes_in_async_mode() {
     );
     let runner = rt.clone();
     let exec = std::thread::spawn(move || {
-        let code = instrument_source("var x = 1;\nvar y = x + 1;\ny;");
+        let code = instrument_source("var x = 1;\nvar y = x + 1;\nreturn y;");
         pollster::block_on(runner.execute_async(&code))
     });
     while !exec.is_finished() {
@@ -496,8 +496,8 @@ fn a_callback_survives_a_real_yield_and_expires_when_the_binding_settles() {
     )
     .unwrap();
     let (a, b) = join(
-        rt.execute_async("(async () => await later((n) => n * 10))()"),
-        rt.execute_async("'meanwhile'"),
+        rt.execute_async("return await later((n) => n * 10);"),
+        rt.execute_async("return 'meanwhile';"),
     );
     assert_eq!(a.unwrap().value, json!([10, 20]));
     assert_eq!(b.unwrap().value, json!("meanwhile"));

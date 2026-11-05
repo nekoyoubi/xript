@@ -46,6 +46,23 @@ function skewed(real) {
 	};
 }
 
+/**
+ * Runs `attempt` against a skewed variant. The core logs each host callback it cannot find
+ * ("QuickJSContext had no callback with id 0") and hands the engine null; that log is the skew
+ * showing itself, so it is captured and asserted rather than left in the test output.
+ */
+async function withSkewLog(attempt) {
+	const original = console.error;
+	const logged = [];
+	console.error = (...args) => logged.push(args.map(String).join(" "));
+	try {
+		await attempt();
+	} finally {
+		console.error = original;
+	}
+	assert.ok(logged.some((line) => line.includes("no callback with id 0")), "the core never reported the missing callback");
+}
+
 describe("QuickJS variant pinning", () => {
 	it("pins the core and every @jitl variant to the same exact version", () => {
 		const pinned = Object.entries({ ...pkg.dependencies, ...pkg.devDependencies }).filter(
@@ -92,22 +109,26 @@ describe("QuickJS variant compatibility check", () => {
 	});
 
 	it("rejects a skewed sync variant at init with the version rule", async () => {
-		await assert.rejects(initXript({ variant: skewed(RELEASE_SYNC) }), (error) => {
-			assert.ok(error instanceof QuickJSVariantMismatchError);
-			assert.match(error.message, new RegExp(`quickjs-emscripten-core@${QUICKJS_CORE_VERSION.replace(/\./g, "\\.")}`));
-			assert.match(error.message, /exactly/);
-			return true;
-		});
+		await withSkewLog(() =>
+			assert.rejects(initXript({ variant: skewed(RELEASE_SYNC) }), (error) => {
+				assert.ok(error instanceof QuickJSVariantMismatchError);
+				assert.match(error.message, new RegExp(`quickjs-emscripten-core@${QUICKJS_CORE_VERSION.replace(/\./g, "\\.")}`));
+				assert.match(error.message, /exactly/);
+				return true;
+			}),
+		);
 	});
 
 	it("rejects a skewed asyncify variant before a runtime is built on it", async () => {
 		const factory = await initXriptAsync({ variant: skewed(RELEASE_ASYNC) });
-		await assert.rejects(factory.createRuntime(manifest, { hostBindings: {} }), QuickJSVariantMismatchError);
+		await withSkewLog(() => assert.rejects(factory.createRuntime(manifest, { hostBindings: {} }), QuickJSVariantMismatchError));
 	});
 
 	it("does not cache a failed variant", async () => {
 		const variant = skewed(RELEASE_SYNC);
-		await assert.rejects(initXript({ variant }), QuickJSVariantMismatchError);
-		await assert.rejects(initXript({ variant }), QuickJSVariantMismatchError);
+		await withSkewLog(async () => {
+			await assert.rejects(initXript({ variant }), QuickJSVariantMismatchError);
+			await assert.rejects(initXript({ variant }), QuickJSVariantMismatchError);
+		});
 	});
 });

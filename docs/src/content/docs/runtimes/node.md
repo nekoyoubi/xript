@@ -49,7 +49,7 @@ const runtime = await createRuntimeFromFile("./manifest.json", {
 |--------|------|---------|-------------|
 | `hostBindings` | `HostBindings` | (required) | Map of binding names to host functions |
 | `capabilities` | `string[]` | `[]` | List of capabilities granted to this script |
-| `console` | `ConsoleHandler` | no-op functions | Console output routing (severity-aware) |
+| `console` | `ConsoleHandler` | no-op functions | Console output routing (severity-aware); each argument arrives as data, formatted as in the universal runtime, and no argument makes a console call throw |
 | `audit` | `(event: AuditEvent) => void` | none | Per-capability audit channel; fired on every allowed binding invocation and on every capability-denied hook fill |
 | `hardLimits` | `HardLimits` | none | Hard caps for memory, CPU time, and stack depth |
 | `cancellation` | `CancellationToken` | none | Host-driven cooperative cancellation |

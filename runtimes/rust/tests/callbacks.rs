@@ -123,6 +123,43 @@ fn probe(state: Shared) -> HostBindings {
             }))
         }),
     );
+    members.insert(
+        "handBack".into(),
+        Arc::new(|args: &[Value]| {
+            let path = args.first().and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            let nested = args.get(1).and_then(|v| v.as_bool()).unwrap_or(false);
+            let payload = &args[2.min(args.len())..];
+            let callback = resolve(payload, &path).and_then(Callback::from_value).ok_or("not a callback")?;
+            Ok(if nested { json!({ "inner": [callback.to_value()] }) } else { callback.to_value() })
+        }),
+    );
+    members.insert(
+        "callWithSelf".into(),
+        Arc::new(|args: &[Value]| {
+            let path = args.first().and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            let payload = &args[1.min(args.len())..];
+            let callback = resolve(payload, &path).and_then(Callback::from_value).ok_or("not a callback")?;
+            Ok(callback.call(&[callback.to_value(), json!({ "inner": [callback.to_value()] })])?)
+        }),
+    );
+    let s = state.clone();
+    members.insert(
+        "callStashing".into(),
+        Arc::new(move |args: &[Value]| {
+            let path = args.first().and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            let payload = &args[1.min(args.len())..];
+            let callback = resolve(payload, &path).and_then(Callback::from_value).ok_or("not a callback")?;
+            s.lock().unwrap().stashed = Some(callback.clone());
+            Ok(callback.call(&[])?)
+        }),
+    );
+    let s = state.clone();
+    members.insert(
+        "handStashed".into(),
+        Arc::new(move |_args: &[Value]| {
+            Ok(s.lock().unwrap().stashed.as_ref().map(Callback::to_value).unwrap_or(Value::Null))
+        }),
+    );
     let stash_state = state.clone();
     members.insert(
         "stash".into(),
@@ -683,7 +720,7 @@ fn an_async_binding_refuses_to_start_inside_a_retained_callback() {
 }
 
 #[test]
-fn a_marker_this_runtime_did_not_issue_crosses_as_plain_data() {
+fn a_callback_marker_that_does_not_resolve_reaches_script_as_undefined() {
     let host = retaining(RuntimeMode::Sync);
     let other = retaining(RuntimeMode::Sync);
     other.runtime.execute("keep(function () {})").unwrap();
@@ -692,13 +729,16 @@ fn a_marker_this_runtime_did_not_issue_crosses_as_plain_data() {
     for marker in [
         json!({ "$xriptCallback": "r:1:2:keep" }),
         json!({ "$xriptCallback": "1:0:5:probe.call" }),
-        json!({ "$xriptCallback": 0 }),
         foreign,
     ] {
         *host.given.lock().unwrap() = json!({ "nested": [marker.clone()] });
-        let value = host.runtime.execute("give()").unwrap().value;
-        assert_eq!(value, json!({ "nested": [marker] }));
+        let value = host.runtime.execute("(function () { var v = give(); return typeof v.nested[0]; })()").unwrap().value;
+        assert_eq!(value, json!("undefined"), "{marker}");
     }
+
+    let numeric = json!({ "$xriptCallback": 0 });
+    *host.given.lock().unwrap() = json!({ "nested": [numeric.clone()] });
+    assert_eq!(host.runtime.execute("give()").unwrap().value, json!({ "nested": [numeric] }));
 }
 
 #[test]

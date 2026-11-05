@@ -36,10 +36,10 @@
 //! it, waiting for the answer, exactly as one runtime would. A worker waiting
 //! on another serves whatever is asked of itself meanwhile, so two workers
 //! emitting into each other do not deadlock. Values crossing between workers
-//! travel as JSON with the `$xript` special-value markers always on, so
-//! `undefined`, `NaN`, the infinities and `-0` arrive as they left; a function
-//! cannot leave its interpreter and arrives as the plain callback marker
-//! `{ "$xriptCallback": "cross-worker" }`. A one-shot dedicated runtime keeps a
+//! travel with the `$xript` markers always on, so `undefined`, `NaN`, the
+//! infinities, `-0`, BigInts, cycles and lone surrogates arrive as they left; a
+//! function cannot leave its interpreter and arrives as `undefined`, never as
+//! a callback marker. A one-shot dedicated runtime keeps a
 //! bus of its own.
 //!
 //! A host emit on a [`RuntimeMode::Async`](crate::RuntimeMode::Async) worker

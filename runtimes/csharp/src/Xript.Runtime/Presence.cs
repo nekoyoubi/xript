@@ -90,35 +90,4 @@ internal static class Presence
             path.RemoveAt(path.Count - 1);
         }
     }
-
-    /// <summary>
-    /// Installs <c>xript.has(path)</c> over a fixed set of provided paths. The set lives in a
-    /// closure the script cannot reach, and <c>has</c> is a non-writable property, so a mod can
-    /// neither forge presence nor replace the probe.
-    /// </summary>
-    internal static string ProbeSource(IReadOnlyList<string> paths) => $$"""
-        (function (paths) {
-            var known = Object.create(null);
-            for (var i = 0; i < paths.length; i++) known[paths[i]] = true;
-            var has = function has(path) { return typeof path === "string" && known[path] === true; };
-            var ns = globalThis.xript;
-            if (ns === null || typeof ns !== "object") { ns = {}; globalThis.xript = ns; }
-            Object.defineProperty(ns, "has", { value: has, enumerable: true, writable: false, configurable: false });
-        })({{JsonSerializer.Serialize(paths)}});
-        """;
-
-    /// <summary>
-    /// Defines an accessor binding on a sandbox object. Without a setter, assignment throws a
-    /// <c>TypeError</c> in strict and sloppy code alike.
-    /// </summary>
-    internal const string DefineAccessorSource = """
-        (function (target, key, get, set, name) {
-            Object.defineProperty(target, key, {
-                get: function () { return get(); },
-                set: set ? function (value) { set(value); } : function () { throw new TypeError(name + " is read-only: the host declares no setter"); },
-                enumerable: true,
-                configurable: false
-            });
-        })
-        """;
 }

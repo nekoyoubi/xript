@@ -296,10 +296,12 @@ let rt = create_async_runtime(manifest_json, RuntimeOptions { host_bindings: bin
 
 // Both calls are in flight at once; the second finishes while the first awaits its binding.
 let (slow, quick) = futures::join!(
-    rt.execute_async("(async () => await fetchData('users'))()"),
-    rt.execute_async("40 + 2"),
+    rt.execute_async("return await fetchData('users');"),
+    rt.execute_async("return 40 + 2;"),
 );
 ```
+
+`execute_async` and `execute_within_async` take their source as the body of an async function, as `executeAsync` does in the JavaScript runtimes: `return` gives the result, `await` works at the top level, and a script that ends on a bare expression statement resolves to `undefined`. `execute` takes a script and returns its completion value, awaiting it when it is a promise.
 
 The async surface is `execute_async`, `execute_within_async`, `load_mod_async`, `invoke_export_async`, `invoke_mod_export_async`, `invoke_mod_export_within_async`, `invoke_command_async`, `fire_hook_async`, `fire_hook_tagged_async`, `emit_async`, `emit_tagged_async` and `fire_fragment_hook_async`, plus `idle()`, which settles work a script started without awaiting it. The plain methods still work in async mode; each drives its one call to completion on the calling thread. `XriptHandle` and `XriptPool` built over async-mode options run calls concurrently on their runtime thread.
 

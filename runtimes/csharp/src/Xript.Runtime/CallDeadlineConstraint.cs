@@ -15,6 +15,9 @@ internal sealed class CallDeadlineConstraint : Constraint
     private long _deadline = long.MaxValue;
     private CancellationTokenSource? _source;
 
+    /// <summary>The clock deadlines are measured on, in <see cref="Stopwatch"/> ticks; replaceable so a test can drive time.</summary>
+    internal Func<long> Clock { get; set; } = Stopwatch.GetTimestamp;
+
     /// <summary>
     /// Installs a deadline <paramref name="timeoutMs"/> from now for <paramref name="source"/>,
     /// never later than the deadline already in force, and returns the previous one so the
@@ -25,7 +28,7 @@ internal sealed class CallDeadlineConstraint : Constraint
         var previous = (_deadline, _source);
         var ticks = timeoutMs >= long.MaxValue / Stopwatch.Frequency
             ? long.MaxValue
-            : Stopwatch.GetTimestamp() + timeoutMs * Stopwatch.Frequency / 1000;
+            : Clock() + timeoutMs * Stopwatch.Frequency / 1000;
         _deadline = Math.Min(previous._deadline, ticks);
         _source = source;
         return previous;
@@ -40,7 +43,7 @@ internal sealed class CallDeadlineConstraint : Constraint
     public override void Check()
     {
         var source = _source;
-        if (source is null || Stopwatch.GetTimestamp() < _deadline || source.IsCancellationRequested)
+        if (source is null || Clock() < _deadline)
             return;
         try
         {
@@ -48,7 +51,11 @@ internal sealed class CallDeadlineConstraint : Constraint
         }
         catch (ObjectDisposedException)
         {
+            return;
         }
+        // Jint checks its cancellation constraint only every so many statements; stopping here
+        // ends the call on the statement where the deadline passed.
+        throw new Jint.Runtime.ExecutionCanceledException();
     }
 
     public override void Reset()

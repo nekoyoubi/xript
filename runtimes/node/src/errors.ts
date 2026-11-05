@@ -8,6 +8,24 @@ export class BindingError extends Error {
 	}
 }
 
+/**
+ * The deepest a value may nest, in containers, to cross the boundary in either direction.
+ * Deeper, the crossing is refused with a message the binding names, instead of the engine
+ * running out of stack.
+ */
+export const MAX_CROSSING_DEPTH = 2048;
+
+/** The refusal message for a value nested past `MAX_CROSSING_DEPTH`. */
+export const TOO_DEEP_MESSAGE = `a value nested deeper than ${MAX_CROSSING_DEPTH} levels cannot cross the host boundary`;
+
+/** Thrown on the host when a value cannot cross the boundary; a binding call names itself in front of it. */
+export class CrossingRefusal extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "CrossingRefusal";
+	}
+}
+
 export class CapabilityDeniedError extends Error {
 	public readonly capability: string;
 	public readonly binding: string;

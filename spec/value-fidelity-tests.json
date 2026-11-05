@@ -1,21 +1,36 @@
 {
-  "description": "Conformance corpus for script values JSON has no spelling for: undefined, NaN, Infinity, -Infinity, and -0, which JSON writes as 0. The JavaScript runtimes pass them as themselves. The Rust and C# runtimes, whose host boundary is JSON, carry them as one-key marker objects when built with value fidelity on (`value_fidelity` / `ValueFidelity`); every runner here turns it on. Values in this file use the marker spelling throughout; a runner in a JavaScript runtime decodes them to real values before handing them over, and encodes what its host receives the same way before comparing.",
+  "description": "Conformance corpus for script values JSON has no spelling for, and for the rules every value follows on its way across the host boundary. The JavaScript runtimes pass values as themselves. The Rust and C# runtimes, whose host boundary is JSON, carry what JSON cannot spell as marker objects when built with value fidelity on (`value_fidelity` / `ValueFidelity`); every runner here turns it on. Values in this file use the marker spelling throughout; a runner in a JavaScript runtime decodes them to real values before handing them over, and encodes what its host receives the same way before comparing.",
   "notes": [
-    "A marker is a one-key object whose only key is `$xript` and whose value is one of `undefined`, `NaN`, `Infinity`, `-Infinity`, `-0`. Anything else, including an object with a `$xript` key and any other key, or an unknown tag, is plain data.",
+    "A marker is an object whose `$xript` key names a known tag and whose other keys are exactly that tag's payload keys. The payload-free tags are `undefined`, `NaN`, `Infinity`, `-Infinity`, and `-0`. `bigint` carries `value`, a decimal string with an optional leading `-`. `symbol` carries `description`, a string, and omits it for a symbol that has none. `string` carries `units`, the UTF-16 code units of a whole string that is not well-formed UTF-16 (it holds a lone surrogate); a well-formed string never uses it. `cycle` carries `up`, an integer of at least 1, and stands for an ancestor container: `up: 1` is the object or array that directly holds the marker, `up: 2` the container holding that one, and so on. Anything else, an unknown tag, an extra key, or a missing payload key, is plain data.",
+    "A JavaScript runner decodes `bigint` to a BigInt, `symbol` to a fresh `Symbol(description)` (or `Symbol()`), `string` to the string its code units spell, and `cycle` to the ancestor itself, so the host hands over a genuinely cyclic value. Encoding what its host received, it spells a BigInt (or a BigInt wrapper) as `bigint`, a symbol as `symbol`, a string that is not well-formed as `string`, a `Number`, `String`, or `Boolean` wrapper as its primitive, and a reference back to a container it is still inside as `cycle`; a container reached twice without a cycle is spelled twice. Comparing those spellings is the cycle-aware equality these cases need.",
+    "A symbol is carried at the top level of a value: a binding's argument, an execution result, a subscriber's result, and a callback's return all cross out as the `symbol` marker, and a symbol marker crossing in (a binding's return, a hook or event payload) decodes to a fresh symbol. Nested symbols follow JSON's rules (dropped from an object, `null` in an array), and no case here pins them.",
+    "`callbackResult`: the binding `call` calls the function it receives with no arguments, records what that callback returned, and returns it. The runtime executes `call(function () { return <returns>; })`, and the value the host recorded must equal `expected` at every depth, as for `results`. A case with `error` instead has a return that cannot cross: the call fails, the host lets the failure escape, and the runtime executes `(function () { try { call(function () { return <returns>; }); return 'crossed'; } catch (e) { return e.name; } })()`, which must equal `error`: the script sees the engine's own error, as reading the value would have thrown.",
+    "A revoked proxy cannot be read, so crossing one, at the top level or nested, as an argument, a result, or a callback's return, fails the call with the engine's own `TypeError`, never a placeholder value. A live proxy crosses as the value it presents through its traps. A `Date` crosses as its ISO string (its `toJSON`), a `Map` and a `Set` as `{}`, and an object's `valueOf` and `toString` are never called: it crosses by its own data. A JavaScript runner spells a `Date` its host received as itself through `toJSON`, as `JSON.stringify` would.",
+    "A `cycle` marker whose `up` is not a whole number of at least 1, or points above the outermost container, is plain data.",
+    "An object key cannot hold a marker, so a key holding a lone surrogate is outside this corpus: the JavaScript runtimes keep it intact and the JSON-boundary runtimes turn it into U+FFFD.",
+    "A cyclic value crosses as itself in the JavaScript runtimes and with `cycle` markers at its back-edges in the others. A container that appears twice without a cycle crosses as two copies, never as a marker.",
     "`inbound`: the binding `value` returns `hostValue`; the runtime executes `(function () { var v = value(); return (<probe>); })()` and the result must equal `expected`.",
     "`echo`: the binding `echo` returns, as an array, exactly the arguments it received. The runtime executes `script`; the arguments `echo` received must equal `received` at every depth, and the script's result must equal `expected`.",
-    "`results`: the runtime executes `script` and the value the host receives must equal `expected` at every depth. A special value inside an object or array crosses as itself, and an `undefined` property stays an own key.",
+    "`sink`: the binding `sink` records the arguments it received and returns nothing. The runtime executes `script`, whose result must equal `expected`; the arguments must equal `received`, and a `received` of `null` means `sink` must not have been called at all. A value crossing out reads each getter once (a getter can run again only when a `toJSON` or getter in the same value throws, or the value is cyclic, and no case here counts reads there), a getter that throws fails the call with the getter's own error (the script catches the very object it threw), and a `Number`, `String`, `Boolean`, or BigInt wrapper crosses as its primitive.",
+    "`results`: the runtime executes `script` and the value the host receives must equal `expected` at every depth. A special value inside an object or array crosses as itself, and an `undefined` property stays an own key. `toJSON` applies as it does for `JSON.stringify`, and a `toJSON` that throws is skipped, on a value a getter returned too: the object crosses by its own properties instead. Symbol-keyed, non-enumerable, and inherited properties are dropped; `arguments`, an `ArrayBuffer`, a `DataView`, a `WeakMap`, a promise, and a generator cross as `{}`; an `Array` subclass crosses as a plain array; a hole is `undefined`. A case with `fails: true` instead of `expected` must make the call fail on the host.",
     "`hook`: the setup script registers `hooks.probe(function () { return Array.prototype.map.call(arguments, String).join('|') + '#' + arguments.length; })`, then the host fires `probe` with `data` as its single payload value. The one result must equal `expected`. A Rust host fires it as `fire_hook(\"probe\", &[data])`.",
     "`event`: the setup script subscribes the same function with `events.on('probed', ...)`, then the host emits `probed` with `data` as its single payload value. The one result must equal `expected`. A Rust host emits it as `emit(\"probed\", &[data])`.",
     "`-0` and `0` compare equal under `===` and stringify alike, so probes and scripts tell them apart with `Object.is`, and a JavaScript runner compares what its host receives with `Object.is` semantics as well.",
-    "`eventResult`: the setup script subscribes `events.on('probed', function () { return <returns>; })`, the host emits `probed` with no payload, and the one result the host receives must equal `expected` at every depth, as for `results`."
+    "`eventResult`: the setup script subscribes `events.on('probed', function () { return <returns>; })`, the host emits `probed` with no payload, and the one result the host receives must equal `expected` at every depth, as for `results`.",
+    "`depth`: a value nested `depth` levels is `depth` containers, each holding the next, the innermost holding `0`; a `shape` of `object` nests `{ \"d\": <next> }` and `array` nests `[<next>]`. For `inbound` the runner builds that value and the binding `value` returns it; for `outbound` the case's `script` builds it and passes it to `echo`. The runtime executes `script`. With `expected`, the result must equal it, and for `outbound` the value `echo` received must be nested exactly `depth` levels of `shape`. With `error`, the script's result is the message of the error the call failed with, and it must begin with `error`. Every runtime carries at least 1000 levels in both directions, value fidelity on or off, and past its own limit refuses with a binding error, never a stack overflow. Limits differ between runtimes; the 100000-level cases are past every runtime's limit, and only the `<binding>(): ` prefix of the refusal is pinned.",
+    "`prefix`: the binding `call` calls the function it receives with no arguments and returns what it returns, letting any failure escape. The runtime executes `script`, which returns the message of the error the call failed with: it must begin with `prefix`, and must not begin with `prefix` twice."
   ],
   "manifest": {
     "xript": "0.10",
     "name": "value-fidelity-probe",
     "bindings": {
       "value": { "description": "Returns the case's host value." },
-      "echo": { "description": "Returns the arguments it received, as an array." }
+      "echo": { "description": "Returns the arguments it received, as an array." },
+      "sink": { "description": "Records the arguments it received and returns nothing." },
+      "call": {
+        "description": "Calls the function it receives with no arguments and returns what it returns.",
+        "params": [{ "name": "fn", "type": "function" }]
+      }
     },
     "hooks": {
       "probe": { "description": "Reports the arguments its handlers receive." }
@@ -78,6 +93,144 @@
       "hostValue": { "$xript": "nan" },
       "probe": "[typeof v, v['$xript']].join('|')",
       "expected": "object|nan"
+    },
+    {
+      "name": "the bigint marker arrives as a BigInt",
+      "hostValue": { "$xript": "bigint", "value": "-12345678901234567890" },
+      "probe": "[typeof v, String(v)].join('|')",
+      "expected": "bigint|-12345678901234567890"
+    },
+    {
+      "name": "bigint markers decode at any depth",
+      "hostValue": { "a": [{ "$xript": "bigint", "value": "7" }], "b": { "$xript": "bigint", "value": "0" } },
+      "probe": "[typeof v.a[0], String(v.a[0]), typeof v.b, String(v.b)].join('|')",
+      "expected": "bigint|7|bigint|0"
+    },
+    {
+      "name": "the symbol marker arrives as a fresh symbol with its description",
+      "hostValue": { "$xript": "symbol", "description": "tag" },
+      "probe": "[typeof v, v.description].join('|')",
+      "expected": "symbol|tag"
+    },
+    {
+      "name": "a symbol marker without a description arrives as a symbol with none",
+      "hostValue": { "$xript": "symbol" },
+      "probe": "[typeof v, v.description === undefined].join('|')",
+      "expected": "symbol|true"
+    },
+    {
+      "name": "the string marker arrives as a string with a lone surrogate intact",
+      "hostValue": { "$xript": "string", "units": [97, 55296, 98] },
+      "probe": "[typeof v, v.length, v.charCodeAt(0), v.charCodeAt(1), v.charCodeAt(2)].join('|')",
+      "expected": "string|3|97|55296|98"
+    },
+    {
+      "name": "string markers decode at any depth",
+      "hostValue": { "k": { "$xript": "string", "units": [56320] }, "list": [{ "$xript": "string", "units": [120, 55357] }] },
+      "probe": "[v.k.length, v.k.charCodeAt(0), v.list[0].length, v.list[0].charCodeAt(1)].join('|')",
+      "expected": "1|56320|2|55357"
+    },
+    {
+      "name": "a cycle marker one level up is the object that holds it",
+      "hostValue": { "name": "root", "self": { "$xript": "cycle", "up": 1 } },
+      "probe": "[v.self === v, v.self.name, Object.keys(v).join(',')].join('|')",
+      "expected": "true|root|name,self"
+    },
+    {
+      "name": "a cycle marker inside an array counts the array as a level",
+      "hostValue": { "list": [1, { "$xript": "cycle", "up": 2 }] },
+      "probe": "[v.list[1] === v, v.list.length, v.list[1].list === v.list].join('|')",
+      "expected": "true|2|true"
+    },
+    {
+      "name": "a cycle marker can reach an array ancestor",
+      "hostValue": [{ "back": { "$xript": "cycle", "up": 2 } }, 2],
+      "probe": "[v[0].back === v, v[0].back[1]].join('|')",
+      "expected": "true|2"
+    },
+    {
+      "name": "a cycle marker several levels deep reaches the root",
+      "hostValue": { "a": { "b": { "c": { "$xript": "cycle", "up": 3 } } } },
+      "probe": "String(v.a.b.c === v)",
+      "expected": "true"
+    },
+    {
+      "name": "a bigint marker with an extra key is plain data",
+      "hostValue": { "$xript": "bigint", "value": "1", "x": 2 },
+      "probe": "[typeof v, v.value, v.x].join('|')",
+      "expected": "object|1|2"
+    },
+    {
+      "name": "a bigint marker missing its value is plain data",
+      "hostValue": { "$xript": "bigint" },
+      "probe": "[typeof v, v['$xript'], Object.keys(v).length].join('|')",
+      "expected": "object|bigint|1"
+    },
+    {
+      "name": "a symbol marker with an extra key is plain data",
+      "hostValue": { "$xript": "symbol", "description": "d", "x": 1 },
+      "probe": "[typeof v, v.description, v.x].join('|')",
+      "expected": "object|d|1"
+    },
+    {
+      "name": "a string marker missing its units is plain data",
+      "hostValue": { "$xript": "string" },
+      "probe": "[typeof v, v['$xript']].join('|')",
+      "expected": "object|string"
+    },
+    {
+      "name": "a cycle marker missing its count is plain data",
+      "hostValue": { "a": { "$xript": "cycle" } },
+      "probe": "[typeof v.a, v.a['$xript'], v.a === v].join('|')",
+      "expected": "object|cycle|false"
+    },
+    {
+      "name": "a cycle marker counting zero levels up is plain data",
+      "hostValue": { "a": { "$xript": "cycle", "up": 0 } },
+      "probe": "[typeof v.a, v.a['$xript'], v.a.up].join('|')",
+      "expected": "object|cycle|0"
+    },
+    {
+      "name": "a cycle marker with a fractional count is plain data",
+      "hostValue": { "a": { "$xript": "cycle", "up": 1.5 } },
+      "probe": "[typeof v.a, v.a['$xript'], v.a.up].join('|')",
+      "expected": "object|cycle|1.5"
+    },
+    {
+      "name": "a cycle marker pointing above the root is plain data",
+      "hostValue": { "a": { "$xript": "cycle", "up": 3 } },
+      "probe": "[typeof v.a, v.a['$xript'], v.a.up, v.a === v].join('|')",
+      "expected": "object|cycle|3|false"
+    },
+    {
+      "name": "a top-level cycle marker is plain data",
+      "hostValue": { "$xript": "cycle", "up": 1 },
+      "probe": "[typeof v, v['$xript'], v.up].join('|')",
+      "expected": "object|cycle|1"
+    },
+    {
+      "name": "a payload-free tag with a payload key is plain data",
+      "hostValue": { "$xript": "undefined", "value": "1" },
+      "probe": "[typeof v, v['$xript'], v.value].join('|')",
+      "expected": "object|undefined|1"
+    },
+    {
+      "name": "a known payload key under the wrong tag is plain data",
+      "hostValue": { "$xript": "cycle", "units": [1] },
+      "probe": "[typeof v, v['$xript'], v.units.length].join('|')",
+      "expected": "object|cycle|1"
+    },
+    {
+      "name": "edge numbers arrive exactly",
+      "hostValue": [5e-324, 1.7976931348623157e308, 2.5e-308, 1e21],
+      "probe": "v.map(String).join('|')",
+      "expected": "5e-324|1.7976931348623157e+308|2.5e-308|1e+21"
+    },
+    {
+      "name": "an own __proto__ key with a primitive value stays an own key",
+      "hostValue": { "__proto__": 5, "a": 1 },
+      "probe": "[Object.keys(v).join(','), Object.getPrototypeOf(v) === Object.prototype, Object.getOwnPropertyDescriptor(v, '__proto__').value].join('|')",
+      "expected": "__proto__,a|true|5"
     }
   ],
   "echo": [
@@ -116,6 +269,128 @@
       "script": "(function () { var r = echo({ list: [{ x: NaN }, [undefined, -Infinity]], deep: { z: -0 } }); var v = r[0]; return [Number.isNaN(v.list[0].x), typeof v.list[1][0], v.list[1].length, v.list[1][1], Object.is(v.deep.z, -0)].join('|') + '#' + r.length; })()",
       "received": [{ "list": [{ "x": { "$xript": "NaN" } }, [{ "$xript": "undefined" }, { "$xript": "-Infinity" }]], "deep": { "z": { "$xript": "-0" } } }],
       "expected": "true|undefined|2|-Infinity|true#1"
+    },
+    {
+      "name": "BigInts cross out and back at any depth",
+      "script": "(function () { var r = echo(10n, { b: -3n }, [12345678901234567890n]); return [typeof r[0], String(r[0]), typeof r[1].b, String(r[1].b), String(r[2][0])].join('|') + '#' + r.length; })()",
+      "received": [{ "$xript": "bigint", "value": "10" }, { "b": { "$xript": "bigint", "value": "-3" } }, [{ "$xript": "bigint", "value": "12345678901234567890" }]],
+      "expected": "bigint|10|bigint|-3|12345678901234567890#3"
+    },
+    {
+      "name": "lone surrogates cross out and back intact",
+      "script": "(function () { var r = echo('a\\uD800b', { k: '\\uDC00' }, ['ok']); return [r[0].length, r[0].charCodeAt(1), r[1].k.length, r[1].k.charCodeAt(0), r[2][0]].join('|') + '#' + r.length; })()",
+      "received": [{ "$xript": "string", "units": [97, 55296, 98] }, { "k": { "$xript": "string", "units": [56320] } }, ["ok"]],
+      "expected": "3|55296|1|56320|ok#3"
+    },
+    {
+      "name": "an object that holds itself crosses out and back as a cycle",
+      "script": "(function () { var o = { name: 'root' }; o.self = o; var r = echo(o); return [r[0].self === r[0], r[0].name].join('|') + '#' + r.length; })()",
+      "received": [{ "name": "root", "self": { "$xript": "cycle", "up": 1 } }],
+      "expected": "true|root#1"
+    },
+    {
+      "name": "a cycle through an array crosses out and back",
+      "script": "(function () { var o = { list: [1] }; o.list.push(o); var r = echo(o); return [r[0].list[1] === r[0], r[0].list[0]].join('|') + '#' + r.length; })()",
+      "received": [{ "list": [1, { "$xript": "cycle", "up": 2 }] }],
+      "expected": "true|1#1"
+    },
+    {
+      "name": "an array that holds itself crosses out and back",
+      "script": "(function () { var a = ['x']; a.push(a); var r = echo(a); return [r[0][1] === r[0], r[0][0], r[0].length].join('|') + '#' + r.length; })()",
+      "received": [["x", { "$xript": "cycle", "up": 1 }]],
+      "expected": "true|x|2#1"
+    },
+    {
+      "name": "a shared object without a cycle crosses as copies",
+      "script": "(function () { var s = { x: 1 }; var r = echo({ a: s, b: [s] }); return [r[0].a.x, r[0].b[0].x].join('|') + '#' + r.length; })()",
+      "received": [{ "a": { "x": 1 }, "b": [{ "x": 1 }] }],
+      "expected": "1|1#1"
+    },
+    {
+      "name": "edge numbers cross out and back exactly",
+      "script": "(function () { var r = echo(5e-324, 1.7976931348623157e308, 2.5e-308, 1e21); return r.map(String).join('|') + '#' + r.length; })()",
+      "received": [5e-324, 1.7976931348623157e308, 2.5e-308, 1e21],
+      "expected": "5e-324|1.7976931348623157e+308|2.5e-308|1e+21#4"
+    },
+    {
+      "name": "an own __proto__ key with a primitive value crosses out and back",
+      "script": "(function () { var o = {}; Object.defineProperty(o, '__proto__', { value: 7, enumerable: true, writable: true, configurable: true }); o.a = 1; var r = echo(o)[0]; return [Object.keys(r).join(','), Object.getPrototypeOf(r) === Object.prototype, Object.getOwnPropertyDescriptor(r, '__proto__').value].join('|'); })()",
+      "received": [{ "__proto__": 7, "a": 1 }],
+      "expected": "__proto__,a|true|7"
+    }
+  ],
+  "sink": [
+    {
+      "name": "a top-level symbol argument crosses with its description",
+      "script": "(function () { sink(Symbol('tag'), Symbol(), Symbol('')); return 'sent'; })()",
+      "received": [{ "$xript": "symbol", "description": "tag" }, { "$xript": "symbol" }, { "$xript": "symbol", "description": "" }],
+      "expected": "sent"
+    },
+    {
+      "name": "wrapper objects cross as their primitives, keeping special values",
+      "script": "(function () { sink(new Number(NaN), new Number(-0), new Number(Infinity), new String('s'), new Boolean(false), Object(5n)); return 'sent'; })()",
+      "received": [{ "$xript": "NaN" }, { "$xript": "-0" }, { "$xript": "Infinity" }, "s", false, { "$xript": "bigint", "value": "5" }],
+      "expected": "sent"
+    },
+    {
+      "name": "wrapper objects unwrap at any depth",
+      "script": "(function () { sink({ n: [new Number(-Infinity), new Number(2)], s: { t: new String('x') }, b: [new Boolean(true)], i: Object(-9n) }); return 'sent'; })()",
+      "received": [{ "n": [{ "$xript": "-Infinity" }, 2], "s": { "t": "x" }, "b": [true], "i": { "$xript": "bigint", "value": "-9" } }],
+      "expected": "sent"
+    },
+    {
+      "name": "a getter on an argument runs once when the value needs markers",
+      "script": "(function () { var n = 0; sink({ get x() { n++; return undefined; }, y: NaN }); return String(n); })()",
+      "received": [{ "x": { "$xript": "undefined" }, "y": { "$xript": "NaN" } }],
+      "expected": "1"
+    },
+    {
+      "name": "a getter nested in an argument runs once",
+      "script": "(function () { var n = 0; sink([1, { a: { get x() { n++; return 2; } }, z: -0 }]); return String(n); })()",
+      "received": [[1, { "a": { "x": 2 }, "z": { "$xript": "-0" } }]],
+      "expected": "1"
+    },
+    {
+      "name": "a getter on a plain argument runs once",
+      "script": "(function () { var n = 0; sink({ get x() { n++; return 'v'; } }); return String(n); })()",
+      "received": [{ "x": "v" }],
+      "expected": "1"
+    },
+    {
+      "name": "a getter that throws on a top-level argument fails the call with its own error",
+      "script": "(function () { var boom = new Error('boom'); try { sink({ get x() { throw boom; } }); return 'crossed'; } catch (e) { return [e === boom, e.message].join('|'); } })()",
+      "received": null,
+      "expected": "true|boom"
+    },
+    {
+      "name": "a getter that throws deep in an argument fails the call with its own error",
+      "script": "(function () { var boom = new TypeError('deep'); try { sink(1, { a: [2, { get x() { throw boom; } }] }); return 'crossed'; } catch (e) { return [e === boom, e.name, e.message].join('|'); } })()",
+      "received": null,
+      "expected": "true|TypeError|deep"
+    },
+    {
+      "name": "a revoked proxy argument fails the call with the engine's TypeError",
+      "script": "(function () { var r = Proxy.revocable({}, {}); r.revoke(); try { sink(r.proxy); return 'crossed'; } catch (e) { return e.name; } })()",
+      "received": null,
+      "expected": "TypeError"
+    },
+    {
+      "name": "a revoked proxy nested in an argument fails the call with the engine's TypeError",
+      "script": "(function () { var r = Proxy.revocable({}, {}); r.revoke(); try { sink({ a: [1, r.proxy] }); return 'crossed'; } catch (e) { return e.name; } })()",
+      "received": null,
+      "expected": "TypeError"
+    },
+    {
+      "name": "live proxies cross as the values they present",
+      "script": "(function () { sink(new Proxy({ a: 1, b: [2] }, {}), new Proxy([1, 2, 3], {}), { p: new Proxy({ a: 1, b: 2 }, { ownKeys: function () { return ['b']; } }) }); return 'sent'; })()",
+      "received": [{ "a": 1, "b": [2] }, [1, 2, 3], { "p": { "b": 2 } }],
+      "expected": "sent"
+    },
+    {
+      "name": "a Date argument crosses as its ISO string, a Map and a Set as empty objects",
+      "script": "(function () { sink(new Date(0), new Map([[1, 2]]), new Set([1]), { d: new Date(86400000) }); return 'sent'; })()",
+      "received": ["1970-01-01T00:00:00.000Z", {}, {}, { "d": "1970-01-02T00:00:00.000Z" }],
+      "expected": "sent"
     }
   ],
   "results": [
@@ -142,6 +417,146 @@
       "name": "special values at depth",
       "script": "({ list: [{ x: NaN }, [undefined, -Infinity]], deep: { z: -0 } })",
       "expected": { "list": [{ "x": { "$xript": "NaN" } }, [{ "$xript": "undefined" }, { "$xript": "-Infinity" }]], "deep": { "z": { "$xript": "-0" } } }
+    },
+    { "name": "a BigInt", "script": "12345678901234567890n", "expected": { "$xript": "bigint", "value": "12345678901234567890" } },
+    { "name": "a negative BigInt", "script": "-5n", "expected": { "$xript": "bigint", "value": "-5" } },
+    { "name": "a BigInt wrapper", "script": "Object(7n)", "expected": { "$xript": "bigint", "value": "7" } },
+    { "name": "a symbol", "script": "Symbol('q')", "expected": { "$xript": "symbol", "description": "q" } },
+    { "name": "a symbol without a description", "script": "Symbol()", "expected": { "$xript": "symbol" } },
+    { "name": "a symbol with an empty description", "script": "Symbol('')", "expected": { "$xript": "symbol", "description": "" } },
+    {
+      "name": "BigInts at depth",
+      "script": "({ b: 10n, a: [Object(-3n), 0n] })",
+      "expected": { "b": { "$xript": "bigint", "value": "10" }, "a": [{ "$xript": "bigint", "value": "-3" }, { "$xript": "bigint", "value": "0" }] }
+    },
+    {
+      "name": "a string with a lone surrogate",
+      "script": "'x\\uDBFF'",
+      "expected": { "$xript": "string", "units": [120, 56319] }
+    },
+    {
+      "name": "lone surrogates at depth, beside well-formed strings",
+      "script": "({ a: ['\\uDC00\\uD800', 'fine \\uD83D\\uDE00'], b: { c: '\\uD800' } })",
+      "expected": { "a": [{ "$xript": "string", "units": [56320, 55296] }, "fine 😀"], "b": { "c": { "$xript": "string", "units": [55296] } } }
+    },
+    {
+      "name": "an object that holds itself",
+      "script": "(function () { var o = { a: 1 }; o.self = o; return o; })()",
+      "expected": { "a": 1, "self": { "$xript": "cycle", "up": 1 } }
+    },
+    {
+      "name": "an array that holds itself",
+      "script": "(function () { var a = [1]; a.push(a); return a; })()",
+      "expected": [1, { "$xript": "cycle", "up": 1 }]
+    },
+    {
+      "name": "a back-edge several levels deep",
+      "script": "(function () { var o = { x: { y: [{}] } }; o.x.y[0].back = o; o.x.y[0].mid = o.x; return o; })()",
+      "expected": { "x": { "y": [{ "back": { "$xript": "cycle", "up": 4 }, "mid": { "$xript": "cycle", "up": 3 } }] } }
+    },
+    {
+      "name": "a shared object without a cycle crosses as copies",
+      "script": "(function () { var s = { v: 1 }; return { a: s, b: [s, s] }; })()",
+      "expected": { "a": { "v": 1 }, "b": [{ "v": 1 }, { "v": 1 }] }
+    },
+    {
+      "name": "wrapper objects cross as their primitives at any depth",
+      "script": "({ n: new Number(NaN), z: [new Number(-0)], i: new Number(Infinity), s: new String('s'), b: new Boolean(false), k: new Number(3) })",
+      "expected": { "n": { "$xript": "NaN" }, "z": [{ "$xript": "-0" }], "i": { "$xript": "Infinity" }, "s": "s", "b": false, "k": 3 }
+    },
+    {
+      "name": "a toJSON that throws is skipped for the object's own properties",
+      "script": "({ a: { toJSON: function () { throw new Error('no'); }, b: 2 }, c: 3 })",
+      "expected": { "a": { "b": 2 }, "c": 3 }
+    },
+    {
+      "name": "a toJSON that throws on a value a getter returned is skipped",
+      "script": "({ get b() { return { toJSON: function () { throw new Error('no'); }, k: 2 }; }, c: 1 })",
+      "expected": { "b": { "k": 2 }, "c": 1 }
+    },
+    {
+      "name": "a top-level toJSON that throws is skipped",
+      "script": "({ toJSON: function () { throw new Error('no'); }, b: [NaN] })",
+      "expected": { "b": [{ "$xript": "NaN" }] }
+    },
+    {
+      "name": "toJSON applies as it does for JSON.stringify",
+      "script": "({ a: { toJSON: function () { return 'A'; } }, list: [{ toJSON: function (key) { return 'at ' + key; } }], n: { toJSON: function () { return NaN; } } })",
+      "expected": { "a": "A", "list": ["at 0"], "n": { "$xript": "NaN" } }
+    },
+    {
+      "name": "a top-level toJSON receives the empty key",
+      "script": "({ toJSON: function (key) { return 'key=' + JSON.stringify(key); } })",
+      "expected": "key=\"\""
+    },
+    {
+      "name": "symbol-keyed, non-enumerable, and inherited properties are dropped",
+      "script": "(function () { var o = Object.create({ inherited: 1 }); o.own = 2; Object.defineProperty(o, 'hidden', { value: 3, enumerable: false }); o[Symbol('k')] = 4; return { o: o }; })()",
+      "expected": { "o": { "own": 2 } }
+    },
+    {
+      "name": "values with no JSON shape cross as empty objects",
+      "script": "(function () { return { args: (function () { return arguments; })(), buffer: new ArrayBuffer(4), view: new DataView(new ArrayBuffer(2)), weak: new WeakMap(), promise: Promise.resolve(1), generator: (function* () { yield 1; })() }; })()",
+      "expected": { "args": {}, "buffer": {}, "view": {}, "weak": {}, "promise": {}, "generator": {} }
+    },
+    {
+      "name": "an Array subclass crosses as a plain array",
+      "script": "(function () { class List extends Array {} var l = new List(); l.push(1, 2); return { l: l }; })()",
+      "expected": { "l": [1, 2] }
+    },
+    {
+      "name": "holes cross as undefined, one per slot",
+      "script": "({ sparse: new Array(3), nested: [1, , 3], deep: [[, 'x']] })",
+      "expected": {
+        "sparse": [{ "$xript": "undefined" }, { "$xript": "undefined" }, { "$xript": "undefined" }],
+        "nested": [1, { "$xript": "undefined" }, 3],
+        "deep": [[{ "$xript": "undefined" }, "x"]]
+      }
+    },
+    {
+      "name": "an own __proto__ key with a primitive value stays an own key",
+      "script": "(function () { var o = {}; Object.defineProperty(o, '__proto__', { value: 'p', enumerable: true, writable: true, configurable: true }); o.a = 1; return o; })()",
+      "expected": { "__proto__": "p", "a": 1 }
+    },
+    {
+      "name": "an object whose valueOf returns an object and toString a string crosses by its own data",
+      "script": "({ a: { valueOf: function () { return {}; }, toString: function () { return 's'; }, k: 1 } })",
+      "expected": { "a": { "k": 1 } }
+    },
+    {
+      "name": "an object whose valueOf and toString both return objects crosses without converting",
+      "script": "({ a: { valueOf: function () { return {}; }, toString: function () { return {}; } } })",
+      "expected": { "a": {} }
+    },
+    {
+      "name": "a non-callable valueOf is plain data",
+      "script": "({ v: { valueOf: 5 } })",
+      "expected": { "v": { "valueOf": 5 } }
+    },
+    {
+      "name": "live proxies cross as the values they present",
+      "script": "({ plain: new Proxy({ a: 1, b: [2] }, {}), list: new Proxy([1, 2, 3], {}), keyed: new Proxy({ a: 1, b: 2 }, { ownKeys: function () { return ['b']; } }) })",
+      "expected": { "plain": { "a": 1, "b": [2] }, "list": [1, 2, 3], "keyed": { "b": 2 } }
+    },
+    {
+      "name": "a Date crosses as its ISO string, a Map and a Set as empty objects",
+      "script": "({ d: new Date(0), m: new Map([[1, 2]]), s: new Set([1]) })",
+      "expected": { "d": "1970-01-01T00:00:00.000Z", "m": {}, "s": {} }
+    },
+    {
+      "name": "a revoked proxy result fails the call",
+      "script": "(function () { var r = Proxy.revocable({}, {}); r.revoke(); return r.proxy; })()",
+      "fails": true
+    },
+    {
+      "name": "a revoked proxy nested in a result fails the call",
+      "script": "(function () { var r = Proxy.revocable({}, {}); r.revoke(); return { a: [r.proxy] }; })()",
+      "fails": true
+    },
+    {
+      "name": "edge numbers",
+      "script": "[5e-324, 1.7976931348623157e308, 2.5e-308, 1e21]",
+      "expected": [5e-324, 1.7976931348623157e308, 2.5e-308, 1e21]
     }
   ],
   "hook": [
@@ -154,6 +569,21 @@
       "name": "a special payload is the one argument",
       "data": { "$xript": "-Infinity" },
       "expected": "-Infinity#1"
+    },
+    {
+      "name": "a BigInt payload is the one argument",
+      "data": { "$xript": "bigint", "value": "42" },
+      "expected": "42#1"
+    },
+    {
+      "name": "a symbol payload is the one argument",
+      "data": { "$xript": "symbol", "description": "tag" },
+      "expected": "Symbol(tag)#1"
+    },
+    {
+      "name": "a cyclic payload spreads with its back-edge intact",
+      "data": { "n": { "$xript": "bigint", "value": "1" }, "self": { "$xript": "cycle", "up": 1 } },
+      "expected": "1|[object Object]#2"
     }
   ],
   "event": [
@@ -166,6 +596,16 @@
       "name": "a special event payload is the one argument",
       "data": { "$xript": "Infinity" },
       "expected": "Infinity#1"
+    },
+    {
+      "name": "a BigInt event payload is the one argument",
+      "data": { "$xript": "bigint", "value": "-8" },
+      "expected": "-8#1"
+    },
+    {
+      "name": "a symbol event payload is the one argument",
+      "data": { "$xript": "symbol" },
+      "expected": "Symbol()#1"
     }
   ],
   "eventResult": [
@@ -178,6 +618,115 @@
       "name": "a subscriber returning special values at depth",
       "returns": "{ n: NaN, u: undefined, list: [-0, Infinity, undefined] }",
       "expected": { "n": { "$xript": "NaN" }, "u": { "$xript": "undefined" }, "list": [{ "$xript": "-0" }, { "$xript": "Infinity" }, { "$xript": "undefined" }] }
+    },
+    { "name": "a subscriber returning a BigInt", "returns": "10n", "expected": { "$xript": "bigint", "value": "10" } },
+    { "name": "a subscriber returning a symbol", "returns": "Symbol('e')", "expected": { "$xript": "symbol", "description": "e" } },
+    { "name": "a subscriber returning a symbol without a description", "returns": "Symbol()", "expected": { "$xript": "symbol" } },
+    {
+      "name": "a subscriber returning a cyclic value",
+      "returns": "(function () { var o = { k: [] }; o.k.push(o); return o; })()",
+      "expected": { "k": [{ "$xript": "cycle", "up": 2 }] }
+    }
+  ],
+  "depth": [
+    {
+      "name": "an object 1000 levels deep crosses in",
+      "direction": "inbound",
+      "shape": "object",
+      "depth": 1000,
+      "script": "(function () { var v = value(), n = 0; while (v !== null && typeof v === 'object') { v = v.d; n++; } return n + '|' + v; })()",
+      "expected": "1000|0"
+    },
+    {
+      "name": "an array 1000 levels deep crosses in",
+      "direction": "inbound",
+      "shape": "array",
+      "depth": 1000,
+      "script": "(function () { var v = value(), n = 0; while (Array.isArray(v)) { v = v[0]; n++; } return n + '|' + v; })()",
+      "expected": "1000|0"
+    },
+    {
+      "name": "an object 1000 levels deep crosses out and back",
+      "direction": "outbound",
+      "shape": "object",
+      "depth": 1000,
+      "script": "(function () { var v = 0; for (var i = 0; i < 1000; i++) v = { d: v }; var r = echo(v)[0], n = 0; while (r !== null && typeof r === 'object') { r = r.d; n++; } return n + '|' + r; })()",
+      "expected": "1000|0"
+    },
+    {
+      "name": "an array 1000 levels deep crosses out and back",
+      "direction": "outbound",
+      "shape": "array",
+      "depth": 1000,
+      "script": "(function () { var v = 0; for (var i = 0; i < 1000; i++) v = [v]; var r = echo(v)[0], n = 0; while (Array.isArray(r)) { r = r[0]; n++; } return n + '|' + r; })()",
+      "expected": "1000|0"
+    },
+    {
+      "name": "a value 1000 levels deep that needs markers crosses out and back",
+      "direction": "outbound",
+      "shape": "object",
+      "depth": 1000,
+      "script": "(function () { var v = 0; for (var i = 0; i < 1000; i++) v = { d: v, u: undefined }; var r = echo(v)[0], n = 0; while (r !== null && typeof r === 'object') { if (!('u' in r)) return 'lost u at ' + n; r = r.d; n++; } return n + '|' + r; })()",
+      "expected": "1000|0"
+    },
+    {
+      "name": "an object nested past the limit fails the binding call going out",
+      "direction": "outbound",
+      "shape": "object",
+      "depth": 100000,
+      "script": "(function () { var v = 0; for (var i = 0; i < 100000; i++) v = { d: v }; try { echo(v); return 'crossed'; } catch (e) { return String(e.message); } })()",
+      "error": "echo(): "
+    },
+    {
+      "name": "an array nested past the limit fails the binding call going out",
+      "direction": "outbound",
+      "shape": "array",
+      "depth": 100000,
+      "script": "(function () { var v = 0; for (var i = 0; i < 100000; i++) v = [v]; try { sink(v); return 'crossed'; } catch (e) { return String(e.message); } })()",
+      "error": "sink(): "
+    },
+    {
+      "name": "a host value nested past the limit fails the binding call coming in",
+      "direction": "inbound",
+      "shape": "object",
+      "depth": 100000,
+      "script": "(function () { try { value(); return 'crossed'; } catch (e) { return String(e.message); } })()",
+      "error": "value(): "
+    }
+  ],
+  "callbackResult": [
+    {
+      "name": "a callback returning nested BigInts",
+      "returns": "[10n, { a: 11n }]",
+      "expected": [{ "$xript": "bigint", "value": "10" }, { "a": { "$xript": "bigint", "value": "11" } }]
+    },
+    {
+      "name": "a callback returning nested symbols follows JSON's rules",
+      "returns": "[Symbol('x'), { s: Symbol('y'), k: 1 }]",
+      "expected": [null, { "k": 1 }]
+    },
+    { "name": "a callback returning a revoked proxy fails the call", "returns": "(function () { var r = Proxy.revocable({}, {}); r.revoke(); return r.proxy; })()", "error": "TypeError" },
+    { "name": "a callback returning a revoked proxy nested in a value fails the call", "returns": "(function () { var r = Proxy.revocable({}, {}); r.revoke(); return [r.proxy]; })()", "error": "TypeError" },
+    { "name": "a callback returning a symbol", "returns": "Symbol('c')", "expected": { "$xript": "symbol", "description": "c" } },
+    { "name": "a callback returning a symbol without a description", "returns": "Symbol()", "expected": { "$xript": "symbol" } },
+    { "name": "a callback returning a BigInt", "returns": "-4n", "expected": { "$xript": "bigint", "value": "-4" } },
+    { "name": "a callback returning NaN", "returns": "NaN", "expected": { "$xript": "NaN" } },
+    {
+      "name": "a callback returning special values at depth",
+      "returns": "{ u: undefined, list: [-0, Infinity] }",
+      "expected": { "u": { "$xript": "undefined" }, "list": [{ "$xript": "-0" }, { "$xript": "Infinity" }] }
+    },
+    {
+      "name": "a callback returning a cyclic value",
+      "returns": "(function () { var o = { n: 1 }; o.self = o; return o; })()",
+      "expected": { "n": 1, "self": { "$xript": "cycle", "up": 1 } }
+    }
+  ],
+  "prefix": [
+    {
+      "name": "a callback that returns a promise names the binding once",
+      "script": "(function () { try { call(function () { return Promise.resolve(1); }); return 'returned'; } catch (e) { return String(e.message); } })()",
+      "prefix": "call(): "
     }
   ]
 }

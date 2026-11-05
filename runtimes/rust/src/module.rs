@@ -253,8 +253,8 @@ fn import_specifier_at(text: &str, clean_pos: usize, raw_spec: &str) -> Option<S
     if prefix.ends_with("from") && preceded_by_import_or_export(prefix) {
         return Some(unescape_specifier(raw_spec));
     }
-    if prefix.ends_with("import") {
-        let before = prefix[..prefix.len() - "import".len()].trim_end();
+    if let Some(before) = prefix.strip_suffix("import") {
+        let before = before.trim_end();
         if before.is_empty() || ends_at_statement_boundary(before) {
             return Some(unescape_specifier(raw_spec));
         }
@@ -316,8 +316,8 @@ fn import_specifier_kind_at(text: &str, clean_pos: usize) -> Option<bool> {
     if prefix.ends_with("from") && preceded_by_import_or_export(prefix) {
         return Some(false);
     }
-    if prefix.ends_with("import") {
-        let before = prefix[..prefix.len() - "import".len()].trim_end();
+    if let Some(before) = prefix.strip_suffix("import") {
+        let before = before.trim_end();
         if before.is_empty() || ends_at_statement_boundary(before) {
             return Some(false);
         }

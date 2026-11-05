@@ -1,9 +1,11 @@
 import type { QuickJSContext, QuickJSAsyncContext, QuickJSHandle } from "quickjs-emscripten-core";
 import { CallbackError, RetainError } from "./errors.js";
 import { installCrossing, readFromQuickJS, releaseCrossing } from "./crossing.js";
-import { marshalToQuickJS, safeDispose } from "./marshal.js";
+import { marshalArgsToQuickJS, safeDispose } from "./marshal.js";
+import { assertUsable, containFault } from "./stack-guard.js";
 import type { PathStep, RetainPositions } from "./retain-positions.js";
 import { RetainedRegistry, type RetainedCallback, type RetainedOptions } from "./retained.js";
+import { registerScopedCallback } from "./retained-handles.js";
 
 type Context = QuickJSContext | QuickJSAsyncContext;
 
@@ -84,6 +86,8 @@ export interface CallbackSupport {
 	types: Record<string, { fields?: Record<string, { type: unknown; retain?: boolean }> }> | undefined;
 	/** The context's retained callbacks, once `configureCallbacks` has run. */
 	retained: RetainedRegistry | null;
+	/** Builds the errors a binding throws as instances of the sandbox's own error classes. */
+	errors: QuickJSHandle | null;
 	dispose(): void;
 }
 
@@ -130,9 +134,11 @@ function installCallbackSupport(context: Context): CallbackSupport {
 		scopes: [],
 		types: undefined,
 		retained: null,
+		errors: null,
 		dispose() {
 			support.retained?.dispose();
 			if (trampoline.alive) trampoline.dispose();
+			if (support.errors?.alive) support.errors.dispose();
 		},
 	};
 	return support;
@@ -154,6 +160,16 @@ export type ScriptCallOutcome =
 	| { kind: "limit"; error: QuickJSHandle }
 	| { kind: "threw"; error: QuickJSHandle; info: { name?: string; message?: string } };
 
+/** A budget interrupt ends the call as a limit stop; any other sandbox error is the script's own throw. */
+function failedCall(context: Context, error: QuickJSHandle): ScriptCallOutcome {
+	const dumped = context.dump(error) as { name?: string; message?: string } | string | undefined;
+	const info = typeof dumped === "object" && dumped !== null ? dumped : { message: String(dumped) };
+	if (typeof info.message === "string" && info.message.includes("interrupted")) {
+		return { kind: "limit", error };
+	}
+	return { kind: "threw", error, info };
+}
+
 /** Calls a script function synchronously with host arguments, counting it as a running callback. */
 export function callScriptFunction(
 	context: Context,
@@ -162,24 +178,20 @@ export function callScriptFunction(
 	args: unknown[],
 	binding: string,
 ): ScriptCallOutcome {
-	const argsHandle = marshalToQuickJS(context, args, binding);
+	assertUsable(context);
+	const argsHandle = marshalArgsToQuickJS(context, args, binding);
 	support.depth++;
 	let result;
 	try {
 		result = context.callFunction(support.trampoline, context.undefined, fn, argsHandle);
+	} catch (error) {
+		throw containFault(context, error);
 	} finally {
 		support.depth--;
 		safeDispose(context, argsHandle);
 	}
 
-	if (result.error) {
-		const dumped = context.dump(result.error) as { name?: string; message?: string } | string | undefined;
-		const info = typeof dumped === "object" && dumped !== null ? dumped : { message: String(dumped) };
-		if (typeof info.message === "string" && info.message.includes("interrupted")) {
-			return { kind: "limit", error: result.error };
-		}
-		return { kind: "threw", error: result.error, info };
-	}
+	if (result.error) return failedCall(context, result.error);
 
 	const outcome = result.value;
 	try {
@@ -191,7 +203,7 @@ export function callScriptFunction(
 		try {
 			let stopped: QuickJSHandle | null = null;
 			const value = readFromQuickJS(context, returned, { onStopped: (error) => (stopped = error) });
-			if (stopped) return { kind: "limit", error: stopped };
+			if (stopped) return failedCall(context, stopped);
 			return { kind: "returned", value };
 		} finally {
 			returned.dispose();
@@ -256,6 +268,9 @@ export class CallbackScope {
 		Object.defineProperty(callback, "retain", {
 			value: (): RetainedCallback => scope.retain(fn, retainable),
 		});
+		registerScopedCallback(callback, (context) =>
+			scope.active && fn.alive && context === scope.context ? fn.dup() : undefined,
+		);
 		return callback as XriptCallback;
 	}
 

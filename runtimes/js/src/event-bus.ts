@@ -5,7 +5,7 @@ import { UNTIMED, type HandlerClock } from "./deprecations.js";
 import { BindingError } from "./errors.js";
 import { EVENT_BUS_KERNEL } from "./event-bus-kernel.js";
 import { readResult } from "./callbacks.js";
-import { marshalToQuickJS, safeDispose } from "./marshal.js";
+import { marshalArgsToQuickJS, marshalToQuickJS, safeDispose } from "./marshal.js";
 
 /** One handler's result from a host emit, tagged with the mod that subscribed it. */
 export interface EmitResult {
@@ -101,10 +101,10 @@ export function installEventBus(
 		return value;
 	}
 
-	function callApiHandle(method: string, args: unknown[]): QuickJSHandle {
+	function callApiHandle(method: string, args: unknown[], argListAt = -1): QuickJSHandle {
 		const marshalled: QuickJSHandle[] = [];
 		try {
-			for (const arg of args) marshalled.push(marshalToQuickJS(context, arg));
+			args.forEach((arg, i) => marshalled.push(i === argListAt ? marshalArgsToQuickJS(context, arg as unknown[]) : marshalToQuickJS(context, arg)));
 		} catch (error) {
 			for (const handle of marshalled) safeDispose(context, handle);
 			throw error;
@@ -139,7 +139,7 @@ export function installEventBus(
 
 	return {
 		emit(eventId: string, args: unknown[]): EmitResult[] {
-			const results = callApiHandle("emit", [eventId, args]);
+			const results = callApiHandle("emit", [eventId, args], 1);
 			try {
 				const lengthHandle = context.getProp(results, "length");
 				const length = context.dump(lengthHandle);

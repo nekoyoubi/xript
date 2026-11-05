@@ -9,4 +9,11 @@ public class BindingException : Exception
     {
         Binding = binding;
     }
+
+    /// <summary>For a subclass that composes its own complete message.</summary>
+    private protected BindingException(string binding, string message, bool composed)
+        : base(composed ? message : $"binding error in `{binding}`: {message}")
+    {
+        Binding = binding;
+    }
 }

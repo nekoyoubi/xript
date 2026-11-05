@@ -48,7 +48,7 @@ export function resolveCallerAware<T extends BindingTree>(bindings: T, caller: C
 		}
 		if (next !== value) {
 			resolved ??= { ...bindings };
-			resolved[name] = next;
+			Object.defineProperty(resolved, name, { value: next, writable: true, enumerable: true, configurable: true });
 		}
 	}
 	return (resolved ?? bindings) as T;

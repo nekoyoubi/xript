@@ -75,7 +75,8 @@ fn set_attr_false_or_null_finalizes_as_remove_attr() {
 
 #[test]
 fn a_non_primitive_set_attr_value_is_refused_with_a_diagnostic() {
-    let seen: Arc<Mutex<Vec<(String, String, Option<String>)>>> = Arc::default();
+    type Seen = Vec<(String, String, Option<String>)>;
+    let seen: Arc<Mutex<Seen>> = Arc::default();
     let sink = seen.clone();
     let runtime = create_runtime(
         MANIFEST,

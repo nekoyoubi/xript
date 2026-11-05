@@ -20,6 +20,13 @@ internal sealed class Sandbox : IDisposable
     private CancellationToken _budgetToken;
 
     private readonly CallDeadlineConstraint _deadline = new();
+
+    /// <summary>
+    /// Whether budgets run on the real clock, with Jint's timeout interval and a cancellation
+    /// timer behind the inline deadline. Off only under <see cref="RuntimeOptions.DeadlineClock"/>,
+    /// where the replaced clock alone decides.
+    /// </summary>
+    private readonly bool _realTimeBudgets;
     private readonly long _defaultTimeoutMs;
     private readonly long? _hardTimeoutMs;
     /// <summary>
@@ -34,6 +41,9 @@ internal sealed class Sandbox : IDisposable
     private readonly HashSet<string> _registeredLibraryModules = [];
     private int _moduleCounter;
     private readonly bool _valueFidelity;
+    private readonly Crossing _crossing;
+    private readonly JsValue _promiseObserver;
+    private readonly SandboxInternals _internals;
     private static readonly DateTime EpochStart =
         new(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
@@ -106,10 +116,13 @@ internal sealed class Sandbox : IDisposable
         var ceilingMs = WidestBudgetMs(manifest, _defaultTimeoutMs, _hardTimeoutMs);
         _constraintLifetime = CancellationTokenSource.CreateLinkedTokenSource(options.Cancellation);
         _budgetToken = _constraintLifetime.Token;
+        _realTimeBudgets = options.DeadlineClock is null;
+        if (options.DeadlineClock is { } clock)
+            _deadline.Clock = clock;
 
         _engine = new Engine(cfg =>
         {
-            if (!debugEnabled)
+            if (!debugEnabled && _realTimeBudgets)
                 cfg.TimeoutInterval(TimeSpan.FromMilliseconds(ceilingMs));
 
             if (effective.MemoryMb is > 0)
@@ -117,6 +130,14 @@ internal sealed class Sandbox : IDisposable
 
             if (effective.MaxStackDepth is > 0)
                 cfg.LimitRecursion(effective.MaxStackDepth.Value);
+
+            // Without the probe a runaway recursion, in script or in a native traversal such as a
+            // deep `JSON.stringify`, overflows the native stack and ends the host process.
+            cfg.Constraints.StackOverflowGuard = true;
+
+            // `String(fn)` is a function's source in every other runtime; Jint answers a
+            // `[native code]` placeholder unless the parser keeps the text.
+            cfg.RetainFunctionSourceText(true);
 
             // Installed unconditionally via the runtime-owned linked token: the constraint is
             // the only per-call deadline lever Jint exposes, and Jint declines to install one
@@ -137,22 +158,50 @@ internal sealed class Sandbox : IDisposable
         });
 
         _valueFidelity = options.ValueFidelity;
-        RegisterMarshal();
+        _crossing = new Crossing(_engine, _valueFidelity, Retained);
+        _promiseObserver = _engine.Evaluate("""
+            (function (apply, then) {
+                return function (promise, box) {
+                    apply(then, promise, [
+                        function (value) { box.state = 1; box.value = value; },
+                        function (reason) { box.state = 2; box.value = reason; }
+                    ]);
+                };
+            })(Reflect.apply, Promise.prototype.then)
+            """);
         RemoveDangerousGlobals();
+        _internals = new SandboxInternals(_engine, Caller);
+        _internals.InstallErrorClasses();
         RegisterConsole(options.Console);
         RegisterBindings(options.HostBindings, granted, options.Audit);
         var shadowable = ShadowableBindings();
-        RegisterFragmentHooks();
-        RegisterHooks(granted);
-        RegisterExportRegistry();
+        var hooks = _internals.InstallHooks();
+        RegisterHooks(hooks, granted);
+        _internals.InstallExports();
         _bus = new EventBus(
             _engine, manifest.Events, granted, Caller, InstallsEventsGlobal(manifest),
             JsonElementToJsValue, JsValueToJsonElement);
         ReportShadowedBindings(shadowable);
+        SealGlobals();
 
         if (debugEnabled)
             DebugSession = new DebugSession(_engine, options.Debug!);
     }
+
+    /// <summary>The runtime's globals besides the bindings, which no mod may replace or delete.</summary>
+    private static readonly string[] SealedBuiltins =
+        ["hooks", "events", "xript", "console", "BindingError", "CapabilityDeniedError"];
+
+    /// <summary>The sealed globals that are also deep-frozen, so their members stay put too.</summary>
+    private static readonly string[] FrozenBuiltins =
+        ["hooks", "xript", "console", "BindingError", "CapabilityDeniedError"];
+
+    /// <summary>
+    /// Locks every global the runtime installed for scripts as a non-writable, non-configurable
+    /// property of <c>globalThis</c>, so one mod can neither replace nor delete what another calls.
+    /// </summary>
+    private void SealGlobals() =>
+        _internals.Seal([.. _manifest.Bindings?.Keys ?? Enumerable.Empty<string>(), .. SealedBuiltins], FrozenBuiltins);
 
     /// <summary>The built-in globals a top-level binding can be replaced by, in the order a notice names them.</summary>
     private static readonly string[] ShadowingBuiltins = ["events", "hooks", "xript"];
@@ -196,72 +245,6 @@ internal sealed class Sandbox : IDisposable
     /// </summary>
     internal JsonElement UndefinedElement() =>
         _valueFidelity ? XriptValue.Undefined : JsonDocument.Parse("null").RootElement.Clone();
-
-    /// <summary>
-    /// Installs <c>__xript_marshal</c>, the sandbox half of special-value markers: a
-    /// <c>JSON.stringify</c> replacer that encodes them and a decoder that turns markers back
-    /// into values in place. With markers off both are pass-throughs. Captures the JSON and
-    /// Object built-ins before any mod code runs and is not writable afterwards.
-    /// </summary>
-    private void RegisterMarshal()
-    {
-        _engine.Execute($$"""
-            Object.defineProperty(globalThis, '__xript_marshal', { value: (function (on, key) {
-                var stringify = JSON.stringify;
-                var keys = Object.keys;
-                var define = Object.defineProperty;
-                function tag(v) {
-                    if (!on) return null;
-                    if (v === undefined) return 'undefined';
-                    if (typeof v === 'number') {
-                        if (v !== v) return 'NaN';
-                        if (v === Infinity) return 'Infinity';
-                        if (v === -Infinity) return '-Infinity';
-                        if (v === 0 && 1 / v < 0) return '-0';
-                    }
-                    return null;
-                }
-                function replacer(k, v) {
-                    var t = tag(v);
-                    if (t === null) return v;
-                    var m = {};
-                    m[key] = t;
-                    return m;
-                }
-                function special(v) {
-                    if (Array.isArray(v)) return null;
-                    var ks = keys(v);
-                    if (ks.length !== 1 || ks[0] !== key) return null;
-                    switch (v[key]) {
-                        case 'undefined': return { v: undefined };
-                        case 'NaN': return { v: NaN };
-                        case 'Infinity': return { v: Infinity };
-                        case '-Infinity': return { v: -Infinity };
-                        case '-0': return { v: -0 };
-                        default: return null;
-                    }
-                }
-                function decode(v) {
-                    if (!on || v === null || typeof v !== 'object') return v;
-                    var s = special(v);
-                    if (s !== null) return s.v;
-                    var ks = keys(v);
-                    for (var i = 0; i < ks.length; i++) {
-                        var child = v[ks[i]];
-                        if (child === null || typeof child !== 'object') continue;
-                        var decoded = decode(child);
-                        if (decoded !== child) define(v, ks[i], { value: decoded, writable: true, enumerable: true, configurable: true });
-                    }
-                    return v;
-                }
-                return Object.freeze({
-                    replacer: replacer,
-                    decode: decode,
-                    stringify: function (v) { return stringify(v, replacer); }
-                });
-            })({{(_valueFidelity ? "true" : "false")}}, {{JsonSerializer.Serialize(XriptValue.Marker)}}) });
-            """);
-    }
 
     /// <summary>
     /// The widest deadline any call on this runtime could legitimately ask for: the manifest
@@ -325,7 +308,8 @@ internal sealed class Sandbox : IDisposable
             _hostToken = owner._cancellation;
             _previous = owner._budgetToken;
             _source = CancellationTokenSource.CreateLinkedTokenSource(_previous);
-            _source.CancelAfter(TimeSpan.FromMilliseconds(timeoutMs));
+            if (owner._realTimeBudgets)
+                _source.CancelAfter(TimeSpan.FromMilliseconds(timeoutMs));
             _previousDeadline = owner._deadline.Enter(timeoutMs, _source);
             owner._budgetToken = _source.Token;
             // `Reset` is the public swap; the constraint's `Token` property is not settable
@@ -433,9 +417,19 @@ internal sealed class Sandbox : IDisposable
         try
         {
             var jsValue = source is null ? _engine.Evaluate(code) : _engine.Evaluate(code, source);
+            if (jsValue.IsPromise())
+            {
+                var (state, settled) = Settle(jsValue);
+                if (state == PromiseState.Pending)
+                    throw new InvalidOperationException(PendingPromise("the script"));
+                if (state == PromiseState.Rejected)
+                    throw new JavaScriptException(settled);
+                jsValue = settled;
+            }
+            var value = JsValueToJsonElement(jsValue, "execute");
             sw.Stop();
             DebugSession?.NotifyTerminated();
-            return new ExecutionResult(JsValueToJsonElement(jsValue), sw.Elapsed.TotalMilliseconds);
+            return new ExecutionResult(value, sw.Elapsed.TotalMilliseconds);
         }
         catch (ExecutionCanceledException)
         {
@@ -548,14 +542,7 @@ internal sealed class Sandbox : IDisposable
 
             var value = ns.Get(key);
             if (value is Function)
-                _engine.SetValue("__xript_harvest_tmp", value);
-            else
-                continue;
-
-            var escaped = JsonSerializer.Serialize(name);
-            _engine.Execute(
-                $"(function() {{ var bucket = globalThis.__xript_exports[globalThis.__xript_export_owner]; if (!Object.prototype.hasOwnProperty.call(bucket, {escaped})) {{ bucket[{escaped}] = __xript_harvest_tmp; }} }})();");
-            _engine.Execute("delete globalThis.__xript_harvest_tmp;");
+                _internals.Harvest(name, value);
         }
     }
 
@@ -580,24 +567,22 @@ internal sealed class Sandbox : IDisposable
             return [];
 
         var registryKey = options?.Phase is { } p ? $"{hookName}:{p}" : hookName;
+        var binding = options?.Phase is { } named ? $"hooks.{hookName}.{named}" : $"hooks.{hookName}";
 
         JsValue dataArg = JsValue.Undefined;
         if (options?.Data is { } data)
-            dataArg = JsonElementToJsValue(data);
+            dataArg = JsonElementToJsValue(data, binding);
 
-        var result = Dispatch(() => _engine.Invoke("__xript_fire_handlers", registryKey, dataArg), hookDef.Limits?.TimeoutMs);
-
-        if (result is not ObjectInstance arrObj)
-            return [];
-
-        var lengthVal = arrObj.Get("length");
-        var length = (int)lengthVal.AsNumber();
-
-        var results = new JsonElement[length];
-        for (var i = 0; i < length; i++)
-            results[i] = JsValueToJsonElement(arrObj.Get(i.ToString()));
-
-        return results;
+        return Dispatch(() =>
+        {
+            if (_internals.FireHandlers(registryKey, dataArg) is not ObjectInstance arrObj)
+                return Array.Empty<JsonElement>();
+            var length = (int)arrObj.Get("length").AsNumber();
+            var results = new JsonElement[length];
+            for (var i = 0; i < length; i++)
+                results[i] = JsValueToJsonElement(arrObj.Get(i.ToString()), binding);
+            return results;
+        }, hookDef.Limits?.TimeoutMs);
     }
 
     /// <summary>
@@ -673,12 +658,9 @@ internal sealed class Sandbox : IDisposable
 
             JsValue dataArg = JsValue.Undefined;
             if (bindings is not null)
-            {
-                var json = System.Text.Json.JsonSerializer.Serialize(bindings);
-                dataArg = _engine.Evaluate($"__xript_marshal.decode(JSON.parse({System.Text.Json.JsonSerializer.Serialize(json)}))");
-            }
+                dataArg = JsonElementToJsValue(JsonSerializer.SerializeToElement(bindings), $"hooks.fragment.{lifecycle}");
 
-            var result = _engine.Invoke("__xript_fire_fragment_handlers", key, dataArg);
+            var result = _internals.FireFragmentHandlers(key, dataArg);
 
             if (result is not ObjectInstance arrObj)
                 return [];
@@ -692,12 +674,12 @@ internal sealed class Sandbox : IDisposable
                 var item = arrObj.Get(i.ToString());
                 if (item is ObjectInstance opObj)
                 {
-                    var op = opObj.Get("op").AsString();
-                    var selector = opObj.Get("selector").AsString();
-                    var value = opObj.HasProperty("value")
+                    var op = SandboxInternals.Own(opObj, "op").AsString();
+                    var selector = SandboxInternals.Own(opObj, "selector").AsString();
+                    var value = SandboxInternals.HasOwn(opObj, "value")
                         ? Fragments.PropValue.FromJson(
                             System.Text.Json.Nodes.JsonNode.Parse(
-                                JsValueToJsonElement(opObj.Get("value")).GetRawText()))
+                                JsValueToJsonElement(opObj.Get("value"), $"hooks.fragment.{lifecycle}").GetRawText()))
                         : null;
                     ops.Add(new RawFragmentOp(
                         op,
@@ -718,22 +700,19 @@ internal sealed class Sandbox : IDisposable
 
     private static string? OptionalString(ObjectInstance obj, string key)
     {
-        if (!obj.HasProperty(key)) return null;
-        var value = obj.Get(key);
+        var value = SandboxInternals.Own(obj, key);
         return value.IsUndefined() || value.IsNull() ? null : value.AsString();
     }
 
-    internal void SetExportOwner(string? owner)
-    {
-        _engine.Execute($"__xript_set_export_owner({JsonSerializer.Serialize(owner ?? string.Empty)});");
-    }
+    internal void SetExportOwner(string? owner) =>
+        _internals.SetExportOwner(owner ?? string.Empty);
 
     /// <summary>The one mod whose namespace holds export <paramref name="name"/>, or null for none, several, or the host's.</summary>
     private string? SoleExportOwner(string name)
     {
         try
         {
-            if (_engine.Invoke("__xript_export_owners_of", name) is ObjectInstance owners
+            if (_internals.OwnersOf(name) is ObjectInstance owners
                 && owners.Get("length").AsNumber() == 1
                 && owners.Get("0") is { } only && only.IsString() && only.AsString().Length > 0)
                 return only.AsString();
@@ -753,14 +732,12 @@ internal sealed class Sandbox : IDisposable
         if (_cancellation.IsCancellationRequested)
             throw new ExecutionCancelledException();
 
-        var ownerExpr = owner is null ? "undefined" : JsonSerializer.Serialize(owner);
+        var ownerValue = owner is null ? JsValue.Undefined : new JsString(owner);
 
         bool registered;
         try
         {
-            registered = _engine.Evaluate(
-                $"typeof __xript_lookup_export({JsonSerializer.Serialize(name)}, {ownerExpr}) === 'function'")
-                .AsBoolean();
+            registered = _internals.HasExport(name, ownerValue);
         }
         catch
         {
@@ -771,18 +748,33 @@ internal sealed class Sandbox : IDisposable
             throw new InvokeException(name, $"export '{name}' not found");
 
         using var caller = Caller.Enter(owner ?? SoleExportOwner(name));
-        var argsElement = JsonSerializer.SerializeToElement(args);
-        JsValue argsValue = ContainsMarker(argsElement)
-            ? JsonElementToJsValue(argsElement)
-            : new JsString(argsElement.GetRawText());
-        var ownerValue = owner is null ? JsValue.Undefined : new JsString(owner);
+        JsValue argsValue = ArgumentsToJs(args, name);
 
-        JsValue result;
         using var budget = BeginCallBudget(timeoutOverrideMs);
         var depth = Caller.Depth;
         try
         {
-            result = _engine.Invoke("__xript_invoke_export", name, argsValue, ownerValue);
+            var outcome = _internals.InvokeExport(name, argsValue, ownerValue);
+            _engine.Advanced.ProcessTasks();
+            if (outcome.Get("failed").AsBoolean())
+            {
+                var errVal = outcome.Get("message");
+                throw new InvokeException(name, errVal.IsString() ? errVal.AsString() : errVal.ToString());
+            }
+            var value = outcome.Get("value");
+            if (value.IsPromise())
+            {
+                var (state, settled) = Settle(value);
+                if (state == PromiseState.Pending)
+                    throw new InvokeException(name, PendingPromise($"export '{name}'"));
+                if (state == PromiseState.Rejected)
+                {
+                    var (_, message) = CallbackScope.Describe(settled);
+                    throw new InvokeException(name, message);
+                }
+                value = settled;
+            }
+            return JsValueToJsonElement(value, name);
         }
         catch (ExecutionCanceledException)
         {
@@ -798,18 +790,6 @@ internal sealed class Sandbox : IDisposable
         {
             Caller.UnwindTo(depth);
         }
-
-        if (result is ObjectInstance envelope && envelope.HasProperty("__xript_err"))
-        {
-            var errVal = envelope.Get("__xript_err");
-            var message = errVal.IsString() ? errVal.AsString() : errVal.ToString();
-            throw new InvokeException(name, message);
-        }
-
-        if (result is ObjectInstance okEnvelope && okEnvelope.HasProperty("__xript_ok"))
-            return JsValueToJsonElement(okEnvelope.Get("__xript_ok"));
-
-        return JsValueToJsonElement(result);
     }
 
     /// <summary>
@@ -821,17 +801,19 @@ internal sealed class Sandbox : IDisposable
         if (_cancellation.IsCancellationRequested)
             throw new ExecutionCancelledException();
 
-        var jsArgs = args.Select(JsonElementToJsValue).ToArray();
-        JsValue result;
+        var jsArgs = args.Select(arg => JsonElementToJsValue(arg, binding)).ToArray();
         using (var budget = BeginCallBudget(null))
         {
             try
             {
-                result = _engine.Invoke(function, JsValue.Undefined, jsArgs);
+                var result = _engine.Invoke(function, JsValue.Undefined, jsArgs);
+                if (CallbackScope.IsThenable(result))
+                    throw new CallbackException(binding, "promise");
+                return JsValueToJsonElement(result, binding);
             }
             catch (JavaScriptException ex)
             {
-                var (name, message) = CallbackScope.Describe(ex.Error, ex.Message);
+                var (name, message) = CallbackScope.Describe(ex.Error);
                 throw new CallbackException(binding, "threw", name, message);
             }
             catch (ExecutionCanceledException)
@@ -845,10 +827,6 @@ internal sealed class Sandbox : IDisposable
                 throw new CallbackException(binding, "limit");
             }
         }
-
-        if (CallbackScope.IsThenable(result))
-            throw new CallbackException(binding, "promise");
-        return JsValueToJsonElement(result);
     }
 
     public void Dispose()
@@ -858,130 +836,9 @@ internal sealed class Sandbox : IDisposable
         _constraintLifetime.Dispose();
     }
 
-    private void RegisterExportRegistry()
-    {
-        _engine.Execute("""
-            globalThis.__xript_exports = { "": {} };
-            globalThis.__xript_export_owner = "";
-            globalThis.__xript_set_export_owner = function(owner) {
-                var key = typeof owner === 'string' ? owner : "";
-                globalThis.__xript_export_owner = key;
-                if (!globalThis.__xript_exports[key]) globalThis.__xript_exports[key] = {};
-                return key;
-            };
-            globalThis.__xript_export_owners_of = function(name) {
-                var owners = [];
-                var keys = Object.keys(globalThis.__xript_exports);
-                for (var i = 0; i < keys.length; i++) {
-                    if (typeof globalThis.__xript_exports[keys[i]][name] === 'function') owners.push(keys[i]);
-                }
-                return owners;
-            };
-            globalThis.__xript_lookup_export = function(name, owner) {
-                if (typeof owner === 'string') {
-                    var bucket = globalThis.__xript_exports[owner];
-                    return bucket ? bucket[name] : undefined;
-                }
-                var owners = globalThis.__xript_export_owners_of(name);
-                return owners.length === 1 ? globalThis.__xript_exports[owners[0]][name] : undefined;
-            };
-            globalThis.xript = globalThis.xript || {};
-            globalThis.xript.exports = {
-                register: function(name, fn) {
-                    if (typeof name !== 'string' || name.length === 0) {
-                        throw new Error('xript.exports.register requires a non-empty string name');
-                    }
-                    if (typeof fn !== 'function') {
-                        throw new Error('xript.exports.register requires a function');
-                    }
-                    globalThis.__xript_exports[globalThis.__xript_export_owner][name] = fn;
-                }
-            };
-            Object.freeze(globalThis.xript.exports);
-            globalThis.__xript_invoke_export = function(name, argsJson, owner) {
-                var fn = globalThis.__xript_lookup_export(name, owner);
-                if (typeof fn !== 'function') {
-                    return { __xript_err: "export '" + name + "' not found" };
-                }
-                try {
-                    var args = globalThis.__xript_marshal.decode(typeof argsJson === 'string' ? JSON.parse(argsJson) : argsJson);
-                    return { __xript_ok: fn.apply(null, args) };
-                } catch (e) {
-                    return { __xript_err: (e && e.message) ? e.message : String(e) };
-                }
-            };
-            """);
-    }
-
-    private void RegisterFragmentHooks()
-    {
-        _engine.Execute("""
-            globalThis.__xript_fragment_handlers = {};
-            globalThis.__xript_register_fragment_handler = function(key, handler) {
-                if (!globalThis.__xript_fragment_handlers[key]) {
-                    globalThis.__xript_fragment_handlers[key] = [];
-                }
-                globalThis.__xript_fragment_handlers[key].push(handler);
-            };
-            globalThis.__xript_fire_fragment_handlers = function(key, data) {
-                var handlers = globalThis.__xript_fragment_handlers[key];
-                if (!handlers || handlers.length === 0) return [];
-                var allOps = [];
-                for (var i = 0; i < handlers.length; i++) {
-                    try {
-                        var ops = [];
-                        var proxy = {
-                            toggle: function(selector, condition) { ops.push({ op: "toggle", selector: selector, value: !!condition }); },
-                            addClass: function(selector, className) { ops.push({ op: "addClass", selector: selector, value: className }); },
-                            removeClass: function(selector, className) { ops.push({ op: "removeClass", selector: selector, value: className }); },
-                            setText: function(selector, text) { ops.push({ op: "setText", selector: selector, value: text }); },
-                            setAttr: function(selector, attr, value) { ops.push({ op: "setAttr", selector: selector, attr: attr, value: value }); },
-                            removeAttr: function(selector, attr) { ops.push({ op: "removeAttr", selector: selector, attr: attr }); },
-                            setProp: function(selector, prop, value) { ops.push({ op: "setProp", selector: selector, prop: prop, value: value }); },
-                            replaceChildren: function(selector, html) { ops.push({ op: "replaceChildren", selector: selector, value: html }); }
-                        };
-                        handlers[i](data, proxy);
-                        for (var j = 0; j < ops.length; j++) { allOps.push(ops[j]); }
-                    } catch(e) {}
-                }
-                return allOps;
-            };
-            globalThis.hooks = {};
-            globalThis.hooks.fragment = {
-                mount: function(fragmentId, handler) {
-                    globalThis.__xript_register_fragment_handler('fragment:mount:' + fragmentId, handler);
-                },
-                unmount: function(fragmentId, handler) {
-                    globalThis.__xript_register_fragment_handler('fragment:unmount:' + fragmentId, handler);
-                },
-                update: function(fragmentId, handler) {
-                    globalThis.__xript_register_fragment_handler('fragment:update:' + fragmentId, handler);
-                },
-                suspend: function(fragmentId, handler) {
-                    globalThis.__xript_register_fragment_handler('fragment:suspend:' + fragmentId, handler);
-                },
-                resume: function(fragmentId, handler) {
-                    globalThis.__xript_register_fragment_handler('fragment:resume:' + fragmentId, handler);
-                }
-            };
-            Object.freeze(globalThis.hooks.fragment);
-            """);
-    }
-
     private void RemoveDangerousGlobals()
     {
         _engine.Execute("""
-            globalThis.__xript_deep_freeze = function(obj) {
-                if (obj === null || typeof obj !== 'object') return obj;
-                Object.getOwnPropertyNames(obj).forEach(function(key) {
-                    var descriptor = Object.getOwnPropertyDescriptor(obj, key);
-                    var val = descriptor && descriptor.value;
-                    if (val !== null && typeof val === 'object' && !Object.isFrozen(val)) {
-                        globalThis.__xript_deep_freeze(val);
-                    }
-                });
-                return Object.freeze(obj);
-            };
             delete globalThis.eval;
             (function () {
                 var refuse = function () {
@@ -1006,49 +863,50 @@ internal sealed class Sandbox : IDisposable
             """);
     }
 
+    /// <summary>
+    /// Installs <c>console</c>. Each method formats its arguments with
+    /// <see cref="Crossing.ConsoleMessage"/> and hands the text to the host's handler. It never
+    /// throws: an argument that cannot be read renders as unreadable, and a handler that throws
+    /// is contained. An execution-limit stop while reading still ends the script.
+    /// </summary>
     private void RegisterConsole(ConsoleHandler console)
     {
-        _engine.SetValue("__xript_console_trace", new Action<string>(msg => console.Dispatch(LogSeverity.Trace, msg)));
-        _engine.SetValue("__xript_console_debug", new Action<string>(msg => console.Dispatch(LogSeverity.Debug, msg)));
-        _engine.SetValue("__xript_console_info", new Action<string>(msg => console.Dispatch(LogSeverity.Info, msg)));
-        _engine.SetValue("__xript_console_warn", new Action<string>(msg => console.Dispatch(LogSeverity.Warn, msg)));
-        _engine.SetValue("__xript_console_error", new Action<string>(msg => console.Dispatch(LogSeverity.Error, msg)));
-
-        _engine.Execute("""
-            var console = (function(trace, debug, info, warn, error) {
-                var fmt = function(args) { return Array.prototype.slice.call(args).map(String).join(' '); };
-                return {
-                    trace: function() { trace(fmt(arguments)); },
-                    debug: function() { debug(fmt(arguments)); },
-                    log: function() { info(fmt(arguments)); },
-                    info: function() { info(fmt(arguments)); },
-                    warn: function() { warn(fmt(arguments)); },
-                    error: function() { error(fmt(arguments)); }
-                };
-            })(__xript_console_trace, __xript_console_debug, __xript_console_info, __xript_console_warn, __xript_console_error);
-            Object.freeze(console);
-            delete globalThis.__xript_console_trace;
-            delete globalThis.__xript_console_debug;
-            delete globalThis.__xript_console_info;
-            delete globalThis.__xript_console_warn;
-            delete globalThis.__xript_console_error;
-            """);
+        var target = new JsObject(_engine);
+        foreach (var (name, severity) in new[]
+        {
+            ("trace", LogSeverity.Trace), ("debug", LogSeverity.Debug), ("log", LogSeverity.Info),
+            ("info", LogSeverity.Info), ("warn", LogSeverity.Warn), ("error", LogSeverity.Error),
+        })
+        {
+            SandboxInternals.Put(target, name, new Jint.Runtime.Interop.ClrFunction(_engine, name, (_, arguments) =>
+            {
+                var message = _crossing.ConsoleMessage(arguments);
+                try
+                {
+                    console.Dispatch(severity, message);
+                }
+                catch (Exception error) when (!CallbackScope.IsBudgetStop(error))
+                {
+                }
+                return JsValue.Undefined;
+            }));
+        }
+        _internals.Freeze(target);
+        SandboxInternals.Put(_engine.Global, "console", target);
     }
-
-    private int _bridgeCounter;
 
     private void RegisterBindings(HostBindings hostBindings, HashSet<string> granted, Action<AuditEvent>? audit)
     {
-        _engine.Execute(Presence.ProbeSource(Presence.ProvidedPaths(_manifest.Bindings, hostBindings)));
+        _internals.InstallProbe(Presence.ProvidedPaths(_manifest.Bindings, hostBindings));
         if (_manifest.Bindings is null) return;
 
         foreach (var (name, bindingElement) in _manifest.Bindings)
         {
             var node = hostBindings.NodeAt([name]);
             if (Presence.IsOptional(bindingElement) && !Presence.Supplies(bindingElement, node))
-                _engine.Execute($"globalThis['{EscapeJs(name)}'] = undefined;");
+                SandboxInternals.Put(_engine.Global, name, JsValue.Undefined);
             else if (Presence.AccessorMode(bindingElement) is not null)
-                RegisterAccessor("globalThis", name, name, bindingElement, node, granted, audit);
+                RegisterAccessor(_engine.Global, name, name, bindingElement, node, granted, audit);
             else if (IsNamespace(bindingElement))
                 RegisterNamespaceBinding(name, bindingElement, hostBindings, granted, audit);
             else
@@ -1065,12 +923,9 @@ internal sealed class Sandbox : IDisposable
     private void RegisterFunctionBinding(
         string name, JsonElement def, HostBindings hostBindings, HashSet<string> granted, Action<AuditEvent>? audit)
     {
-        var target = $"globalThis['{EscapeJs(name)}']";
-
         if (TryGetCapability(def, out var capability) && !Capabilities.GrantedSatisfies(granted, capability))
         {
-            var msg = $"{name}() requires the \"{capability}\" capability, which hasn't been granted to this script";
-            AssignThrowingFunction(target, msg);
+            SandboxInternals.Put(_engine.Global, name, _internals.DeniedFunction(name, capability));
             return;
         }
 
@@ -1078,23 +933,23 @@ internal sealed class Sandbox : IDisposable
             ?? (hostBindings.GetCallerFunction(name) is { } aware ? CallerAware(aware, name) : null);
         if (hostFn is null)
         {
-            AssignThrowingFunction(target, $"host binding '{name}' is not provided");
+            SandboxInternals.Put(_engine.Global, name, _internals.MissingFunction(name));
             return;
         }
 
         var declaredCapability = TryGetCapability(def, out var cap) ? cap : null;
-        AssignBridgedFunction(target, hostFn, name, declaredCapability, audit, def);
+        SandboxInternals.Put(_engine.Global, name, BridgedFunction(hostFn, name, declaredCapability, audit, def));
     }
 
     private static readonly JsonElement JsonNull = JsonDocument.Parse("null").RootElement.Clone();
 
     /// <summary>
-    /// Defines an accessor binding on <paramref name="targetExpr"/>. The getter and setter are
+    /// Defines an accessor binding on <paramref name="target"/>. The getter and setter are
     /// the ordinary bridged binding wrappers, so each access is capability-gated, audited,
     /// budgeted, and error-marshalled exactly as a function call.
     /// </summary>
     private void RegisterAccessor(
-        string targetExpr,
+        ObjectInstance target,
         string key,
         string qualifiedName,
         JsonElement def,
@@ -1103,62 +958,50 @@ internal sealed class Sandbox : IDisposable
         Action<AuditEvent>? audit)
     {
         var accessor = Presence.Supplies(def, hostMember) ? hostMember!.Accessor : null;
-        var getName = $"__xript_accessor_get_{_bridgeCounter++}";
-        AssignAccessorHalf($"globalThis.{getName}", accessor is null ? null : _ => accessor.Get(), qualifiedName, def, granted, audit);
+        var getter = AccessorHalf(accessor is null ? null : _ => accessor.Get(), qualifiedName, def, granted, audit);
 
-        var setExpr = "undefined";
-        string? setName = null;
+        var setter = JsValue.Undefined;
         if (Presence.AccessorMode(def) == "get-set")
         {
-            setName = $"__xript_accessor_set_{_bridgeCounter++}";
-            setExpr = $"globalThis.{setName}";
-            HostFunction? setter = accessor?.Set is { } set
+            HostFunction? set = accessor?.Set is { } hostSet
                 ? args =>
                 {
-                    set(args.Length > 0 ? args[0] : JsonNull);
+                    hostSet(args.Length > 0 ? args[0] : JsonNull);
                     return JsonNull;
                 }
                 : null;
-            AssignAccessorHalf(setExpr, setter, qualifiedName, def, granted, audit);
+            setter = AccessorHalf(set, qualifiedName, def, granted, audit);
         }
 
-        var cleanup = setName is null ? $"delete globalThis.{getName};" : $"delete globalThis.{getName}; delete globalThis.{setName};";
-        _engine.Execute(
-            $"{Presence.DefineAccessorSource}({targetExpr}, '{EscapeJs(key)}', globalThis.{getName}, {setExpr}, {JsonSerializer.Serialize(qualifiedName)}); {cleanup}");
+        _internals.DefineAccessor(target, key, getter, setter, qualifiedName);
     }
 
-    private void AssignAccessorHalf(
-        string targetExpr, HostFunction? hostFn, string qualifiedName, JsonElement def, HashSet<string> granted, Action<AuditEvent>? audit)
+    private JsValue AccessorHalf(
+        HostFunction? hostFn, string qualifiedName, JsonElement def, HashSet<string> granted, Action<AuditEvent>? audit)
     {
         if (TryGetCapability(def, out var capability) && !Capabilities.GrantedSatisfies(granted, capability))
-        {
-            AssignThrowingFunction(targetExpr, $"{qualifiedName}() requires the \"{capability}\" capability, which hasn't been granted to this script");
-            return;
-        }
+            return _internals.DeniedFunction(qualifiedName, capability);
         if (hostFn is null)
-        {
-            AssignThrowingFunction(targetExpr, $"host binding '{qualifiedName}' is not provided");
-            return;
-        }
-        AssignBridgedFunction(targetExpr, hostFn, qualifiedName, TryGetCapability(def, out var cap) ? cap : null, audit, def);
+            return _internals.MissingFunction(qualifiedName);
+        return BridgedFunction(hostFn, qualifiedName, TryGetCapability(def, out var cap) ? cap : null, audit, def);
     }
 
     private void RegisterNamespaceBinding(
         string name, JsonElement def, HostBindings hostBindings, HashSet<string> granted, Action<AuditEvent>? audit)
     {
-        var rootTarget = $"globalThis['{EscapeJs(name)}']";
-        _engine.Execute($"{rootTarget} = {{}};");
+        var root = new JsObject(_engine);
+        SandboxInternals.Put(_engine.Global, name, root);
 
         var hostNs = hostBindings.GetNestedNamespace(name);
         var members = def.GetProperty("members");
 
-        RegisterNamespaceMembers(rootTarget, name, members, hostNs, granted, audit);
+        RegisterNamespaceMembers(root, name, members, hostNs, granted, audit);
 
-        _engine.Execute($"__xript_deep_freeze({rootTarget});");
+        _internals.DeepFreeze(root);
     }
 
     private void RegisterNamespaceMembers(
-        string target,
+        ObjectInstance target,
         string qualifiedPrefix,
         JsonElement members,
         Dictionary<string, HostNamespaceMember>? hostNs,
@@ -1170,14 +1013,13 @@ internal sealed class Sandbox : IDisposable
             var memberName = member.Name;
             var qualifiedName = $"{qualifiedPrefix}.{memberName}";
             var memberDef = member.Value;
-            var memberTarget = $"{target}['{EscapeJs(memberName)}']";
 
             HostNamespaceMember? hostMember = null;
             hostNs?.TryGetValue(memberName, out hostMember);
 
             if (Presence.IsOptional(memberDef) && !Presence.Supplies(memberDef, hostMember))
             {
-                _engine.Execute($"{memberTarget} = undefined;");
+                SandboxInternals.Put(target, memberName, JsValue.Undefined);
                 continue;
             }
 
@@ -1189,24 +1031,23 @@ internal sealed class Sandbox : IDisposable
 
             if (IsNamespace(memberDef))
             {
-                _engine.Execute($"{memberTarget} = {{}};");
+                var child = new JsObject(_engine);
+                SandboxInternals.Put(target, memberName, child);
                 var childHostNs = hostMember?.Namespace;
                 RegisterNamespaceMembers(
-                    memberTarget, qualifiedName, memberDef.GetProperty("members"), childHostNs, granted, audit);
+                    child, qualifiedName, memberDef.GetProperty("members"), childHostNs, granted, audit);
                 continue;
             }
 
             if (TryGetCapability(memberDef, out var capability) && !Capabilities.GrantedSatisfies(granted, capability))
             {
-                var msg = $"{qualifiedName}() requires the \"{capability}\" capability, which hasn't been granted to this script";
-                AssignThrowingFunction(memberTarget, msg);
+                SandboxInternals.Put(target, memberName, _internals.DeniedFunction(qualifiedName, capability));
                 continue;
             }
 
             if (hostMember?.Property is { } prop)
             {
-                var literal = System.Text.Json.JsonSerializer.Serialize(prop.GetRawText());
-                _engine.Execute($"{memberTarget} = __xript_marshal.decode(JSON.parse({literal}));");
+                SandboxInternals.Put(target, memberName, JsonElementToJsValue(prop, qualifiedName));
                 continue;
             }
 
@@ -1214,68 +1055,57 @@ internal sealed class Sandbox : IDisposable
                 ?? (hostMember?.CallerFunction is { } aware ? CallerAware(aware, qualifiedName) : null);
             if (hostFn is null)
             {
-                AssignThrowingFunction(memberTarget, $"host binding '{qualifiedName}' is not provided");
+                SandboxInternals.Put(target, memberName, _internals.MissingFunction(qualifiedName));
                 continue;
             }
 
             var declaredCapability = TryGetCapability(memberDef, out var cap) ? cap : null;
-            AssignBridgedFunction(memberTarget, hostFn, qualifiedName, declaredCapability, audit, memberDef);
+            SandboxInternals.Put(target, memberName, BridgedFunction(hostFn, qualifiedName, declaredCapability, audit, memberDef));
         }
     }
 
     /// <summary>
-    /// The sandbox side of a bridged binding: refuses a non-function where the manifest declares
-    /// a function parameter, then serializes the arguments with every script function swapped
-    /// for a numeric callback marker and hands the functions to the bridge alongside the JSON.
+    /// The envelope a bridge hands back to its sandbox side, which turns it into the call's
+    /// outcome: a value (0), a host error (1), a <c>BindingError</c> for a value that could not
+    /// cross (2), or a script error (a throwing getter's) rethrown as itself (3).
     /// </summary>
-    private const string BridgeWrapper = """
-        (function (bridge, marker, checks, name) {
-            var stringify = JSON.stringify;
-            var parse = JSON.parse;
-            var slice = Array.prototype.slice;
-            var marshal = globalThis.__xript_marshal;
-            return function () {
-                var args = slice.call(arguments);
-                for (var i = 0; i < checks.length; i++) {
-                    var check = checks[i];
-                    var value = args[check.index];
-                    if (typeof value === 'function') continue;
-                    if (check.optional && (value === undefined || value === null)) continue;
-                    throw new TypeError(name + '(): parameter "' + check.name + '" expects a function, got ' + (value === null ? 'null' : typeof value));
-                }
-                var fns = [];
-                var json = stringify(args, function (key, v) {
-                    if (typeof v === 'function') {
-                        var m = {};
-                        m[marker] = fns.length;
-                        fns[fns.length] = v;
-                        return m;
-                    }
-                    return marshal.replacer(key, v);
-                });
-                var raw = bridge(json, fns);
-                var envelope = typeof raw === 'string' ? parse(raw) : raw;
-                if (envelope.__xript_err !== undefined) throw new Error(envelope.__xript_err);
-                return marshal.decode(envelope.__xript_ok);
-            };
-        })
-        """;
-
-    private void AssignBridgedFunction(
-        string targetExpr, HostFunction hostFn, string binding, string? capability, Action<AuditEvent>? audit, JsonElement def)
+    private JsObject Envelope(int kind, JsValue? value = null, string? message = null, string? binding = null)
     {
-        var bridgeName = $"__xript_bridge_{_bridgeCounter++}";
-        var checks = FunctionParamCheck.ToJson(FunctionParamCheck.For(def));
-        var positions = RetainPositions.For(def, _manifest.Types);
-        _engine.SetValue(bridgeName, CreateBridge(hostFn, binding, capability, audit, positions));
-        _engine.Execute(
-            $"{targetExpr} = {BridgeWrapper}({bridgeName}, {JsonSerializer.Serialize(XriptCallback.Marker)}, {checks}, {JsonSerializer.Serialize(binding)}); delete globalThis.{bridgeName};");
+        var envelope = new JsObject(_engine);
+        SandboxInternals.Put(envelope, "kind", kind);
+        if (value is not null) SandboxInternals.Put(envelope, "value", value);
+        if (message is not null) SandboxInternals.Put(envelope, "message", message);
+        if (binding is not null) SandboxInternals.Put(envelope, "binding", binding);
+        return envelope;
     }
 
-    private Func<string, JsValue, JsValue> CreateBridge(
+    private JsObject CrossingFailure(ValueCrossingException failure) =>
+        Envelope(2, message: failure.Detail, binding: failure.Binding);
+
+    /// <summary>
+    /// A bridged binding: its sandbox side refuses a non-function where the manifest declares a
+    /// function parameter, then hands the arguments to the host bridge.
+    /// </summary>
+    private JsValue BridgedFunction(
+        HostFunction hostFn, string binding, string? capability, Action<AuditEvent>? audit, JsonElement def)
+    {
+        var checks = FunctionParamCheck.For(def).Select(check =>
+        {
+            var entry = new JsObject(_engine);
+            SandboxInternals.Put(entry, "index", check.Index);
+            SandboxInternals.Put(entry, "name", check.Name);
+            SandboxInternals.Put(entry, "optional", check.Optional);
+            return (JsValue)entry;
+        }).ToArray();
+        var positions = RetainPositions.For(def, _manifest.Types);
+        var bridge = JsValue.FromObject(_engine, CreateBridge(hostFn, binding, capability, audit, positions));
+        return _internals.Bridge(bridge, new JsArray(_engine, checks), binding);
+    }
+
+    private Func<JsValue, JsValue> CreateBridge(
         HostFunction hostFn, string binding, string? capability, Action<AuditEvent>? audit, RetainPositions positions)
     {
-        return (argsJson, functions) =>
+        return argsValue =>
         {
             if (audit is not null)
             {
@@ -1288,36 +1118,35 @@ internal sealed class Sandbox : IDisposable
                 }
             }
 
+            using var scope = new CallbackScope(
+                _engine, binding, JsonElementToJsValue, JsValueToJsonElement, positions, Retained);
             JsonElement[] args;
             try
             {
-                args = JsonSerializer.Deserialize<JsonElement[]>(argsJson) ?? [];
+                var array = argsValue.AsObject();
+                args = new JsonElement[(int)array.Get("length").AsNumber()];
+                for (var i = 0; i < args.Length; i++)
+                    args[i] = _crossing.ToHost(array.Get(i.ToString()), binding, scope.Add, [i]);
             }
-            catch
+            catch (ValueCrossingException failure)
             {
-                return JsonSerializer.Serialize(new { __xript_err = "invalid arguments" });
+                return CrossingFailure(failure);
+            }
+            catch (JavaScriptException thrown)
+            {
+                return Envelope(3, thrown.Error);
             }
 
-            using var scope = new CallbackScope(
-                _engine, binding, functions, JsonElementToJsValue, JsValueToJsonElement, positions, Retained);
-            args = scope.ResolveMarkers(args);
             try
             {
                 var result = hostFn(args);
                 scope.Settle(null);
-                if (ContainsMarker(result))
-                {
-                    var envelope = new JsObject(_engine);
-                    envelope.Set("__xript_ok", JsonElementToJsValue(result));
-                    return envelope;
-                }
-                var raw = result.GetRawText();
-                return $"{{\"__xript_ok\":{raw}}}";
+                return Envelope(0, JsonElementToJsValue(result, binding));
             }
             catch (Exception ex)
             {
                 scope.Settle(ex);
-                return JsonSerializer.Serialize(new { __xript_err = ex.Message });
+                return ex is ValueCrossingException failure ? CrossingFailure(failure) : Envelope(1, message: ex.Message);
             }
         };
     }
@@ -1325,117 +1154,40 @@ internal sealed class Sandbox : IDisposable
     private static double NowMs() =>
         (DateTime.UtcNow - EpochStart).TotalMilliseconds;
 
-    private void AssignThrowingFunction(string targetExpr, string message)
-    {
-        _engine.Execute(
-            $"{targetExpr} = function() {{ throw new Error(\"{EscapeJsDoubleQuote(message)}\"); }};");
-    }
-
-    private void RegisterHooks(HashSet<string> granted)
+    private void RegisterHooks(ObjectInstance hooks, HashSet<string> granted)
     {
         var effectiveHooks = _manifest.EffectiveHooks();
         if (effectiveHooks.Count == 0) return;
 
-        InstallCallerHooks();
-        _engine.Execute("""
-            (function (current, enter, exit) {
-            globalThis.__xript_hook_handlers = {};
-            globalThis.__xript_register_handler = function(key, handler) {
-                if (!globalThis.__xript_hook_handlers[key]) {
-                    globalThis.__xript_hook_handlers[key] = [];
-                }
-                globalThis.__xript_hook_handlers[key].push({ handler: handler, owner: current() });
-            };
-            globalThis.__xript_fire_handlers = function(key, data) {
-                var handlers = globalThis.__xript_hook_handlers[key];
-                if (!handlers || handlers.length === 0) return [];
-                var args;
-                if (data === undefined) {
-                    args = [];
-                } else if (typeof data === "object" && data !== null && !Array.isArray(data)) {
-                    args = Object.values(data);
-                } else {
-                    args = [data];
-                }
-                var results = [];
-                for (var i = 0; i < handlers.length; i++) {
-                    enter(handlers[i].owner);
-                    try {
-                        results.push(handlers[i].handler.apply(null, args));
-                    } catch(e) {
-                        results.push(undefined);
-                    } finally {
-                        exit();
-                    }
-                }
-                return results;
-            };
-            })(__xript_caller_current, __xript_caller_enter, __xript_caller_exit);
-            """);
-        RemoveCallerHooks();
-
-        _engine.Execute("if (typeof globalThis.hooks === 'undefined') { globalThis.hooks = {}; }");
+        var phasedNamespaces = new List<JsObject>();
 
         foreach (var (hookName, hookDef) in effectiveHooks)
         {
+            var denied = hookDef.Capability is { } cap && !Capabilities.GrantedSatisfies(granted, cap) ? cap : null;
             if (hookDef.Phases is { Count: > 0 } phases)
             {
-                _engine.Execute($"globalThis.hooks['{EscapeJs(hookName)}'] = {{}};");
+                var hookNs = new JsObject(_engine);
+                SandboxInternals.Put(hooks, hookName, hookNs);
+                phasedNamespaces.Add(hookNs);
                 foreach (var phase in phases)
                 {
-                    if (hookDef.Capability is { } cap && !Capabilities.GrantedSatisfies(granted, cap))
-                    {
-                        _engine.Execute(
-                            $"globalThis.hooks['{EscapeJs(hookName)}']['{EscapeJs(phase)}'] = function() {{ throw new Error(\"{EscapeJs(hookName)}.{EscapeJs(phase)}() requires the \\\"{EscapeJs(cap)}\\\" capability\"); }};");
-                    }
-                    else
-                    {
-                        _engine.Execute(
-                            $"globalThis.hooks['{EscapeJs(hookName)}']['{EscapeJs(phase)}'] = function(handler) {{ globalThis.__xript_register_handler('{EscapeJs(hookName)}:{EscapeJs(phase)}', handler); }};");
-                    }
+                    SandboxInternals.Put(hookNs, phase, denied is null
+                        ? _internals.RegisteringFunction($"{hookName}:{phase}")
+                        : _internals.DeniedFunction($"hooks.{hookName}.{phase}", denied));
                 }
             }
             else
             {
-                if (hookDef.Capability is { } cap && !Capabilities.GrantedSatisfies(granted, cap))
-                {
-                    _engine.Execute(
-                        $"globalThis.hooks['{EscapeJs(hookName)}'] = function() {{ throw new Error(\"{EscapeJs(hookName)}() requires the \\\"{EscapeJs(cap)}\\\" capability\"); }};");
-                }
-                else
-                {
-                    _engine.Execute(
-                        $"globalThis.hooks['{EscapeJs(hookName)}'] = function(handler) {{ globalThis.__xript_register_handler('{EscapeJs(hookName)}', handler); }};");
-                }
+                SandboxInternals.Put(hooks, hookName, denied is null
+                    ? _internals.RegisteringFunction(hookName)
+                    : _internals.DeniedFunction($"hooks.{hookName}", denied));
             }
         }
 
-        _engine.Execute("Object.freeze(globalThis.hooks);");
-
-        var hookNsNames = effectiveHooks
-            .Where(kv => kv.Value.Phases is { Count: > 0 })
-            .Select(kv => kv.Key);
-        foreach (var nsName in hookNsNames)
-            _engine.Execute($"Object.freeze(globalThis.hooks['{EscapeJs(nsName)}']);");
+        _internals.Freeze(hooks);
+        foreach (var hookNs in phasedNamespaces)
+            _internals.Freeze(hookNs);
     }
-
-    /// <summary>
-    /// Exposes the caller context to the sandbox-side handler registries for one install: the
-    /// registries capture these in a closure and <see cref="RemoveCallerHooks"/> deletes the
-    /// globals, so no script can reach them.
-    /// </summary>
-    private void InstallCallerHooks()
-    {
-        _engine.SetValue("__xript_caller_current", new Func<JsValue>(() =>
-            Caller.Current is { } owner ? new JsString(owner) : JsValue.Null));
-        _engine.SetValue("__xript_caller_enter", new Action<JsValue>(owner =>
-            Caller.Push(owner.IsString() ? owner.AsString() : null)));
-        _engine.SetValue("__xript_caller_exit", new Action(Caller.Pop));
-    }
-
-    private void RemoveCallerHooks() =>
-        _engine.Execute(
-            "delete globalThis.__xript_caller_current; delete globalThis.__xript_caller_enter; delete globalThis.__xript_caller_exit;");
 
     private static bool TryGetCapability(JsonElement def, out string capability)
     {
@@ -1451,13 +1203,8 @@ internal sealed class Sandbox : IDisposable
         return false;
     }
 
-    private static string EscapeJs(string s) =>
-        s.Replace("\\", "\\\\").Replace("'", "\\'");
-
-    private static string EscapeJsDoubleQuote(string s) =>
-        s.Replace("\\", "\\\\").Replace("\"", "\\\"");
-
-    private JsonElement JsValueToJsonElement(JsValue value)
+    /// <summary>A script value crossing out to the host; <paramref name="binding"/> names the crossing in a failure.</summary>
+    private JsonElement JsValueToJsonElement(JsValue value, string binding)
     {
         if (value.IsUndefined())
             return UndefinedElement();
@@ -1475,110 +1222,38 @@ internal sealed class Sandbox : IDisposable
                 return _valueFidelity ? XriptValue.Number(num) : JsonDocument.Parse("null").RootElement.Clone();
             if (_valueFidelity && num == 0 && double.IsNegative(num))
                 return XriptValue.NegativeZero;
-            if (num == Math.Floor(num) && Math.Abs(num) < long.MaxValue)
-                return JsonDocument.Parse(((long)num).ToString()).RootElement.Clone();
-            return JsonDocument.Parse(
-                num.ToString("R", System.Globalization.CultureInfo.InvariantCulture)).RootElement.Clone();
+            return JsonDocument.Parse(Crossing.NumberText(num)).RootElement.Clone();
         }
 
-        if (value.IsString())
-        {
-            var jsonStr = JsonSerializer.Serialize(value.AsString());
-            return JsonDocument.Parse(jsonStr).RootElement.Clone();
-        }
+        if (value.IsString() && JsonText.IsWellFormed(value.AsString()))
+            return JsonDocument.Parse(JsonSerializer.Serialize(value.AsString())).RootElement.Clone();
 
-        try
-        {
-            _engine.SetValue("__xript_tmp_val", value);
-            var jsonResult = _engine.Evaluate(
-                _valueFidelity ? "__xript_marshal.stringify(__xript_tmp_val)" : "JSON.stringify(__xript_tmp_val)");
-            _engine.Execute("delete globalThis.__xript_tmp_val;");
-            if (jsonResult.IsString())
-            {
-                var json = jsonResult.AsString();
-                if (!string.IsNullOrEmpty(json))
-                    return JsonDocument.Parse(json).RootElement.Clone();
-            }
-        }
-        catch { }
-
-        return JsonDocument.Parse("null").RootElement.Clone();
+        return _crossing.ToHost(value, binding);
     }
 
-    private JsValue JsonElementToJsValue(JsonElement element)
-    {
-        return element.ValueKind switch
-        {
-            JsonValueKind.Null => JsValue.Null,
-            JsonValueKind.Undefined => JsValue.Undefined,
-            JsonValueKind.True => JsBoolean.True,
-            JsonValueKind.False => JsBoolean.False,
-            JsonValueKind.Number when element.TryGetInt64(out var l) => new JsNumber(l),
-            JsonValueKind.Number => new JsNumber(element.GetDouble()),
-            JsonValueKind.String => new JsString(element.GetString()!),
-            JsonValueKind.Object when _valueFidelity && XriptValue.TryGetSpecial(element, out var special) => special switch
-            {
-                XriptSpecial.NaN => new JsNumber(double.NaN),
-                XriptSpecial.Infinity => new JsNumber(double.PositiveInfinity),
-                XriptSpecial.NegativeInfinity => new JsNumber(double.NegativeInfinity),
-                XriptSpecial.NegativeZero => new JsNumber(-0.0),
-                _ => JsValue.Undefined,
-            },
-            JsonValueKind.Object or JsonValueKind.Array when ContainsMarker(element) => Revive(ParseComplexJson(element)),
-            JsonValueKind.Object or JsonValueKind.Array => ParseComplexJson(element),
-            _ => JsValue.Undefined,
-        };
-    }
+    /// <summary>A host value crossing into the sandbox; <paramref name="binding"/> names the crossing in a failure.</summary>
+    private JsValue JsonElementToJsValue(JsonElement element, string binding) => _crossing.Decode(element, binding);
 
-    private static bool IsMarker(JsonElement element) =>
-        element.ValueKind == JsonValueKind.Object
-        && element.EnumerateObject().Count() == 1
-        && element.TryGetProperty(XriptCallback.Marker, out var token)
-        && token.ValueKind == JsonValueKind.String
-        && token.GetString()!.StartsWith(RetainedRegistry.TokenPrefix, StringComparison.Ordinal);
+    /// <summary>A sandbox array of host values, each crossing in under <paramref name="binding"/>.</summary>
+    private JsArray ArgumentsToJs(JsonElement[] args, string binding) =>
+        new(_engine, args.Select(arg => _crossing.Decode(arg, binding)).ToArray());
 
-    /// <summary>Whether a host value carries a retained-callback marker anywhere inside it.</summary>
-    private static bool ContainsMarker(JsonElement element) => element.ValueKind switch
-    {
-        JsonValueKind.Object => IsMarker(element) || element.EnumerateObject().Any(p => ContainsMarker(p.Value)),
-        JsonValueKind.Array => element.EnumerateArray().Any(ContainsMarker),
-        _ => false,
-    };
+    private enum PromiseState { Pending, Fulfilled, Rejected }
 
     /// <summary>
-    /// Replaces every marker in a value crossing into the sandbox that names a retained callback
-    /// this runtime issued with the script function it names, refusing one that is released or
-    /// that the running mod may not receive. Any other marker stays plain data.
+    /// How a promise a script returned has settled once the job queue has run. Scripts run
+    /// synchronously here, so a promise still pending then can never settle before the host
+    /// needs the value.
     /// </summary>
-    private JsValue Revive(JsValue value)
+    private (PromiseState State, JsValue Value) Settle(JsValue promise)
     {
-        if (value is not ObjectInstance obj)
-            return value;
-        var keys = obj.GetOwnPropertyKeys().Where(k => !k.IsSymbol()).ToList();
-        if (!obj.IsArray() && keys.Count == 1 && keys[0].ToString() == XriptCallback.Marker
-            && obj.Get(keys[0]) is { } token && token.IsString())
-            return Retained.Resolve(token.AsString()) ?? obj;
-        foreach (var key in keys)
-        {
-            if (obj.IsArray() && key.ToString() == "length") continue;
-            var child = obj.Get(key);
-            var revived = Revive(child);
-            if (!ReferenceEquals(revived, child))
-                obj.Set(key, revived);
-        }
-        return obj;
+        var box = new JsObject(_engine);
+        _engine.Call(_promiseObserver, JsValue.Undefined, [promise, box]);
+        _engine.Advanced.ProcessTasks();
+        var state = box.Get("state");
+        return (state.IsNumber() ? (PromiseState)(int)state.AsNumber() : PromiseState.Pending, box.Get("value"));
     }
 
-    /// <summary>
-    /// Builds a host object or array as a sandbox value with Jint's own JSON parser, so host
-    /// data is never evaluated as script text and a real failure surfaces instead of becoming
-    /// <c>null</c>.
-    /// </summary>
-    private JsValue ParseComplexJson(JsonElement element)
-    {
-        var parsed = new Jint.Native.Json.JsonParser(_engine).Parse(element.GetRawText());
-        if (!_valueFidelity) return parsed;
-        var decode = _engine.Evaluate("__xript_marshal.decode");
-        return _engine.Invoke(decode, parsed);
-    }
+    private static string PendingPromise(string surface) =>
+        $"{surface} returned a promise that is still pending; the C# runtime runs scripts synchronously and cannot await one, so settle it within the call or return a settled value";
 }

@@ -1,0 +1,229 @@
+{
+  "description": "Conformance corpus for the error a script sees when a host binding fails. Every runtime builds the `manifest` host below with the `probe` bindings, runs `setup`, then runs each case's `script` (through `executeAsync` for a case marked `async`, through `execute` otherwise) and compares the fields of the result that the case's `expected` names. A failing binding throws a `BindingError` whose message names the binding once, as `<binding>(): <reason>`; a binding the script may not call throws a `CapabilityDeniedError`; a non-function where the manifest declares a function parameter throws a `TypeError`. Both error classes are globals, and every error a binding throws is a real instance of its class, and of `Error`.",
+  "notes": [
+    "The host supplies every binding but `missing`. `boom` fails with the message `boom`; `prefixed` fails with the message `prefixed(): already`, which already names the binding, so the script sees the prefix once; `gated` is declared with the `secret` capability, which the runtime is not granted; `missing` is declared but not supplied, so the runtime installs a stub that throws; `takesFn` declares a function parameter `fn`; `deep` accepts any argument; `nested.inner` fails with the message `inner fail`; `later` is an async binding whose promise rejects with an error carrying the message `nope`.",
+    "`setup` defines `shape(run)`, which calls `run` and returns `\"no throw\"` when it does not throw, and otherwise an object describing what it threw: `name`, `message`, `binding` and `capability` (each `null` when the error has no such property), and `error`, `bindingError`, `capabilityDenied` and `typeError`, which say whether it is an instance of `Error`, `BindingError`, `CapabilityDeniedError` and `TypeError`. A case compares only the fields `expected` lists. `messageStartsWith` in place of `message` compares a prefix, for a reason whose wording is the runtime's own.",
+    "The `events` bus refuses a call the same way: an undeclared event is a `BindingError` naming the bus method, and an event behind a capability the script lacks is a `CapabilityDeniedError`.",
+    "`deep` is passed an array nested 20000 levels deep, past every runtime's limit for a value crossing into the host (2048 levels in the JavaScript runtimes, 1024 in Rust, 10000 in C#), so the binding fails before it is called. The wording after the prefix names the runtime's own limit.",
+    "A case marked `async` needs a runtime with async bindings and an async entry point. The universal JavaScript runtime's synchronous build has no async bindings, and C# has neither, so they skip it."
+  ],
+  "manifest": {
+    "xript": "0.10",
+    "name": "binding-error-probe",
+    "capabilities": {
+      "secret": {
+        "description": "A capability this host never grants."
+      }
+    },
+    "bindings": {
+      "boom": {
+        "description": "Fails with the message boom."
+      },
+      "prefixed": {
+        "description": "Fails with a message that already names the binding."
+      },
+      "gated": {
+        "description": "Needs a capability the script lacks.",
+        "capability": "secret"
+      },
+      "missing": {
+        "description": "Declared, but the host does not supply it."
+      },
+      "takesFn": {
+        "description": "Declares a function parameter.",
+        "params": [
+          {
+            "name": "fn",
+            "type": "function"
+          }
+        ]
+      },
+      "deep": {
+        "description": "Accepts any argument."
+      },
+      "nested": {
+        "description": "A namespace.",
+        "members": {
+          "inner": {
+            "description": "Fails with the message inner fail."
+          }
+        }
+      },
+      "later": {
+        "description": "An async binding whose promise rejects.",
+        "async": true
+      }
+    },
+    "events": [
+      {
+        "id": "tick",
+        "description": "An event anyone may follow."
+      },
+      {
+        "id": "guarded",
+        "description": "An event behind the secret capability.",
+        "capability": "secret"
+      }
+    ]
+  },
+  "setup": "function shape(run) { try { run(); return 'no throw'; } catch (e) { return { name: e.name, message: e.message, binding: 'binding' in e ? e.binding : null, capability: 'capability' in e ? e.capability : null, error: e instanceof Error, bindingError: e instanceof BindingError, capabilityDenied: e instanceof CapabilityDeniedError, typeError: e instanceof TypeError }; } } function nest(n) { var root = []; var at = root; for (var i = 0; i < n; i++) { var next = []; at.push(next); at = next; } return root; }",
+  "cases": [
+    {
+      "name": "the error classes are globals",
+      "script": "[typeof BindingError, typeof CapabilityDeniedError]",
+      "expected": [
+        "function",
+        "function"
+      ]
+    },
+    {
+      "name": "a host error is a BindingError naming the binding",
+      "script": "shape(function () { boom(); })",
+      "expected": {
+        "name": "BindingError",
+        "message": "boom(): boom",
+        "binding": "boom",
+        "error": true,
+        "bindingError": true,
+        "capabilityDenied": false
+      }
+    },
+    {
+      "name": "a host message that already names the binding is prefixed once",
+      "script": "shape(function () { prefixed(); })",
+      "expected": {
+        "name": "BindingError",
+        "message": "prefixed(): already",
+        "binding": "prefixed",
+        "error": true,
+        "bindingError": true
+      }
+    },
+    {
+      "name": "a namespaced binding is named in full",
+      "script": "shape(function () { nested.inner(); })",
+      "expected": {
+        "name": "BindingError",
+        "message": "nested.inner(): inner fail",
+        "binding": "nested.inner",
+        "error": true,
+        "bindingError": true
+      }
+    },
+    {
+      "name": "a binding the host did not supply throws a BindingError",
+      "script": "shape(function () { missing(); })",
+      "expected": {
+        "name": "BindingError",
+        "message": "missing(): not implemented by the app",
+        "binding": "missing",
+        "error": true,
+        "bindingError": true
+      }
+    },
+    {
+      "name": "a binding without its capability throws a CapabilityDeniedError",
+      "script": "shape(function () { gated(); })",
+      "expected": {
+        "name": "CapabilityDeniedError",
+        "message": "gated() requires the \"secret\" capability, which hasn't been granted to this script. Ask the app developer to enable it.",
+        "binding": "gated",
+        "capability": "secret",
+        "error": true,
+        "bindingError": false,
+        "capabilityDenied": true
+      }
+    },
+    {
+      "name": "a non-function for a function parameter throws a TypeError",
+      "script": "shape(function () { takesFn(5); })",
+      "expected": {
+        "name": "TypeError",
+        "message": "takesFn(): parameter \"fn\" expects a function, got number",
+        "error": true,
+        "typeError": true,
+        "bindingError": false
+      }
+    },
+    {
+      "name": "a value too deep to cross is a BindingError naming the binding",
+      "script": "shape(function () { deep(nest(20000)); })",
+      "expected": {
+        "name": "BindingError",
+        "messageStartsWith": "deep(): ",
+        "binding": "deep",
+        "error": true,
+        "bindingError": true
+      }
+    },
+    {
+      "name": "an events call the bus refuses is a BindingError naming the call",
+      "script": "shape(function () { events.emit('undeclared'); })",
+      "expected": {
+        "name": "BindingError",
+        "messageStartsWith": "events.emit(): ",
+        "binding": "events.emit",
+        "error": true,
+        "bindingError": true
+      }
+    },
+    {
+      "name": "following an event without its capability is a CapabilityDeniedError",
+      "script": "shape(function () { events.on('guarded', function () {}); })",
+      "expected": {
+        "name": "CapabilityDeniedError",
+        "message": "events.on() requires the \"secret\" capability, which hasn't been granted to this script. Ask the app developer to enable it.",
+        "binding": "events.on",
+        "capability": "secret",
+        "error": true,
+        "capabilityDenied": true
+      }
+    },
+    {
+      "name": "a binding error can be caught and the script carries on",
+      "script": "var caught; try { boom(); } catch (e) { caught = e instanceof BindingError && e.binding; } [caught, 1 + 1]",
+      "expected": [
+        "boom",
+        2
+      ]
+    },
+    {
+      "name": "a script that tampers with the error classes changes nothing a binding throws",
+      "script": "try { BindingError = function () {}; } catch (e) {} try { Object.defineProperty(Error.prototype, 'name', { value: 'Tampered', writable: false, configurable: true }); } catch (e) {} shape(function () { boom(); })",
+      "expected": {
+        "name": "BindingError",
+        "message": "boom(): boom",
+        "binding": "boom",
+        "capability": null,
+        "error": true,
+        "bindingError": true,
+        "capabilityDenied": false,
+        "typeError": false
+      }
+    },
+    {
+      "name": "a script that tampers with the error classes changes nothing a capability denial throws",
+      "script": "try { CapabilityDeniedError = function () {}; } catch (e) {} try { Object.defineProperty(Error.prototype, 'name', { value: 'Tampered', writable: false, configurable: true }); } catch (e) {} shape(function () { gated(); })",
+      "expected": {
+        "name": "CapabilityDeniedError",
+        "binding": "gated",
+        "capability": "secret",
+        "error": true,
+        "bindingError": false,
+        "capabilityDenied": true
+      }
+    },
+    {
+      "name": "an async binding's rejection is a BindingError naming the binding",
+      "async": true,
+      "script": "try { await later(); return 'no throw'; } catch (e) { return { name: e.name, message: e.message, binding: 'binding' in e ? e.binding : null, error: e instanceof Error, bindingError: e instanceof BindingError }; }",
+      "expected": {
+        "name": "BindingError",
+        "message": "later(): nope",
+        "binding": "later",
+        "error": true,
+        "bindingError": true
+      }
+    }
+  ]
+}

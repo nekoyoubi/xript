@@ -1,0 +1,131 @@
+{
+  "description": "Conformance corpus for async bindings and the async entry point. An `\"async\": true` binding hands the script a real promise; `executeAsync` (`execute_async` in Rust) runs its source as the body of an async function. Values in this file use the marker spelling of `spec/value-fidelity-tests.json`.",
+  "notes": [
+    "The host binding `slow(ms, value)` returns a promise that resolves to `value` after `ms` milliseconds; `fail(message)` returns a promise that rejects with an `Error` carrying `message`. `sync()` is an ordinary binding that returns `\"sync\"`.",
+    "`body`: the runtime runs `script` through `executeAsync`, and the result must equal `expected`. The source is an async function body: `return` gives the result, `await` works at the top level, and a body that returns nothing yields `undefined`.",
+    "`promise`: the runtime runs `script` through `executeAsync`, and the result must equal `expected`. A case marked `concurrent` needs a runtime whose async bindings settle while the script keeps running; a runtime that settles an async binding before handing it to the script (Rust's `RuntimeMode::Sync`, C#) skips it.",
+    "`syncReach`: the runtime runs `script` through its synchronous `execute`; the script catches what calling the async binding threw and returns its message, which must begin with `error`. The runtime then runs `after` through `executeAsync`, whose result must equal `expected`: a refused call leaves the runtime usable. This applies to a runtime whose synchronous `execute` cannot drive an async binding (the universal JavaScript runtime, with either QuickJS build); a runtime that can (Node, Rust, C#) skips it.",
+    "`executeResult`: the runtime runs `script` through its synchronous `execute`, whose result is a promise. The JavaScript runtimes that cannot hand the host a settled value refuse it: `execute` throws an error whose message names `executeAsync`. A runtime that settles a promise result instead (Rust awaits it, C# drains its job queue before returning; see `spec/execution.md`) or hands the host the promise itself (Node) skips it.",
+    "`mod` is loaded into the runtime before the export sections run: its entry script registers the exports the cases invoke.",
+    "`exportAsync`: the runtime invokes `export` of the mod with `args` through its async export invocation (`invokeModExportAsync`, `invoke_export_async`, or the runtime's equivalent), which awaits a promise the export returns; the result must equal `expected`. An export reaches async bindings exactly as a script does: they hand it real promises. A case marked `concurrent` is skipped as in `promise`.",
+    "`exportSync`: the runtime invokes `export` with `args` through its synchronous export invocation, which must fail with an error whose message contains `error`: an export that ends in a promise is refused in favor of the async invocation, and an async binding it reaches is refused as from `execute`. The runtime then runs `after` through `executeAsync`, whose result must equal `expected`. This applies where `executeResult` and `syncReach` do; other runtimes skip it."
+  ],
+  "mod": {
+    "manifest": {
+      "xript": "0.10",
+      "name": "async-mod",
+      "version": "1.0.0",
+      "entry": {
+        "script": "mod.js",
+        "exports": {
+          "later": { "description": "Resolves after a microtask." },
+          "awaitBinding": { "description": "Awaits slow(ms, value)." },
+          "settled": { "description": "Returns an already settled promise." },
+          "race": { "description": "Races two async bindings." },
+          "seesPromise": { "description": "Reports whether an async binding hands it a promise." },
+          "startBinding": { "description": "Returns slow(1, value) without awaiting it." }
+        }
+      }
+    },
+    "source": "xript.exports.register('later', async function () { await null; return 'later'; });\nxript.exports.register('awaitBinding', async function (ms, value) { return await slow(ms, value); });\nxript.exports.register('settled', function () { return Promise.resolve('settled'); });\nxript.exports.register('race', function () { return Promise.race([slow(60, 'slow'), slow(1, 'fast')]); });\nxript.exports.register('seesPromise', async function () { var p = slow(1, 'x'); var real = p instanceof Promise; await p; return real; });\nxript.exports.register('startBinding', function (value) { return slow(1, value); });\n"
+  },
+  "manifest": {
+    "xript": "0.10",
+    "name": "async-probe",
+    "bindings": {
+      "slow": {
+        "description": "Resolves to value after ms milliseconds.",
+        "async": true,
+        "params": [
+          { "name": "ms", "type": "number" },
+          { "name": "value", "type": "string" }
+        ]
+      },
+      "fail": {
+        "description": "Rejects with an Error carrying message.",
+        "async": true,
+        "params": [{ "name": "message", "type": "string" }]
+      },
+      "sync": { "description": "Returns \"sync\"." }
+    }
+  },
+  "body": [
+    { "name": "return gives the result", "script": "return 5;", "expected": 5 },
+    { "name": "await works at the top level", "script": "var a = await 'x'; await null; return a + 'y';", "expected": "xy" },
+    { "name": "a body that returns nothing yields undefined", "script": "1 + 1;", "expected": { "$xript": "undefined" } },
+    { "name": "an awaited async binding gives its value", "script": "return await slow(1, 'v');", "expected": "v" }
+  ],
+  "promise": [
+    { "name": "an async binding returns a real promise", "script": "var p = slow(1, 'a'); var real = p instanceof Promise; await p; return real;", "expected": true },
+    { "name": "the promise has a callable then", "script": "var p = slow(1, 'a'); var kind = typeof p.then; await p; return kind;", "expected": "function" },
+    { "name": "then chains on the promise", "script": "return slow(1, 'v').then(function (x) { return x + '!'; });", "expected": "v!" },
+    {
+      "name": "a rejected binding is caught by the awaiting script",
+      "script": "try { await fail('nope'); return 'resolved'; } catch (e) { return e.message.indexOf('nope') !== -1; }",
+      "expected": true
+    },
+    {
+      "name": "the script keeps running while an async binding is pending",
+      "script": "var order = []; var p = slow(5, 'later').then(function (x) { order.push(x); }); order.push(sync()); await p; return order.join(',');",
+      "expected": "sync,later"
+    },
+    {
+      "name": "two async bindings are pending at once",
+      "script": "var p = slow(20, 'a'); var q = slow(1, 'b'); var both = await Promise.all([p, q]); return both.join('');",
+      "expected": "ab"
+    },
+    {
+      "name": "Promise.race settles with the faster binding",
+      "script": "return await Promise.race([slow(60, 'slow'), slow(1, 'fast')]);",
+      "expected": "fast",
+      "concurrent": true
+    }
+  ],
+  "syncReach": [
+    {
+      "name": "an async binding reached from execute fails naming the binding",
+      "script": "(function () { try { slow(1, 'x'); return 'started'; } catch (e) { return String(e.message); } })()",
+      "error": "slow(): ",
+      "after": "return await slow(1, 'after');",
+      "expected": "after"
+    },
+    {
+      "name": "an uncaught refusal leaves the runtime usable",
+      "script": "(function () { try { return slow(1, 'x').then(function () { return 'ran'; }); } catch (e) { return String(e.message); } })()",
+      "error": "slow(): ",
+      "after": "var a = await slow(1, 'one'); var b = await slow(1, 'two'); return a + b;",
+      "expected": "onetwo"
+    }
+  ],
+  "executeResult": [
+    { "name": "a promise result is refused", "script": "Promise.resolve(1)" },
+    { "name": "an async function's result is refused", "script": "(async function () { return 1; })()" },
+    { "name": "a pending promise result is refused", "script": "new Promise(function () {})" }
+  ],
+  "exportAsync": [
+    { "name": "an async export's result is awaited", "export": "later", "args": [], "expected": "later" },
+    { "name": "an export awaiting an async binding gets its value", "export": "awaitBinding", "args": [1, "v"], "expected": "v" },
+    { "name": "an export returning a settled promise gives its value", "export": "settled", "args": [], "expected": "settled" },
+    { "name": "an async binding hands an export a real promise", "export": "seesPromise", "args": [], "expected": true },
+    { "name": "an export racing async bindings settles with the faster", "export": "race", "args": [], "expected": "fast", "concurrent": true },
+    { "name": "an export handing back an async binding's promise gives its value", "export": "startBinding", "args": ["handed"], "expected": "handed" }
+  ],
+  "exportSync": [
+    {
+      "name": "an export ending in a promise is refused by the synchronous invocation",
+      "export": "later",
+      "args": [],
+      "error": "invokeExportAsync",
+      "after": "return await slow(1, 'after');",
+      "expected": "after"
+    },
+    {
+      "name": "an async binding an export reaches during a synchronous invocation is refused",
+      "export": "startBinding",
+      "args": ["x"],
+      "error": "slow(): ",
+      "after": "return await slow(1, 'after');",
+      "expected": "after"
+    }
+  ]
+}

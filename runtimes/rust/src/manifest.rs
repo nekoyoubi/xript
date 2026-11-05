@@ -811,21 +811,17 @@ pub fn validate_structure(manifest: &Manifest) -> crate::error::Result<()> {
     }
 
     if let Some(ref limits) = manifest.limits {
-        if let Some(timeout) = limits.timeout_ms {
-            if timeout == 0 {
-                issues.push(ValidationIssue {
-                    path: "/limits/timeout_ms".into(),
-                    message: "'timeout_ms' must be a positive number".into(),
-                });
-            }
+        if limits.timeout_ms == Some(0) {
+            issues.push(ValidationIssue {
+                path: "/limits/timeout_ms".into(),
+                message: "'timeout_ms' must be a positive number".into(),
+            });
         }
-        if let Some(memory) = limits.memory_mb {
-            if memory == 0 {
-                issues.push(ValidationIssue {
-                    path: "/limits/memory_mb".into(),
-                    message: "'memory_mb' must be a positive number".into(),
-                });
-            }
+        if limits.memory_mb == Some(0) {
+            issues.push(ValidationIssue {
+                path: "/limits/memory_mb".into(),
+                message: "'memory_mb' must be a positive number".into(),
+            });
         }
     }
 
@@ -984,16 +980,16 @@ pub fn validate_mod_against_app(
                         }
                     }
 
-                    if let Some(ref cap) = slot.capability {
-                        if !crate::cap_match::granted_satisfies(granted_capabilities, cap) {
-                            issues.push(ValidationIssue {
-                                path: format!("{}/slot", prefix),
-                                message: format!(
-                                    "slot '{}' requires capability '{}'",
-                                    frag.slot, cap
-                                ),
-                            });
-                        }
+                    if let Some(ref cap) = slot.capability
+                        && !crate::cap_match::granted_satisfies(granted_capabilities, cap)
+                    {
+                        issues.push(ValidationIssue {
+                            path: format!("{}/slot", prefix),
+                            message: format!(
+                                "slot '{}' requires capability '{}'",
+                                frag.slot, cap
+                            ),
+                        });
                     }
                 }
             }
@@ -1560,11 +1556,10 @@ mod extends_conformance {
             let outcome = resolve_extends(&child, &tmp_dir);
 
             if case.error {
-                if outcome.is_ok() {
+                if let Ok(resolved) = outcome {
                     failures.push(format!(
                         "case '{}': expected resolution to error, but it succeeded with {:?}",
-                        case.description,
-                        outcome.unwrap()
+                        case.description, resolved
                     ));
                 }
             } else {

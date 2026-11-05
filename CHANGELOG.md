@@ -1,5 +1,88 @@
 # Changelog
 
+## v0.10.1
+
+A host running the same mods on the Rust runtime and on the JavaScript runtimes, comparing results value by value, turned up dozens of places where the four runtimes disagreed about what crossed the boundary, plus several real sandbox-safety holes and some large performance costs on the Rust side. This release settles every one of them against a shared conformance corpus, so all four runtimes now give the same answer, and the Rust host boundary gets roughly 10 to 35 times cheaper. The rule from 0.10.0 still holds: nothing changes for an existing host or mod unless it fixes a silent bug, closes a security hole, or moves an outlier runtime onto what the JavaScript runtimes already do.
+
+- **Five things change when you upgrade.** Each is a fix or a catch-up, and each has its own bullet below marked "changes on upgrade"
+  - Rust: `execute_async` and `execute_within_async` take an async function body, so a host passing a bare expression needs a `return`
+  - Rust and C#: a failing host binding throws a `BindingError` with the `<binding>(): ` prefix instead of a plain `Error` carrying only the host's message
+  - every runtime: host bindings, `hooks`, `events`, `xript`, and `console` are sealed once the runtime is built, so a mod can no longer reassign them
+  - `@xriptjs/runtime-node`: the console handler receives copied data, not live sandbox objects
+  - C#: `String(fn)` returns the function's real source instead of `[native code]`
+- **`value_fidelity` covers the rest of JavaScript's values.** New opt-in markers in Rust and C#, in the same family as 0.10.0's: `{"$xript":"bigint","value":"10"}`, `{"$xript":"symbol","description":"tag"}` (description omitted when absent), `{"$xript":"string","units":[...]}` for a string holding a lone surrogate, and `{"$xript":"cycle","up":n}` for a back-reference to an ancestor. The marker rule widened to match: a known tag with exactly its payload keys is a marker, and anything else stays plain data
+  - Rust helpers: `special::bigint`, `special::symbol`, `special::utf16`, `special::cycle`, and `XriptValue::marker()`
+  - lone surrogates never error any more (Rust failed with `invalid args: unexpected end of hex escape`); with fidelity off they become U+FFFD, and since an object key can't hold a marker, a lone surrogate in a key is U+FFFD on Rust and C# either way
+  - Rust and C#: with fidelity off, a result that can't cross (a cycle, a BigInt, a value past the depth limit) fails with a named error instead of silently becoming `null`
+  - Rust: `Number`, `String`, and `Boolean` wrapper objects are unwrapped at every depth; `new Number(NaN)` used to arrive as `null` and `new Number(-0)` as `0`
+- **`@xriptjs/runtime` stops swallowing arguments it can't read.** It silently replaced a whole argument with `"[object Object]"` (or `""`) when it held a cycle, a throwing `toJSON`, a throwing getter, or a revoked Proxy. Now a cyclic value crosses as a real cycle, a throwing `toJSON` is skipped and the object crosses by its own properties (as Rust and C# already did), a throwing getter fails the call with the getter's own error, and a revoked Proxy fails it with the engine's `TypeError`. Every runtime follows the same rules
+  - a getter runs once per crossing; it can run again only if a `toJSON` or getter in the same value throws, or the value is cyclic
+- **Deep values cross everywhere.** Rust stopped at 128 levels (serde's default) and C# at 64. The limits are now 1024 for Rust, 10000 for C#, and 2048 for `@xriptjs/runtime`, all well past 1000; past the limit the call fails with a `BindingError` naming the binding, never a raw parser message
+- **Callbacks cross both ways intact.**
+  - a callback's return value carries everything an argument does: symbols, BigInt at any depth, and cycles (Rust and C# returned `null`, and the universal runtime stringified nested BigInts)
+  - a callback the host hands back into the sandbox during its call arrives as the script's own function (`fn === original`) on every runtime, where the JS runtimes gave `undefined` and Rust and C# gave the raw internal marker; a handle whose call has ended arrives as `undefined`
+  - callback throw messages match the JS text on every runtime (`"42"`, `"null"`, `"undefined"`, and `"callback threw"` for an object with no `message`)
+  - security: on Rust and C#, script data shaped like a callback marker could resolve to a real function passed in the same call, and Rust exposed the call's nonce to script; both closed
+- **A Rust pool carries the whole value across workers.** Values crossing between workers on the event bus carry BigInt, cycles, lone surrogates, and full depth regardless of `value_fidelity`, and a function arrives as `undefined`. Payload keys keep their order; they were sorted, so a spread payload reached handlers in the wrong argument order
+- **`@xriptjs/runtime-node` matches the universal runtime on results.** Getters are read once, a throwing getter surfaces as the script's own error (it was a `BindingError` wrapping it), holes in results become `undefined`, `toJSON` applies to copied result containers, and nested symbols follow JSON's rules as they do on the universal runtime
+- **Async bindings hand over real promises.** In the `@xriptjs/runtime` asyncify build, an `"async": true` binding now gives the script a real Promise, as the spec says; it used to hand over the settled value, so `.then` threw. Several async bindings can be pending at once, and the one-suspended-call refusal is gone
+  - reaching an async binding from sync `execute` used to throw a raw engine message and wedge the runtime for every later async binding; it now fails with a `BindingError` naming the binding and leaves the runtime usable
+- **Rust's `execute_async` takes an async function body (changes on upgrade).** `execute_async` and `execute_within_async` now work like the JS runtimes' `executeAsync`: `return` works, top-level `await` works, and a bare expression yields `undefined`. A Rust host passing a bare expression needs a `return`
+- **A promise result never comes back as `{}`.** JS `execute`, `invokeExport`, `invokeModExport`, and `invokeCommand` returned `{}` when the script's result was a promise; they now throw and point at the async counterpart. Rust keeps awaiting a promise result, and now does so for exports in sync mode too (`invoke_export` returned `{}` there). C# settles an already-fulfilled promise result, fails on a rejected one, and fails clearly on a pending one, where it returned `{}`
+- **Interleaved async calls stay honest.** They keep correct caller identity, code after an async binding settles gets a fresh `timeout_ms` budget, and a runaway continuation fails the waiting call instead of hanging
+- **A Rust binding can call back into its own runtime.** A host binding calling `execute`, `invoke_export`, `fire_hook`, or `emit` on its own runtime hung forever, because rquickjs's runtime lock isn't reentrant. It now re-enters the way the JS runtimes and C# always did: inner results come back, inner throws are catchable outside, and an inner hook timeout fails only that call
+  - new `RetainedCallback::call_async(&self, args) -> Result<Value, CallbackError>`: nested inside a binding or another callback it runs in place on the caller's budget (the case `call` refuses with `CallbackError::Promise`); between script calls it gets a fresh budget and yields while an async binding is pending
+  - new `Callback::to_value()` lets a Rust host hand a callback back
+  - on all four runtimes, a host `execute` re-entered from inside a mod's export reported that mod as the caller; it now reports `modId: null`, as the spec says
+- **Rust and C# binding failures throw `BindingError` (changes on upgrade).** A failing host binding threw a plain `Error` carrying only the host's message; it now throws a `BindingError` with the `<binding>(): ` prefix, as `spec/bindings.md` requires and the JS runtimes always did. `BindingError` and `CapabilityDeniedError` are sealed globals a mod can't replace
+  - the prefix appears exactly once; the universal runtime doubled it
+- **A runaway mod can't take the host process down.**
+  - C#: there was no recursion limit, so unbounded recursion or `JSON.stringify` of a deeply nested value killed the host with a native stack overflow; Jint's stack guard is on, so it's a catchable `RangeError` and the runtime stays usable, and deep `JSON.parse` stops at 64 levels with a catchable `SyntaxError`
+  - Rust: no stack limit was set, so QuickJS's default budget could overflow a 1 MiB host thread and kill the process; the runtime now measures the calling thread's remaining stack at every entry (in-crate, per platform, no new dependency) and sets the engine's limit from it, capped by `max_stack_depth`, which gives about 2,240 recursion levels on an 8 MiB thread in release and a catchable error instead of a crash on small threads
+    - a host's own debug build compiles QuickJS unoptimized and recurses much shallower; `[profile.dev.package.rquickjs-sys] opt-level = 3` gives release-like depth
+  - `@xriptjs/runtime`: `JSON.stringify` on a value about 5,000 levels deep overflowed the WASM stack and corrupted the runtime so `dispose()` aborted; the engine's stack limit is now 128 KiB in the sync build and 64 KiB in the asyncify build, `JSON.stringify` and `JSON.parse` refuse values nested past 1,000 levels with a catchable error, and plain recursion now stops at about 741 frames in the sync build (was about 1,486) and about 369 in the asyncify build
+    - if the host itself is nearly out of stack, the runtime throws `EngineStackExhaustedError` for that call and later ones, and `dispose()` stays safe
+    - on Node.js 20, once V8 11.3's optimizing compiler takes over the asyncify build, each level of script recursion costs about 40 KB of host stack; about 20 levels exhaust V8's default stack, and the runtime then retires with `EngineStackExhaustedError` without harming the host process. The sync build and `@xriptjs/runtime-node` aren't affected, and Node.js 22 and later meet the stack corpus in both builds
+- **One mod can't tamper with another (changes on upgrade).** On every runtime, a second mod could overwrite, delete, or redeclare host bindings, replace `hooks`, `events`, or `console`, and monkeypatch the `Array` methods the runtime relied on. On the universal runtime, Rust, and C# it could also read and empty the internal registries, replace internal helpers, and forge the export owner to replace another mod's handler. Internals now live where only the host can reach them (no `__xript*` global remains), the runtime captures the built-ins it uses before any script runs, and host bindings, `hooks`, `events`, `xript`, and `console` are sealed once the runtime is built, so a mod can no longer reassign them. Debug-session probes are locked too
+  - `@xriptjs/runtime`: the engine's own `JSON.stringify` could pass values being serialized, including another mod's return values, to a setter a mod planted on `Array.prototype`; closed
+- **Host-manifest names cross as data.** Names from the host manifest were spliced into generated JS. On `@xriptjs/runtime` a phased hook name (and, under the asyncify build, an async binding name) could run code while the runtime was built; on C# a gated hook name could; on Rust a fragment id passed to `fire_fragment_hook` ran as script. Line breaks in names broke construction, and non-identifier names silently left namespaces and hooks unfrozen. Every name now crosses as data, and names like `constructor`, `__proto__`, and `toString` work as ordinary names everywhere. Mod-supplied names were already safe
+- **`console.*` never throws, and formats one way.** Rust threw a `TypeError` on any Error or object argument, `@xriptjs/runtime` threw on a revoked Proxy or a throwing getter, and C# turned everything into `String(arg)` (`[object Object]`). Formatting is now one rule, pinned in `spec/console-tests.json`
+  - a string-sink handler (Rust `ConsoleHandler(severity, &str)`, C#) gets one line per call: an Error as `Name: message`, objects and arrays as compact JSON-like text with `[Circular]`, BigInt as `12n`, symbols as `Symbol(tag)`, and functions as source
+  - an unreadable argument becomes `[unreadable: Name: message]` and the call's other arguments still log; a timeout while reading still ends the script
+- **`@xriptjs/runtime-node`'s console handler gets copied data (changes on upgrade).** It received live sandbox objects (Errors, functions, Maps, unread getters); it now receives copied data, the same as `@xriptjs/runtime`
+- **C#'s `String(fn)` returns real source (changes on upgrade).** It returned `function f() { [native code] }` for every script function; it now returns the real source on every path, since Jint keeps script source in memory
+- **Rust script-to-host binding calls are about 10x cheaper.** In µs per call, release: `nop(i)` 2.80 → 0.28, `nop(i, 2, 3)` 3.35 → 0.38, `one()` 2.28 → 0.19, and an object argument 7.70 → 3.34, now cheaper than the engine's own `JSON.stringify` of it. The binding path uses a native encoder instead of `JSON.stringify` plus a replacer, stops cloning internal handles per call, binds a binding with no function parameters as the native function, and skips the nonce and allocation when no function is passed
+- **Rust host-to-script calls are 15 to 35x cheaper**, in both runtime modes: `invoke_mod_export` 20.4 → 0.76, `fire_hook` with one handler 48.2 → 1.41 and with five 61.5 → 3.89, and `emit` 23.0 → 6.09. Every call used to build and compile a fresh piece of JS source; calls are now native, the hook table is built once, and promise handling runs only when a result is a promise
+- **`@xriptjs/runtime` crossing got faster where it was slow.** Values containing `undefined` encode about 2x faster than 0.10.0, and values that hit a special value late about 3x faster; plain values are about 11 to 13% slower, the cost of reading each getter once
+- **C# timeouts land on time.** The call deadline is checked on every statement, so a timeout fires when it should instead of hundreds of statements late, at no measurable cost
+- **Seven new shared corpora, held by all four runtimes:** `spec/async-tests.json`, `spec/stack-tests.json`, `spec/console-tests.json`, `spec/reentrancy-tests.json`, `spec/names-as-data-tests.json`, `spec/isolation-tests.json`, and `spec/binding-error-tests.json`. `spec/value-fidelity-tests.json` gained `sink`, `depth`, `prefix`, and `callbackResult` sections and many cases, and `spec/callback-tests.json` and `spec/key-order-tests.json` grew
+- **Smaller fixes found on the way**
+  - `executeAsync` source ending in a `//` comment no longer fails to parse
+  - C# writes numbers the way JavaScript does (`1e+21`, not `1E+21`)
+  - Rust: a public `SeveritySink` type alias, and the crate builds QuickJS optimized in its own debug and test profile
+  - Rust: 15 pre-existing Clippy warnings cleared, and a debug test that could hang the suite fixed
+  - flaky timing tests in the JS and C# suites moved onto fake clocks
+
+### Test counts
+
+| package | before | after |
+| --- | --- | --- |
+| `@xriptjs/sanitize` | 960 | 960 |
+| `@xriptjs/runtime` | 1782 | 3116 |
+| `@xriptjs/runtime-node` | 1523 | 2174 |
+| `@xriptjs/validate` | 575 | 575 |
+| `@xriptjs/typegen` | 215 | 215 |
+| `@xriptjs/docgen` | 193 | 193 |
+| `@xriptjs/init` | 55 | 55 |
+| `@xriptjs/cli` | 136 | 136 |
+| `xript-runtime` | 548 | 629 |
+| `xript-tree` | 22 | 22 |
+| `xript-expr` | 19 | 19 |
+| `xript-ratatui` | 60 | 60 |
+| `xript-wiz` | 38 | 38 |
+| `Xript.Runtime` | 1976 | 2663 |
+| **total** | **8102** | **10855** |
+
 ## v0.10.0
 
 Most of this release is about what a real host needs from the runtime once it stops being a demo. Embedding xript in an application that ships on desktop and the web at once ran straight into a wall of gaps: the host couldn't keep a mod's function past a call, its own `events` binding was silently replaced, `Infinity` turned into `null`, hook phases were ignored, and a binding it couldn't make `Send` had to be smuggled through a thread-local. All of that is closed here, in all four runtimes, and almost none of it changes what an existing host or mod sees. New behavior is opt-in; the few defaults that move are bug fixes, or Rust and C# catching up to what JavaScript already did.
